@@ -53,6 +53,12 @@
     <Compile Include="FmMain.Designer.cs">
       <DependentUpon>FmMain.cs</DependentUpon>
     </Compile>
+    <Compile Include="FmTool\FmCover.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FmTool\FmCover.Designer.cs">
+      <DependentUpon>FmCover.cs</DependentUpon>
+    </Compile>
     <Compile Include="mcStruct\mcBI.cs" />
     <Compile Include="mcStruct\mcDC.cs" />
     <Compile Include="mcData\mcQ.cs" />
@@ -66,6 +72,9 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <EmbeddedResource Include="FmMain.resx">
       <DependentUpon>FmMain.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="FmTool\FmCover.resx">
+      <DependentUpon>FmCover.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>

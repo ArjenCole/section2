@@ -14,6 +14,7 @@ namespace section2
         public FmMain()
         {
             InitializeComponent();
+            mscCtrl.LoadFinished = true;
         }
     }
 }

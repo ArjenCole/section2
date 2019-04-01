@@ -33,8 +33,8 @@
             this.SCmain = new System.Windows.Forms.SplitContainer();
             this.SCleft = new System.Windows.Forms.SplitContainer();
             this.TVproject = new System.Windows.Forms.TreeView();
-            this.SCright = new System.Windows.Forms.SplitContainer();
             this.TVinventory = new System.Windows.Forms.TreeView();
+            this.SCright = new System.Windows.Forms.SplitContainer();
             this.SCmain.Panel1.SuspendLayout();
             this.SCmain.Panel2.SuspendLayout();
             this.SCmain.SuspendLayout();
@@ -103,6 +103,14 @@
             this.TVproject.Size = new System.Drawing.Size(261, 175);
             this.TVproject.TabIndex = 0;
             // 
+            // TVinventory
+            // 
+            this.TVinventory.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.TVinventory.Location = new System.Drawing.Point(0, 0);
+            this.TVinventory.Name = "TVinventory";
+            this.TVinventory.Size = new System.Drawing.Size(261, 120);
+            this.TVinventory.TabIndex = 1;
+            // 
             // SCright
             // 
             this.SCright.Dock = System.Windows.Forms.DockStyle.Fill;
@@ -114,14 +122,6 @@
             this.SCright.SplitterDistance = 113;
             this.SCright.TabIndex = 0;
             // 
-            // TVinventory
-            // 
-            this.TVinventory.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.TVinventory.Location = new System.Drawing.Point(0, 0);
-            this.TVinventory.Name = "TVinventory";
-            this.TVinventory.Size = new System.Drawing.Size(261, 120);
-            this.TVinventory.TabIndex = 1;
-            // 
             // FmMain
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
@@ -132,6 +132,7 @@
             this.Controls.Add(this.MSmain);
             this.Name = "FmMain";
             this.Text = "Form1";
+            this.WindowState = System.Windows.Forms.FormWindowState.Maximized;
             this.SCmain.Panel1.ResumeLayout(false);
             this.SCmain.Panel2.ResumeLayout(false);
             this.SCmain.ResumeLayout(false);
