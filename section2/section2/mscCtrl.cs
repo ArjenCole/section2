@@ -30,12 +30,12 @@ namespace section2
             dc.BI.ProjectName = pFmGuide.ProjectName;
             dc.BI.ProjectIndex = pFmGuide.ProjectIndex;
             dc.BI.Designer = pFmGuide.Designer;
-            dc.add
+            int segmentCNT = pFmGuide.SegmentCount;
+            for(int i = 0; i< segmentCNT; i++)
+            {
+                dc.Add(new mcSegment());
+            }
         }
 
-        public static mcDC NewDC()
-        {
-            return new mcDC();
-        }
     }
 }

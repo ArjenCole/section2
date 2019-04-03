@@ -24,7 +24,12 @@ namespace section2.FmTool
 
         private void BTNok_Click(object sender, EventArgs e)
         {
-
+            ProjectName = TXTprojectName.Text;
+            ProjectIndex = TXTprojectIndex.Text;
+            Designer = TXTdesigner.Text;
+            SegmentCount = int.Parse(TXTsegmentCount.Text);
+            this.DialogResult = DialogResult.OK;
+            this.Close();
         }
     }
 }

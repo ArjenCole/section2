@@ -7,5 +7,9 @@ namespace section2.mcStruct
 {
     public class mcSegment:macList<mcUnit>
     {
+        public mcSegment()
+        {
+            SetName("标段");
+        }
     }
 }

@@ -8,6 +8,7 @@ namespace section2.mcStruct
     public abstract class macList<T>: Iname
     {
         public string Name() { return name; }
+        public void SetName(string pName) { name = pName; }
         private string name;
         public List<T> mList = new List<T>();
 
@@ -26,6 +27,9 @@ namespace section2.mcStruct
 
         public void Add(T pT)
         {
+            string tName = ((Iname)pT).Name();
+            tName = mscTools.reName(mList, tName);
+            ((Iname)pT).SetName(tName);
             mList.Add(pT);
         }
         public void MoveUp(int pIdx)
@@ -54,5 +58,6 @@ namespace section2.mcStruct
     public interface Iname
     {
         string Name();
+        void SetName(string pName);
     }
 }

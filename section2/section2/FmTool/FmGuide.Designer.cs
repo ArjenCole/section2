@@ -40,7 +40,7 @@
             this.checkBox1 = new System.Windows.Forms.CheckBox();
             this.groupBox1 = new System.Windows.Forms.GroupBox();
             this.LBLauthor = new System.Windows.Forms.Label();
-            this.TXTauthor = new System.Windows.Forms.TextBox();
+            this.TXTdesigner = new System.Windows.Forms.TextBox();
             this.label2 = new System.Windows.Forms.Label();
             this.label1 = new System.Windows.Forms.Label();
             this.TXTprojectIndex = new System.Windows.Forms.TextBox();
@@ -158,7 +158,7 @@
             // groupBox1
             // 
             this.groupBox1.Controls.Add(this.LBLauthor);
-            this.groupBox1.Controls.Add(this.TXTauthor);
+            this.groupBox1.Controls.Add(this.TXTdesigner);
             this.groupBox1.Controls.Add(this.label2);
             this.groupBox1.Controls.Add(this.label1);
             this.groupBox1.Controls.Add(this.TXTprojectIndex);
@@ -179,13 +179,13 @@
             this.LBLauthor.TabIndex = 5;
             this.LBLauthor.Text = "编制人";
             // 
-            // TXTauthor
+            // TXTdesigner
             // 
-            this.TXTauthor.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
-            this.TXTauthor.Location = new System.Drawing.Point(92, 116);
-            this.TXTauthor.Name = "TXTauthor";
-            this.TXTauthor.Size = new System.Drawing.Size(91, 21);
-            this.TXTauthor.TabIndex = 4;
+            this.TXTdesigner.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
+            this.TXTdesigner.Location = new System.Drawing.Point(92, 116);
+            this.TXTdesigner.Name = "TXTdesigner";
+            this.TXTdesigner.Size = new System.Drawing.Size(91, 21);
+            this.TXTdesigner.TabIndex = 4;
             // 
             // label2
             // 
@@ -236,6 +236,7 @@
             this.Controls.Add(this.groupBox1);
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedToolWindow;
             this.Name = "FmGuide";
+            this.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
             this.Text = "FmGuide";
             this.groupBox2.ResumeLayout(false);
             this.groupBox2.PerformLayout();
@@ -260,7 +261,7 @@
         private System.Windows.Forms.CheckBox checkBox1;
         private System.Windows.Forms.GroupBox groupBox1;
         private System.Windows.Forms.Label LBLauthor;
-        private System.Windows.Forms.TextBox TXTauthor;
+        private System.Windows.Forms.TextBox TXTdesigner;
         private System.Windows.Forms.Label label2;
         private System.Windows.Forms.Label label1;
         private System.Windows.Forms.TextBox TXTprojectIndex;

@@ -19,12 +19,27 @@ namespace section2
         {
             Dictionary<string, mcQ> tD = new Dictionary<string, mcQ>();
             foreach (mcQ feQ in pL1)
-                if (tD.Keys.Contains(feQ.NameUnit))
-                    tD[feQ.NameUnit].Exp += "+" + feQ.Exp;
+                if (tD.Keys.Contains(feQ.CNU))
+                    tD[feQ.CNU].Exp += "+" + feQ.Exp;
                 else
-                    tD.Add(feQ.NameUnit, feQ);
+                    tD.Add(feQ.CNU, feQ);
             
             return tD.Values.ToList();
+        }
+
+        public static string reName<T>(List<T> pL, string pName)
+        {
+            string rtName = pName;
+            if (pL.Count == 0) return rtName;
+            T tT;
+            int i = 0;
+            do
+            {
+                i++;
+                rtName = pName + i.ToString();
+                tT = pL.Find(t => ((mcStruct.Iname)t).Name() == rtName);
+            } while (tT != null);
+            return rtName;
         }
     }
 }

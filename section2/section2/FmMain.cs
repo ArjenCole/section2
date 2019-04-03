@@ -16,5 +16,10 @@ namespace section2
             InitializeComponent();
             mscCtrl.LoadFinished = true;
         }
+
+        private void 新建ToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            mscCtrl.NewFileFromGuide();
+        }
     }
 }
