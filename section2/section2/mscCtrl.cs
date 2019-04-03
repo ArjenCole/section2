@@ -16,15 +16,28 @@ namespace section2
 
         public static bool LoadFinished = false;//主程序加载完毕后封面窗体自动消失
 
+        #region 新建
         public static void NewFileFromGuide()
         {
             FmGuide fmGuide = new FmTool.FmGuide();
             if (fmGuide.ShowDialog() == System.Windows.Forms.DialogResult.OK)
-            {
-                NewFile(fmGuide);
-            }
+                newFile(fmGuide);
+            else
+                newFile();
         }
-        public static void NewFile(FmGuide pFmGuide)
+        private static void newFile()
+        {
+            dc = new mcDC();
+            dc.BI.ProjectName = "新建项目";
+            dc.BI.ProjectIndex = "";
+            dc.BI.Designer = "";
+            int segmentCNT = 1;
+            mcUnit tU = new mcUnit();
+            mcSegment tS = new mcSegment();
+            dc.Add(tS);
+            tS.Add(tU);
+        }
+        private static void newFile(FmGuide pFmGuide)
         {
             dc = new mcDC();
             dc.BI.ProjectName = pFmGuide.ProjectName;
@@ -32,10 +45,9 @@ namespace section2
             dc.BI.Designer = pFmGuide.Designer;
             int segmentCNT = pFmGuide.SegmentCount;
             for(int i = 0; i< segmentCNT; i++)
-            {
                 dc.Add(new mcSegment(pFmGuide.Cat));
-            }
         }
+        #endregion
 
     }
 }

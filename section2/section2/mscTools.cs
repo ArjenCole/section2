@@ -31,7 +31,6 @@ namespace section2
         {
             string rtName = pName;
             if (pL.Count == 0) return rtName;
-            T tT;
             int i = 0;
             while (pL.Find(t => ((mcStruct.Iname)t).Name() == rtName) != null) 
             {

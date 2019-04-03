@@ -10,7 +10,7 @@ namespace section2.mcStruct
     {
         public mcUnit()
         {
-
+            SetName("单位工程");
         }
         public mcUnit(string pName)
         {
