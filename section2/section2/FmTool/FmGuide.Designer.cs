@@ -33,7 +33,7 @@
             this.label4 = new System.Windows.Forms.Label();
             this.TXTsegmentCount = new System.Windows.Forms.TextBox();
             this.BTNok = new System.Windows.Forms.Button();
-            this.groupBox2 = new System.Windows.Forms.GroupBox();
+            this.GBcat = new System.Windows.Forms.GroupBox();
             this.CBrain = new System.Windows.Forms.CheckBox();
             this.CBsewageWork = new System.Windows.Forms.CheckBox();
             this.CBwaterSupply = new System.Windows.Forms.CheckBox();
@@ -45,7 +45,7 @@
             this.label1 = new System.Windows.Forms.Label();
             this.TXTprojectIndex = new System.Windows.Forms.TextBox();
             this.TXTprojectName = new System.Windows.Forms.TextBox();
-            this.groupBox2.SuspendLayout();
+            this.GBcat.SuspendLayout();
             this.groupBox1.SuspendLayout();
             this.SuspendLayout();
             // 
@@ -98,18 +98,18 @@
             this.BTNok.UseVisualStyleBackColor = true;
             this.BTNok.Click += new System.EventHandler(this.BTNok_Click);
             // 
-            // groupBox2
+            // GBcat
             // 
-            this.groupBox2.Controls.Add(this.CBrain);
-            this.groupBox2.Controls.Add(this.CBsewageWork);
-            this.groupBox2.Controls.Add(this.CBwaterSupply);
-            this.groupBox2.Controls.Add(this.checkBox1);
-            this.groupBox2.Location = new System.Drawing.Point(12, 180);
-            this.groupBox2.Name = "groupBox2";
-            this.groupBox2.Size = new System.Drawing.Size(106, 122);
-            this.groupBox2.TabIndex = 17;
-            this.groupBox2.TabStop = false;
-            this.groupBox2.Text = "涵盖专业";
+            this.GBcat.Controls.Add(this.CBrain);
+            this.GBcat.Controls.Add(this.CBsewageWork);
+            this.GBcat.Controls.Add(this.CBwaterSupply);
+            this.GBcat.Controls.Add(this.checkBox1);
+            this.GBcat.Location = new System.Drawing.Point(12, 180);
+            this.GBcat.Name = "GBcat";
+            this.GBcat.Size = new System.Drawing.Size(106, 122);
+            this.GBcat.TabIndex = 17;
+            this.GBcat.TabStop = false;
+            this.GBcat.Text = "涵盖专业";
             // 
             // CBrain
             // 
@@ -232,14 +232,14 @@
             this.Controls.Add(this.label4);
             this.Controls.Add(this.TXTsegmentCount);
             this.Controls.Add(this.BTNok);
-            this.Controls.Add(this.groupBox2);
+            this.Controls.Add(this.GBcat);
             this.Controls.Add(this.groupBox1);
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedToolWindow;
             this.Name = "FmGuide";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
             this.Text = "FmGuide";
-            this.groupBox2.ResumeLayout(false);
-            this.groupBox2.PerformLayout();
+            this.GBcat.ResumeLayout(false);
+            this.GBcat.PerformLayout();
             this.groupBox1.ResumeLayout(false);
             this.groupBox1.PerformLayout();
             this.ResumeLayout(false);
@@ -254,7 +254,7 @@
         private System.Windows.Forms.Label label4;
         private System.Windows.Forms.TextBox TXTsegmentCount;
         private System.Windows.Forms.Button BTNok;
-        private System.Windows.Forms.GroupBox groupBox2;
+        private System.Windows.Forms.GroupBox GBcat;
         private System.Windows.Forms.CheckBox CBrain;
         private System.Windows.Forms.CheckBox CBsewageWork;
         private System.Windows.Forms.CheckBox CBwaterSupply;

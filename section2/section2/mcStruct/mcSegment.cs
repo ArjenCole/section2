@@ -11,5 +11,13 @@ namespace section2.mcStruct
         {
             SetName("标段");
         }
+        public mcSegment(List<string> pNameList)
+        {
+            SetName("标段");
+            foreach (string feStr in pNameList)
+            {
+                Add(new mcUnit(feStr));
+            }
+        }
     }
 }

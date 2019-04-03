@@ -8,5 +8,13 @@ namespace section2.mcStruct
 {
     public class mcUnit:macList<mcS>
     {
+        public mcUnit()
+        {
+
+        }
+        public mcUnit(string pName)
+        {
+            SetName(pName);
+        }
     }
 }

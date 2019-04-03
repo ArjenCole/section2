@@ -14,7 +14,7 @@ namespace section2.FmTool
         public string ProjectName;
         public string ProjectIndex;
         public string Designer;
-        public List<string> Cat;
+        public List<string> Cat = new List<string>();
         public int SegmentCount;
 
         public FmGuide()
@@ -27,6 +27,9 @@ namespace section2.FmTool
             ProjectName = TXTprojectName.Text;
             ProjectIndex = TXTprojectIndex.Text;
             Designer = TXTdesigner.Text;
+            foreach (CheckBox feCB in GBcat.Controls)
+                if(feCB.Checked)
+                    Cat.Add(feCB.Text);
             SegmentCount = int.Parse(TXTsegmentCount.Text);
             this.DialogResult = DialogResult.OK;
             this.Close();

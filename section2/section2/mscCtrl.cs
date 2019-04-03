@@ -33,7 +33,7 @@ namespace section2
             int segmentCNT = pFmGuide.SegmentCount;
             for(int i = 0; i< segmentCNT; i++)
             {
-                dc.Add(new mcSegment());
+                dc.Add(new mcSegment(pFmGuide.Cat));
             }
         }
 
