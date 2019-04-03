@@ -9,5 +9,12 @@ namespace section2.mcStruct
     {
         public mcBI BI;
 
+
+        public mcDC()
+        {
+            BI = new mcStruct.mcBI();
+            mList = new List<mcStruct.mcSegment>();
+
+        }
     }
 }
