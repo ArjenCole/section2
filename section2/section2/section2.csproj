@@ -65,6 +65,8 @@
     <Compile Include="FmTool\FmGuide.Designer.cs">
       <DependentUpon>FmGuide.cs</DependentUpon>
     </Compile>
+    <Compile Include="mcStruct\Iname.cs" />
+    <Compile Include="mcStruct\macDic.cs" />
     <Compile Include="mcStruct\mcBI.cs" />
     <Compile Include="mcStruct\mcDC.cs" />
     <Compile Include="mcData\mcQ.cs" />
