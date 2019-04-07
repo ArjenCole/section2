@@ -6,6 +6,8 @@ using System.Drawing;
 using System.Linq;
 using System.Text;
 using System.Windows.Forms;
+using section2.mcStruct;
+using section2.mcData;
 
 namespace section2
 {
@@ -19,7 +21,33 @@ namespace section2
 
         private void 新建ToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            mscCtrl.NewFileFromGuide();
+            mcDC tDC = mscCtrl.NewFileFromGuide();
+            FlashTVdc(tDC);
+        }
+
+
+        private void FlashTVdc(mcDC pDC)
+        {
+            TreeNode ActiveNode = null;
+            TVdc.Nodes.Clear();
+            if (pDC == null) { return; }
+            TreeNode NodeProject = new TreeNode(pDC.BI.ProjectName, 1, 2);//一级节点
+            foreach (mcSG feSG in pDC.Sons()) 
+            {
+                TreeNode NodeSegment = new TreeNode(feSG.Name());
+                foreach (mcUN feUN in feSG.Sons())
+                {
+                    TreeNode NodeUnit = new TreeNode(feUN.Name());
+                    NodeSegment.Nodes.Add(NodeUnit);
+                    /*if ((ActiveFormUnit != null) && (ActiveFormUnit.OwnerName == feSG.Name) && (ActiveFormUnit.mUName == feUN.Name))
+                        ActiveNode = NodeUnit;*/
+                }
+                NodeProject.Nodes.Add(NodeSegment);
+            }
+            TVdc.Nodes.Add(NodeProject);
+            TVdc.ExpandAll();
+            if (ActiveNode != null)
+                TVdc.SelectedNode = ActiveNode;
         }
     }
 }

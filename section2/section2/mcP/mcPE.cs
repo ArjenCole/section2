@@ -15,6 +15,14 @@ namespace section2.mcP
         public mcQ Fc3;
         public mcQ Fc4;
 
+        public mcPE()
+        {
+
+        }
+        public mcPE(string pName)
+        {
+            this.SetName(pName);
+        }
 
     }
 }

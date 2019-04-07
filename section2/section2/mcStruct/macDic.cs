@@ -26,6 +26,7 @@ namespace section2.mcStruct
         {
             return mDic[mDic.Keys.ToList()[pIdx]];
         }
+        public List<T> Sons() { return mDic.Values.ToList(); }
 
         public void Add(T pT)
         {
@@ -34,5 +35,9 @@ namespace section2.mcStruct
             ((Iname)pT).SetName(tName);
             mDic.Add(tName, pT);
         }
+    }
+    public class mcDic<T> :macDic<T>
+    {
+
     }
 }

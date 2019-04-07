@@ -35,9 +35,14 @@
             this.TSmain = new System.Windows.Forms.ToolStrip();
             this.SCmain = new System.Windows.Forms.SplitContainer();
             this.SCleft = new System.Windows.Forms.SplitContainer();
-            this.TVproject = new System.Windows.Forms.TreeView();
+            this.TVdc = new System.Windows.Forms.TreeView();
             this.TVinventory = new System.Windows.Forms.TreeView();
             this.SCright = new System.Windows.Forms.SplitContainer();
+            this.SCpcp = new System.Windows.Forms.SplitContainer();
+            this.RBmPE = new System.Windows.Forms.RadioButton();
+            this.RBmPF = new System.Windows.Forms.RadioButton();
+            this.RBmPD = new System.Windows.Forms.RadioButton();
+            this.RBmPW = new System.Windows.Forms.RadioButton();
             this.MSmain.SuspendLayout();
             this.SCmain.Panel1.SuspendLayout();
             this.SCmain.Panel2.SuspendLayout();
@@ -45,7 +50,10 @@
             this.SCleft.Panel1.SuspendLayout();
             this.SCleft.Panel2.SuspendLayout();
             this.SCleft.SuspendLayout();
+            this.SCright.Panel1.SuspendLayout();
             this.SCright.SuspendLayout();
+            this.SCpcp.Panel1.SuspendLayout();
+            this.SCpcp.SuspendLayout();
             this.SuspendLayout();
             // 
             // MSmain
@@ -70,14 +78,14 @@
             // 新建ToolStripMenuItem
             // 
             this.新建ToolStripMenuItem.Name = "新建ToolStripMenuItem";
-            this.新建ToolStripMenuItem.Size = new System.Drawing.Size(152, 22);
+            this.新建ToolStripMenuItem.Size = new System.Drawing.Size(100, 22);
             this.新建ToolStripMenuItem.Text = "新建";
             this.新建ToolStripMenuItem.Click += new System.EventHandler(this.新建ToolStripMenuItem_Click);
             // 
             // 打开ToolStripMenuItem
             // 
             this.打开ToolStripMenuItem.Name = "打开ToolStripMenuItem";
-            this.打开ToolStripMenuItem.Size = new System.Drawing.Size(152, 22);
+            this.打开ToolStripMenuItem.Size = new System.Drawing.Size(100, 22);
             this.打开ToolStripMenuItem.Text = "打开";
             // 
             // TSmain
@@ -102,7 +110,7 @@
             // 
             this.SCmain.Panel2.Controls.Add(this.SCright);
             this.SCmain.Size = new System.Drawing.Size(783, 298);
-            this.SCmain.SplitterDistance = 261;
+            this.SCmain.SplitterDistance = 116;
             this.SCmain.TabIndex = 4;
             // 
             // SCleft
@@ -114,41 +122,120 @@
             // 
             // SCleft.Panel1
             // 
-            this.SCleft.Panel1.Controls.Add(this.TVproject);
+            this.SCleft.Panel1.Controls.Add(this.TVdc);
             // 
             // SCleft.Panel2
             // 
             this.SCleft.Panel2.Controls.Add(this.TVinventory);
-            this.SCleft.Size = new System.Drawing.Size(261, 298);
+            this.SCleft.Size = new System.Drawing.Size(116, 298);
             this.SCleft.SplitterDistance = 174;
             this.SCleft.TabIndex = 0;
             // 
-            // TVproject
+            // TVdc
             // 
-            this.TVproject.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.TVproject.Location = new System.Drawing.Point(0, 0);
-            this.TVproject.Name = "TVproject";
-            this.TVproject.Size = new System.Drawing.Size(261, 174);
-            this.TVproject.TabIndex = 0;
+            this.TVdc.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.TVdc.Location = new System.Drawing.Point(0, 0);
+            this.TVdc.Name = "TVdc";
+            this.TVdc.Size = new System.Drawing.Size(116, 174);
+            this.TVdc.TabIndex = 0;
             // 
             // TVinventory
             // 
             this.TVinventory.Dock = System.Windows.Forms.DockStyle.Fill;
             this.TVinventory.Location = new System.Drawing.Point(0, 0);
             this.TVinventory.Name = "TVinventory";
-            this.TVinventory.Size = new System.Drawing.Size(261, 120);
+            this.TVinventory.Size = new System.Drawing.Size(116, 120);
             this.TVinventory.TabIndex = 1;
             // 
             // SCright
             // 
             this.SCright.Dock = System.Windows.Forms.DockStyle.Fill;
             this.SCright.FixedPanel = System.Windows.Forms.FixedPanel.Panel1;
+            this.SCright.IsSplitterFixed = true;
             this.SCright.Location = new System.Drawing.Point(0, 0);
             this.SCright.Name = "SCright";
             this.SCright.Orientation = System.Windows.Forms.Orientation.Horizontal;
-            this.SCright.Size = new System.Drawing.Size(518, 298);
+            // 
+            // SCright.Panel1
+            // 
+            this.SCright.Panel1.Controls.Add(this.SCpcp);
+            this.SCright.Size = new System.Drawing.Size(663, 298);
             this.SCright.SplitterDistance = 113;
             this.SCright.TabIndex = 0;
+            // 
+            // SCpcp
+            // 
+            this.SCpcp.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.SCpcp.FixedPanel = System.Windows.Forms.FixedPanel.Panel1;
+            this.SCpcp.IsSplitterFixed = true;
+            this.SCpcp.Location = new System.Drawing.Point(0, 0);
+            this.SCpcp.Name = "SCpcp";
+            // 
+            // SCpcp.Panel1
+            // 
+            this.SCpcp.Panel1.Controls.Add(this.RBmPW);
+            this.SCpcp.Panel1.Controls.Add(this.RBmPD);
+            this.SCpcp.Panel1.Controls.Add(this.RBmPF);
+            this.SCpcp.Panel1.Controls.Add(this.RBmPE);
+            this.SCpcp.Size = new System.Drawing.Size(663, 113);
+            this.SCpcp.SplitterDistance = 91;
+            this.SCpcp.TabIndex = 0;
+            // 
+            // RBmPE
+            // 
+            this.RBmPE.AutoSize = true;
+            this.RBmPE.Checked = true;
+            this.RBmPE.FlatStyle = System.Windows.Forms.FlatStyle.System;
+            this.RBmPE.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.RBmPE.Location = new System.Drawing.Point(3, 3);
+            this.RBmPE.Name = "RBmPE";
+            this.RBmPE.Size = new System.Drawing.Size(98, 26);
+            this.RBmPE.TabIndex = 5;
+            this.RBmPE.TabStop = true;
+            this.RBmPE.Text = "围护原则";
+            this.RBmPE.UseVisualStyleBackColor = true;
+            // 
+            // RBmPF
+            // 
+            this.RBmPF.AutoSize = true;
+            this.RBmPF.Checked = true;
+            this.RBmPF.FlatStyle = System.Windows.Forms.FlatStyle.System;
+            this.RBmPF.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.RBmPF.Location = new System.Drawing.Point(3, 29);
+            this.RBmPF.Name = "RBmPF";
+            this.RBmPF.Size = new System.Drawing.Size(98, 26);
+            this.RBmPF.TabIndex = 6;
+            this.RBmPF.TabStop = true;
+            this.RBmPF.Text = "地基处理";
+            this.RBmPF.UseVisualStyleBackColor = true;
+            // 
+            // RBmPD
+            // 
+            this.RBmPD.AutoSize = true;
+            this.RBmPD.Checked = true;
+            this.RBmPD.FlatStyle = System.Windows.Forms.FlatStyle.System;
+            this.RBmPD.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.RBmPD.Location = new System.Drawing.Point(3, 55);
+            this.RBmPD.Name = "RBmPD";
+            this.RBmPD.Size = new System.Drawing.Size(98, 26);
+            this.RBmPD.TabIndex = 7;
+            this.RBmPD.TabStop = true;
+            this.RBmPD.Text = "降水原则";
+            this.RBmPD.UseVisualStyleBackColor = true;
+            // 
+            // RBmPW
+            // 
+            this.RBmPW.AutoSize = true;
+            this.RBmPW.Checked = true;
+            this.RBmPW.FlatStyle = System.Windows.Forms.FlatStyle.System;
+            this.RBmPW.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.RBmPW.Location = new System.Drawing.Point(3, 81);
+            this.RBmPW.Name = "RBmPW";
+            this.RBmPW.Size = new System.Drawing.Size(98, 26);
+            this.RBmPW.TabIndex = 8;
+            this.RBmPW.TabStop = true;
+            this.RBmPW.Text = "工作面宽";
+            this.RBmPW.UseVisualStyleBackColor = true;
             // 
             // FmMain
             // 
@@ -169,7 +256,11 @@
             this.SCleft.Panel1.ResumeLayout(false);
             this.SCleft.Panel2.ResumeLayout(false);
             this.SCleft.ResumeLayout(false);
+            this.SCright.Panel1.ResumeLayout(false);
             this.SCright.ResumeLayout(false);
+            this.SCpcp.Panel1.ResumeLayout(false);
+            this.SCpcp.Panel1.PerformLayout();
+            this.SCpcp.ResumeLayout(false);
             this.ResumeLayout(false);
             this.PerformLayout();
 
@@ -180,12 +271,17 @@
         private System.Windows.Forms.ToolStrip TSmain;
         private System.Windows.Forms.SplitContainer SCmain;
         private System.Windows.Forms.SplitContainer SCleft;
-        private System.Windows.Forms.TreeView TVproject;
+        private System.Windows.Forms.TreeView TVdc;
         private System.Windows.Forms.SplitContainer SCright;
         private System.Windows.Forms.TreeView TVinventory;
         private System.Windows.Forms.ToolStripMenuItem 文件ToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem 新建ToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem 打开ToolStripMenuItem;
+        private System.Windows.Forms.SplitContainer SCpcp;
+        private System.Windows.Forms.RadioButton RBmPW;
+        private System.Windows.Forms.RadioButton RBmPD;
+        private System.Windows.Forms.RadioButton RBmPF;
+        private System.Windows.Forms.RadioButton RBmPE;
     }
 }
 
