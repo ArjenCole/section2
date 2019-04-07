@@ -14,5 +14,13 @@ namespace section2.mcP
         public void SetName(string pName) { name = pName; }
         private string name;
 
+        public mcPW()
+        {
+            this.SetName("工作面宽原则");
+        }
+        public mcPW(string pName)
+        {
+            this.SetName(pName);
+        }
     }
 }

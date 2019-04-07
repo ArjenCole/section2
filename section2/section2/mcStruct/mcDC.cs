@@ -11,21 +11,21 @@ namespace section2.mcStruct
     {
         public mcBI BI;
 
-        public mcDic<mcPE> PEdic;
-        public mcDic<mcPF> PFdic;
-        public mcDic<mcPD> PDdic;
-        public mcDic<mcPW> PWdic;
+        public mcDic<mcPE> PEdic = new mcDic<mcPE>();
+        public mcDic<mcPF> PFdic = new mcDic<mcPF>();
+        public mcDic<mcPD> PDdic = new mcDic<mcPD>();
+        public mcDic<mcPW> PWdic = new mcDic<mcPW>();
 
         public mcDC()
         {
             mDic = new Dictionary<string, mcSG>();
 
             BI = new mcBI();
-
-            PEdic = new mcDic<mcP.mcPE>();
-            PEdic.Add(new mcPE("围护原则"));
-
-
+            
+            PEdic.Add(new mcPE());
+            PFdic.Add(new mcPF());
+            PDdic.Add(new mcPD());
+            PWdic.Add(new mcPW());
         }
     }
 }

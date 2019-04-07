@@ -16,7 +16,7 @@ namespace section2.mcP
 
         public mcPF()
         {
-
+            this.SetName("地基处理原则");
         }
         public mcPF(string pName)
         {

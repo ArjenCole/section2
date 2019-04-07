@@ -5,6 +5,7 @@ using System.Text;
 using section2.FmTool;
 using section2.mcData;
 using section2.mcStruct;
+using section2.mcP;
 
 namespace section2
 {
@@ -31,12 +32,11 @@ namespace section2
             dc.BI.ProjectName = "新建项目";
             dc.BI.ProjectIndex = "";
             dc.BI.Designer = "";
-            int segmentCNT = 1;
-            mcUN tU = new mcUN();
             mcSG tS = new mcSG();
-            dc.Add(tS);
+            mcUN tU = new mcUN();
             tS.Add(tU);
-            return dc;
+            dc.Add(tS);
+            return getDC();
         }
         private static mcDC newFile(FmGuide pFmGuide)
         {
@@ -47,19 +47,30 @@ namespace section2
             int segmentCNT = pFmGuide.SegmentCount;
             for(int i = 0; i< segmentCNT; i++)
                 dc.Add(new mcSG(pFmGuide.Cat));
-            return dc;
+            return getDC();
         }
         #endregion
         #region 读取
+        public static mcDC getDC()
+        {
+            return dc;
+        }
         public static mcSG getSG(string pSGname)
         {
-            return dc.Son(pSGname);
+            return getDC().Son(pSGname);
         }
         public static mcUN getUN(string pSGname,string pUNname)
         {
             return getSG(pSGname).Son(pUNname);
         }
-
+        public static mcDic<mcPE> getPEdic()
+        {
+            return getDC().PEdic;
+        }
+        public static mcDic<mcPF> getPFdic()
+        {
+            return getDC().PFdic;
+        }
 
         #endregion
     }

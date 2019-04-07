@@ -17,7 +17,7 @@ namespace section2.mcP
 
         public mcPE()
         {
-
+            this.SetName("围护原则");
         }
         public mcPE(string pName)
         {
