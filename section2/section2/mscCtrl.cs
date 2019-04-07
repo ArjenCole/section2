@@ -32,8 +32,8 @@ namespace section2
             dc.BI.ProjectIndex = "";
             dc.BI.Designer = "";
             int segmentCNT = 1;
-            mcUnit tU = new mcUnit();
-            mcSegment tS = new mcSegment();
+            mcUN tU = new mcUN();
+            mcSG tS = new mcSG();
             dc.Add(tS);
             tS.Add(tU);
         }
@@ -45,7 +45,7 @@ namespace section2
             dc.BI.Designer = pFmGuide.Designer;
             int segmentCNT = pFmGuide.SegmentCount;
             for(int i = 0; i< segmentCNT; i++)
-                dc.Add(new mcSegment(pFmGuide.Cat));
+                dc.Add(new mcSG(pFmGuide.Cat));
         }
         #endregion
 

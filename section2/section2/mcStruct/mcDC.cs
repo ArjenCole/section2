@@ -5,7 +5,7 @@ using System.Text;
 
 namespace section2.mcStruct
 {
-    public class mcDC:macList<mcSegment>
+    public class mcDC:macDic<mcSG>
     {
         public mcBI BI;
 
@@ -13,7 +13,7 @@ namespace section2.mcStruct
         public mcDC()
         {
             BI = new mcStruct.mcBI();
-            mList = new List<mcStruct.mcSegment>();
+            mDic = new Dictionary<string, mcSG>();
 
         }
     }

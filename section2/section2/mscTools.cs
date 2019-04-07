@@ -27,12 +27,12 @@ namespace section2
             return tD.Values.ToList();
         }
 
-        public static string reName<T>(List<T> pL, string pName)
+        public static string reName<T>(Dictionary<string, T> pD, string pName)
         {
             string rtName = pName;
-            if (pL.Count == 0) return rtName;
+            if (pD.Count == 0) return rtName;
             int i = 0;
-            while (pL.Find(t => ((mcStruct.Iname)t).Name() == rtName) != null) 
+            while (pD.Keys.Contains(rtName)) 
             {
                 i++;
                 rtName = pName + i.ToString();

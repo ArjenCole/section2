@@ -5,18 +5,18 @@ using System.Text;
 
 namespace section2.mcStruct
 {
-    public class mcSegment:macList<mcUnit>
+    public class mcSG:macDic<mcUN>
     {
-        public mcSegment()
+        public mcSG()
         {
             SetName("标段");
         }
-        public mcSegment(List<string> pNameList)
+        public mcSG(List<string> pNameList)
         {
             SetName("标段");
             foreach (string feStr in pNameList)
             {
-                Add(new mcUnit(feStr));
+                Add(new mcUN(feStr));
             }
         }
     }

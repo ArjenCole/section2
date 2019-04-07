@@ -30,7 +30,7 @@ namespace section2.mcStruct
         public void Add(T pT)
         {
             string tName = ((Iname)pT).Name();
-            tName = mscTools.reName(mDic.Keys.ToList(), tName);
+            tName = mscTools.reName(mDic, tName);
             ((Iname)pT).SetName(tName);
             mDic.Add(tName, pT);
         }

@@ -6,13 +6,13 @@ using section2.mcData;
 
 namespace section2.mcStruct
 {
-    public class mcUnit:macList<mcS>
+    public class mcUN:macDic<mcS>
     {
-        public mcUnit()
+        public mcUN()
         {
             SetName("单位工程");
         }
-        public mcUnit(string pName)
+        public mcUN(string pName)
         {
             SetName(pName);
         }
