@@ -66,6 +66,7 @@
       <DependentUpon>FmGuide.cs</DependentUpon>
     </Compile>
     <Compile Include="mcData\mcCpt.cs" />
+    <Compile Include="mcP\mcPD.cs" />
     <Compile Include="mcP\mcPE.cs" />
     <Compile Include="mcP\mcPEn.cs" />
     <Compile Include="mcP\mcPEns.cs" />

@@ -13,6 +13,7 @@ namespace section2.mcStruct
 
         public macDic<mcPE> PEdic;
         public macDic<mcPF> PFdic;
+        public macDic<mcPD> PDdic;
         public macDic<mcPW> PWdic;
 
         public mcDC()

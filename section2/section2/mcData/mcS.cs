@@ -12,11 +12,11 @@ namespace section2.mcData
         public string DepthDig;
         public string Unit;
         public string Amount;
-
+        public string Discribe;
+        public mcCpt Cpt;
 
         public Dictionary<string,double> PEdic;
         public Dictionary<string,double> PFdic;
-        public string PW;
 
         /// <summary>
         /// 获得断面在任意高度(基础底起算)的占土面积
