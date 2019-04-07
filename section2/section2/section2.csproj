@@ -67,13 +67,10 @@
     </Compile>
     <Compile Include="mcData\mcCpt.cs" />
     <Compile Include="mcP\mcPE.cs" />
-    <Compile Include="mcP\mcPEdic.cs" />
     <Compile Include="mcP\mcPEn.cs" />
     <Compile Include="mcP\mcPEns.cs" />
     <Compile Include="mcP\mcPF.cs" />
-    <Compile Include="mcP\mcPFdic.cs" />
     <Compile Include="mcP\mcPW.cs" />
-    <Compile Include="mcP\mcPWdic.cs" />
     <Compile Include="mcStruct\Iname.cs" />
     <Compile Include="mcStruct\macDic.cs" />
     <Compile Include="mcData\mcBI.cs" />

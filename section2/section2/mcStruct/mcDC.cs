@@ -11,9 +11,9 @@ namespace section2.mcStruct
     {
         public mcBI BI;
 
-        public mcPEdic PEdic;
-        public mcPFdic PFdic;
-        public mcPWdic PWdic;
+        public macDic<mcPE> PEdic;
+        public macDic<mcPF> PFdic;
+        public macDic<mcPW> PWdic;
 
         public mcDC()
         {
