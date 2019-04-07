@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using section2.mcData;
+using section2.mcP;
 
 namespace section2.mcStruct
 {
@@ -9,6 +11,9 @@ namespace section2.mcStruct
     {
         public mcBI BI;
 
+        public mcPEdic PEdic;
+        public mcPFdic PFdic;
+        public mcPWdic PWdic;
 
         public mcDC()
         {

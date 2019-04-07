@@ -65,6 +65,15 @@
     <Compile Include="FmTool\FmGuide.Designer.cs">
       <DependentUpon>FmGuide.cs</DependentUpon>
     </Compile>
+    <Compile Include="mcData\mcCpt.cs" />
+    <Compile Include="mcP\mcPE.cs" />
+    <Compile Include="mcP\mcPEdic.cs" />
+    <Compile Include="mcP\mcPEn.cs" />
+    <Compile Include="mcP\mcPEns.cs" />
+    <Compile Include="mcP\mcPF.cs" />
+    <Compile Include="mcP\mcPFdic.cs" />
+    <Compile Include="mcP\mcPW.cs" />
+    <Compile Include="mcP\mcPWdic.cs" />
     <Compile Include="mcStruct\Iname.cs" />
     <Compile Include="mcStruct\macDic.cs" />
     <Compile Include="mcData\mcBI.cs" />
@@ -109,9 +118,7 @@
   <ItemGroup>
     <None Include="App.config" />
   </ItemGroup>
-  <ItemGroup>
-    <Folder Include="mcP\" />
-  </ItemGroup>
+  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.
