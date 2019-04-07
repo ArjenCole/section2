@@ -6,8 +6,12 @@ using section2.mcData;
 
 namespace section2.mcP
 {
-    public class mcPF:mcStruct.macDic<>
+    public class mcPF:mcStruct.Iname
     {
+        public string Name() { return name; }
+        public void SetName(string pName) { name = pName; }
+        private string name;
+
         public List<mcCpt> CptList;
 
         public mcPF()

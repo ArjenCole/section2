@@ -22,11 +22,15 @@ namespace section2
         private void 新建ToolStripMenuItem_Click(object sender, EventArgs e)
         {
             mcDC tDC = mscCtrl.NewFileFromGuide();
-            FlashTVdc(tDC);
+            flashTVdc(tDC);
+        }
+        private void TVdc_NodeMouseClick(object sender, TreeNodeMouseClickEventArgs e)
+        {
+
         }
 
 
-        private void FlashTVdc(mcDC pDC)
+        private void flashTVdc(mcDC pDC)
         {
             TreeNode ActiveNode = null;
             TVdc.Nodes.Clear();
@@ -48,6 +52,16 @@ namespace section2
             TVdc.ExpandAll();
             if (ActiveNode != null)
                 TVdc.SelectedNode = ActiveNode;
+        }
+        private void flashDGVunit(string pSGname,string pUNname)
+        {
+            mcUN tUN = mscCtrl.getUN(pSGname, pUNname);
+
+        }
+
+        private void FmMain_Load(object sender, EventArgs e)
+        {
+
         }
     }
 }

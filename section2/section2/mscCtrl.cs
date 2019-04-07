@@ -50,6 +50,17 @@ namespace section2
             return dc;
         }
         #endregion
+        #region 读取
+        public static mcSG getSG(string pSGname)
+        {
+            return dc.Son(pSGname);
+        }
+        public static mcUN getUN(string pSGname,string pUNname)
+        {
+            return getSG(pSGname).Son(pUNname);
+        }
 
+
+        #endregion
     }
 }

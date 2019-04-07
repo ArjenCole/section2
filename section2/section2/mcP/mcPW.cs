@@ -8,7 +8,11 @@ namespace section2.mcP
     /// <summary>
     /// 工作面宽度原则
     /// </summary>
-    public class mcPW
+    public class mcPW : mcStruct.Iname
     {
+        public string Name() { return name; }
+        public void SetName(string pName) { name = pName; }
+        private string name;
+
     }
 }
