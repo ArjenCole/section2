@@ -20,8 +20,8 @@ namespace section2
 
             Thread t = new Thread(ShowCover);
             t.Start();
-            mscCtrl.fmMain = new FmMain();
-            Application.Run(mscCtrl.fmMain);
+            mscVctrl.fmMain = new FmMain();
+            Application.Run(mscVctrl.fmMain);
 
             Environment.Exit(0);
         }
@@ -31,10 +31,10 @@ namespace section2
             FmCover fmCover = new FmCover();
             fmCover.ShowDialog();
 
-            if (mscCtrl.fmMain.InvokeRequired)
+            if (mscVctrl.fmMain.InvokeRequired)
             {
-                Action<string> actionDelegate = (x) => { mscCtrl.fmMain.Activate(); };
-                mscCtrl.fmMain.Invoke(actionDelegate, string.Empty);
+                Action<string> actionDelegate = (x) => { mscVctrl.fmMain.Activate(); };
+                mscVctrl.fmMain.Invoke(actionDelegate, string.Empty);
             }
         }
     }

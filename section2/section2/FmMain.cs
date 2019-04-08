@@ -16,13 +16,13 @@ namespace section2
         public FmMain()
         {
             InitializeComponent();
-            mscCtrl.LoadFinished = true;
+            mscVctrl.LoadFinished = true;
         }
 
         private void 新建ToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            mcDC tDC = mscCtrl.NewFileFromGuide();
-            flashTVdc(tDC);
+            mscVctrl.NewFileFromGuide();
+            flashTVdc();
             flashPcpTab();
         }
         private void TVdc_NodeMouseClick(object sender, TreeNodeMouseClickEventArgs e)
@@ -31,13 +31,14 @@ namespace section2
         }
 
 
-        private void flashTVdc(mcDC pDC)
+        private void flashTVdc()
         {
             TreeNode ActiveNode = null;
             TVdc.Nodes.Clear();
-            if (pDC == null) { return; }
-            TreeNode NodeProject = new TreeNode(pDC.BI.ProjectName, 1, 2);//一级节点
-            foreach (mcSG feSG in pDC.Sons()) 
+            mcDC tDC = mscMctrl.getDC();
+            if (tDC == null) { return; }
+            TreeNode NodeProject = new TreeNode(tDC.BI.ProjectName, 1, 2);//一级节点
+            foreach (mcSG feSG in tDC.Sons()) 
             {
                 TreeNode NodeSegment = new TreeNode(feSG.Name());
                 foreach (mcUN feUN in feSG.Sons())
@@ -58,13 +59,13 @@ namespace section2
         {
             TLPmPE.Controls.Clear();
             TLPmPF.Controls.Clear();
-            if (mscCtrl.getDC() == null) { RBmPE.Checked = true; RBmPD.Checked = true; SCpcpHigh.Enabled = false; SCpcpLow.Visible = false; return; }
+            if (mscMctrl.getDC() == null) { RBmPE.Checked = true; RBmPD.Checked = true; SCpcpHigh.Enabled = false; SCpcpLow.Visible = false; return; }
             SCpcpHigh.Enabled = true; SCpcpHigh.Visible = true;
             SCpcpLow.Enabled = true; SCpcpLow.Visible = true;
 
-            foreach (string feKey in mscCtrl.getPEdic().mDic.Keys)
+            foreach (string feKey in mscMctrl.getPEdic().mDic.Keys)
                 TLPmPE.Controls.Add(NewPrincpleLab("围护", feKey));
-            foreach (string feKey in mscCtrl.getPFdic().mDic.Keys)
+            foreach (string feKey in mscMctrl.getPFdic().mDic.Keys)
                 TLPmPF.Controls.Add(NewPrincpleLab("地基", feKey));
             //TODO：此处需要添加字典匹配类型和颜色，并且添加降水、工作面对应内容
         }
@@ -105,7 +106,7 @@ namespace section2
 
         private void flashDGVunit(string pSGname,string pUNname)
         {
-            mcUN tUN = mscCtrl.getUN(pSGname, pUNname);
+            mcUN tUN = mscMctrl.getUN(pSGname, pUNname);
 
         }
 

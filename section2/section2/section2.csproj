@@ -81,7 +81,8 @@
     <Compile Include="mcData\mcS.cs" />
     <Compile Include="mcStruct\mcSG.cs" />
     <Compile Include="mcStruct\mcUN.cs" />
-    <Compile Include="mscCtrl.cs" />
+    <Compile Include="mscVctrl.cs" />
+    <Compile Include="mscMctrl.cs" />
     <Compile Include="mscTools.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

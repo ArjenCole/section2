@@ -20,7 +20,7 @@ namespace section2.FmTool
         private void TMdetective_Tick(object sender, EventArgs e)
         {
             this.Text = this.Opacity.ToString();
-            if (mscCtrl.LoadFinished)
+            if (mscVctrl.LoadFinished)
             {
                 this.Opacity -= 0.04;
                 if (this.Opacity <= 0)
