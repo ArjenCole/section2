@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Web.Script.Serialization;
 using section2.mcData;
 
 namespace section2
@@ -49,6 +50,23 @@ namespace section2
             foreach (KeyValuePair<Int64, T> feKVP in dicSort)
                 rtDic.Add(feKVP.Key ,feKVP.Value);
             return rtDic;
+        }
+
+        public static string toJson<T>(T pT)
+        {
+            var serializer = new JavaScriptSerializer();
+            return serializer.Serialize(pT);
+        }
+        public static T anJson<T>(string pJsonStr)
+        {
+            var serializer = new JavaScriptSerializer();
+            return serializer.Deserialize<T>(pJsonStr);
+        }
+
+        public static T DeepClone<T>(T pT)
+        {
+            string tJsonStr = toJson<T>(pT);
+            return anJson<T>(tJsonStr);
         }
     }
 }

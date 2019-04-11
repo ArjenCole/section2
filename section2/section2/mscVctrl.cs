@@ -20,9 +20,9 @@ namespace section2
         {
             FmGuide fmGuide = new FmTool.FmGuide();
             if (fmGuide.ShowDialog() == System.Windows.Forms.DialogResult.OK)
-                return mscMctrl.newDC(fmGuide.ProjectName, fmGuide.ProjectIndex, fmGuide.Designer, fmGuide.SegmentCount, fmGuide.Cat);
+                return mscDC.newDC(fmGuide.ProjectName, fmGuide.ProjectIndex, fmGuide.Designer, fmGuide.SegmentCount, fmGuide.Cat);
             else
-                return mscMctrl.newDC();
+                return mscDC.newDC();
         }
 
         #endregion

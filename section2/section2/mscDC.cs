@@ -8,7 +8,7 @@ using section2.mcP;
 
 namespace section2
 {
-    public static class mscMctrl
+    public static class mscDC
     {        
         private static mcDC dc;
 
