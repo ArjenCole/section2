@@ -7,9 +7,20 @@ namespace section2.mcStruct
 {
     public abstract class macDicInt<T> : Iname
     {
+        #region 实现接口
         public string Name() { return name; }
         public void SetName(string pName) { name = pName; }
         private string name;
+
+        public string toJson()
+        {
+            return mscTools.toJson<macDicInt<T>>(this);
+        }
+        public macDicInt<T> DeepClone()
+        {
+            return mscTools.DeepClone<macDicInt<T>>(this);
+        }
+        #endregion
 
         public Dictionary<Int64, T> mDic = new Dictionary<Int64, T>();
 

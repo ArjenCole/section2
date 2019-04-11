@@ -71,6 +71,7 @@
     <Compile Include="mcP\mcPEns.cs" />
     <Compile Include="mcP\mcPF.cs" />
     <Compile Include="mcP\mcPW.cs" />
+    <Compile Include="mcStruct\Ijson.cs" />
     <Compile Include="mcStruct\Iname.cs" />
     <Compile Include="mcStruct\macDic.cs" />
     <Compile Include="mcData\mcBI.cs" />
