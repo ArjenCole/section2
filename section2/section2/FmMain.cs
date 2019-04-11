@@ -34,7 +34,6 @@ namespace section2
         {
             InitializeComponent();
             mscVctrl.LoadFinished = true;
-            
         }
 
         private void 新建ToolStripMenuItem_Click(object sender, EventArgs e)

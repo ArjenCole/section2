@@ -18,7 +18,7 @@ namespace section2.mcStruct
         }
         public macDic<T> DeepClone()
         {
-            return mscTools.DeepClone<macDic<T>>(this);
+            return mscTools.anJson<macDic<T>>(toJson());
         }
         #endregion
         public Dictionary<string, T> mDic = new Dictionary<string, T>();

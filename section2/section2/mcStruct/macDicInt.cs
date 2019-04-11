@@ -18,7 +18,7 @@ namespace section2.mcStruct
         }
         public macDicInt<T> DeepClone()
         {
-            return mscTools.DeepClone<macDicInt<T>>(this);
+            return mscTools.anJson<macDicInt<T>>(toJson());
         }
         #endregion
 
