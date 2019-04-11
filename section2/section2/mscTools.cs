@@ -68,5 +68,16 @@ namespace section2
             string tJsonStr = toJson<T>(pT);
             return anJson<T>(tJsonStr);
         }
+
+        /// <summary>
+        /// 利用反射机制修改TableLayoutPanel的Protected的DoubleBuffered属性 避免闪烁
+        /// </summary>
+        /// <param name="pO"></param>
+        public static void DoubleBuffered(object pO)
+        {
+            pO.GetType().GetProperty
+                ("DoubleBuffered", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                .SetValue(pO, true, null);
+        }
     }
 }

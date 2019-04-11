@@ -51,6 +51,7 @@
             this.BTNpcpAddLow = new System.Windows.Forms.Button();
             this.TLPmPD = new System.Windows.Forms.TableLayoutPanel();
             this.TLPmPW = new System.Windows.Forms.TableLayoutPanel();
+            this.Pun = new System.Windows.Forms.Panel();
             this.MSmain.SuspendLayout();
             this.SCmain.Panel1.SuspendLayout();
             this.SCmain.Panel2.SuspendLayout();
@@ -59,6 +60,7 @@
             this.SCleft.Panel2.SuspendLayout();
             this.SCleft.SuspendLayout();
             this.SCright.Panel1.SuspendLayout();
+            this.SCright.Panel2.SuspendLayout();
             this.SCright.SuspendLayout();
             this.SCpcp.Panel1.SuspendLayout();
             this.SCpcp.Panel2.SuspendLayout();
@@ -174,6 +176,10 @@
             // SCright.Panel1
             // 
             this.SCright.Panel1.Controls.Add(this.SCpcp);
+            // 
+            // SCright.Panel2
+            // 
+            this.SCright.Panel2.Controls.Add(this.Pun);
             this.SCright.Size = new System.Drawing.Size(920, 451);
             this.SCright.SplitterDistance = 113;
             this.SCright.TabIndex = 0;
@@ -234,6 +240,7 @@
             this.RBmPF.TabStop = true;
             this.RBmPF.Text = "地基处理";
             this.RBmPF.UseVisualStyleBackColor = true;
+            this.RBmPF.CheckedChanged += new System.EventHandler(this.RBmP_CheckedChanged);
             // 
             // RBmPE
             // 
@@ -248,6 +255,7 @@
             this.RBmPE.TabStop = true;
             this.RBmPE.Text = "围护原则";
             this.RBmPE.UseVisualStyleBackColor = true;
+            this.RBmPE.CheckedChanged += new System.EventHandler(this.RBmP_CheckedChanged);
             // 
             // BTNpcpAddHigh
             // 
@@ -325,6 +333,7 @@
             this.RBmPW.TabStop = true;
             this.RBmPW.Text = "工作面宽";
             this.RBmPW.UseVisualStyleBackColor = true;
+            this.RBmPW.CheckedChanged += new System.EventHandler(this.RBmP_CheckedChanged);
             // 
             // RBmPD
             // 
@@ -339,6 +348,7 @@
             this.RBmPD.TabStop = true;
             this.RBmPD.Text = "降水原则";
             this.RBmPD.UseVisualStyleBackColor = true;
+            this.RBmPD.CheckedChanged += new System.EventHandler(this.RBmP_CheckedChanged);
             // 
             // BTNpcpAddLow
             // 
@@ -380,6 +390,13 @@
             this.TLPmPW.Size = new System.Drawing.Size(166, 44);
             this.TLPmPW.TabIndex = 6;
             // 
+            // Pun
+            // 
+            this.Pun.Location = new System.Drawing.Point(209, 45);
+            this.Pun.Name = "Pun";
+            this.Pun.Size = new System.Drawing.Size(200, 100);
+            this.Pun.TabIndex = 0;
+            // 
             // FmMain
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
@@ -400,6 +417,7 @@
             this.SCleft.Panel2.ResumeLayout(false);
             this.SCleft.ResumeLayout(false);
             this.SCright.Panel1.ResumeLayout(false);
+            this.SCright.Panel2.ResumeLayout(false);
             this.SCright.ResumeLayout(false);
             this.SCpcp.Panel1.ResumeLayout(false);
             this.SCpcp.Panel2.ResumeLayout(false);
@@ -443,6 +461,7 @@
         private System.Windows.Forms.Button BTNpcpAddLow;
         private System.Windows.Forms.TableLayoutPanel TLPmPD;
         private System.Windows.Forms.TableLayoutPanel TLPmPW;
+        private System.Windows.Forms.Panel Pun;
     }
 }
 

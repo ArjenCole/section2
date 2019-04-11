@@ -13,10 +13,28 @@ namespace section2
 {
     public partial class FmMain : Form
     {
+        private enum eNodeType
+        {
+            Null = 0,
+            DC = 1,
+            SG = 2,
+            UN = 3,
+            Other = 4
+        }
+        private eNodeType nodeType(TreeNode pTN)
+        {
+            if (pTN == null) return eNodeType.Null;
+            if (pTN.Parent == null) return eNodeType.DC;
+            if (pTN.Parent.Parent == null) return eNodeType.SG;
+            if (pTN.Parent.Parent.Parent == null) return eNodeType.UN;
+            return eNodeType.Other;
+        }
+
         public FmMain()
         {
             InitializeComponent();
             mscVctrl.LoadFinished = true;
+            
         }
 
         private void 新建ToolStripMenuItem_Click(object sender, EventArgs e)
@@ -27,9 +45,27 @@ namespace section2
         }
         private void TVdc_NodeMouseClick(object sender, TreeNodeMouseClickEventArgs e)
         {
-
+            switch (nodeType(e.Node))
+            {
+                case eNodeType.Null:
+                    break;
+                case eNodeType.DC:
+                    break;
+                case eNodeType.SG:
+                    break;
+                case eNodeType.UN:
+                    break;
+                case eNodeType.Other:
+                    break;
+                default:
+                    break;
+            }
         }
 
+        private void initFlashPcpTab()
+        {
+
+        }
 
         private void flashTVdc()
         {
@@ -55,6 +91,7 @@ namespace section2
             if (ActiveNode != null)
                 TVdc.SelectedNode = ActiveNode;
         }
+
         private void flashPcpTab()
         {
             TLPmPE.Controls.Clear();
@@ -122,25 +159,10 @@ namespace section2
 
         private void RBmP_CheckedChanged(object sender, EventArgs e)
         {
-            TLPmPE.Visible = false;
-            TLPmPF.Visible = false;
-            TLPmPD.Visible = false;
-            TLPmPW.Visible = false;
-            switch (((RadioButton)sender).Name)
-            {
-                case "RBmPE":
-                    TLPmPE.Visible = true;
-                    break;
-                case "RBmPF":
-                    TLPmPF.Visible = true;
-                    break;
-                case "RBmPD":
-                    TLPmPD.Visible = true;
-                    break;
-                case "RBmPW":
-                    TLPmPW.Visible = true;
-                    break;
-            }
+            TLPmPE.Visible = RBmPE.Checked;
+            TLPmPF.Visible = RBmPF.Checked;
+            TLPmPD.Visible = RBmPD.Checked;
+            TLPmPW.Visible = RBmPW.Checked;
         }
     }
 }
