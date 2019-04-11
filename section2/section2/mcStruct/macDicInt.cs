@@ -5,31 +5,11 @@ using System.Text;
 
 namespace section2.mcStruct
 {
-    public abstract class macDicInt<T> : Iname
+    public abstract class macDicInt<T> :macDic<T>
     {
-        #region 实现接口
-        public string Name() { return name; }
-        public void SetName(string pName) { name = pName; }
-        private string name = "";
-
-        public string toJson()
+        public T Son(long pIdx)
         {
-            return mscTools.toJson<macDicInt<T>>(this);
-        }
-        public macDicInt<T> DeepClone()
-        {
-            return mscTools.anJson<macDicInt<T>>(toJson());
-        }
-        #endregion
-
-        public Dictionary<Int64, T> mDicInt = new Dictionary<Int64, T>();
-
-        public Int64 Count
-        {
-            get { return mDicInt.Count; }
-        }
-        public T Son(Int64 pIdx)
-        {
+            Dictionary<long, T> mDicInt = new Dictionary<long, T>();
             mDicInt = mscTools.OrderDic(mDicInt);
             var tKeyList = mDicInt.Keys.ToList();
             if (pIdx == 0) return mDicInt[0];
@@ -39,13 +19,15 @@ namespace section2.mcStruct
 
             return mDicInt[tKeyList.Last()];
         }
-        public List<T> Sons() { return mDicInt.Values.ToList(); }
+        public List<T> Sons() { return mDic.Values.ToList(); }
 
         public void Add(string pExp, T pT)
         {
-            Int64 tInt = Convert.ToInt64(Math.Round(double.Parse(pExp) * 1000, 0));
-            mDicInt.Add(tInt, pT);
-            mDicInt = mscTools.OrderDic(mDicInt);
+            /*
+            long tInt = Convert.ToInt64(Math.Round(double.Parse(pExp) * 1000, 0));
+            mDic.Add(tInt, pT);
+            mDic = mscTools.OrderDic(mDicInt);
+            */
         }
         
     }

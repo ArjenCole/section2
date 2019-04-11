@@ -34,11 +34,6 @@ namespace section2
         {
             InitializeComponent();
             mscVctrl.LoadFinished = true;
-
-
-            mcTestDC mTD = new mcStruct.mcTestDC();
-            var tt = mscTools.DeepClone(mTD);
-            var tbi = tt.PEdic;
         }
 
         private void 新建ToolStripMenuItem_Click(object sender, EventArgs e)
