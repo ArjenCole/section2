@@ -31,7 +31,7 @@ namespace section2
         #region 读取
         public static mcDC getDC()
         {
-            return dc;
+            return mscTools.DeepClone(dc);
         }
         public static mcSG getSG(string pSGname)
         {

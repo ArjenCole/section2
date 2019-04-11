@@ -5,21 +5,13 @@ using System.Text;
 
 namespace section2.mcStruct
 {
-    public abstract class macDic<T> : Iname,Ijson<macDic<T>>
+    public abstract class macDic<T> : Iname
     {
         #region 实现接口
         public string Name() { return name; }
         public void SetName(string pName) { name = pName; }
-        private string name;
+        private string name = "";
 
-        public string toJson()
-        {
-            return mscTools.toJson<macDic<T>>(this);
-        }
-        public macDic<T> DeepClone()
-        {
-            return mscTools.anJson<macDic<T>>(toJson());
-        }
         #endregion
         public Dictionary<string, T> mDic = new Dictionary<string, T>();
 

@@ -5,7 +5,7 @@ using System.Text;
 
 namespace section2.mcData
 {
-    public abstract class mcS
+    public abstract class mcS:mcCpt
     {
         public string Describe;
         public string DepthFill;
@@ -13,7 +13,6 @@ namespace section2.mcData
         public string Unit;
         public string Amount;
         public string Discribe;
-        public mcCpt Cpt;
 
         public Dictionary<string,double> PEdic;
         public Dictionary<string,double> PFdic;

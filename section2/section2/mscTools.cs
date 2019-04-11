@@ -20,10 +20,10 @@ namespace section2
         {
             Dictionary<string, mcQ> tD = new Dictionary<string, mcQ>();
             foreach (mcQ feQ in pL1)
-                if (tD.Keys.Contains(feQ.CNU))
-                    tD[feQ.CNU].Exp += "+" + feQ.Exp;
+                if (tD.Keys.Contains(feQ.CNU()))
+                    tD[feQ.CNU()].Exp += "+" + feQ.Exp;
                 else
-                    tD.Add(feQ.CNU, feQ);
+                    tD.Add(feQ.CNU(), feQ);
             
             return tD.Values.ToList();
         }

@@ -19,7 +19,7 @@ namespace section2
             Application.SetCompatibleTextRenderingDefault(false);
 
             Thread t = new Thread(ShowCover);
-            t.Start();
+            //t.Start();
             mscVctrl.fmMain = new FmMain();
             Application.Run(mscVctrl.fmMain);
 

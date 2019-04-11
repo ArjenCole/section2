@@ -6,14 +6,14 @@ using section2.mcData;
 
 namespace section2.mcP
 {
-    public class mcPE:mcStruct.macDicInt<mcPEn>
+    public class mcPE:mcStruct.macDic<mcPEn>
     {
-        public mcQ Fc1;
-        public mcQ Fc2;
-        public mcQ Fr1;
-        public mcQ Fr2;
-        public mcQ Fc3;
-        public mcQ Fc4;
+        public mcQ Fc1 = new mcQ();
+        public mcQ Fc2 = new mcQ();
+        public mcQ Fr1 = new mcQ();
+        public mcQ Fr2 = new mcQ();
+        public mcQ Fc3 = new mcQ();
+        public mcQ Fc4 = new mcQ();
 
         public mcPE()
         {

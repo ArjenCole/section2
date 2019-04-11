@@ -12,7 +12,7 @@ namespace section2.mcP
         public void SetName(string pName) { name = pName; }
         private string name;
 
-        public List<mcCpt> CptList;
+        public List<mcCpt> CptList = new List<mcCpt>();
 
         public mcPF()
         {
