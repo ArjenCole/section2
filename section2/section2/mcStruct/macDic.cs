@@ -30,7 +30,7 @@ namespace section2.mcStruct
         }
         public List<T> Sons() { return mDic.Values.ToList(); }
 
-        public void Add(T pT)
+        public virtual void Add(T pT)
         {
             string tName = ((Iname)pT).Name();
             tName = mscTools.reName(mDic, tName);

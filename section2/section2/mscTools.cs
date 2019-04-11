@@ -41,9 +41,9 @@ namespace section2
             return rtName;
         }
         
-        public static Dictionary<Int64,T> OrderDic<T>(Dictionary<Int64, T> pDic)
+        public static Dictionary<Int64,T> OrderDic<T>(Dictionary<string, T> pDic)
         {
-            IOrderedEnumerable<KeyValuePair<Int64, T>> dicSort = from objDic in pDic orderby objDic.Key select objDic;
+            IOrderedEnumerable<KeyValuePair<Int64, T>> dicSort = from objDic in pDic orderby py(objDic.Key) select objDic;
             //return from objDic in pDQ orderby order(objDic.Key) descending select objDic; 降序
 
             var rtDic = new Dictionary<Int64, T>();

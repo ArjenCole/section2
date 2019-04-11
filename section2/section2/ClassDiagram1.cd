@@ -1,0 +1,200 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<ClassDiagram MajorVersion="1" MinorVersion="1">
+  <Class Name="section2.FmMain" Collapsed="true">
+    <Position X="26.75" Y="0.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>IICABIIAACBAAIJAgCiAEAWCMgAEACCoAIQCIAEAAQg=</HashCode>
+      <FileName>FmMain.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mscDC" Collapsed="true">
+    <Position X="28.5" Y="1.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAgAAAIAAAAAAAAAgBAAAAAAEAAIAAAAAAAAAAQAAAA=</HashCode>
+      <FileName>mscDC.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mscTools" Collapsed="true">
+    <Position X="23.25" Y="2.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AACAAAACAAAAAAAAAAAAAAAAAIAwAAAAEAAAAAAAIAA=</HashCode>
+      <FileName>mscTools.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mscVctrl" Collapsed="true">
+    <Position X="25" Y="2.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAQAAAAAAAAAAAAAAAACAAgAAAAAAAAAA=</HashCode>
+      <FileName>mscVctrl.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.Program" Collapsed="true">
+    <Position X="26.75" Y="2.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAABAAAAAA=</HashCode>
+      <FileName>Program.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.FmTool.FmCover" Collapsed="true">
+    <Position X="23.25" Y="0.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAABAACAAAAAAAACAAAACAAAAAAAAAAAAQAAAAAA=</HashCode>
+      <FileName>FmTool\FmCover.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.FmTool.FmGuide" Collapsed="true">
+    <Position X="25" Y="0.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAQAECRABBBACGCAAAACAAAAAAACACQAAQUCAgo=</HashCode>
+      <FileName>FmTool\FmGuide.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mcStruct.mcBI" Collapsed="true">
+    <Position X="23.25" Y="1.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAABAAACAAAAAAAAAAAAAAAAAAAAAAAAAg=</HashCode>
+      <FileName>mcData\mcBI.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mcStruct.macDic&lt;T&gt;" Collapsed="true">
+    <Position X="10.5" Y="0.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAIAAAAAAAAAAAAAAACAAAQAAQAEAQAAAAAAQAAAAAA=</HashCode>
+      <FileName>mcStruct\macDic.cs</FileName>
+    </TypeIdentifier>
+    <Lollipop Position="0.2" />
+  </Class>
+  <Class Name="section2.mcStruct.mcDic&lt;T&gt;">
+    <Position X="16.25" Y="1.75" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+      <FileName>mcStruct\macDic.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mcStruct.macDicInt&lt;T&gt;" Collapsed="true">
+    <Position X="2.75" Y="1.75" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAIAAAAAAAAAAAAAAACAAAAAAAAAAQAAAAAAAAAAAAA=</HashCode>
+      <FileName>mcStruct\macDicInt.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mcStruct.macList&lt;T&gt;" Collapsed="true">
+    <Position X="28.5" Y="0.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+      <FileName>mcStruct\macList.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mcStruct.mcDC">
+    <Position X="7.25" Y="1.75" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAEEAAAAAAAAAAACAAAAAAAAAAAAiA=</HashCode>
+      <FileName>mcStruct\mcDC.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mcStruct.mcSG">
+    <Position X="9.5" Y="1.75" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+      <FileName>mcStruct\mcSG.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mcStruct.mcUN">
+    <Position X="14" Y="1.75" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+      <FileName>mcStruct\mcUN.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mcData.mcCpt" Collapsed="true">
+    <Position X="18.5" Y="1.75" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAEAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAA=</HashCode>
+      <FileName>mcData\mcCpt.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mcData.mcQ" Collapsed="true">
+    <Position X="26.75" Y="1.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAACAAAAAAQAAAAAIAAAAAQAACAAAgAAAAAAAAAAAAA=</HashCode>
+      <FileName>mcData\mcQ.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mcData.mcS" Collapsed="true">
+    <Position X="18.5" Y="3.25" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAIQAEAAAAAgAMAAAAACAAAABCAAAAAABAIAgAAA=</HashCode>
+      <FileName>mcData\mcS.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mcP.mcPD">
+    <Position X="2.75" Y="3.25" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+      <FileName>mcP\mcPD.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mcP.mcPE">
+    <Position X="11.75" Y="1.75" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAIA=</HashCode>
+      <FileName>mcP\mcPE.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mcP.mcPEn">
+    <Position X="5" Y="3.25" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAEAAAAAAAAQAAAAAgAAAAAAAAAAA=</HashCode>
+      <FileName>mcP\mcPEn.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mcP.mcPEns" Collapsed="true">
+    <Position X="20.75" Y="1.75" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAABAAAAAAAAAAAAEAAAAAAAAAAAAAAAACAAAA=</HashCode>
+      <FileName>mcP\mcPEns.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.mcP.mcPF" Collapsed="true" BaseTypeListCollapsed="true">
+    <Position X="25" Y="1.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAQAAAQAAAAEAAAAAAAAQAAAAAA=</HashCode>
+      <FileName>mcP\mcPF.cs</FileName>
+    </TypeIdentifier>
+    <Lollipop Position="0.2" Collapsed="true" />
+  </Class>
+  <Class Name="section2.mcP.mcPW">
+    <Position X="0.5" Y="3.25" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+      <FileName>mcP\mcPW.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.Properties.Resources" Collapsed="true">
+    <Position X="28.5" Y="2.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAABEAAAAQAAAAAAAAAAAAAAAIA=</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="section2.Properties.Settings" Collapsed="true">
+    <Position X="23.25" Y="3.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAIAAAAAABAAAAAAAAAAAAAAA=</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Interface Name="section2.mcStruct.Ijson&lt;T&gt;" Collapsed="true">
+    <Position X="23.25" Y="4.75" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAIAgAAAAAAAAAAAAAAA=</HashCode>
+      <FileName>mcStruct\Ijson.cs</FileName>
+    </TypeIdentifier>
+  </Interface>
+  <Interface Name="section2.mcStruct.Iname" Collapsed="true">
+    <Position X="25" Y="4.75" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAQAAAAAA=</HashCode>
+      <FileName>mcStruct\Iname.cs</FileName>
+    </TypeIdentifier>
+  </Interface>
+  <Font Name="微软雅黑" Size="9" />
+</ClassDiagram>

@@ -21,15 +21,14 @@ namespace section2.mcStruct
         }
         public List<T> Sons() { return mDic.Values.ToList(); }
 
-        public void Add(string pExp, T pT)
+        public override void Add(T pT)
         {
-            /*
-            long tInt = Convert.ToInt64(Math.Round(double.Parse(pExp) * 1000, 0));
-            mDic.Add(tInt, pT);
+            mDic.Add(((Iname)pT).Name(), pT);
             mDic = mscTools.OrderDic(mDicInt);
-            */
+
+            //TODO: 添加项后自动排序
         }
-        
+
     }
 
 }
