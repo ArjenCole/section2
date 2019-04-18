@@ -41,13 +41,13 @@ namespace section2
             return rtName;
         }
         
-        public static Dictionary<Int64,T> OrderDic<T>(Dictionary<string, T> pDic)
+        public static Dictionary<string,T> OrderDic<T>(Dictionary<string, T> pDic)
         {
-            IOrderedEnumerable<KeyValuePair<Int64, T>> dicSort = from objDic in pDic orderby py(objDic.Key) select objDic;
+            IOrderedEnumerable<KeyValuePair<string, T>> dicSort = from objDic in pDic orderby py(objDic.Key) select objDic;
             //return from objDic in pDQ orderby order(objDic.Key) descending select objDic; 降序
 
-            var rtDic = new Dictionary<Int64, T>();
-            foreach (KeyValuePair<Int64, T> feKVP in dicSort)
+            var rtDic = new Dictionary<string, T>();
+            foreach (KeyValuePair<string, T> feKVP in dicSort)
                 rtDic.Add(feKVP.Key ,feKVP.Value);
             return rtDic;
         }

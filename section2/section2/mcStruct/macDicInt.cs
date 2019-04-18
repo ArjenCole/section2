@@ -10,7 +10,7 @@ namespace section2.mcStruct
         public T Son(long pIdx)
         {
             Dictionary<long, T> mDicInt = new Dictionary<long, T>();
-            mDicInt = mscTools.OrderDic(mDicInt);
+            mDicInt = mscTools.OrderDic(mDic);
             var tKeyList = mDicInt.Keys.ToList();
             if (pIdx == 0) return mDicInt[0];
             for (int i = 0; i < mDicInt.Count - 1; i++)
@@ -24,7 +24,7 @@ namespace section2.mcStruct
         public override void Add(T pT)
         {
             mDic.Add(((Iname)pT).Name(), pT);
-            mDic = mscTools.OrderDic(mDicInt);
+            mDic = mscTools.OrderDic(mDic);
 
             //TODO: 添加项后自动排序
         }
