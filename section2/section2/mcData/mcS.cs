@@ -5,18 +5,26 @@ using System.Text;
 
 namespace section2.mcData
 {
+    public enum mcStype
+    {
+        Null = 0,
+        Pipe = 1,//单管
+        ConBox = 2,//箱涵
+        Jacking = 3,//顶管
+        Custom = 1000//自定义
+    }
     public abstract class mcS:mcCpt
     {
+        public mcStype Type;
         public string Describe;
-        public string DepthFill;
-        public string DepthDig;
+        public string Depth;
         public string Unit;
         public string Amount;
-        public string Discribe;
 
         public Dictionary<string,double> PEdic;
         public Dictionary<string,double> PFdic;
-
+        public Dictionary<string, double> PDdic;
+        public Dictionary<string, double> PWdic;
         /// <summary>
         /// 获得断面在任意高度(基础底起算)的占土面积
         /// </summary>
