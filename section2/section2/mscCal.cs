@@ -32,6 +32,7 @@ namespace section2
         private static void analyze()
         {
             analyzeDepth();
+
         }
         private static void analyzeDepth()
         {
@@ -51,6 +52,11 @@ namespace section2
                 depth0 = mscExp.Doub(tDepth);
                 depth1 = depth0;
             }
+
+        }
+
+        private static void choicePEn()
+        {
 
         }
 

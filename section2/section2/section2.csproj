@@ -75,7 +75,7 @@
     <Compile Include="mcStruct\Iname.cs" />
     <Compile Include="mcStruct\macDic.cs" />
     <Compile Include="mcData\mcBI.cs" />
-    <Compile Include="mcStruct\macDicInt.cs" />
+    <Compile Include="mcStruct\macDicDoub.cs" />
     <Compile Include="mcStruct\macList.cs" />
     <Compile Include="mcStruct\mcDC.cs" />
     <Compile Include="mcData\mcQ.cs" />

@@ -6,7 +6,7 @@ using System.Text;
 namespace section2.mcP
 {
     //降水原则
-    public class mcPD : mcStruct.macDicInt<mcData.mcCpt>
+    public class mcPD : mcStruct.macDicDoub<mcData.mcCpt>
     {
         public mcPD()
         {

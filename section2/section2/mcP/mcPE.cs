@@ -6,7 +6,7 @@ using section2.mcData;
 
 namespace section2.mcP
 {
-    public class mcPE:mcStruct.macDic<mcPEn>
+    public class mcPE:mcStruct.macDicDoub<mcPEn>
     {
         public mcQ Fc1 = new mcQ();
         public mcQ Fc2 = new mcQ();
