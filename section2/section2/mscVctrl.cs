@@ -6,6 +6,7 @@ using section2.FmTool;
 using section2.mcData;
 using section2.mcStruct;
 using section2.mcP;
+using System.Windows.Forms;
 
 namespace section2
 {
@@ -19,12 +20,20 @@ namespace section2
         public static mcDC NewFileFromGuide()
         {
             FmGuide fmGuide = new FmTool.FmGuide();
-            if (fmGuide.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+            if (fmGuide.ShowDialog() == DialogResult.OK)
                 return mscDC.newDC(fmGuide.ProjectName, fmGuide.ProjectIndex, fmGuide.Designer, fmGuide.SegmentCount, fmGuide.Cat);
             else
                 return mscDC.newDC();
         }
 
         #endregion
+
+        public static void ShowFmPE(string pName)
+        {
+            FmPE fmPE = new FmPE(mscDC.getPE(pName));
+            if (fmPE.ShowDialog() == DialogResult.OK)
+                mscDC.updatePE(pName, fmPE.resultPE);
+
+        }
     }
 }

@@ -14,15 +14,16 @@ namespace section2
 
         public static mcDC newDC()
         {
-            return newDC("新建项目", "", "", 2, new List<string>() { "雨水工程", "污水工程" });
+            return newDC("新建项目", "", "", 1, new List<string>() { "雨水工程", "污水工程" });
         }
-        public static mcDC newDC(string pPN, string pPI, string pD, int pSC, List<string> pC)
+        public static mcDC newDC(string pPN, string pPI, string pD, int pSGcnt, List<string> pC)
         {
             dc = new mcDC();
             dc.BI.ProjectName = pPN;
             dc.BI.ProjectIndex = pPI;
             dc.BI.Designer = pD;
-            for (int i = 0; i < pSC; i++)
+            
+            for (int i = 0; i < pSGcnt; i++)
                 dc.Add(new mcSG(pC));
             return getDC();
         }
@@ -54,19 +55,24 @@ namespace section2
         {
             return getDC().PEdic;
         }
+        public static mcPE getPE(string pName)
+        {
+            return getPEdic().Son(pName);
+        }
         public static mcDic<mcPF> getPFdic()
         {
             return getDC().PFdic;
         }
-        public static mcDic<mcPD> getPDdic()
+        public static mcPF getPF(string pName)
         {
-            return getDC().PDdic;
-        }
-        public static mcDic<mcPW> getPWdic()
-        {
-            return getDC().PWdic;
+            return getPFdic().Son(pName);
         }
         #endregion
+
+        public static void updatePE(string pOname, mcPE pmPE)
+        {
+
+        }
 
     }
 }

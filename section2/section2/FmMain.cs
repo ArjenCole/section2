@@ -104,10 +104,12 @@ namespace section2
                 TLPmPE.Controls.Add(newPcpLab("围护", feKey));
             foreach (string feKey in mscDC.getPFdic().mDic.Keys)
                 TLPmPF.Controls.Add(newPcpLab("地基", feKey));
+            /*
             foreach (string feKey in mscDC.getPDdic().mDic.Keys)
                 TLPmPD.Controls.Add(newPcpLab("降水", feKey));
             foreach (string feKey in mscDC.getPWdic().mDic.Keys)
                 TLPmPW.Controls.Add(newPcpLab("工作面", feKey));
+                */
         }
         #region 原则标签框生成
         private Label newPcpLab(string pCat, string pName)
@@ -136,6 +138,7 @@ namespace section2
         private void PcpLab_DoubleClick(object sender, EventArgs e)
         {
             //ShowPEPF(((Label)sender).Text);
+            mscVctrl.ShowFmPE(((Label)sender).Text);
         }
         private void PcpLab_MouseUp(object sender, MouseEventArgs e)
         {
