@@ -58,7 +58,14 @@ namespace section2
         {
             return getDC().PFdic;
         }
-
+        public static mcDic<mcPD> getPDdic()
+        {
+            return getDC().PDdic;
+        }
+        public static mcDic<mcPW> getPWdic()
+        {
+            return getDC().PWdic;
+        }
         #endregion
 
     }

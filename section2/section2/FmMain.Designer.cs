@@ -155,6 +155,7 @@
             this.TVdc.Name = "TVdc";
             this.TVdc.Size = new System.Drawing.Size(160, 263);
             this.TVdc.TabIndex = 0;
+            this.TVdc.NodeMouseClick += new System.Windows.Forms.TreeNodeMouseClickEventHandler(this.TVdc_NodeMouseClick);
             // 
             // TVinventory
             // 
@@ -392,9 +393,9 @@
             // 
             // Pun
             // 
-            this.Pun.Location = new System.Drawing.Point(209, 45);
+            this.Pun.Location = new System.Drawing.Point(88, 46);
             this.Pun.Name = "Pun";
-            this.Pun.Size = new System.Drawing.Size(200, 100);
+            this.Pun.Size = new System.Drawing.Size(629, 245);
             this.Pun.TabIndex = 0;
             // 
             // FmMain

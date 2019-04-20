@@ -13,27 +13,27 @@ namespace section2
 {
     public partial class FmMain : Form
     {
-        private enum eNodeType
-        {
-            Null = 0,
-            DC = 1,
-            SG = 2,
-            UN = 3,
-            Other = 4
-        }
-        private eNodeType nodeType(TreeNode pTN)
-        {
-            if (pTN == null) return eNodeType.Null;
-            if (pTN.Parent == null) return eNodeType.DC;
-            if (pTN.Parent.Parent == null) return eNodeType.SG;
-            if (pTN.Parent.Parent.Parent == null) return eNodeType.UN;
-            return eNodeType.Other;
-        }
-
         public FmMain()
         {
             InitializeComponent();
             mscVctrl.LoadFinished = true;
+        }
+        private void FmMain_Load(object sender, EventArgs e)
+        {
+
+        }
+
+        private void BTNpcpAddHigh_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void RBmP_CheckedChanged(object sender, EventArgs e)
+        {
+            TLPmPE.Visible = RBmPE.Checked;
+            TLPmPF.Visible = RBmPF.Checked;
+            TLPmPD.Visible = RBmPD.Checked;
+            TLPmPW.Visible = RBmPW.Checked;
         }
 
         private void 新建ToolStripMenuItem_Click(object sender, EventArgs e)
@@ -42,6 +42,7 @@ namespace section2
             flashTVdc();
             flashPcpTab();
         }
+
         private void TVdc_NodeMouseClick(object sender, TreeNodeMouseClickEventArgs e)
         {
             switch (nodeType(e.Node))
@@ -72,20 +73,20 @@ namespace section2
             TVdc.Nodes.Clear();
             mcDC tDC = mscDC.getDC();
             if (tDC == null) { return; }
-            TreeNode NodeProject = new TreeNode(tDC.BI.ProjectName, 1, 2);//一级节点
+            TreeNode NodeDC = new TreeNode(tDC.BI.ProjectName, 1, 2);//一级节点
             foreach (mcSG feSG in tDC.Sons()) 
             {
-                TreeNode NodeSegment = new TreeNode(feSG.Name());
+                TreeNode NodeSG = new TreeNode(feSG.Name());
                 foreach (mcUN feUN in feSG.Sons())
                 {
-                    TreeNode NodeUnit = new TreeNode(feUN.Name());
-                    NodeSegment.Nodes.Add(NodeUnit);
+                    TreeNode NodeUN = new TreeNode(feUN.Name());
+                    NodeSG.Nodes.Add(NodeUN);
                     /*if ((ActiveFormUnit != null) && (ActiveFormUnit.OwnerName == feSG.Name) && (ActiveFormUnit.mUName == feUN.Name))
                         ActiveNode = NodeUnit;*/
                 }
-                NodeProject.Nodes.Add(NodeSegment);
+                NodeDC.Nodes.Add(NodeSG);
             }
-            TVdc.Nodes.Add(NodeProject);
+            TVdc.Nodes.Add(NodeDC);
             TVdc.ExpandAll();
             if (ActiveNode != null)
                 TVdc.SelectedNode = ActiveNode;
@@ -100,35 +101,43 @@ namespace section2
             SCpcpLow.Enabled = true; SCpcpLow.Visible = true;
 
             foreach (string feKey in mscDC.getPEdic().mDic.Keys)
-                TLPmPE.Controls.Add(NewPrincpleLab("围护", feKey));
+                TLPmPE.Controls.Add(newPcpLab("围护", feKey));
             foreach (string feKey in mscDC.getPFdic().mDic.Keys)
-                TLPmPF.Controls.Add(NewPrincpleLab("地基", feKey));
-            //TODO：此处需要添加字典匹配类型和颜色，并且添加降水、工作面对应内容
+                TLPmPF.Controls.Add(newPcpLab("地基", feKey));
+            foreach (string feKey in mscDC.getPDdic().mDic.Keys)
+                TLPmPD.Controls.Add(newPcpLab("降水", feKey));
+            foreach (string feKey in mscDC.getPWdic().mDic.Keys)
+                TLPmPW.Controls.Add(newPcpLab("工作面", feKey));
         }
-        private Label NewPrincpleLab(string para_str_cat, string para_str_name)
+        #region 原则标签框生成
+        private Label newPcpLab(string pCat, string pName)
         {
-
+            Dictionary<string, Color> pcpColor = new Dictionary<string, Color>
+            {
+                { "围护",ColorTranslator.FromHtml("#448AFF") },
+                { "地基",ColorTranslator.FromHtml("#455A64") },
+                { "降水",ColorTranslator.FromHtml("#448AFF") },
+                { "工作面",ColorTranslator.FromHtml("#455A64") },
+            };
             Label lab = new Label();
-            lab.Text = para_str_name;
+            lab.Text = pName;
             lab.Width = 200; lab.Height = 40;
             //通过Anchor 设置Label 列中居中
             lab.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)));
             lab.ForeColor = ColorTranslator.FromHtml("#FFFFFF");
-            if (para_str_cat == "围护")
-                lab.BackColor = ColorTranslator.FromHtml("#448AFF");
-            else
-                lab.BackColor = ColorTranslator.FromHtml("#455A64");
+            lab.BackColor = pcpColor[pCat];
+            
             lab.Font = new System.Drawing.Font("微软雅黑", 14.25F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
             lab.TextAlign = ContentAlignment.MiddleCenter;
-            lab.DoubleClick += new EventHandler(PrincpleLab_DoubleClick);
-            lab.MouseUp += new MouseEventHandler(PrincpleLab_MouseUp);
+            lab.DoubleClick += new EventHandler(PcpLab_DoubleClick);
+            lab.MouseUp += new MouseEventHandler(PcpLab_MouseUp);
             return lab;
         }
-        private void PrincpleLab_DoubleClick(object sender, EventArgs e)
+        private void PcpLab_DoubleClick(object sender, EventArgs e)
         {
             //ShowPEPF(((Label)sender).Text);
         }
-        private void PrincpleLab_MouseUp(object sender, MouseEventArgs e)
+        private void PcpLab_MouseUp(object sender, MouseEventArgs e)
         {
             /*
             if (e.Button == MouseButtons.Right)
@@ -139,6 +148,7 @@ namespace section2
             }
             FormUnitEndEdit();*/
         }
+        #endregion
 
         private void flashDGVunit(string pSGname,string pUNname)
         {
@@ -146,22 +156,22 @@ namespace section2
 
         }
 
-        private void FmMain_Load(object sender, EventArgs e)
+        private enum eNodeType
         {
-
+            Null = 0,
+            DC = 1,
+            SG = 2,
+            UN = 3,
+            Other = 4
+        }
+        private eNodeType nodeType(TreeNode pTN)
+        {
+            if (pTN == null) return eNodeType.Null;
+            if (pTN.Parent == null) return eNodeType.DC;
+            if (pTN.Parent.Parent == null) return eNodeType.SG;
+            if (pTN.Parent.Parent.Parent == null) return eNodeType.UN;
+            return eNodeType.Other;
         }
 
-        private void BTNpcpAddHigh_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void RBmP_CheckedChanged(object sender, EventArgs e)
-        {
-            TLPmPE.Visible = RBmPE.Checked;
-            TLPmPF.Visible = RBmPF.Checked;
-            TLPmPD.Visible = RBmPD.Checked;
-            TLPmPW.Visible = RBmPW.Checked;
-        }
     }
 }
