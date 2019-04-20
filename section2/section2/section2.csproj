@@ -87,6 +87,9 @@
     <Compile Include="mscTools.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="TestEval\Eval.cs" />
+    <Compile Include="TestEval\mscExp.cs" />
+    <Compile Include="TestEval\TextParser.cs" />
     <EmbeddedResource Include="FmMain.resx">
       <DependentUpon>FmMain.cs</DependentUpon>
     </EmbeddedResource>

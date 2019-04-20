@@ -7,17 +7,18 @@ namespace section2.mcStruct
 {
     public abstract class macDicInt<T> :macDic<T>
     {
-        public T Son(long pIdx)
+        public T Son(string pKey)
         {
-            Dictionary<long, T> mDicInt = new Dictionary<long, T>();
-            mDicInt = mscTools.OrderDic(mDic);
-            var tKeyList = mDicInt.Keys.ToList();
-            if (pIdx == 0) return mDicInt[0];
-            for (int i = 0; i < mDicInt.Count - 1; i++)
-                if (pIdx > tKeyList[i] && pIdx <= tKeyList[i + 1])
-                    return mDicInt[tKeyList[i]];
+            double tDouble = mscExp.Doub(pKey);
+            Dictionary<string, T> mDicOrd = new Dictionary<string, T>();
+            mDicOrd = mscTools.OrderDic(mDic);
+            if (tDouble <= 0) return mDicOrd.First().Value;
+            var tKeyList = mDicOrd.Keys.ToList();
+            for (int i = 0; i < mDicOrd.Count - 1; i++)
+                if (tDouble > mscExp.Doub(tKeyList[i]) && tDouble <= mscExp.Doub(tKeyList[i + 1]))
+                    return mDicOrd[tKeyList[i]];
 
-            return mDicInt[tKeyList.Last()];
+            return mDicOrd[tKeyList.Last()];
         }
         public List<T> Sons() { return mDic.Values.ToList(); }
 

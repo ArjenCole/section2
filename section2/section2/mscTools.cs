@@ -43,7 +43,7 @@ namespace section2
         
         public static Dictionary<string,T> OrderDic<T>(Dictionary<string, T> pDic)
         {
-            IOrderedEnumerable<KeyValuePair<string, T>> dicSort = from objDic in pDic orderby py(objDic.Key) select objDic;
+            IOrderedEnumerable<KeyValuePair<string, T>> dicSort = from objDic in pDic orderby mscExp.Doub(objDic.Key) select objDic;
             //return from objDic in pDQ orderby order(objDic.Key) descending select objDic; 降序
 
             var rtDic = new Dictionary<string, T>();
