@@ -41,6 +41,15 @@ namespace section2
         {
             return getSG(pSGname).Son(pUNname);
         }
+        public static List<mcS> getSlist(string pSGname, string pUNname)
+        {
+            return getUN(pSGname, pUNname).Sons();
+        }
+        public static mcS getS(string pSGname, string pUNname, int pIdx)
+        {
+            return getUN(pSGname, pUNname).Sons()[pIdx];
+        }
+
         public static mcDic<mcPE> getPEdic()
         {
             return getDC().PEdic;
