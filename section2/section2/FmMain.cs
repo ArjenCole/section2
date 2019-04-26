@@ -32,8 +32,6 @@ namespace section2
         {
             TLPmPE.Visible = RBmPE.Checked;
             TLPmPF.Visible = RBmPF.Checked;
-            TLPmPD.Visible = RBmPD.Checked;
-            TLPmPW.Visible = RBmPW.Checked;
         }
 
         private void 新建ToolStripMenuItem_Click(object sender, EventArgs e)
@@ -96,9 +94,10 @@ namespace section2
         {
             TLPmPE.Controls.Clear();
             TLPmPF.Controls.Clear();
-            if (mscDC.getDC() == null) { RBmPE.Checked = true; RBmPD.Checked = true; SCpcpHigh.Enabled = false; SCpcpLow.Visible = false; return; }
+            TLPmPE.Dock = DockStyle.Left;
+            TLPmPF.Dock = DockStyle.Left;
+            if (mscDC.getDC() == null) { RBmPE.Checked = true; SCpcpHigh.Enabled = false; return; }
             SCpcpHigh.Enabled = true; SCpcpHigh.Visible = true;
-            SCpcpLow.Enabled = true; SCpcpLow.Visible = true;
 
             foreach (string feKey in mscDC.getPEdic().mDic.Keys)
                 TLPmPE.Controls.Add(newPcpLab("围护", feKey));

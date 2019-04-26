@@ -49,6 +49,7 @@
             this.txtDock = new System.Windows.Forms.TextBox();
             this.lblDock = new System.Windows.Forms.Label();
             this.groupBox3 = new System.Windows.Forms.GroupBox();
+            this.label1 = new System.Windows.Forms.Label();
             this.cboConfound = new System.Windows.Forms.ComboBox();
             this.cboConangle = new System.Windows.Forms.ComboBox();
             this.txtCushH = new System.Windows.Forms.TextBox();
@@ -56,7 +57,6 @@
             this.LBLcushH = new System.Windows.Forms.Label();
             this.txtCushname = new System.Windows.Forms.TextBox();
             this.LBLcushname = new System.Windows.Forms.Label();
-            this.label1 = new System.Windows.Forms.Label();
             this.TXTPEname = new System.Windows.Forms.TextBox();
             this.LBLPEname = new System.Windows.Forms.Label();
             this.tcMain.SuspendLayout();
@@ -212,7 +212,7 @@
             this.cboDock.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
             this.cboDock.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
             this.cboDock.FormattingEnabled = true;
-            this.cboDock.Location = new System.Drawing.Point(80, 76);
+            this.cboDock.Location = new System.Drawing.Point(80, 48);
             this.cboDock.Name = "cboDock";
             this.cboDock.Size = new System.Drawing.Size(121, 25);
             this.cboDock.TabIndex = 69;
@@ -222,7 +222,7 @@
             this.cboExv.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
             this.cboExv.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
             this.cboExv.FormattingEnabled = true;
-            this.cboExv.Location = new System.Drawing.Point(80, 20);
+            this.cboExv.Location = new System.Drawing.Point(80, 18);
             this.cboExv.Name = "cboExv";
             this.cboExv.Size = new System.Drawing.Size(121, 25);
             this.cboExv.TabIndex = 68;
@@ -240,7 +240,7 @@
             // txtCover
             // 
             this.txtCover.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.txtCover.Location = new System.Drawing.Point(80, 105);
+            this.txtCover.Location = new System.Drawing.Point(80, 102);
             this.txtCover.Name = "txtCover";
             this.txtCover.Size = new System.Drawing.Size(121, 23);
             this.txtCover.TabIndex = 66;
@@ -249,7 +249,7 @@
             // 
             this.lblCover.AutoSize = true;
             this.lblCover.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.lblCover.Location = new System.Drawing.Point(6, 107);
+            this.lblCover.Location = new System.Drawing.Point(6, 108);
             this.lblCover.Name = "lblCover";
             this.lblCover.Size = new System.Drawing.Size(59, 17);
             this.lblCover.TabIndex = 65;
@@ -258,7 +258,7 @@
             // txtDock
             // 
             this.txtDock.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.txtDock.Location = new System.Drawing.Point(80, 49);
+            this.txtDock.Location = new System.Drawing.Point(80, 76);
             this.txtDock.Name = "txtDock";
             this.txtDock.Size = new System.Drawing.Size(121, 23);
             this.txtDock.TabIndex = 64;
@@ -290,6 +290,16 @@
             this.groupBox3.TabIndex = 67;
             this.groupBox3.TabStop = false;
             this.groupBox3.Text = "管道基础";
+            // 
+            // label1
+            // 
+            this.label1.AutoSize = true;
+            this.label1.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.label1.Location = new System.Drawing.Point(9, 23);
+            this.label1.Name = "label1";
+            this.label1.Size = new System.Drawing.Size(59, 17);
+            this.label1.TabIndex = 57;
+            this.label1.Text = "基础材质:";
             // 
             // cboConfound
             // 
@@ -358,16 +368,6 @@
             this.LBLcushname.Size = new System.Drawing.Size(59, 17);
             this.LBLcushname.TabIndex = 53;
             this.LBLcushname.Text = "垫层材质:";
-            // 
-            // label1
-            // 
-            this.label1.AutoSize = true;
-            this.label1.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.label1.Location = new System.Drawing.Point(9, 23);
-            this.label1.Name = "label1";
-            this.label1.Size = new System.Drawing.Size(59, 17);
-            this.label1.TabIndex = 57;
-            this.label1.Text = "基础材质:";
             // 
             // TXTPEname
             // 
