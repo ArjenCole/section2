@@ -16,10 +16,14 @@ namespace section2.mcP
 
         #endregion
         public const string StrMultiPEns= "多级围护";
-
-        public int Depth = 0;//起始（浅）埋深mm
+        
         public List<mcPEns> ListPEns = null;
         public mcCpt cptStopWater;//止水
+
+        public string Depth()
+        {
+            return Name;
+        }
 
         public mcPEn()
         {
@@ -27,7 +31,17 @@ namespace section2.mcP
             ListPEns = new List<mcPEns>();
             ListPEns.Add(new mcPEns());
         }
-        
+
+        public mcPEn(string pDepth,string pCat)
+        {
+            SetName(pDepth);
+            if (mscInventory.DicPEns.Keys.Contains(pCat))
+            {
+                ListPEns = new List<mcPEns>();
+                ListPEns.Add(new mcPEns(mscInventory.DicPEns[pCat]));
+            }
+        }
+
         public string Cat()
         {
             if (ListPEns.Count == 1)

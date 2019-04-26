@@ -30,12 +30,6 @@ namespace section2
             flashdgvPE();
         }
 
-        private void dgvPE_CellClick(object sender, DataGridViewCellEventArgs e)
-        {
-            if (dgvPE.Columns[e.ColumnIndex].GetType().ToString() == "System.Windows.Forms.DataGridViewComboBoxColumn")
-                dgvPE.BeginEdit(true);
-        }
-
         private void dgvPE_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
         {
             int rowIdx = e.RowIndex;
@@ -72,6 +66,51 @@ namespace section2
                     break;
             }
         }
+        private void dgvPE_CellMouseUp(object sender, DataGridViewCellMouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Right)
+            {
+                cmsDrop.Items.Clear();
+                var colIdx = e.ColumnIndex;
+                var rowIdx = e.RowIndex;
+                string colName = dgvPE.Columns[colIdx].Name;
+                cmsDrop.Tag = new Point(rowIdx, colIdx);
+                switch (colName)
+                {
+                    case "eColPEnDis":
+                        foreach (string feStr in mscInventory.ListPEnsKeys())
+                            cmsDrop.Items.Add(feStr);
+                        cmsDrop.Visible = true;
+                        break;
+                    default:
+                        cmsDrop.Visible = false;
+                        break;
+                }
+            }
+        }
+        private void cmsDrop_ItemClicked(object sender, ToolStripItemClickedEventArgs e)
+        {
+            var rowIdx = ((Point)cmsDrop.Tag).X;
+            var colIdx = ((Point)cmsDrop.Tag).Y;
+            string colName = dgvPE.Columns[colIdx].Name;
+
+            switch (colName)
+            {
+                case "eColPEnDis":
+                    string tTxt = e.ClickedItem.Text;
+                    if (mscInventory.ListPEnsKeys().Contains(tTxt))
+                    {
+                        dgvPE[colIdx, rowIdx].Value
+                            = new mcPEn(resultPE.Son(rowIdx).Depth(), tTxt)
+                            .Discribe();
+                        resultPE.SetSon(rowIdx, new mcPEn(resultPE.Son(rowIdx).Depth(), tTxt));
+                    }
+                    break;
+                default:
+                    cmsDrop.Visible = false;
+                    break;
+            }
+        }
 
         private void initDropItems()
         {
@@ -79,10 +118,8 @@ namespace section2
             cboDockMat.DataSource = mcPE.sDockPos;
             cboFndMat.DataSource = mcPE.sFndMat;
             cboFndAgl.DataSource = mcPE.sFndAgl;
-
-            eColPEnCat.DataSource = mscInventory.ListPEnsKeys();
+            
         }
-
         private void initShowPEpara()
         {
             txtPEname.Text = oPE.GetName();
@@ -95,7 +132,6 @@ namespace section2
             cboFndAgl.Text = oPE.FndAgl;
             cboFndMat.Text = oPE.FndMat;
         }
-
         private void flashdgvPE()
         {
             dgvPE.Rows.Add(resultPE.Count());
@@ -103,8 +139,8 @@ namespace section2
             foreach(var fePEn in resultPE.Sons())
             {
                 DataGridViewRow tDGVR = dgvPE.Rows[i];
-                tDGVR.Cells[0].Value = fePEn.Depth.ToString();
-                tDGVR.Cells[1].Value = i + 1 == resultPE.Count() ? "+∞" : resultPE.Son(i + 1).Depth.ToString();
+                tDGVR.Cells[0].Value = fePEn.Depth().ToString();
+                tDGVR.Cells[1].Value = i + 1 == resultPE.Count() ? "+∞" : resultPE.Son(i + 1).Depth().ToString();
                 tDGVR.Cells[2].Value = fePEn.Cat();
                 tDGVR.Cells[3].Value = fePEn.Discribe();
                 i++;

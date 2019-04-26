@@ -30,7 +30,7 @@ namespace section2.FmTool
         {
             int cnt = pmcQs.Count();
             if (cnt == 0) return;
-            pDGV.Rows.Add();
+            pDGV.Rows.Add(cnt);
             int i = 0;
             foreach (var fe in pmcQs)
             {

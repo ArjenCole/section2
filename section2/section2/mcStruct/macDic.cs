@@ -35,6 +35,11 @@ namespace section2.mcStruct
             ((Iname)pT).SetName(tName);
             mDic.Add(tName, pT);
         }
+
+        public void SetSon(int pIdx, T pT)
+        {
+            mDic[mDic.Keys.ToList()[pIdx]] = pT;                
+        }
     }
     public class mcDic<T> :macDic<T>
     {

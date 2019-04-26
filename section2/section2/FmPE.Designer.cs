@@ -28,6 +28,7 @@
         /// </summary>
         private void InitializeComponent()
         {
+            this.components = new System.ComponentModel.Container();
             System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle1 = new System.Windows.Forms.DataGridViewCellStyle();
             System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle4 = new System.Windows.Forms.DataGridViewCellStyle();
             System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle2 = new System.Windows.Forms.DataGridViewCellStyle();
@@ -36,6 +37,14 @@
             this.tpPE = new System.Windows.Forms.TabPage();
             this.BTNadd = new System.Windows.Forms.Button();
             this.dgvPE = new System.Windows.Forms.DataGridView();
+            this.eColdepth = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.eColrange = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.eColPEnDis = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.eColWSDis = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.cmsDrop = new System.Windows.Forms.ContextMenuStrip(this.components);
+            this.toolStripMenuItem1 = new System.Windows.Forms.ToolStripMenuItem();
+            this.toolStripMenuItem2 = new System.Windows.Forms.ToolStripMenuItem();
+            this.toolStripMenuItem3 = new System.Windows.Forms.ToolStripMenuItem();
             this.tpPD = new System.Windows.Forms.TabPage();
             this.tpPW = new System.Windows.Forms.TabPage();
             this.tcPW = new System.Windows.Forms.TabControl();
@@ -65,15 +74,10 @@
             this.LBLcushname = new System.Windows.Forms.Label();
             this.txtPEname = new System.Windows.Forms.TextBox();
             this.LBLPEname = new System.Windows.Forms.Label();
-            this.eColdepth = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.eColrange = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.eColPEnCat = new System.Windows.Forms.DataGridViewComboBoxColumn();
-            this.eColPEnDis = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.eColWSCat = new System.Windows.Forms.DataGridViewComboBoxColumn();
-            this.eColWSDis = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.tcMain.SuspendLayout();
             this.tpPE.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.dgvPE)).BeginInit();
+            this.cmsDrop.SuspendLayout();
             this.tpPW.SuspendLayout();
             this.tcPW.SuspendLayout();
             this.groupBox1.SuspendLayout();
@@ -131,10 +135,9 @@
             this.dgvPE.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
             this.eColdepth,
             this.eColrange,
-            this.eColPEnCat,
             this.eColPEnDis,
-            this.eColWSCat,
             this.eColWSDis});
+            this.dgvPE.ContextMenuStrip = this.cmsDrop;
             dataGridViewCellStyle4.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
             dataGridViewCellStyle4.BackColor = System.Drawing.SystemColors.Window;
             dataGridViewCellStyle4.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
@@ -150,8 +153,72 @@
             this.dgvPE.RowTemplate.Height = 23;
             this.dgvPE.Size = new System.Drawing.Size(785, 310);
             this.dgvPE.TabIndex = 61;
-            this.dgvPE.CellClick += new System.Windows.Forms.DataGridViewCellEventHandler(this.dgvPE_CellClick);
             this.dgvPE.CellDoubleClick += new System.Windows.Forms.DataGridViewCellEventHandler(this.dgvPE_CellDoubleClick);
+            this.dgvPE.CellMouseUp += new System.Windows.Forms.DataGridViewCellMouseEventHandler(this.dgvPE_CellMouseUp);
+            // 
+            // eColdepth
+            // 
+            dataGridViewCellStyle2.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleRight;
+            this.eColdepth.DefaultCellStyle = dataGridViewCellStyle2;
+            this.eColdepth.HeaderText = "埋深";
+            this.eColdepth.Name = "eColdepth";
+            this.eColdepth.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
+            this.eColdepth.Width = 70;
+            // 
+            // eColrange
+            // 
+            dataGridViewCellStyle3.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
+            this.eColrange.DefaultCellStyle = dataGridViewCellStyle3;
+            this.eColrange.HeaderText = "范围";
+            this.eColrange.Name = "eColrange";
+            this.eColrange.ReadOnly = true;
+            this.eColrange.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
+            this.eColrange.Width = 70;
+            // 
+            // eColPEnDis
+            // 
+            this.eColPEnDis.HeaderText = "围护(右键选择,双击编辑)";
+            this.eColPEnDis.Name = "eColPEnDis";
+            this.eColPEnDis.ReadOnly = true;
+            this.eColPEnDis.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
+            this.eColPEnDis.ToolTipText = "双击编辑围护形式";
+            this.eColPEnDis.Width = 200;
+            // 
+            // eColWSDis
+            // 
+            this.eColWSDis.HeaderText = "止水(右键选择,双击编辑)";
+            this.eColWSDis.Name = "eColWSDis";
+            this.eColWSDis.ReadOnly = true;
+            this.eColWSDis.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
+            this.eColWSDis.Width = 200;
+            // 
+            // cmsDrop
+            // 
+            this.cmsDrop.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.toolStripMenuItem1,
+            this.toolStripMenuItem2,
+            this.toolStripMenuItem3});
+            this.cmsDrop.Name = "cmsDrop";
+            this.cmsDrop.Size = new System.Drawing.Size(193, 70);
+            this.cmsDrop.ItemClicked += new System.Windows.Forms.ToolStripItemClickedEventHandler(this.cmsDrop_ItemClicked);
+            // 
+            // toolStripMenuItem1
+            // 
+            this.toolStripMenuItem1.Name = "toolStripMenuItem1";
+            this.toolStripMenuItem1.Size = new System.Drawing.Size(192, 22);
+            this.toolStripMenuItem1.Text = "toolStripMenuItem1";
+            // 
+            // toolStripMenuItem2
+            // 
+            this.toolStripMenuItem2.Name = "toolStripMenuItem2";
+            this.toolStripMenuItem2.Size = new System.Drawing.Size(192, 22);
+            this.toolStripMenuItem2.Text = "toolStripMenuItem2";
+            // 
+            // toolStripMenuItem3
+            // 
+            this.toolStripMenuItem3.Name = "toolStripMenuItem3";
+            this.toolStripMenuItem3.Size = new System.Drawing.Size(192, 22);
+            this.toolStripMenuItem3.Text = "toolStripMenuItem3";
             // 
             // tpPD
             // 
@@ -203,7 +270,7 @@
             this.tabPage5.Location = new System.Drawing.Point(4, 22);
             this.tabPage5.Name = "tabPage5";
             this.tabPage5.Padding = new System.Windows.Forms.Padding(3);
-            this.tabPage5.Size = new System.Drawing.Size(810, 290);
+            this.tabPage5.Size = new System.Drawing.Size(783, 290);
             this.tabPage5.TabIndex = 1;
             this.tabPage5.Text = "tabPage5";
             this.tabPage5.UseVisualStyleBackColor = true;
@@ -212,7 +279,7 @@
             // 
             this.tabPage6.Location = new System.Drawing.Point(4, 22);
             this.tabPage6.Name = "tabPage6";
-            this.tabPage6.Size = new System.Drawing.Size(810, 290);
+            this.tabPage6.Size = new System.Drawing.Size(783, 290);
             this.tabPage6.TabIndex = 2;
             this.tabPage6.Text = "tabPage6";
             this.tabPage6.UseVisualStyleBackColor = true;
@@ -221,7 +288,7 @@
             // 
             this.tabPage7.Location = new System.Drawing.Point(4, 22);
             this.tabPage7.Name = "tabPage7";
-            this.tabPage7.Size = new System.Drawing.Size(810, 290);
+            this.tabPage7.Size = new System.Drawing.Size(783, 290);
             this.tabPage7.TabIndex = 3;
             this.tabPage7.Text = "tabPage7";
             this.tabPage7.UseVisualStyleBackColor = true;
@@ -230,7 +297,7 @@
             // 
             this.tabPage8.Location = new System.Drawing.Point(4, 22);
             this.tabPage8.Name = "tabPage8";
-            this.tabPage8.Size = new System.Drawing.Size(810, 290);
+            this.tabPage8.Size = new System.Drawing.Size(783, 290);
             this.tabPage8.TabIndex = 4;
             this.tabPage8.Text = "tabPage8";
             this.tabPage8.UseVisualStyleBackColor = true;
@@ -239,7 +306,7 @@
             // 
             this.tabPage9.Location = new System.Drawing.Point(4, 22);
             this.tabPage9.Name = "tabPage9";
-            this.tabPage9.Size = new System.Drawing.Size(810, 290);
+            this.tabPage9.Size = new System.Drawing.Size(783, 290);
             this.tabPage9.TabIndex = 5;
             this.tabPage9.Text = "tabPage9";
             this.tabPage9.UseVisualStyleBackColor = true;
@@ -453,57 +520,6 @@
             this.LBLPEname.TabIndex = 68;
             this.LBLPEname.Text = "原则名称:";
             // 
-            // eColdepth
-            // 
-            dataGridViewCellStyle2.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleRight;
-            this.eColdepth.DefaultCellStyle = dataGridViewCellStyle2;
-            this.eColdepth.HeaderText = "埋深";
-            this.eColdepth.Name = "eColdepth";
-            this.eColdepth.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
-            this.eColdepth.Width = 70;
-            // 
-            // eColrange
-            // 
-            dataGridViewCellStyle3.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
-            this.eColrange.DefaultCellStyle = dataGridViewCellStyle3;
-            this.eColrange.HeaderText = "范围";
-            this.eColrange.Name = "eColrange";
-            this.eColrange.ReadOnly = true;
-            this.eColrange.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
-            this.eColrange.Width = 70;
-            // 
-            // eColPEnCat
-            // 
-            this.eColPEnCat.DisplayStyle = System.Windows.Forms.DataGridViewComboBoxDisplayStyle.ComboBox;
-            this.eColPEnCat.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.eColPEnCat.HeaderText = "围护类型";
-            this.eColPEnCat.Name = "eColPEnCat";
-            // 
-            // eColPEnDis
-            // 
-            this.eColPEnDis.HeaderText = "围护(双击编辑)";
-            this.eColPEnDis.Name = "eColPEnDis";
-            this.eColPEnDis.ReadOnly = true;
-            this.eColPEnDis.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
-            this.eColPEnDis.ToolTipText = "双击编辑围护形式";
-            this.eColPEnDis.Width = 200;
-            // 
-            // eColWSCat
-            // 
-            this.eColWSCat.DisplayStyle = System.Windows.Forms.DataGridViewComboBoxDisplayStyle.ComboBox;
-            this.eColWSCat.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.eColWSCat.HeaderText = "止水类型";
-            this.eColWSCat.Name = "eColWSCat";
-            this.eColWSCat.Resizable = System.Windows.Forms.DataGridViewTriState.True;
-            // 
-            // eColWSDis
-            // 
-            this.eColWSDis.HeaderText = "止水(双击编辑)";
-            this.eColWSDis.Name = "eColWSDis";
-            this.eColWSDis.ReadOnly = true;
-            this.eColWSDis.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
-            this.eColWSDis.Width = 200;
-            // 
             // FmPE
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
@@ -524,6 +540,7 @@
             this.tcMain.ResumeLayout(false);
             this.tpPE.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)(this.dgvPE)).EndInit();
+            this.cmsDrop.ResumeLayout(false);
             this.tpPW.ResumeLayout(false);
             this.tcPW.ResumeLayout(false);
             this.groupBox1.ResumeLayout(false);
@@ -570,11 +587,13 @@
         private System.Windows.Forms.Label LBLPEname;
         private System.Windows.Forms.Button BTNadd;
         private System.Windows.Forms.DataGridView dgvPE;
+        private System.Windows.Forms.ContextMenuStrip cmsDrop;
+        private System.Windows.Forms.ToolStripMenuItem toolStripMenuItem1;
+        private System.Windows.Forms.ToolStripMenuItem toolStripMenuItem2;
+        private System.Windows.Forms.ToolStripMenuItem toolStripMenuItem3;
         private System.Windows.Forms.DataGridViewTextBoxColumn eColdepth;
         private System.Windows.Forms.DataGridViewTextBoxColumn eColrange;
-        private System.Windows.Forms.DataGridViewComboBoxColumn eColPEnCat;
         private System.Windows.Forms.DataGridViewTextBoxColumn eColPEnDis;
-        private System.Windows.Forms.DataGridViewComboBoxColumn eColWSCat;
         private System.Windows.Forms.DataGridViewTextBoxColumn eColWSDis;
     }
 }

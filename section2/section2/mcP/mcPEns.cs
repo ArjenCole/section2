@@ -14,7 +14,11 @@ namespace section2.mcP
 
         public mcPEns()
         {
-            Cpt = mscInventory.DicPEns.First().Value;
+            Cpt = mscTools.DeepClone(mscInventory.DicPEns.First().Value);
+        }
+        public mcPEns(mcCpt pC)
+        {
+            Cpt = mscTools.DeepClone(pC);
         }
     }
 }
