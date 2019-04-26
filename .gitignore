@@ -13,7 +13,7 @@
 *.userprefs
 
 # Build results
-![Dd]ebug/Inventory
+![Dd]ebug/Inventory/
 [Dd]ebug/
 [Dd]ebugPublic/
 [Rr]elease/
