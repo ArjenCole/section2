@@ -10,6 +10,5 @@ namespace section2.mcP
     {
         public int Depth;//起始（浅）埋深mm
         public mcCpt cptStopWater;//止水
-        public mcCpt cptSupport;//支撑
     }
 }

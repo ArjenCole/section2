@@ -42,5 +42,17 @@ namespace section2
                 mscDC.updatePE(pName, fmPE.resultPE);
 
         }
+        public static void ShowFmPF(string pName)
+        {
+            /*
+            FmPE fmPE = new FmPE(mscDC.getPE(pName));
+            if (fmPE.ShowDialog() == DialogResult.OK)
+                mscDC.updatePE(pName, fmPE.resultPE);
+                */
+            FmCptEditor fmCptEditor = new FmCptEditor(mscInventory.DicPEns.Last().Value);
+            fmCptEditor.ShowDialog();
+
+
+        }
     }
 }

@@ -135,7 +135,11 @@ namespace section2
         private void PcpLab_DoubleClick(object sender, EventArgs e)
         {
             //ShowPEPF(((Label)sender).Text);
-            mscVctrl.ShowFmPE(((Label)sender).Text);
+            if(RBmPE.Checked)
+                mscVctrl.ShowFmPE(((Label)sender).Text);
+            else
+                mscVctrl.ShowFmPF(((Label)sender).Text);
+
         }
         private void PcpLab_MouseUp(object sender, MouseEventArgs e)
         {

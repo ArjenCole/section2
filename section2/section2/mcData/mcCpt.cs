@@ -9,6 +9,9 @@ namespace section2.mcData
     {
         public static List<string> KeepWords = new List<string>
         {
+            "name",
+            "count",
+            "ROUNDUP",
             "Auto",
             "Autot","t",
             "Autoa","a",

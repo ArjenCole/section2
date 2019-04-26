@@ -10,13 +10,13 @@ namespace section2
 {
     public static class mscInventory
     {
-        public static Dictionary<string, mcCpt> DicPEn;
+        public static Dictionary<string, mcCpt> DicPEns;
 
         const string Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
         public static void ini()
         {
-            DicPEn = loadDicPEn("DicPEn");
+            DicPEns = loadDicPEn("DicPEn");
         }
 
 
