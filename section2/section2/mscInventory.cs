@@ -88,7 +88,7 @@ namespace section2
                 }
                 foreach (char feChar in Alphabet)
                 {
-                    string tKey = "F" + mscTools.ToString(feChar);
+                    string tKey = "Z" + mscTools.ToString(feChar);
                     string tDis = mscTools.ToString(foundRowsDis[i][tKey]);
                     if (tDis != "")
                     {
