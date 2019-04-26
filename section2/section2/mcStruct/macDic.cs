@@ -15,10 +15,8 @@ namespace section2.mcStruct
         #endregion
         public Dictionary<string, T> mDic = new Dictionary<string, T>();
 
-        public int Count
-        {
-            get { return mDic.Count; }
-        }
+        public int Count()
+        {  return mDic.Count; }
 
         public T Son(string pName)
         {

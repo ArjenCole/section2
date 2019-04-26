@@ -44,8 +44,8 @@ namespace section2
             var tPEn = resultPE.Son(rowIdx);
             switch (tColName)
             {
-                case "eColPEnCat":
-                    if (tPEn.Cat() == mcPEn.StrMultiPEns)//多级围护
+                case "eColPEnDis":
+                    if (tPEn.Cat() == "多级围护")//mcPEn.StrMultiPEns)//多级围护
                     {/*
                         FormEcls formEcls = new FormEcls(mPEcrt.mList[e.RowIndex]);
                         if (formEcls.ShowDialog() == DialogResult.Yes)
@@ -98,16 +98,16 @@ namespace section2
 
         private void flashdgvPE()
         {
-            dgvPE.Rows.Add(resultPE.Count);
+            dgvPE.Rows.Add(resultPE.Count());
             int i = 0;
             foreach(var fePEn in resultPE.Sons())
             {
                 DataGridViewRow tDGVR = dgvPE.Rows[i];
                 tDGVR.Cells[0].Value = fePEn.Depth.ToString();
-                tDGVR.Cells[1].Value = fePEn.Depth.ToString();
+                tDGVR.Cells[1].Value = i + 1 == resultPE.Count() ? "+∞" : resultPE.Son(i + 1).Depth.ToString();
                 tDGVR.Cells[2].Value = fePEn.Cat();
                 tDGVR.Cells[3].Value = fePEn.Discribe();
-
+                i++;
             }
         }
 

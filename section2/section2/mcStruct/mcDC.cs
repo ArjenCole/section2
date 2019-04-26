@@ -13,8 +13,6 @@ namespace section2.mcStruct
 
         public mcDic<mcPE> PEdic = new mcDic<mcPE>();
         public mcDic<mcPF> PFdic = new mcDic<mcPF>();
-        public mcDic<mcPD> PDdic = new mcDic<mcPD>();
-        public mcDic<mcPW> PWdic = new mcDic<mcPW>();
 
         public mcDC()
         {

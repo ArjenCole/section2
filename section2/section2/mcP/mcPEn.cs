@@ -17,16 +17,17 @@ namespace section2.mcP
         #endregion
         public const string StrMultiPEns= "多级围护";
 
-        public int Depth;//起始（浅）埋深mm
-        public List<mcPEns> ListPEns;
-        //public mcCpt cptStopWater;//止水
+        public int Depth = 0;//起始（浅）埋深mm
+        public List<mcPEns> ListPEns = null;
+        public mcCpt cptStopWater;//止水
 
         public mcPEn()
         {
+            SetName("0");
             ListPEns = new List<mcPEns>();
             ListPEns.Add(new mcPEns());
         }
-
+        
         public string Cat()
         {
             if (ListPEns.Count == 1)
@@ -40,7 +41,7 @@ namespace section2.mcP
             if (ListPEns.Count == 1)
                 return ListPEns[0].Cpt.Name;
             else
-                return ListPEns.Count.ToString() + "级围护";
+               return ListPEns.Count.ToString() + "级围护";
         }
     }
 }

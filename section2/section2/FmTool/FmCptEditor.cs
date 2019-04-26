@@ -28,7 +28,9 @@ namespace section2.FmTool
         }
         private void showQs(DataGridView pDGV, IEnumerable<mcQ> pmcQs)
         {
-            pDGV.Rows.Add(pmcQs.Count());
+            int cnt = pmcQs.Count();
+            if (cnt == 0) return;
+            pDGV.Rows.Add();
             int i = 0;
             foreach (var fe in pmcQs)
             {
