@@ -21,19 +21,34 @@ namespace section2
             oPE = mscTools.DeepClone(pmPE);
             resultPE = pmPE;
 
-            initShowPEpara();
             initDropItems();
+        }
+
+        private void FmPE_Load(object sender, EventArgs e)
+        {
+            initShowPEpara();
+
+        }
+
+        private void initDropItems()
+        {
+            cboExv.DataSource = mcPE.sExvCat;
+            cboDockMat.DataSource = mcPE.sDockPos;
+            cboFndMat.DataSource = mcPE.sFndMat;
+            cboFndAgl.DataSource = mcPE.sFndAgl;
         }
         private void initShowPEpara()
         {
+            txtPEname.Text = oPE.Name();
+            txtCovMat.Text = oPE.CovMat;
+            txtCuhMat.Text = oPE.CuhMat;
+            txtCuhThk.Text = oPE.CuhThk;
+            txtDockMat.Text = oPE.DockMat;
+            cboDockMat.Text = oPE.DockPos;
+            cboExv.Text = oPE.ExvCat;
+            cboFndAgl.Text = oPE.FndAgl;
+            cboFndMat.Text = oPE.FndMat;
+        }
 
-        }
-        private void initDropItems()
-        {
-            cboExv.DataSource = new[] { "Ⅰ、Ⅱ类土", "Ⅲ类土", "Ⅳ类土", "松石", "次坚石", "普坚石", "特坚石" };
-            cboDock.DataSource = new[] { "至管顶50cm", "至管顶标高", "至管中心标高", "至沟槽顶标高" };
-            cboConfound.DataSource = new[] { "采用混凝土基础", "不采用混凝土基础" };
-            cboConangle.DataSource = new[] { "90", "120", "150", "180" };
-        }
     }
 }

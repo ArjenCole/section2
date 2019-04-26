@@ -14,6 +14,15 @@ namespace section2.mcData
 
         public bool isConFound = true;
 
+        public mcQ()
+        {
+
+        }
+        public mcQ(string pCat,string pName)
+        {
+            Cat = pCat;Name = pName;
+        }
+
         public string CNU()
         {
             return Cat + "|" + Name + "|" + Unit;

@@ -41,23 +41,23 @@
             this.tabPage9 = new System.Windows.Forms.TabPage();
             this.groupBox1 = new System.Windows.Forms.GroupBox();
             this.lblBackFill = new System.Windows.Forms.Label();
-            this.cboDock = new System.Windows.Forms.ComboBox();
+            this.cboDockMat = new System.Windows.Forms.ComboBox();
             this.cboExv = new System.Windows.Forms.ComboBox();
             this.lblExv = new System.Windows.Forms.Label();
-            this.txtCover = new System.Windows.Forms.TextBox();
+            this.txtCovMat = new System.Windows.Forms.TextBox();
             this.lblCover = new System.Windows.Forms.Label();
-            this.txtDock = new System.Windows.Forms.TextBox();
+            this.txtDockMat = new System.Windows.Forms.TextBox();
             this.lblDock = new System.Windows.Forms.Label();
             this.groupBox3 = new System.Windows.Forms.GroupBox();
             this.label1 = new System.Windows.Forms.Label();
-            this.cboConfound = new System.Windows.Forms.ComboBox();
-            this.cboConangle = new System.Windows.Forms.ComboBox();
-            this.txtCushH = new System.Windows.Forms.TextBox();
+            this.cboFndMat = new System.Windows.Forms.ComboBox();
+            this.cboFndAgl = new System.Windows.Forms.ComboBox();
+            this.txtCuhThk = new System.Windows.Forms.TextBox();
             this.LBLconangle = new System.Windows.Forms.Label();
             this.LBLcushH = new System.Windows.Forms.Label();
-            this.txtCushname = new System.Windows.Forms.TextBox();
+            this.txtCuhMat = new System.Windows.Forms.TextBox();
             this.LBLcushname = new System.Windows.Forms.Label();
-            this.TXTPEname = new System.Windows.Forms.TextBox();
+            this.txtPEname = new System.Windows.Forms.TextBox();
             this.LBLPEname = new System.Windows.Forms.Label();
             this.tcMain.SuspendLayout();
             this.tpPW.SuspendLayout();
@@ -181,12 +181,12 @@
             // groupBox1
             // 
             this.groupBox1.Controls.Add(this.lblBackFill);
-            this.groupBox1.Controls.Add(this.cboDock);
+            this.groupBox1.Controls.Add(this.cboDockMat);
             this.groupBox1.Controls.Add(this.cboExv);
             this.groupBox1.Controls.Add(this.lblExv);
-            this.groupBox1.Controls.Add(this.txtCover);
+            this.groupBox1.Controls.Add(this.txtCovMat);
             this.groupBox1.Controls.Add(this.lblCover);
-            this.groupBox1.Controls.Add(this.txtDock);
+            this.groupBox1.Controls.Add(this.txtDockMat);
             this.groupBox1.Controls.Add(this.lblDock);
             this.groupBox1.Font = new System.Drawing.Font("微软雅黑", 10.5F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
             this.groupBox1.Location = new System.Drawing.Point(7, 47);
@@ -200,22 +200,22 @@
             // 
             this.lblBackFill.AutoSize = true;
             this.lblBackFill.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.lblBackFill.Location = new System.Drawing.Point(6, 79);
+            this.lblBackFill.Location = new System.Drawing.Point(6, 51);
             this.lblBackFill.Name = "lblBackFill";
             this.lblBackFill.Size = new System.Drawing.Size(59, 17);
             this.lblBackFill.TabIndex = 70;
             this.lblBackFill.Text = "坞塝回填:";
             // 
-            // cboDock
+            // cboDockMat
             // 
-            this.cboDock.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
-            this.cboDock.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
-            this.cboDock.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.cboDock.FormattingEnabled = true;
-            this.cboDock.Location = new System.Drawing.Point(80, 48);
-            this.cboDock.Name = "cboDock";
-            this.cboDock.Size = new System.Drawing.Size(121, 25);
-            this.cboDock.TabIndex = 69;
+            this.cboDockMat.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.cboDockMat.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
+            this.cboDockMat.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.cboDockMat.FormattingEnabled = true;
+            this.cboDockMat.Location = new System.Drawing.Point(80, 48);
+            this.cboDockMat.Name = "cboDockMat";
+            this.cboDockMat.Size = new System.Drawing.Size(121, 25);
+            this.cboDockMat.TabIndex = 69;
             // 
             // cboExv
             // 
@@ -237,13 +237,13 @@
             this.lblExv.TabIndex = 67;
             this.lblExv.Text = "开挖类型:";
             // 
-            // txtCover
+            // txtCovMat
             // 
-            this.txtCover.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.txtCover.Location = new System.Drawing.Point(80, 102);
-            this.txtCover.Name = "txtCover";
-            this.txtCover.Size = new System.Drawing.Size(121, 23);
-            this.txtCover.TabIndex = 66;
+            this.txtCovMat.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.txtCovMat.Location = new System.Drawing.Point(80, 102);
+            this.txtCovMat.Name = "txtCovMat";
+            this.txtCovMat.Size = new System.Drawing.Size(121, 23);
+            this.txtCovMat.TabIndex = 66;
             // 
             // lblCover
             // 
@@ -255,19 +255,19 @@
             this.lblCover.TabIndex = 65;
             this.lblCover.Text = "顶部回填:";
             // 
-            // txtDock
+            // txtDockMat
             // 
-            this.txtDock.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.txtDock.Location = new System.Drawing.Point(80, 76);
-            this.txtDock.Name = "txtDock";
-            this.txtDock.Size = new System.Drawing.Size(121, 23);
-            this.txtDock.TabIndex = 64;
+            this.txtDockMat.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.txtDockMat.Location = new System.Drawing.Point(80, 76);
+            this.txtDockMat.Name = "txtDockMat";
+            this.txtDockMat.Size = new System.Drawing.Size(121, 23);
+            this.txtDockMat.TabIndex = 64;
             // 
             // lblDock
             // 
             this.lblDock.AutoSize = true;
             this.lblDock.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.lblDock.Location = new System.Drawing.Point(6, 51);
+            this.lblDock.Location = new System.Drawing.Point(6, 79);
             this.lblDock.Name = "lblDock";
             this.lblDock.Size = new System.Drawing.Size(59, 17);
             this.lblDock.TabIndex = 63;
@@ -276,12 +276,12 @@
             // groupBox3
             // 
             this.groupBox3.Controls.Add(this.label1);
-            this.groupBox3.Controls.Add(this.cboConfound);
-            this.groupBox3.Controls.Add(this.cboConangle);
-            this.groupBox3.Controls.Add(this.txtCushH);
+            this.groupBox3.Controls.Add(this.cboFndMat);
+            this.groupBox3.Controls.Add(this.cboFndAgl);
+            this.groupBox3.Controls.Add(this.txtCuhThk);
             this.groupBox3.Controls.Add(this.LBLconangle);
             this.groupBox3.Controls.Add(this.LBLcushH);
-            this.groupBox3.Controls.Add(this.txtCushname);
+            this.groupBox3.Controls.Add(this.txtCuhMat);
             this.groupBox3.Controls.Add(this.LBLcushname);
             this.groupBox3.Font = new System.Drawing.Font("微软雅黑", 10.5F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
             this.groupBox3.Location = new System.Drawing.Point(244, 47);
@@ -301,35 +301,35 @@
             this.label1.TabIndex = 57;
             this.label1.Text = "基础材质:";
             // 
-            // cboConfound
+            // cboFndMat
             // 
-            this.cboConfound.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
-            this.cboConfound.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
-            this.cboConfound.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.cboConfound.FormattingEnabled = true;
-            this.cboConfound.Location = new System.Drawing.Point(85, 18);
-            this.cboConfound.Name = "cboConfound";
-            this.cboConfound.Size = new System.Drawing.Size(123, 25);
-            this.cboConfound.TabIndex = 54;
+            this.cboFndMat.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.cboFndMat.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
+            this.cboFndMat.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.cboFndMat.FormattingEnabled = true;
+            this.cboFndMat.Location = new System.Drawing.Point(85, 18);
+            this.cboFndMat.Name = "cboFndMat";
+            this.cboFndMat.Size = new System.Drawing.Size(123, 25);
+            this.cboFndMat.TabIndex = 54;
             // 
-            // cboConangle
+            // cboFndAgl
             // 
-            this.cboConangle.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
-            this.cboConangle.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
-            this.cboConangle.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.cboConangle.FormattingEnabled = true;
-            this.cboConangle.Location = new System.Drawing.Point(85, 48);
-            this.cboConangle.Name = "cboConangle";
-            this.cboConangle.Size = new System.Drawing.Size(123, 25);
-            this.cboConangle.TabIndex = 53;
+            this.cboFndAgl.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.cboFndAgl.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
+            this.cboFndAgl.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.cboFndAgl.FormattingEnabled = true;
+            this.cboFndAgl.Location = new System.Drawing.Point(85, 48);
+            this.cboFndAgl.Name = "cboFndAgl";
+            this.cboFndAgl.Size = new System.Drawing.Size(123, 25);
+            this.cboFndAgl.TabIndex = 53;
             // 
-            // txtCushH
+            // txtCuhThk
             // 
-            this.txtCushH.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.txtCushH.Location = new System.Drawing.Point(85, 105);
-            this.txtCushH.Name = "txtCushH";
-            this.txtCushH.Size = new System.Drawing.Size(123, 23);
-            this.txtCushH.TabIndex = 56;
+            this.txtCuhThk.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.txtCuhThk.Location = new System.Drawing.Point(85, 105);
+            this.txtCuhThk.Name = "txtCuhThk";
+            this.txtCuhThk.Size = new System.Drawing.Size(123, 23);
+            this.txtCuhThk.TabIndex = 56;
             // 
             // LBLconangle
             // 
@@ -351,13 +351,13 @@
             this.LBLcushH.TabIndex = 55;
             this.LBLcushH.Text = "垫层厚(mm):";
             // 
-            // txtCushname
+            // txtCuhMat
             // 
-            this.txtCushname.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.txtCushname.Location = new System.Drawing.Point(85, 76);
-            this.txtCushname.Name = "txtCushname";
-            this.txtCushname.Size = new System.Drawing.Size(123, 23);
-            this.txtCushname.TabIndex = 54;
+            this.txtCuhMat.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.txtCuhMat.Location = new System.Drawing.Point(85, 76);
+            this.txtCuhMat.Name = "txtCuhMat";
+            this.txtCuhMat.Size = new System.Drawing.Size(123, 23);
+            this.txtCuhMat.TabIndex = 54;
             // 
             // LBLcushname
             // 
@@ -369,13 +369,13 @@
             this.LBLcushname.TabIndex = 53;
             this.LBLcushname.Text = "垫层材质:";
             // 
-            // TXTPEname
+            // txtPEname
             // 
-            this.TXTPEname.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.TXTPEname.Location = new System.Drawing.Point(87, 6);
-            this.TXTPEname.Name = "TXTPEname";
-            this.TXTPEname.Size = new System.Drawing.Size(371, 29);
-            this.TXTPEname.TabIndex = 69;
+            this.txtPEname.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.txtPEname.Location = new System.Drawing.Point(87, 6);
+            this.txtPEname.Name = "txtPEname";
+            this.txtPEname.Size = new System.Drawing.Size(371, 29);
+            this.txtPEname.TabIndex = 69;
             // 
             // LBLPEname
             // 
@@ -392,7 +392,7 @@
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(838, 541);
-            this.Controls.Add(this.TXTPEname);
+            this.Controls.Add(this.txtPEname);
             this.Controls.Add(this.LBLPEname);
             this.Controls.Add(this.groupBox3);
             this.Controls.Add(this.groupBox1);
@@ -403,6 +403,7 @@
             this.ShowInTaskbar = false;
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
             this.Text = "FmPE";
+            this.Load += new System.EventHandler(this.FmPE_Load);
             this.tcMain.ResumeLayout(false);
             this.tpPW.ResumeLayout(false);
             this.tcPW.ResumeLayout(false);
@@ -430,23 +431,23 @@
         private System.Windows.Forms.TabPage tabPage9;
         private System.Windows.Forms.GroupBox groupBox1;
         private System.Windows.Forms.Label lblBackFill;
-        private System.Windows.Forms.ComboBox cboDock;
+        private System.Windows.Forms.ComboBox cboDockMat;
         private System.Windows.Forms.ComboBox cboExv;
         private System.Windows.Forms.Label lblExv;
-        private System.Windows.Forms.TextBox txtCover;
+        private System.Windows.Forms.TextBox txtCovMat;
         private System.Windows.Forms.Label lblCover;
-        private System.Windows.Forms.TextBox txtDock;
+        private System.Windows.Forms.TextBox txtDockMat;
         private System.Windows.Forms.Label lblDock;
         private System.Windows.Forms.GroupBox groupBox3;
         private System.Windows.Forms.Label label1;
-        private System.Windows.Forms.ComboBox cboConfound;
-        private System.Windows.Forms.ComboBox cboConangle;
-        private System.Windows.Forms.TextBox txtCushH;
+        private System.Windows.Forms.ComboBox cboFndMat;
+        private System.Windows.Forms.ComboBox cboFndAgl;
+        private System.Windows.Forms.TextBox txtCuhThk;
         private System.Windows.Forms.Label LBLconangle;
         private System.Windows.Forms.Label LBLcushH;
-        private System.Windows.Forms.TextBox txtCushname;
+        private System.Windows.Forms.TextBox txtCuhMat;
         private System.Windows.Forms.Label LBLcushname;
-        private System.Windows.Forms.TextBox TXTPEname;
+        private System.Windows.Forms.TextBox txtPEname;
         private System.Windows.Forms.Label LBLPEname;
     }
 }
