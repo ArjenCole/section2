@@ -38,13 +38,13 @@
             this.TVdc = new System.Windows.Forms.TreeView();
             this.TVinventory = new System.Windows.Forms.TreeView();
             this.SCright = new System.Windows.Forms.SplitContainer();
-            this.Pun = new System.Windows.Forms.Panel();
             this.SCpcpHigh = new System.Windows.Forms.SplitContainer();
             this.RBmPF = new System.Windows.Forms.RadioButton();
             this.RBmPE = new System.Windows.Forms.RadioButton();
             this.BTNpcpAddHigh = new System.Windows.Forms.Button();
             this.TLPmPF = new System.Windows.Forms.TableLayoutPanel();
             this.TLPmPE = new System.Windows.Forms.TableLayoutPanel();
+            this.Pun = new System.Windows.Forms.Panel();
             this.MSmain.SuspendLayout();
             this.SCmain.Panel1.SuspendLayout();
             this.SCmain.Panel2.SuspendLayout();
@@ -138,6 +138,7 @@
             // TVdc
             // 
             this.TVdc.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.TVdc.Font = new System.Drawing.Font("等线", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
             this.TVdc.Location = new System.Drawing.Point(0, 0);
             this.TVdc.Name = "TVdc";
             this.TVdc.Size = new System.Drawing.Size(160, 263);
@@ -171,13 +172,6 @@
             this.SCright.Size = new System.Drawing.Size(920, 451);
             this.SCright.SplitterDistance = 52;
             this.SCright.TabIndex = 0;
-            // 
-            // Pun
-            // 
-            this.Pun.Location = new System.Drawing.Point(88, 46);
-            this.Pun.Name = "Pun";
-            this.Pun.Size = new System.Drawing.Size(629, 245);
-            this.Pun.TabIndex = 0;
             // 
             // SCpcpHigh
             // 
@@ -236,9 +230,9 @@
             this.BTNpcpAddHigh.Dock = System.Windows.Forms.DockStyle.Left;
             this.BTNpcpAddHigh.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
             this.BTNpcpAddHigh.Font = new System.Drawing.Font("幼圆", 15.75F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.BTNpcpAddHigh.Location = new System.Drawing.Point(0, 0);
+            this.BTNpcpAddHigh.Location = new System.Drawing.Point(8, 0);
             this.BTNpcpAddHigh.Name = "BTNpcpAddHigh";
-            this.BTNpcpAddHigh.Size = new System.Drawing.Size(32, 52);
+            this.BTNpcpAddHigh.Size = new System.Drawing.Size(24, 52);
             this.BTNpcpAddHigh.TabIndex = 5;
             this.BTNpcpAddHigh.TabStop = false;
             this.BTNpcpAddHigh.Text = "+";
@@ -250,12 +244,13 @@
             this.TLPmPF.CellBorderStyle = System.Windows.Forms.TableLayoutPanelCellBorderStyle.Inset;
             this.TLPmPF.ColumnCount = 1;
             this.TLPmPF.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
+            this.TLPmPF.Dock = System.Windows.Forms.DockStyle.Left;
             this.TLPmPF.GrowStyle = System.Windows.Forms.TableLayoutPanelGrowStyle.AddColumns;
-            this.TLPmPF.Location = new System.Drawing.Point(392, 5);
+            this.TLPmPF.Location = new System.Drawing.Point(4, 0);
             this.TLPmPF.Name = "TLPmPF";
             this.TLPmPF.RowCount = 1;
             this.TLPmPF.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            this.TLPmPF.Size = new System.Drawing.Size(166, 44);
+            this.TLPmPF.Size = new System.Drawing.Size(4, 52);
             this.TLPmPF.TabIndex = 4;
             // 
             // TLPmPE
@@ -264,13 +259,21 @@
             this.TLPmPE.CellBorderStyle = System.Windows.Forms.TableLayoutPanelCellBorderStyle.Inset;
             this.TLPmPE.ColumnCount = 1;
             this.TLPmPE.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
+            this.TLPmPE.Dock = System.Windows.Forms.DockStyle.Left;
             this.TLPmPE.GrowStyle = System.Windows.Forms.TableLayoutPanelGrowStyle.AddColumns;
-            this.TLPmPE.Location = new System.Drawing.Point(45, 5);
+            this.TLPmPE.Location = new System.Drawing.Point(0, 0);
             this.TLPmPE.Name = "TLPmPE";
             this.TLPmPE.RowCount = 1;
             this.TLPmPE.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            this.TLPmPE.Size = new System.Drawing.Size(166, 44);
+            this.TLPmPE.Size = new System.Drawing.Size(4, 52);
             this.TLPmPE.TabIndex = 3;
+            // 
+            // Pun
+            // 
+            this.Pun.Location = new System.Drawing.Point(88, 46);
+            this.Pun.Name = "Pun";
+            this.Pun.Size = new System.Drawing.Size(629, 245);
+            this.Pun.TabIndex = 0;
             // 
             // FmMain
             // 

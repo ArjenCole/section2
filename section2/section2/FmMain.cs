@@ -94,8 +94,6 @@ namespace section2
         {
             TLPmPE.Controls.Clear();
             TLPmPF.Controls.Clear();
-            TLPmPE.Dock = DockStyle.Left;
-            TLPmPF.Dock = DockStyle.Left;
             if (mscDC.getDC() == null) { RBmPE.Checked = true; SCpcpHigh.Enabled = false; return; }
             SCpcpHigh.Enabled = true; SCpcpHigh.Visible = true;
 
