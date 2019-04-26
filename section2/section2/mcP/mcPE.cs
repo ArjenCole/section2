@@ -32,10 +32,16 @@ namespace section2.mcP
         public mcPE()
         {
             this.SetName("围护原则");
+            init();
         }
         public mcPE(string pName)
         {
             this.SetName(pName);
+            init();
+        }
+        public void init()
+        {
+
         }
 
         public mcQ Fc1() { return new mcQ("垫层", choseMat("Fc1")); }

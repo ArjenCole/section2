@@ -28,6 +28,10 @@
         /// </summary>
         private void InitializeComponent()
         {
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle1 = new System.Windows.Forms.DataGridViewCellStyle();
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle4 = new System.Windows.Forms.DataGridViewCellStyle();
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle2 = new System.Windows.Forms.DataGridViewCellStyle();
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle3 = new System.Windows.Forms.DataGridViewCellStyle();
             this.tcMain = new System.Windows.Forms.TabControl();
             this.tpPE = new System.Windows.Forms.TabPage();
             this.tpPD = new System.Windows.Forms.TabPage();
@@ -59,11 +63,21 @@
             this.LBLcushname = new System.Windows.Forms.Label();
             this.txtPEname = new System.Windows.Forms.TextBox();
             this.LBLPEname = new System.Windows.Forms.Label();
+            this.BTNadd = new System.Windows.Forms.Button();
+            this.dGVPE = new System.Windows.Forms.DataGridView();
+            this.Coldepth = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.Colrange = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.ColEclsCat = new System.Windows.Forms.DataGridViewComboBoxColumn();
+            this.ColEclsDis = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.ColWSCat = new System.Windows.Forms.DataGridViewComboBoxColumn();
+            this.ColWSDis = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.tcMain.SuspendLayout();
+            this.tpPE.SuspendLayout();
             this.tpPW.SuspendLayout();
             this.tcPW.SuspendLayout();
             this.groupBox1.SuspendLayout();
             this.groupBox3.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)(this.dGVPE)).BeginInit();
             this.SuspendLayout();
             // 
             // tcMain
@@ -74,15 +88,17 @@
             this.tcMain.Location = new System.Drawing.Point(7, 195);
             this.tcMain.Name = "tcMain";
             this.tcMain.SelectedIndex = 0;
-            this.tcMain.Size = new System.Drawing.Size(826, 342);
+            this.tcMain.Size = new System.Drawing.Size(799, 342);
             this.tcMain.TabIndex = 1;
             // 
             // tpPE
             // 
+            this.tpPE.Controls.Add(this.BTNadd);
+            this.tpPE.Controls.Add(this.dGVPE);
             this.tpPE.Location = new System.Drawing.Point(4, 22);
             this.tpPE.Name = "tpPE";
             this.tpPE.Padding = new System.Windows.Forms.Padding(3);
-            this.tpPE.Size = new System.Drawing.Size(818, 316);
+            this.tpPE.Size = new System.Drawing.Size(791, 316);
             this.tpPE.TabIndex = 0;
             this.tpPE.Text = "围护原则";
             this.tpPE.UseVisualStyleBackColor = true;
@@ -92,7 +108,7 @@
             this.tpPD.Location = new System.Drawing.Point(4, 22);
             this.tpPD.Name = "tpPD";
             this.tpPD.Padding = new System.Windows.Forms.Padding(3);
-            this.tpPD.Size = new System.Drawing.Size(818, 316);
+            this.tpPD.Size = new System.Drawing.Size(791, 316);
             this.tpPD.TabIndex = 1;
             this.tpPD.Text = "降水原则";
             this.tpPD.UseVisualStyleBackColor = true;
@@ -387,11 +403,110 @@
             this.LBLPEname.TabIndex = 68;
             this.LBLPEname.Text = "原则名称:";
             // 
+            // BTNadd
+            // 
+            this.BTNadd.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
+            this.BTNadd.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.BTNadd.Location = new System.Drawing.Point(746, 3);
+            this.BTNadd.Name = "BTNadd";
+            this.BTNadd.Size = new System.Drawing.Size(41, 30);
+            this.BTNadd.TabIndex = 62;
+            this.BTNadd.Text = "+";
+            this.BTNadd.UseVisualStyleBackColor = true;
+            // 
+            // dGVPE
+            // 
+            this.dGVPE.AllowUserToAddRows = false;
+            this.dGVPE.AllowUserToResizeColumns = false;
+            this.dGVPE.AllowUserToResizeRows = false;
+            dataGridViewCellStyle1.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+            dataGridViewCellStyle1.BackColor = System.Drawing.SystemColors.Control;
+            dataGridViewCellStyle1.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            dataGridViewCellStyle1.ForeColor = System.Drawing.SystemColors.WindowText;
+            dataGridViewCellStyle1.SelectionBackColor = System.Drawing.SystemColors.Highlight;
+            dataGridViewCellStyle1.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
+            dataGridViewCellStyle1.WrapMode = System.Windows.Forms.DataGridViewTriState.True;
+            this.dGVPE.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle1;
+            this.dGVPE.ColumnHeadersHeightSizeMode = System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+            this.dGVPE.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
+            this.Coldepth,
+            this.Colrange,
+            this.ColEclsCat,
+            this.ColEclsDis,
+            this.ColWSCat,
+            this.ColWSDis});
+            dataGridViewCellStyle4.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
+            dataGridViewCellStyle4.BackColor = System.Drawing.SystemColors.Window;
+            dataGridViewCellStyle4.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            dataGridViewCellStyle4.ForeColor = System.Drawing.SystemColors.ControlText;
+            dataGridViewCellStyle4.SelectionBackColor = System.Drawing.SystemColors.Highlight;
+            dataGridViewCellStyle4.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
+            dataGridViewCellStyle4.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
+            this.dGVPE.DefaultCellStyle = dataGridViewCellStyle4;
+            this.dGVPE.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.dGVPE.Location = new System.Drawing.Point(3, 3);
+            this.dGVPE.Name = "dGVPE";
+            this.dGVPE.RowHeadersVisible = false;
+            this.dGVPE.RowTemplate.Height = 23;
+            this.dGVPE.Size = new System.Drawing.Size(785, 310);
+            this.dGVPE.TabIndex = 61;
+            // 
+            // Coldepth
+            // 
+            dataGridViewCellStyle2.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleRight;
+            this.Coldepth.DefaultCellStyle = dataGridViewCellStyle2;
+            this.Coldepth.HeaderText = "埋深";
+            this.Coldepth.Name = "Coldepth";
+            this.Coldepth.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
+            this.Coldepth.Width = 70;
+            // 
+            // Colrange
+            // 
+            dataGridViewCellStyle3.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
+            this.Colrange.DefaultCellStyle = dataGridViewCellStyle3;
+            this.Colrange.HeaderText = "范围";
+            this.Colrange.Name = "Colrange";
+            this.Colrange.ReadOnly = true;
+            this.Colrange.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
+            this.Colrange.Width = 70;
+            // 
+            // ColEclsCat
+            // 
+            this.ColEclsCat.DisplayStyle = System.Windows.Forms.DataGridViewComboBoxDisplayStyle.ComboBox;
+            this.ColEclsCat.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+            this.ColEclsCat.HeaderText = "围护类型";
+            this.ColEclsCat.Name = "ColEclsCat";
+            // 
+            // ColEclsDis
+            // 
+            this.ColEclsDis.HeaderText = "围护(双击编辑)";
+            this.ColEclsDis.Name = "ColEclsDis";
+            this.ColEclsDis.ReadOnly = true;
+            this.ColEclsDis.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
+            this.ColEclsDis.ToolTipText = "双击编辑围护形式";
+            this.ColEclsDis.Width = 200;
+            // 
+            // ColWSCat
+            // 
+            this.ColWSCat.DisplayStyle = System.Windows.Forms.DataGridViewComboBoxDisplayStyle.ComboBox;
+            this.ColWSCat.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+            this.ColWSCat.HeaderText = "止水类型";
+            this.ColWSCat.Name = "ColWSCat";
+            this.ColWSCat.Resizable = System.Windows.Forms.DataGridViewTriState.True;
+            // 
+            // ColWSDis
+            // 
+            this.ColWSDis.HeaderText = "止水(双击编辑)";
+            this.ColWSDis.Name = "ColWSDis";
+            this.ColWSDis.ReadOnly = true;
+            this.ColWSDis.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
+            this.ColWSDis.Width = 200;
+            // 
             // FmPE
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(838, 541);
+            this.ClientSize = new System.Drawing.Size(814, 541);
             this.Controls.Add(this.txtPEname);
             this.Controls.Add(this.LBLPEname);
             this.Controls.Add(this.groupBox3);
@@ -405,12 +520,14 @@
             this.Text = "FmPE";
             this.Load += new System.EventHandler(this.FmPE_Load);
             this.tcMain.ResumeLayout(false);
+            this.tpPE.ResumeLayout(false);
             this.tpPW.ResumeLayout(false);
             this.tcPW.ResumeLayout(false);
             this.groupBox1.ResumeLayout(false);
             this.groupBox1.PerformLayout();
             this.groupBox3.ResumeLayout(false);
             this.groupBox3.PerformLayout();
+            ((System.ComponentModel.ISupportInitialize)(this.dGVPE)).EndInit();
             this.ResumeLayout(false);
             this.PerformLayout();
 
@@ -449,5 +566,13 @@
         private System.Windows.Forms.Label LBLcushname;
         private System.Windows.Forms.TextBox txtPEname;
         private System.Windows.Forms.Label LBLPEname;
+        private System.Windows.Forms.Button BTNadd;
+        private System.Windows.Forms.DataGridView dGVPE;
+        private System.Windows.Forms.DataGridViewTextBoxColumn Coldepth;
+        private System.Windows.Forms.DataGridViewTextBoxColumn Colrange;
+        private System.Windows.Forms.DataGridViewComboBoxColumn ColEclsCat;
+        private System.Windows.Forms.DataGridViewTextBoxColumn ColEclsDis;
+        private System.Windows.Forms.DataGridViewComboBoxColumn ColWSCat;
+        private System.Windows.Forms.DataGridViewTextBoxColumn ColWSDis;
     }
 }

@@ -8,7 +8,7 @@ namespace section2.mcP
 {
     public class mcPF:mcStruct.Iname
     {
-        public string Name() { return name; }
+        public string GetName() { return name; }
         public void SetName(string pName) { name = pName; }
         private string name;
 

@@ -90,6 +90,7 @@
     <Compile Include="mcStruct\mcUN.cs" />
     <Compile Include="mscAtlas.cs" />
     <Compile Include="mscCal.cs" />
+    <Compile Include="mscInventory.cs" />
     <Compile Include="mscVctrl.cs" />
     <Compile Include="mscDC.cs" />
     <Compile Include="mscTools.cs" />

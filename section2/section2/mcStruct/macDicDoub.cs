@@ -59,7 +59,7 @@ namespace section2.mcStruct
 
         public override void Add(T pT)
         {
-            mDic.Add(((Iname)pT).Name(), pT);
+            mDic.Add(((Iname)pT).GetName(), pT);
             orderDic();
 
             //TODO: 添加项后自动排序

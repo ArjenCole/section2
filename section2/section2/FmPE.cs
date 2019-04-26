@@ -39,7 +39,7 @@ namespace section2
         }
         private void initShowPEpara()
         {
-            txtPEname.Text = oPE.Name();
+            txtPEname.Text = oPE.GetName();
             txtCovMat.Text = oPE.CovMat;
             txtCuhMat.Text = oPE.CuhMat;
             txtCuhThk.Text = oPE.CuhThk;
@@ -49,6 +49,5 @@ namespace section2
             cboFndAgl.Text = oPE.FndAgl;
             cboFndMat.Text = oPE.FndMat;
         }
-
     }
 }

@@ -16,6 +16,13 @@ namespace section2
         
         public static bool LoadFinished = false;//主程序加载完毕后封面窗体自动消失
 
+        public static void ini()
+        {
+            mscInventory.ini();
+
+            LoadFinished = true;
+        }
+
         #region 新建
         public static mcDC NewFileFromGuide()
         {

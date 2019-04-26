@@ -18,7 +18,9 @@ namespace section2.mcData
             "slope","WorkWidth","FoundAngle",
             "保留字2"
         };
+        public string NameExp = "";
         public List<mcQ> Qlist = new List<mcQ>();
+        
         /*
         private Dictionary<string, string> keepPara = new Dictionary<string, string>();
         public void SetKeepPara(string pParaName, string pParaValue)

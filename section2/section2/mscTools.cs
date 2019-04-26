@@ -4,6 +4,9 @@ using System.Linq;
 using System.Text;
 using System.Web.Script.Serialization;
 using section2.mcData;
+using System.Data;
+using System.IO;
+using System.Windows.Forms;
 
 namespace section2
 {
@@ -78,6 +81,67 @@ namespace section2
             pO.GetType().GetProperty
                 ("DoubleBuffered", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
                 .SetValue(pO, true, null);
+        }
+
+        /// <summary>
+        /// 读取CSV文件
+        /// </summary>
+        /// <param name="pFileName">文件路径</param>
+        /// <returns>DataTable</returns>
+        static public DataTable OpenCSV(string pFileName)
+        {
+            DataTable rtDT = new DataTable();
+            FileStream tFS = new FileStream(Application.StartupPath + @"\" + pFileName, System.IO.FileMode.Open, System.IO.FileAccess.Read);
+            StreamReader tSR = new StreamReader(tFS, System.Text.Encoding.Default);
+            //记录每次读取的一行记录
+            string strLine = "";
+            //记录每行记录中的各字段内容
+            string[] aryLine;
+            //标示列数
+            int columnCount = 0;
+            //标示是否是读取的第一行
+            bool IsFirst = true;
+
+            //逐行读取CSV中的数据
+            while ((strLine = tSR.ReadLine()) != null)
+            {
+                aryLine = strLine.Split(',');
+                if (IsFirst == true)
+                {
+                    IsFirst = false;
+                    columnCount = aryLine.Length;
+                    //创建列
+                    for (int i = 0; i < columnCount; i++)
+                    {
+                        DataColumn dc = new DataColumn(aryLine[i]);
+                        rtDT.Columns.Add(dc);
+                    }
+                }
+                else
+                {
+                    DataRow dr = rtDT.NewRow();
+                    for (int j = 0; j < columnCount; j++)
+                    {
+                        dr[j] = aryLine[j];
+                    }
+                    rtDT.Rows.Add(dr);
+                }
+            }
+            tSR.Close();
+            tFS.Close();
+            return rtDT;
+        }
+
+        public static string ToString(object pObj)
+        {
+            try
+            {
+                return pObj.ToString();
+            }
+            catch (Exception)
+            {
+                return string.Empty;
+            }
         }
     }
 }

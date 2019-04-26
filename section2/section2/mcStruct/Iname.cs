@@ -7,7 +7,7 @@ namespace section2.mcStruct
 {
     public interface Iname
     {
-        string Name();
+        string GetName();
         void SetName(string pName);
     }
 }

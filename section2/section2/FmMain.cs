@@ -16,7 +16,7 @@ namespace section2
         public FmMain()
         {
             InitializeComponent();
-            mscVctrl.LoadFinished = true;
+            mscVctrl.ini();
         }
         private void FmMain_Load(object sender, EventArgs e)
         {
@@ -74,10 +74,10 @@ namespace section2
             TreeNode NodeDC = new TreeNode(tDC.BI.ProjectName, 1, 2);//一级节点
             foreach (mcSG feSG in tDC.Sons()) 
             {
-                TreeNode NodeSG = new TreeNode(feSG.Name());
+                TreeNode NodeSG = new TreeNode(feSG.GetName());
                 foreach (mcUN feUN in feSG.Sons())
                 {
-                    TreeNode NodeUN = new TreeNode(feUN.Name());
+                    TreeNode NodeUN = new TreeNode(feUN.GetName());
                     NodeSG.Nodes.Add(NodeUN);
                     /*if ((ActiveFormUnit != null) && (ActiveFormUnit.OwnerName == feSG.Name) && (ActiveFormUnit.mUName == feUN.Name))
                         ActiveNode = NodeUnit;*/
