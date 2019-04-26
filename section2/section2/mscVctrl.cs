@@ -54,5 +54,10 @@ namespace section2
 
 
         }
+        public static void ShowCpt(mcCpt pC)
+        {
+            FmCptEditor fmCptEditor = new FmCptEditor(pC);
+            fmCptEditor.ShowDialog();
+        }
     }
 }

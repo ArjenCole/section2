@@ -11,6 +11,13 @@ namespace section2
     public static class mscInventory
     {
         public static Dictionary<string, mcCpt> DicPEns;
+        private static List<string> listPEnsKeys = new List<string>();
+        public static List<string> ListPEnsKeys()
+        {
+            listPEnsKeys = DicPEns.Keys.ToList();
+            listPEnsKeys.Add(mcPEn.StrMultiPEns);
+            return listPEnsKeys;
+        }
 
         const string Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 

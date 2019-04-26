@@ -11,5 +11,10 @@ namespace section2.mcP
         public int Height = -1;//固定高度mm
         public int Width = 1;//工作面宽度mm
         public mcCpt Cpt;
+
+        public mcPEns()
+        {
+            Cpt = mscInventory.DicPEns.First().Value;
+        }
     }
 }

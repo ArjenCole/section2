@@ -24,8 +24,6 @@ namespace section2.mcStruct
             
             PEdic.Add(new mcPE());
             PFdic.Add(new mcPF());
-            PDdic.Add(new mcPD());
-            PWdic.Add(new mcPW());
         }
     }
 }

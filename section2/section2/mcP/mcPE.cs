@@ -3,10 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using section2.mcData;
+using section2.mcStruct;
 
 namespace section2.mcP
 {
-    public class mcPE:mcStruct.macDicDoub<mcPEn>
+    public class mcPE:macDicDoub<mcPEn>
     {
         #region 下拉框数据源
         public static string[] sExvCat = new[] { "Ⅰ、Ⅱ类土", "Ⅲ类土", "Ⅳ类土", "松石", "次坚石", "普坚石", "特坚石" };
@@ -24,7 +25,7 @@ namespace section2.mcP
         public string FndAgl = "120";
         public string CuhMat = "中粗砂";
         public string CuhThk = "200";
-
+       
         public mcPD PD = new mcPD();
         public List<mcPW> PWs = new List<mcPW>();
         #endregion
@@ -41,7 +42,7 @@ namespace section2.mcP
         }
         public void init()
         {
-
+            this.Add(new mcPEn());
         }
 
         public mcQ Fc1() { return new mcQ("垫层", choseMat("Fc1")); }
