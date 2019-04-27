@@ -28,47 +28,47 @@
         /// </summary>
         private void InitializeComponent()
         {
-            this.MSmain = new System.Windows.Forms.MenuStrip();
+            this.msMain = new System.Windows.Forms.MenuStrip();
             this.文件ToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.新建ToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.打开ToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-            this.TSmain = new System.Windows.Forms.ToolStrip();
-            this.SCmain = new System.Windows.Forms.SplitContainer();
-            this.SCleft = new System.Windows.Forms.SplitContainer();
-            this.TVdc = new System.Windows.Forms.TreeView();
-            this.TVinventory = new System.Windows.Forms.TreeView();
-            this.SCright = new System.Windows.Forms.SplitContainer();
+            this.tsMain = new System.Windows.Forms.ToolStrip();
+            this.scMain = new System.Windows.Forms.SplitContainer();
+            this.scLeft = new System.Windows.Forms.SplitContainer();
+            this.tvDC = new System.Windows.Forms.TreeView();
+            this.tvInventory = new System.Windows.Forms.TreeView();
+            this.scRight = new System.Windows.Forms.SplitContainer();
             this.scPcp = new System.Windows.Forms.SplitContainer();
             this.RBmPF = new System.Windows.Forms.RadioButton();
             this.RBmPE = new System.Windows.Forms.RadioButton();
-            this.BTNpcpAddHigh = new System.Windows.Forms.Button();
+            this.btnPcpAdd = new System.Windows.Forms.Button();
             this.TLPmPF = new System.Windows.Forms.TableLayoutPanel();
             this.TLPmPE = new System.Windows.Forms.TableLayoutPanel();
-            this.Pun = new System.Windows.Forms.Panel();
-            this.MSmain.SuspendLayout();
-            this.SCmain.Panel1.SuspendLayout();
-            this.SCmain.Panel2.SuspendLayout();
-            this.SCmain.SuspendLayout();
-            this.SCleft.Panel1.SuspendLayout();
-            this.SCleft.Panel2.SuspendLayout();
-            this.SCleft.SuspendLayout();
-            this.SCright.Panel1.SuspendLayout();
-            this.SCright.Panel2.SuspendLayout();
-            this.SCright.SuspendLayout();
+            this.pUN = new System.Windows.Forms.Panel();
+            this.msMain.SuspendLayout();
+            this.scMain.Panel1.SuspendLayout();
+            this.scMain.Panel2.SuspendLayout();
+            this.scMain.SuspendLayout();
+            this.scLeft.Panel1.SuspendLayout();
+            this.scLeft.Panel2.SuspendLayout();
+            this.scLeft.SuspendLayout();
+            this.scRight.Panel1.SuspendLayout();
+            this.scRight.Panel2.SuspendLayout();
+            this.scRight.SuspendLayout();
             this.scPcp.Panel1.SuspendLayout();
             this.scPcp.Panel2.SuspendLayout();
             this.scPcp.SuspendLayout();
             this.SuspendLayout();
             // 
-            // MSmain
+            // msMain
             // 
-            this.MSmain.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.msMain.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.文件ToolStripMenuItem});
-            this.MSmain.Location = new System.Drawing.Point(0, 0);
-            this.MSmain.Name = "MSmain";
-            this.MSmain.Size = new System.Drawing.Size(1084, 25);
-            this.MSmain.TabIndex = 2;
-            this.MSmain.Text = "menuStrip1";
+            this.msMain.Location = new System.Drawing.Point(0, 0);
+            this.msMain.Name = "msMain";
+            this.msMain.Size = new System.Drawing.Size(1084, 25);
+            this.msMain.TabIndex = 2;
+            this.msMain.Text = "menuStrip1";
             // 
             // 文件ToolStripMenuItem
             // 
@@ -92,86 +92,86 @@
             this.打开ToolStripMenuItem.Size = new System.Drawing.Size(100, 22);
             this.打开ToolStripMenuItem.Text = "打开";
             // 
-            // TSmain
+            // tsMain
             // 
-            this.TSmain.Location = new System.Drawing.Point(0, 25);
-            this.TSmain.Name = "TSmain";
-            this.TSmain.Size = new System.Drawing.Size(1084, 25);
-            this.TSmain.TabIndex = 3;
-            this.TSmain.Text = "toolStrip1";
+            this.tsMain.Location = new System.Drawing.Point(0, 25);
+            this.tsMain.Name = "tsMain";
+            this.tsMain.Size = new System.Drawing.Size(1084, 25);
+            this.tsMain.TabIndex = 3;
+            this.tsMain.Text = "toolStrip1";
             // 
-            // SCmain
+            // scMain
             // 
-            this.SCmain.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.SCmain.Location = new System.Drawing.Point(0, 50);
-            this.SCmain.Name = "SCmain";
+            this.scMain.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.scMain.Location = new System.Drawing.Point(0, 50);
+            this.scMain.Name = "scMain";
             // 
-            // SCmain.Panel1
+            // scMain.Panel1
             // 
-            this.SCmain.Panel1.Controls.Add(this.SCleft);
+            this.scMain.Panel1.Controls.Add(this.scLeft);
             // 
-            // SCmain.Panel2
+            // scMain.Panel2
             // 
-            this.SCmain.Panel2.Controls.Add(this.SCright);
-            this.SCmain.Size = new System.Drawing.Size(1084, 451);
-            this.SCmain.SplitterDistance = 160;
-            this.SCmain.TabIndex = 4;
+            this.scMain.Panel2.Controls.Add(this.scRight);
+            this.scMain.Size = new System.Drawing.Size(1084, 451);
+            this.scMain.SplitterDistance = 160;
+            this.scMain.TabIndex = 4;
             // 
-            // SCleft
+            // scLeft
             // 
-            this.SCleft.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.SCleft.Location = new System.Drawing.Point(0, 0);
-            this.SCleft.Name = "SCleft";
-            this.SCleft.Orientation = System.Windows.Forms.Orientation.Horizontal;
+            this.scLeft.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.scLeft.Location = new System.Drawing.Point(0, 0);
+            this.scLeft.Name = "scLeft";
+            this.scLeft.Orientation = System.Windows.Forms.Orientation.Horizontal;
             // 
-            // SCleft.Panel1
+            // scLeft.Panel1
             // 
-            this.SCleft.Panel1.Controls.Add(this.TVdc);
+            this.scLeft.Panel1.Controls.Add(this.tvDC);
             // 
-            // SCleft.Panel2
+            // scLeft.Panel2
             // 
-            this.SCleft.Panel2.Controls.Add(this.TVinventory);
-            this.SCleft.Size = new System.Drawing.Size(160, 451);
-            this.SCleft.SplitterDistance = 263;
-            this.SCleft.TabIndex = 0;
+            this.scLeft.Panel2.Controls.Add(this.tvInventory);
+            this.scLeft.Size = new System.Drawing.Size(160, 451);
+            this.scLeft.SplitterDistance = 263;
+            this.scLeft.TabIndex = 0;
             // 
-            // TVdc
+            // tvDC
             // 
-            this.TVdc.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.TVdc.Font = new System.Drawing.Font("等线", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.TVdc.Location = new System.Drawing.Point(0, 0);
-            this.TVdc.Name = "TVdc";
-            this.TVdc.Size = new System.Drawing.Size(160, 263);
-            this.TVdc.TabIndex = 0;
-            this.TVdc.NodeMouseClick += new System.Windows.Forms.TreeNodeMouseClickEventHandler(this.TVdc_NodeMouseClick);
+            this.tvDC.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.tvDC.Font = new System.Drawing.Font("等线", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.tvDC.Location = new System.Drawing.Point(0, 0);
+            this.tvDC.Name = "tvDC";
+            this.tvDC.Size = new System.Drawing.Size(160, 263);
+            this.tvDC.TabIndex = 0;
+            this.tvDC.NodeMouseClick += new System.Windows.Forms.TreeNodeMouseClickEventHandler(this.tvDC_NodeMouseClick);
             // 
-            // TVinventory
+            // tvInventory
             // 
-            this.TVinventory.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.TVinventory.Location = new System.Drawing.Point(0, 0);
-            this.TVinventory.Name = "TVinventory";
-            this.TVinventory.Size = new System.Drawing.Size(160, 184);
-            this.TVinventory.TabIndex = 1;
+            this.tvInventory.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.tvInventory.Location = new System.Drawing.Point(0, 0);
+            this.tvInventory.Name = "tvInventory";
+            this.tvInventory.Size = new System.Drawing.Size(160, 184);
+            this.tvInventory.TabIndex = 1;
             // 
-            // SCright
+            // scRight
             // 
-            this.SCright.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.SCright.FixedPanel = System.Windows.Forms.FixedPanel.Panel1;
-            this.SCright.IsSplitterFixed = true;
-            this.SCright.Location = new System.Drawing.Point(0, 0);
-            this.SCright.Name = "SCright";
-            this.SCright.Orientation = System.Windows.Forms.Orientation.Horizontal;
+            this.scRight.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.scRight.FixedPanel = System.Windows.Forms.FixedPanel.Panel1;
+            this.scRight.IsSplitterFixed = true;
+            this.scRight.Location = new System.Drawing.Point(0, 0);
+            this.scRight.Name = "scRight";
+            this.scRight.Orientation = System.Windows.Forms.Orientation.Horizontal;
             // 
-            // SCright.Panel1
+            // scRight.Panel1
             // 
-            this.SCright.Panel1.Controls.Add(this.scPcp);
+            this.scRight.Panel1.Controls.Add(this.scPcp);
             // 
-            // SCright.Panel2
+            // scRight.Panel2
             // 
-            this.SCright.Panel2.Controls.Add(this.Pun);
-            this.SCright.Size = new System.Drawing.Size(920, 451);
-            this.SCright.SplitterDistance = 52;
-            this.SCright.TabIndex = 0;
+            this.scRight.Panel2.Controls.Add(this.pUN);
+            this.scRight.Size = new System.Drawing.Size(920, 451);
+            this.scRight.SplitterDistance = 52;
+            this.scRight.TabIndex = 0;
             // 
             // scPcp
             // 
@@ -188,7 +188,7 @@
             // 
             // scPcp.Panel2
             // 
-            this.scPcp.Panel2.Controls.Add(this.BTNpcpAddHigh);
+            this.scPcp.Panel2.Controls.Add(this.btnPcpAdd);
             this.scPcp.Panel2.Controls.Add(this.TLPmPF);
             this.scPcp.Panel2.Controls.Add(this.TLPmPE);
             this.scPcp.Size = new System.Drawing.Size(920, 52);
@@ -225,18 +225,19 @@
             this.RBmPE.UseVisualStyleBackColor = true;
             this.RBmPE.CheckedChanged += new System.EventHandler(this.RBmP_CheckedChanged);
             // 
-            // BTNpcpAddHigh
+            // btnPcpAdd
             // 
-            this.BTNpcpAddHigh.Dock = System.Windows.Forms.DockStyle.Left;
-            this.BTNpcpAddHigh.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
-            this.BTNpcpAddHigh.Font = new System.Drawing.Font("幼圆", 15.75F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.BTNpcpAddHigh.Location = new System.Drawing.Point(8, 0);
-            this.BTNpcpAddHigh.Name = "BTNpcpAddHigh";
-            this.BTNpcpAddHigh.Size = new System.Drawing.Size(24, 52);
-            this.BTNpcpAddHigh.TabIndex = 5;
-            this.BTNpcpAddHigh.TabStop = false;
-            this.BTNpcpAddHigh.Text = "+";
-            this.BTNpcpAddHigh.UseVisualStyleBackColor = true;
+            this.btnPcpAdd.Dock = System.Windows.Forms.DockStyle.Left;
+            this.btnPcpAdd.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
+            this.btnPcpAdd.Font = new System.Drawing.Font("幼圆", 15.75F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.btnPcpAdd.Location = new System.Drawing.Point(8, 0);
+            this.btnPcpAdd.Name = "btnPcpAdd";
+            this.btnPcpAdd.Size = new System.Drawing.Size(24, 52);
+            this.btnPcpAdd.TabIndex = 5;
+            this.btnPcpAdd.TabStop = false;
+            this.btnPcpAdd.Text = "+";
+            this.btnPcpAdd.UseVisualStyleBackColor = true;
+            this.btnPcpAdd.Click += new System.EventHandler(this.btnPcpAdd_Click);
             // 
             // TLPmPF
             // 
@@ -268,35 +269,35 @@
             this.TLPmPE.Size = new System.Drawing.Size(4, 52);
             this.TLPmPE.TabIndex = 3;
             // 
-            // Pun
+            // pUN
             // 
-            this.Pun.Location = new System.Drawing.Point(88, 46);
-            this.Pun.Name = "Pun";
-            this.Pun.Size = new System.Drawing.Size(629, 245);
-            this.Pun.TabIndex = 0;
+            this.pUN.Location = new System.Drawing.Point(88, 46);
+            this.pUN.Name = "pUN";
+            this.pUN.Size = new System.Drawing.Size(629, 245);
+            this.pUN.TabIndex = 0;
             // 
             // FmMain
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(1084, 501);
-            this.Controls.Add(this.SCmain);
-            this.Controls.Add(this.TSmain);
-            this.Controls.Add(this.MSmain);
+            this.Controls.Add(this.scMain);
+            this.Controls.Add(this.tsMain);
+            this.Controls.Add(this.msMain);
             this.Name = "FmMain";
             this.Text = "Form1";
             this.WindowState = System.Windows.Forms.FormWindowState.Maximized;
-            this.MSmain.ResumeLayout(false);
-            this.MSmain.PerformLayout();
-            this.SCmain.Panel1.ResumeLayout(false);
-            this.SCmain.Panel2.ResumeLayout(false);
-            this.SCmain.ResumeLayout(false);
-            this.SCleft.Panel1.ResumeLayout(false);
-            this.SCleft.Panel2.ResumeLayout(false);
-            this.SCleft.ResumeLayout(false);
-            this.SCright.Panel1.ResumeLayout(false);
-            this.SCright.Panel2.ResumeLayout(false);
-            this.SCright.ResumeLayout(false);
+            this.msMain.ResumeLayout(false);
+            this.msMain.PerformLayout();
+            this.scMain.Panel1.ResumeLayout(false);
+            this.scMain.Panel2.ResumeLayout(false);
+            this.scMain.ResumeLayout(false);
+            this.scLeft.Panel1.ResumeLayout(false);
+            this.scLeft.Panel2.ResumeLayout(false);
+            this.scLeft.ResumeLayout(false);
+            this.scRight.Panel1.ResumeLayout(false);
+            this.scRight.Panel2.ResumeLayout(false);
+            this.scRight.ResumeLayout(false);
             this.scPcp.Panel1.ResumeLayout(false);
             this.scPcp.Panel1.PerformLayout();
             this.scPcp.Panel2.ResumeLayout(false);
@@ -308,21 +309,21 @@
         }
 
         #endregion
-        private System.Windows.Forms.MenuStrip MSmain;
-        private System.Windows.Forms.ToolStrip TSmain;
-        private System.Windows.Forms.SplitContainer SCmain;
-        private System.Windows.Forms.SplitContainer SCleft;
-        private System.Windows.Forms.TreeView TVdc;
-        private System.Windows.Forms.SplitContainer SCright;
-        private System.Windows.Forms.TreeView TVinventory;
+        private System.Windows.Forms.MenuStrip msMain;
+        private System.Windows.Forms.ToolStrip tsMain;
+        private System.Windows.Forms.SplitContainer scMain;
+        private System.Windows.Forms.SplitContainer scLeft;
+        private System.Windows.Forms.TreeView tvDC;
+        private System.Windows.Forms.SplitContainer scRight;
+        private System.Windows.Forms.TreeView tvInventory;
         private System.Windows.Forms.ToolStripMenuItem 文件ToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem 新建ToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem 打开ToolStripMenuItem;
-        private System.Windows.Forms.Panel Pun;
+        private System.Windows.Forms.Panel pUN;
         private System.Windows.Forms.SplitContainer scPcp;
         private System.Windows.Forms.RadioButton RBmPF;
         private System.Windows.Forms.RadioButton RBmPE;
-        private System.Windows.Forms.Button BTNpcpAddHigh;
+        private System.Windows.Forms.Button btnPcpAdd;
         private System.Windows.Forms.TableLayoutPanel TLPmPF;
         private System.Windows.Forms.TableLayoutPanel TLPmPE;
     }

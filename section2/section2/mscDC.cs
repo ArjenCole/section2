@@ -69,13 +69,21 @@ namespace section2
         }
         #endregion
 
-        public static void Update(string pOname, mcPE pmPE)
+        public static void Add(mcPE pPE)
         {
-            dc.PEdic.UpdateSon(pOname, pmPE);
+            dc.PEdic.Add(pPE);
         }
-        public static void Update(string pOname, mcPF pmPF)
+        public static void Add(mcPF pPF)
         {
-            dc.PFdic.UpdateSon(pOname, pmPF);
+            dc.PFdic.Add(pPF);
+        }
+        public static void Update(string pOname, mcPE pPE)
+        {
+            dc.PEdic.UpdateSon(pOname, pPE);
+        }
+        public static void Update(string pOname, mcPF pPF)
+        {
+            dc.PFdic.UpdateSon(pOname, pPF);
         }
     }
 }

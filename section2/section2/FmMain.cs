@@ -24,11 +24,12 @@ namespace section2
 
         }
 
-        private void BTNpcpAddHigh_Click(object sender, EventArgs e)
+        private void btnPcpAdd_Click(object sender, EventArgs e)
         {
-
+            if (RBmPE.Checked) mscDC.Add(new mcP.mcPE("围护原则"));
+            if (RBmPF.Checked) mscDC.Add(new mcP.mcPF("地基处理"));
+            Fls_scPcp();
         }
-
         private void RBmP_CheckedChanged(object sender, EventArgs e)
         {
             TLPmPE.Visible = RBmPE.Checked;
@@ -38,11 +39,11 @@ namespace section2
         private void 新建ToolStripMenuItem_Click(object sender, EventArgs e)
         {
             mscVctrl.NewFileFromGuide();
-            flashTVdc();
+            fls_tvDC();
             Fls_scPcp();
         }
 
-        private void TVdc_NodeMouseClick(object sender, TreeNodeMouseClickEventArgs e)
+        private void tvDC_NodeMouseClick(object sender, TreeNodeMouseClickEventArgs e)
         {
             switch (nodeType(e.Node))
             {
@@ -68,10 +69,10 @@ namespace section2
             mscTools.DoubleBuffered(TLPmPF);
         }
 
-        private void flashTVdc()
+        private void fls_tvDC()
         {
             TreeNode ActiveNode = null;
-            TVdc.Nodes.Clear();
+            tvDC.Nodes.Clear();
             mcDC tDC = mscDC.getDC();
             if (tDC == null) { return; }
             TreeNode NodeDC = new TreeNode(tDC.BI.ProjectName, 1, 2);//一级节点
@@ -87,10 +88,10 @@ namespace section2
                 }
                 NodeDC.Nodes.Add(NodeSG);
             }
-            TVdc.Nodes.Add(NodeDC);
-            TVdc.ExpandAll();
+            tvDC.Nodes.Add(NodeDC);
+            tvDC.ExpandAll();
             if (ActiveNode != null)
-                TVdc.SelectedNode = ActiveNode;
+                tvDC.SelectedNode = ActiveNode;
         }
 
         public void Fls_scPcp()
@@ -157,7 +158,7 @@ namespace section2
         }
         #endregion
 
-        private void flashDGVunit(string pSGname,string pUNname)
+        private void fls_pUN(string pSGname,string pUNname)
         {
             mcUN tUN = mscDC.getUN(pSGname, pUNname);
 
@@ -179,6 +180,7 @@ namespace section2
             if (pTN.Parent.Parent.Parent == null) return eNodeType.UN;
             return eNodeType.Other;
         }
+
 
     }
 }

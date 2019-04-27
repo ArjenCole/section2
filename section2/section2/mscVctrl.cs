@@ -24,15 +24,14 @@ namespace section2
         }
 
         #region 新建
-        public static mcDC NewFileFromGuide()
+        public static void NewFileFromGuide()
         {
             FmGuide fmGuide = new FmTool.FmGuide();
             if (fmGuide.ShowDialog() == DialogResult.OK)
-                return mscDC.newDC(fmGuide.ProjectName, fmGuide.ProjectIndex, fmGuide.Designer, fmGuide.SegmentCount, fmGuide.Cat);
+                mscDC.newDC(fmGuide.ProjectName, fmGuide.ProjectIndex, fmGuide.Designer, fmGuide.SegmentCount, fmGuide.Cat);
             else
-                return mscDC.newDC();
+                mscDC.newDC();
         }
-
         #endregion
 
         public static void ShowFmPE(string pName)
