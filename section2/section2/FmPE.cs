@@ -67,6 +67,8 @@ namespace section2
         {
             if (e.Button == MouseButtons.Right)
             {
+                dgvPE.ClearSelection();
+                dgvPE[e.ColumnIndex, e.RowIndex].Selected = true;
                 cmsDrop.Items.Clear();
                 var colIdx = e.ColumnIndex;
                 var rowIdx = e.RowIndex;
@@ -202,7 +204,6 @@ namespace section2
         {
             return pDGV.SelectedCells[0].RowIndex;
         }
-
-
+        
     }
 }

@@ -30,7 +30,7 @@ namespace section2.mcP
         }
         public double DepthDoub()
         {
-            return (double)(DepthInt() / 1000);
+            return (double)(DepthInt() / 1000.0);
         }
         public mcPEn()
         {

@@ -29,10 +29,10 @@
         private void InitializeComponent()
         {
             this.components = new System.ComponentModel.Container();
-            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle5 = new System.Windows.Forms.DataGridViewCellStyle();
-            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle8 = new System.Windows.Forms.DataGridViewCellStyle();
-            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle6 = new System.Windows.Forms.DataGridViewCellStyle();
-            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle7 = new System.Windows.Forms.DataGridViewCellStyle();
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle1 = new System.Windows.Forms.DataGridViewCellStyle();
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle4 = new System.Windows.Forms.DataGridViewCellStyle();
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle2 = new System.Windows.Forms.DataGridViewCellStyle();
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle3 = new System.Windows.Forms.DataGridViewCellStyle();
             this.tcMain = new System.Windows.Forms.TabControl();
             this.tpPE = new System.Windows.Forms.TabPage();
             this.btnAddPEn = new System.Windows.Forms.Button();
@@ -42,9 +42,6 @@
             this.eColPEnDis = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.eColWSDis = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.cmsDrop = new System.Windows.Forms.ContextMenuStrip(this.components);
-            this.toolStripMenuItem1 = new System.Windows.Forms.ToolStripMenuItem();
-            this.toolStripMenuItem2 = new System.Windows.Forms.ToolStripMenuItem();
-            this.toolStripMenuItem3 = new System.Windows.Forms.ToolStripMenuItem();
             this.tpPD = new System.Windows.Forms.TabPage();
             this.tpPW = new System.Windows.Forms.TabPage();
             this.tcPW = new System.Windows.Forms.TabControl();
@@ -79,7 +76,6 @@
             this.tcMain.SuspendLayout();
             this.tpPE.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.dgvPE)).BeginInit();
-            this.cmsDrop.SuspendLayout();
             this.tpPW.SuspendLayout();
             this.tcPW.SuspendLayout();
             this.gbPEparaDock.SuspendLayout();
@@ -94,7 +90,7 @@
             this.tcMain.Location = new System.Drawing.Point(7, 195);
             this.tcMain.Name = "tcMain";
             this.tcMain.SelectedIndex = 0;
-            this.tcMain.Size = new System.Drawing.Size(799, 342);
+            this.tcMain.Size = new System.Drawing.Size(598, 342);
             this.tcMain.TabIndex = 1;
             // 
             // tpPE
@@ -104,16 +100,17 @@
             this.tpPE.Location = new System.Drawing.Point(4, 22);
             this.tpPE.Name = "tpPE";
             this.tpPE.Padding = new System.Windows.Forms.Padding(3);
-            this.tpPE.Size = new System.Drawing.Size(791, 316);
+            this.tpPE.Size = new System.Drawing.Size(590, 316);
             this.tpPE.TabIndex = 0;
             this.tpPE.Text = "围护原则";
             this.tpPE.UseVisualStyleBackColor = true;
             // 
             // btnAddPEn
             // 
+            this.btnAddPEn.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
             this.btnAddPEn.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
             this.btnAddPEn.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.btnAddPEn.Location = new System.Drawing.Point(746, 3);
+            this.btnAddPEn.Location = new System.Drawing.Point(545, 3);
             this.btnAddPEn.Name = "btnAddPEn";
             this.btnAddPEn.Size = new System.Drawing.Size(41, 30);
             this.btnAddPEn.TabIndex = 62;
@@ -126,14 +123,14 @@
             this.dgvPE.AllowUserToAddRows = false;
             this.dgvPE.AllowUserToResizeColumns = false;
             this.dgvPE.AllowUserToResizeRows = false;
-            dataGridViewCellStyle5.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-            dataGridViewCellStyle5.BackColor = System.Drawing.SystemColors.Control;
-            dataGridViewCellStyle5.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            dataGridViewCellStyle5.ForeColor = System.Drawing.SystemColors.WindowText;
-            dataGridViewCellStyle5.SelectionBackColor = System.Drawing.SystemColors.Highlight;
-            dataGridViewCellStyle5.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
-            dataGridViewCellStyle5.WrapMode = System.Windows.Forms.DataGridViewTriState.True;
-            this.dgvPE.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle5;
+            dataGridViewCellStyle1.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+            dataGridViewCellStyle1.BackColor = System.Drawing.SystemColors.Control;
+            dataGridViewCellStyle1.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            dataGridViewCellStyle1.ForeColor = System.Drawing.SystemColors.WindowText;
+            dataGridViewCellStyle1.SelectionBackColor = System.Drawing.SystemColors.Highlight;
+            dataGridViewCellStyle1.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
+            dataGridViewCellStyle1.WrapMode = System.Windows.Forms.DataGridViewTriState.True;
+            this.dgvPE.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle1;
             this.dgvPE.ColumnHeadersHeightSizeMode = System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode.AutoSize;
             this.dgvPE.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
             this.eColdepth,
@@ -141,29 +138,29 @@
             this.eColPEnDis,
             this.eColWSDis});
             this.dgvPE.ContextMenuStrip = this.cmsDrop;
-            dataGridViewCellStyle8.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
-            dataGridViewCellStyle8.BackColor = System.Drawing.SystemColors.Window;
-            dataGridViewCellStyle8.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            dataGridViewCellStyle8.ForeColor = System.Drawing.SystemColors.ControlText;
-            dataGridViewCellStyle8.SelectionBackColor = System.Drawing.SystemColors.Highlight;
-            dataGridViewCellStyle8.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
-            dataGridViewCellStyle8.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
-            this.dgvPE.DefaultCellStyle = dataGridViewCellStyle8;
+            dataGridViewCellStyle4.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
+            dataGridViewCellStyle4.BackColor = System.Drawing.SystemColors.Window;
+            dataGridViewCellStyle4.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            dataGridViewCellStyle4.ForeColor = System.Drawing.SystemColors.ControlText;
+            dataGridViewCellStyle4.SelectionBackColor = System.Drawing.SystemColors.Highlight;
+            dataGridViewCellStyle4.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
+            dataGridViewCellStyle4.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
+            this.dgvPE.DefaultCellStyle = dataGridViewCellStyle4;
             this.dgvPE.Dock = System.Windows.Forms.DockStyle.Fill;
             this.dgvPE.Location = new System.Drawing.Point(3, 3);
             this.dgvPE.Name = "dgvPE";
             this.dgvPE.RowHeadersVisible = false;
             this.dgvPE.RowTemplate.Height = 23;
             this.dgvPE.SelectionMode = System.Windows.Forms.DataGridViewSelectionMode.CellSelect;
-            this.dgvPE.Size = new System.Drawing.Size(785, 310);
+            this.dgvPE.Size = new System.Drawing.Size(584, 310);
             this.dgvPE.TabIndex = 61;
             this.dgvPE.CellDoubleClick += new System.Windows.Forms.DataGridViewCellEventHandler(this.dgvPE_CellDoubleClick);
             this.dgvPE.CellMouseUp += new System.Windows.Forms.DataGridViewCellMouseEventHandler(this.dgvPE_CellMouseUp);
             // 
             // eColdepth
             // 
-            dataGridViewCellStyle6.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleRight;
-            this.eColdepth.DefaultCellStyle = dataGridViewCellStyle6;
+            dataGridViewCellStyle2.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleRight;
+            this.eColdepth.DefaultCellStyle = dataGridViewCellStyle2;
             this.eColdepth.HeaderText = "埋深";
             this.eColdepth.Name = "eColdepth";
             this.eColdepth.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
@@ -171,8 +168,8 @@
             // 
             // eColrange
             // 
-            dataGridViewCellStyle7.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
-            this.eColrange.DefaultCellStyle = dataGridViewCellStyle7;
+            dataGridViewCellStyle3.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
+            this.eColrange.DefaultCellStyle = dataGridViewCellStyle3;
             this.eColrange.HeaderText = "范围";
             this.eColrange.Name = "eColrange";
             this.eColrange.ReadOnly = true;
@@ -198,31 +195,9 @@
             // 
             // cmsDrop
             // 
-            this.cmsDrop.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
-            this.toolStripMenuItem1,
-            this.toolStripMenuItem2,
-            this.toolStripMenuItem3});
             this.cmsDrop.Name = "cmsDrop";
-            this.cmsDrop.Size = new System.Drawing.Size(193, 70);
+            this.cmsDrop.Size = new System.Drawing.Size(61, 4);
             this.cmsDrop.ItemClicked += new System.Windows.Forms.ToolStripItemClickedEventHandler(this.cmsDrop_ItemClicked);
-            // 
-            // toolStripMenuItem1
-            // 
-            this.toolStripMenuItem1.Name = "toolStripMenuItem1";
-            this.toolStripMenuItem1.Size = new System.Drawing.Size(192, 22);
-            this.toolStripMenuItem1.Text = "toolStripMenuItem1";
-            // 
-            // toolStripMenuItem2
-            // 
-            this.toolStripMenuItem2.Name = "toolStripMenuItem2";
-            this.toolStripMenuItem2.Size = new System.Drawing.Size(192, 22);
-            this.toolStripMenuItem2.Text = "toolStripMenuItem2";
-            // 
-            // toolStripMenuItem3
-            // 
-            this.toolStripMenuItem3.Name = "toolStripMenuItem3";
-            this.toolStripMenuItem3.Size = new System.Drawing.Size(192, 22);
-            this.toolStripMenuItem3.Text = "toolStripMenuItem3";
             // 
             // tpPD
             // 
@@ -552,7 +527,7 @@
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(814, 541);
+            this.ClientSize = new System.Drawing.Size(610, 541);
             this.Controls.Add(this.btnCancel);
             this.Controls.Add(this.btnOK);
             this.Controls.Add(this.txtPEname);
@@ -570,7 +545,6 @@
             this.tcMain.ResumeLayout(false);
             this.tpPE.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)(this.dgvPE)).EndInit();
-            this.cmsDrop.ResumeLayout(false);
             this.tpPW.ResumeLayout(false);
             this.tcPW.ResumeLayout(false);
             this.gbPEparaDock.ResumeLayout(false);
@@ -618,9 +592,6 @@
         private System.Windows.Forms.Button btnAddPEn;
         private System.Windows.Forms.DataGridView dgvPE;
         private System.Windows.Forms.ContextMenuStrip cmsDrop;
-        private System.Windows.Forms.ToolStripMenuItem toolStripMenuItem1;
-        private System.Windows.Forms.ToolStripMenuItem toolStripMenuItem2;
-        private System.Windows.Forms.ToolStripMenuItem toolStripMenuItem3;
         private System.Windows.Forms.DataGridViewTextBoxColumn eColdepth;
         private System.Windows.Forms.DataGridViewTextBoxColumn eColrange;
         private System.Windows.Forms.DataGridViewTextBoxColumn eColPEnDis;
