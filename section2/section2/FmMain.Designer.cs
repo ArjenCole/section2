@@ -38,7 +38,7 @@
             this.TVdc = new System.Windows.Forms.TreeView();
             this.TVinventory = new System.Windows.Forms.TreeView();
             this.SCright = new System.Windows.Forms.SplitContainer();
-            this.SCpcpHigh = new System.Windows.Forms.SplitContainer();
+            this.scPcp = new System.Windows.Forms.SplitContainer();
             this.RBmPF = new System.Windows.Forms.RadioButton();
             this.RBmPE = new System.Windows.Forms.RadioButton();
             this.BTNpcpAddHigh = new System.Windows.Forms.Button();
@@ -55,9 +55,9 @@
             this.SCright.Panel1.SuspendLayout();
             this.SCright.Panel2.SuspendLayout();
             this.SCright.SuspendLayout();
-            this.SCpcpHigh.Panel1.SuspendLayout();
-            this.SCpcpHigh.Panel2.SuspendLayout();
-            this.SCpcpHigh.SuspendLayout();
+            this.scPcp.Panel1.SuspendLayout();
+            this.scPcp.Panel2.SuspendLayout();
+            this.scPcp.SuspendLayout();
             this.SuspendLayout();
             // 
             // MSmain
@@ -164,7 +164,7 @@
             // 
             // SCright.Panel1
             // 
-            this.SCright.Panel1.Controls.Add(this.SCpcpHigh);
+            this.SCright.Panel1.Controls.Add(this.scPcp);
             // 
             // SCright.Panel2
             // 
@@ -173,27 +173,27 @@
             this.SCright.SplitterDistance = 52;
             this.SCright.TabIndex = 0;
             // 
-            // SCpcpHigh
+            // scPcp
             // 
-            this.SCpcpHigh.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.SCpcpHigh.FixedPanel = System.Windows.Forms.FixedPanel.Panel1;
-            this.SCpcpHigh.IsSplitterFixed = true;
-            this.SCpcpHigh.Location = new System.Drawing.Point(0, 0);
-            this.SCpcpHigh.Name = "SCpcpHigh";
+            this.scPcp.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.scPcp.FixedPanel = System.Windows.Forms.FixedPanel.Panel1;
+            this.scPcp.IsSplitterFixed = true;
+            this.scPcp.Location = new System.Drawing.Point(0, 0);
+            this.scPcp.Name = "scPcp";
             // 
-            // SCpcpHigh.Panel1
+            // scPcp.Panel1
             // 
-            this.SCpcpHigh.Panel1.Controls.Add(this.RBmPF);
-            this.SCpcpHigh.Panel1.Controls.Add(this.RBmPE);
+            this.scPcp.Panel1.Controls.Add(this.RBmPF);
+            this.scPcp.Panel1.Controls.Add(this.RBmPE);
             // 
-            // SCpcpHigh.Panel2
+            // scPcp.Panel2
             // 
-            this.SCpcpHigh.Panel2.Controls.Add(this.BTNpcpAddHigh);
-            this.SCpcpHigh.Panel2.Controls.Add(this.TLPmPF);
-            this.SCpcpHigh.Panel2.Controls.Add(this.TLPmPE);
-            this.SCpcpHigh.Size = new System.Drawing.Size(920, 52);
-            this.SCpcpHigh.SplitterDistance = 105;
-            this.SCpcpHigh.TabIndex = 2;
+            this.scPcp.Panel2.Controls.Add(this.BTNpcpAddHigh);
+            this.scPcp.Panel2.Controls.Add(this.TLPmPF);
+            this.scPcp.Panel2.Controls.Add(this.TLPmPE);
+            this.scPcp.Size = new System.Drawing.Size(920, 52);
+            this.scPcp.SplitterDistance = 105;
+            this.scPcp.TabIndex = 2;
             // 
             // RBmPF
             // 
@@ -297,11 +297,11 @@
             this.SCright.Panel1.ResumeLayout(false);
             this.SCright.Panel2.ResumeLayout(false);
             this.SCright.ResumeLayout(false);
-            this.SCpcpHigh.Panel1.ResumeLayout(false);
-            this.SCpcpHigh.Panel1.PerformLayout();
-            this.SCpcpHigh.Panel2.ResumeLayout(false);
-            this.SCpcpHigh.Panel2.PerformLayout();
-            this.SCpcpHigh.ResumeLayout(false);
+            this.scPcp.Panel1.ResumeLayout(false);
+            this.scPcp.Panel1.PerformLayout();
+            this.scPcp.Panel2.ResumeLayout(false);
+            this.scPcp.Panel2.PerformLayout();
+            this.scPcp.ResumeLayout(false);
             this.ResumeLayout(false);
             this.PerformLayout();
 
@@ -319,7 +319,7 @@
         private System.Windows.Forms.ToolStripMenuItem 新建ToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem 打开ToolStripMenuItem;
         private System.Windows.Forms.Panel Pun;
-        private System.Windows.Forms.SplitContainer SCpcpHigh;
+        private System.Windows.Forms.SplitContainer scPcp;
         private System.Windows.Forms.RadioButton RBmPF;
         private System.Windows.Forms.RadioButton RBmPE;
         private System.Windows.Forms.Button BTNpcpAddHigh;

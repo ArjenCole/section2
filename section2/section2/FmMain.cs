@@ -39,7 +39,7 @@ namespace section2
         {
             mscVctrl.NewFileFromGuide();
             flashTVdc();
-            flashPcpTab();
+            Fls_scPcp();
         }
 
         private void TVdc_NodeMouseClick(object sender, TreeNodeMouseClickEventArgs e)
@@ -63,7 +63,7 @@ namespace section2
 
         private void initPcpTab()
         {
-            mscTools.DoubleBuffered(SCpcpHigh);
+            mscTools.DoubleBuffered(scPcp);
             mscTools.DoubleBuffered(TLPmPE);
             mscTools.DoubleBuffered(TLPmPF);
         }
@@ -93,12 +93,12 @@ namespace section2
                 TVdc.SelectedNode = ActiveNode;
         }
 
-        private void flashPcpTab()
+        public void Fls_scPcp()
         {
             TLPmPE.Controls.Clear();
             TLPmPF.Controls.Clear();
-            if (mscDC.getDC() == null) { RBmPE.Checked = true; SCpcpHigh.Enabled = false; return; }
-            SCpcpHigh.Enabled = true; SCpcpHigh.Visible = true;
+            if (mscDC.getDC() == null) { RBmPE.Checked = true; scPcp.Enabled = false; return; }
+            scPcp.Enabled = true; scPcp.Visible = true;
 
             foreach (string feKey in mscDC.getPEdic().mDic.Keys)
                 TLPmPE.Controls.Add(newPcpLab("围护", feKey));

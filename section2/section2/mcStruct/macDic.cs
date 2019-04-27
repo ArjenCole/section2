@@ -18,15 +18,11 @@ namespace section2.mcStruct
         public int Count()
         {  return mDic.Count; }
 
-        public T Son(string pName)
-        {
-            return mDic[pName];
-        }
-        public T Son(int pIdx)
-        {
-            return mDic[mDic.Keys.ToList()[pIdx]];
-        }
+        public T Son(string pName) { return mDic[pName]; }
+        public T Son(int pIdx) { return mDic[mDic.Keys.ToList()[pIdx]]; }
+        public List<string> SonKeys() { return mDic.Keys.ToList(); }
         public List<T> Sons() { return mDic.Values.ToList(); }
+
 
         public virtual void Add(T pT)
         {
@@ -36,9 +32,22 @@ namespace section2.mcStruct
             mDic.Add(tName, pT);
         }
 
-        public void SetSon(int pIdx, T pT)
+        public void UpdateSon(int pIdx, T pT)
         {
             mDic[mDic.Keys.ToList()[pIdx]] = pT;                
+        }
+
+        public void UpdateSon(string pOname, T pT)
+        {
+            if (pOname == ((Iname)pT).GetName())
+            {
+                mDic[pOname] = pT;
+            }
+            else
+            {
+                mDic.Remove(pOname);
+                Add(pT);
+            }
         }
     }
     public class mcDic<T> :macDic<T>

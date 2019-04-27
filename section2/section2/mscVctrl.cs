@@ -39,7 +39,10 @@ namespace section2
         {
             FmPE fmPE = new FmPE(mscDC.getPE(pName));
             if (fmPE.ShowDialog() == DialogResult.OK)
-                mscDC.updatePE(pName, fmPE.resultPE);
+            {
+                mscDC.Update(pName, fmPE.rtPE);
+                fmMain.Fls_scPcp();
+            }
 
         }
         public static void ShowFmPF(string pName)

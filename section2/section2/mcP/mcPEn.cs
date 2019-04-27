@@ -20,18 +20,30 @@ namespace section2.mcP
         public List<mcPEns> ListPEns = null;
         public mcCpt cptStopWater;//止水
 
-        public string Depth()
+        public string DepthStr()
         {
             return Name;
         }
-
+        public int DepthInt()
+        {
+            return int.Parse(Name);
+        }
+        public double DepthDoub()
+        {
+            return (double)(DepthInt() / 1000);
+        }
         public mcPEn()
         {
             SetName("0");
             ListPEns = new List<mcPEns>();
             ListPEns.Add(new mcPEns());
         }
-
+        public mcPEn(int pDepth)
+        {
+            SetName(pDepth.ToString());
+            ListPEns = new List<mcPEns>();
+            ListPEns.Add(new mcPEns());
+        }
         public mcPEn(string pDepth,string pCat)
         {
             SetName(pDepth);

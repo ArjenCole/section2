@@ -29,13 +29,13 @@
         private void InitializeComponent()
         {
             this.components = new System.ComponentModel.Container();
-            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle1 = new System.Windows.Forms.DataGridViewCellStyle();
-            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle4 = new System.Windows.Forms.DataGridViewCellStyle();
-            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle2 = new System.Windows.Forms.DataGridViewCellStyle();
-            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle3 = new System.Windows.Forms.DataGridViewCellStyle();
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle5 = new System.Windows.Forms.DataGridViewCellStyle();
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle8 = new System.Windows.Forms.DataGridViewCellStyle();
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle6 = new System.Windows.Forms.DataGridViewCellStyle();
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle7 = new System.Windows.Forms.DataGridViewCellStyle();
             this.tcMain = new System.Windows.Forms.TabControl();
             this.tpPE = new System.Windows.Forms.TabPage();
-            this.BTNadd = new System.Windows.Forms.Button();
+            this.btnAddPEn = new System.Windows.Forms.Button();
             this.dgvPE = new System.Windows.Forms.DataGridView();
             this.eColdepth = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.eColrange = new System.Windows.Forms.DataGridViewTextBoxColumn();
@@ -54,7 +54,7 @@
             this.tabPage7 = new System.Windows.Forms.TabPage();
             this.tabPage8 = new System.Windows.Forms.TabPage();
             this.tabPage9 = new System.Windows.Forms.TabPage();
-            this.groupBox1 = new System.Windows.Forms.GroupBox();
+            this.gbPEparaDock = new System.Windows.Forms.GroupBox();
             this.lblBackFill = new System.Windows.Forms.Label();
             this.cboDockMat = new System.Windows.Forms.ComboBox();
             this.cboExv = new System.Windows.Forms.ComboBox();
@@ -63,7 +63,7 @@
             this.lblCover = new System.Windows.Forms.Label();
             this.txtDockMat = new System.Windows.Forms.TextBox();
             this.lblDock = new System.Windows.Forms.Label();
-            this.groupBox3 = new System.Windows.Forms.GroupBox();
+            this.gbPEparaFound = new System.Windows.Forms.GroupBox();
             this.label1 = new System.Windows.Forms.Label();
             this.cboFndMat = new System.Windows.Forms.ComboBox();
             this.cboFndAgl = new System.Windows.Forms.ComboBox();
@@ -74,14 +74,16 @@
             this.LBLcushname = new System.Windows.Forms.Label();
             this.txtPEname = new System.Windows.Forms.TextBox();
             this.LBLPEname = new System.Windows.Forms.Label();
+            this.btnOK = new System.Windows.Forms.Button();
+            this.btnCancel = new System.Windows.Forms.Button();
             this.tcMain.SuspendLayout();
             this.tpPE.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.dgvPE)).BeginInit();
             this.cmsDrop.SuspendLayout();
             this.tpPW.SuspendLayout();
             this.tcPW.SuspendLayout();
-            this.groupBox1.SuspendLayout();
-            this.groupBox3.SuspendLayout();
+            this.gbPEparaDock.SuspendLayout();
+            this.gbPEparaFound.SuspendLayout();
             this.SuspendLayout();
             // 
             // tcMain
@@ -97,7 +99,7 @@
             // 
             // tpPE
             // 
-            this.tpPE.Controls.Add(this.BTNadd);
+            this.tpPE.Controls.Add(this.btnAddPEn);
             this.tpPE.Controls.Add(this.dgvPE);
             this.tpPE.Location = new System.Drawing.Point(4, 22);
             this.tpPE.Name = "tpPE";
@@ -107,30 +109,31 @@
             this.tpPE.Text = "围护原则";
             this.tpPE.UseVisualStyleBackColor = true;
             // 
-            // BTNadd
+            // btnAddPEn
             // 
-            this.BTNadd.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
-            this.BTNadd.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.BTNadd.Location = new System.Drawing.Point(746, 3);
-            this.BTNadd.Name = "BTNadd";
-            this.BTNadd.Size = new System.Drawing.Size(41, 30);
-            this.BTNadd.TabIndex = 62;
-            this.BTNadd.Text = "+";
-            this.BTNadd.UseVisualStyleBackColor = true;
+            this.btnAddPEn.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
+            this.btnAddPEn.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.btnAddPEn.Location = new System.Drawing.Point(746, 3);
+            this.btnAddPEn.Name = "btnAddPEn";
+            this.btnAddPEn.Size = new System.Drawing.Size(41, 30);
+            this.btnAddPEn.TabIndex = 62;
+            this.btnAddPEn.Text = "+";
+            this.btnAddPEn.UseVisualStyleBackColor = true;
+            this.btnAddPEn.Click += new System.EventHandler(this.btnAddPEn_Click);
             // 
             // dgvPE
             // 
             this.dgvPE.AllowUserToAddRows = false;
             this.dgvPE.AllowUserToResizeColumns = false;
             this.dgvPE.AllowUserToResizeRows = false;
-            dataGridViewCellStyle1.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-            dataGridViewCellStyle1.BackColor = System.Drawing.SystemColors.Control;
-            dataGridViewCellStyle1.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            dataGridViewCellStyle1.ForeColor = System.Drawing.SystemColors.WindowText;
-            dataGridViewCellStyle1.SelectionBackColor = System.Drawing.SystemColors.Highlight;
-            dataGridViewCellStyle1.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
-            dataGridViewCellStyle1.WrapMode = System.Windows.Forms.DataGridViewTriState.True;
-            this.dgvPE.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle1;
+            dataGridViewCellStyle5.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+            dataGridViewCellStyle5.BackColor = System.Drawing.SystemColors.Control;
+            dataGridViewCellStyle5.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            dataGridViewCellStyle5.ForeColor = System.Drawing.SystemColors.WindowText;
+            dataGridViewCellStyle5.SelectionBackColor = System.Drawing.SystemColors.Highlight;
+            dataGridViewCellStyle5.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
+            dataGridViewCellStyle5.WrapMode = System.Windows.Forms.DataGridViewTriState.True;
+            this.dgvPE.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle5;
             this.dgvPE.ColumnHeadersHeightSizeMode = System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode.AutoSize;
             this.dgvPE.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
             this.eColdepth,
@@ -138,19 +141,20 @@
             this.eColPEnDis,
             this.eColWSDis});
             this.dgvPE.ContextMenuStrip = this.cmsDrop;
-            dataGridViewCellStyle4.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
-            dataGridViewCellStyle4.BackColor = System.Drawing.SystemColors.Window;
-            dataGridViewCellStyle4.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            dataGridViewCellStyle4.ForeColor = System.Drawing.SystemColors.ControlText;
-            dataGridViewCellStyle4.SelectionBackColor = System.Drawing.SystemColors.Highlight;
-            dataGridViewCellStyle4.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
-            dataGridViewCellStyle4.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
-            this.dgvPE.DefaultCellStyle = dataGridViewCellStyle4;
+            dataGridViewCellStyle8.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
+            dataGridViewCellStyle8.BackColor = System.Drawing.SystemColors.Window;
+            dataGridViewCellStyle8.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            dataGridViewCellStyle8.ForeColor = System.Drawing.SystemColors.ControlText;
+            dataGridViewCellStyle8.SelectionBackColor = System.Drawing.SystemColors.Highlight;
+            dataGridViewCellStyle8.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
+            dataGridViewCellStyle8.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
+            this.dgvPE.DefaultCellStyle = dataGridViewCellStyle8;
             this.dgvPE.Dock = System.Windows.Forms.DockStyle.Fill;
             this.dgvPE.Location = new System.Drawing.Point(3, 3);
             this.dgvPE.Name = "dgvPE";
             this.dgvPE.RowHeadersVisible = false;
             this.dgvPE.RowTemplate.Height = 23;
+            this.dgvPE.SelectionMode = System.Windows.Forms.DataGridViewSelectionMode.CellSelect;
             this.dgvPE.Size = new System.Drawing.Size(785, 310);
             this.dgvPE.TabIndex = 61;
             this.dgvPE.CellDoubleClick += new System.Windows.Forms.DataGridViewCellEventHandler(this.dgvPE_CellDoubleClick);
@@ -158,8 +162,8 @@
             // 
             // eColdepth
             // 
-            dataGridViewCellStyle2.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleRight;
-            this.eColdepth.DefaultCellStyle = dataGridViewCellStyle2;
+            dataGridViewCellStyle6.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleRight;
+            this.eColdepth.DefaultCellStyle = dataGridViewCellStyle6;
             this.eColdepth.HeaderText = "埋深";
             this.eColdepth.Name = "eColdepth";
             this.eColdepth.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
@@ -167,8 +171,8 @@
             // 
             // eColrange
             // 
-            dataGridViewCellStyle3.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
-            this.eColrange.DefaultCellStyle = dataGridViewCellStyle3;
+            dataGridViewCellStyle7.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
+            this.eColrange.DefaultCellStyle = dataGridViewCellStyle7;
             this.eColrange.HeaderText = "范围";
             this.eColrange.Name = "eColrange";
             this.eColrange.ReadOnly = true;
@@ -311,23 +315,23 @@
             this.tabPage9.Text = "tabPage9";
             this.tabPage9.UseVisualStyleBackColor = true;
             // 
-            // groupBox1
+            // gbPEparaDock
             // 
-            this.groupBox1.Controls.Add(this.lblBackFill);
-            this.groupBox1.Controls.Add(this.cboDockMat);
-            this.groupBox1.Controls.Add(this.cboExv);
-            this.groupBox1.Controls.Add(this.lblExv);
-            this.groupBox1.Controls.Add(this.txtCovMat);
-            this.groupBox1.Controls.Add(this.lblCover);
-            this.groupBox1.Controls.Add(this.txtDockMat);
-            this.groupBox1.Controls.Add(this.lblDock);
-            this.groupBox1.Font = new System.Drawing.Font("微软雅黑", 10.5F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.groupBox1.Location = new System.Drawing.Point(7, 47);
-            this.groupBox1.Name = "groupBox1";
-            this.groupBox1.Size = new System.Drawing.Size(214, 142);
-            this.groupBox1.TabIndex = 66;
-            this.groupBox1.TabStop = false;
-            this.groupBox1.Text = "挖填类型";
+            this.gbPEparaDock.Controls.Add(this.lblBackFill);
+            this.gbPEparaDock.Controls.Add(this.cboDockMat);
+            this.gbPEparaDock.Controls.Add(this.cboExv);
+            this.gbPEparaDock.Controls.Add(this.lblExv);
+            this.gbPEparaDock.Controls.Add(this.txtCovMat);
+            this.gbPEparaDock.Controls.Add(this.lblCover);
+            this.gbPEparaDock.Controls.Add(this.txtDockMat);
+            this.gbPEparaDock.Controls.Add(this.lblDock);
+            this.gbPEparaDock.Font = new System.Drawing.Font("微软雅黑", 10.5F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.gbPEparaDock.Location = new System.Drawing.Point(7, 47);
+            this.gbPEparaDock.Name = "gbPEparaDock";
+            this.gbPEparaDock.Size = new System.Drawing.Size(214, 142);
+            this.gbPEparaDock.TabIndex = 66;
+            this.gbPEparaDock.TabStop = false;
+            this.gbPEparaDock.Text = "挖填类型";
             // 
             // lblBackFill
             // 
@@ -406,23 +410,23 @@
             this.lblDock.TabIndex = 63;
             this.lblDock.Text = "坞塝材质:";
             // 
-            // groupBox3
+            // gbPEparaFound
             // 
-            this.groupBox3.Controls.Add(this.label1);
-            this.groupBox3.Controls.Add(this.cboFndMat);
-            this.groupBox3.Controls.Add(this.cboFndAgl);
-            this.groupBox3.Controls.Add(this.txtCuhThk);
-            this.groupBox3.Controls.Add(this.LBLconangle);
-            this.groupBox3.Controls.Add(this.LBLcushH);
-            this.groupBox3.Controls.Add(this.txtCuhMat);
-            this.groupBox3.Controls.Add(this.LBLcushname);
-            this.groupBox3.Font = new System.Drawing.Font("微软雅黑", 10.5F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.groupBox3.Location = new System.Drawing.Point(244, 47);
-            this.groupBox3.Name = "groupBox3";
-            this.groupBox3.Size = new System.Drawing.Size(214, 142);
-            this.groupBox3.TabIndex = 67;
-            this.groupBox3.TabStop = false;
-            this.groupBox3.Text = "管道基础";
+            this.gbPEparaFound.Controls.Add(this.label1);
+            this.gbPEparaFound.Controls.Add(this.cboFndMat);
+            this.gbPEparaFound.Controls.Add(this.cboFndAgl);
+            this.gbPEparaFound.Controls.Add(this.txtCuhThk);
+            this.gbPEparaFound.Controls.Add(this.LBLconangle);
+            this.gbPEparaFound.Controls.Add(this.LBLcushH);
+            this.gbPEparaFound.Controls.Add(this.txtCuhMat);
+            this.gbPEparaFound.Controls.Add(this.LBLcushname);
+            this.gbPEparaFound.Font = new System.Drawing.Font("微软雅黑", 10.5F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.gbPEparaFound.Location = new System.Drawing.Point(244, 47);
+            this.gbPEparaFound.Name = "gbPEparaFound";
+            this.gbPEparaFound.Size = new System.Drawing.Size(214, 142);
+            this.gbPEparaFound.TabIndex = 67;
+            this.gbPEparaFound.TabStop = false;
+            this.gbPEparaFound.Text = "管道基础";
             // 
             // label1
             // 
@@ -520,15 +524,41 @@
             this.LBLPEname.TabIndex = 68;
             this.LBLPEname.Text = "原则名称:";
             // 
+            // btnOK
+            // 
+            this.btnOK.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
+            this.btnOK.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.btnOK.Location = new System.Drawing.Point(464, 5);
+            this.btnOK.Name = "btnOK";
+            this.btnOK.Size = new System.Drawing.Size(79, 62);
+            this.btnOK.TabIndex = 70;
+            this.btnOK.Text = "确定";
+            this.btnOK.UseVisualStyleBackColor = true;
+            this.btnOK.Click += new System.EventHandler(this.btnOK_Click);
+            // 
+            // btnCancel
+            // 
+            this.btnCancel.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
+            this.btnCancel.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.btnCancel.Location = new System.Drawing.Point(464, 73);
+            this.btnCancel.Name = "btnCancel";
+            this.btnCancel.Size = new System.Drawing.Size(79, 62);
+            this.btnCancel.TabIndex = 71;
+            this.btnCancel.Text = "取消";
+            this.btnCancel.UseVisualStyleBackColor = true;
+            this.btnCancel.Click += new System.EventHandler(this.btnCancel_Click);
+            // 
             // FmPE
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(814, 541);
+            this.Controls.Add(this.btnCancel);
+            this.Controls.Add(this.btnOK);
             this.Controls.Add(this.txtPEname);
             this.Controls.Add(this.LBLPEname);
-            this.Controls.Add(this.groupBox3);
-            this.Controls.Add(this.groupBox1);
+            this.Controls.Add(this.gbPEparaFound);
+            this.Controls.Add(this.gbPEparaDock);
             this.Controls.Add(this.tcMain);
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedToolWindow;
             this.Name = "FmPE";
@@ -543,10 +573,10 @@
             this.cmsDrop.ResumeLayout(false);
             this.tpPW.ResumeLayout(false);
             this.tcPW.ResumeLayout(false);
-            this.groupBox1.ResumeLayout(false);
-            this.groupBox1.PerformLayout();
-            this.groupBox3.ResumeLayout(false);
-            this.groupBox3.PerformLayout();
+            this.gbPEparaDock.ResumeLayout(false);
+            this.gbPEparaDock.PerformLayout();
+            this.gbPEparaFound.ResumeLayout(false);
+            this.gbPEparaFound.PerformLayout();
             this.ResumeLayout(false);
             this.PerformLayout();
 
@@ -565,7 +595,7 @@
         private System.Windows.Forms.TabPage tabPage7;
         private System.Windows.Forms.TabPage tabPage8;
         private System.Windows.Forms.TabPage tabPage9;
-        private System.Windows.Forms.GroupBox groupBox1;
+        private System.Windows.Forms.GroupBox gbPEparaDock;
         private System.Windows.Forms.Label lblBackFill;
         private System.Windows.Forms.ComboBox cboDockMat;
         private System.Windows.Forms.ComboBox cboExv;
@@ -574,7 +604,7 @@
         private System.Windows.Forms.Label lblCover;
         private System.Windows.Forms.TextBox txtDockMat;
         private System.Windows.Forms.Label lblDock;
-        private System.Windows.Forms.GroupBox groupBox3;
+        private System.Windows.Forms.GroupBox gbPEparaFound;
         private System.Windows.Forms.Label label1;
         private System.Windows.Forms.ComboBox cboFndMat;
         private System.Windows.Forms.ComboBox cboFndAgl;
@@ -585,7 +615,7 @@
         private System.Windows.Forms.Label LBLcushname;
         private System.Windows.Forms.TextBox txtPEname;
         private System.Windows.Forms.Label LBLPEname;
-        private System.Windows.Forms.Button BTNadd;
+        private System.Windows.Forms.Button btnAddPEn;
         private System.Windows.Forms.DataGridView dgvPE;
         private System.Windows.Forms.ContextMenuStrip cmsDrop;
         private System.Windows.Forms.ToolStripMenuItem toolStripMenuItem1;
@@ -595,5 +625,7 @@
         private System.Windows.Forms.DataGridViewTextBoxColumn eColrange;
         private System.Windows.Forms.DataGridViewTextBoxColumn eColPEnDis;
         private System.Windows.Forms.DataGridViewTextBoxColumn eColWSDis;
+        private System.Windows.Forms.Button btnOK;
+        private System.Windows.Forms.Button btnCancel;
     }
 }

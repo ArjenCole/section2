@@ -13,21 +13,18 @@ namespace section2
     public partial class FmPE : Form
     {
         public mcPE oPE = new mcPE();
-        public mcPE resultPE = new mcPE();
+        public mcPE rtPE = new mcPE();
 
         public FmPE(mcPE pmPE)
         {
             InitializeComponent();
-            oPE = mscTools.DeepClone(pmPE);
-            resultPE = mscTools.DeepClone(pmPE);
-
-            initDropItems();
+            iniData(pmPE);
+            iniDropItems();
         }
-
         private void FmPE_Load(object sender, EventArgs e)
         {
-            initShowPEpara();
-            flashdgvPE();
+            fls_gbPEpara(oPE);
+            fls_dgvPE();
         }
 
         private void dgvPE_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
@@ -35,7 +32,7 @@ namespace section2
             int rowIdx = e.RowIndex;
             if (e.RowIndex < 0) return;
             string tColName = dgvPE.Columns[e.ColumnIndex].Name;
-            var tPEn = resultPE.Son(rowIdx);
+            var tPEn = rtPE.Son(rowIdx);
             switch (tColName)
             {
                 case "eColPEnDis":
@@ -101,9 +98,9 @@ namespace section2
                     if (mscInventory.ListPEnsKeys().Contains(tTxt))
                     {
                         dgvPE[colIdx, rowIdx].Value
-                            = new mcPEn(resultPE.Son(rowIdx).Depth(), tTxt)
+                            = new mcPEn(rtPE.Son(rowIdx).DepthStr(), tTxt)
                             .Discribe();
-                        resultPE.SetSon(rowIdx, new mcPEn(resultPE.Son(rowIdx).Depth(), tTxt));
+                        rtPE.UpdateSon(rowIdx, new mcPEn(rtPE.Son(rowIdx).DepthStr(), tTxt));
                     }
                     break;
                 default:
@@ -112,40 +109,100 @@ namespace section2
             }
         }
 
-        private void initDropItems()
+        private void btnOK_Click(object sender, EventArgs e)
+        {
+            getPEpara();
+            this.DialogResult = DialogResult.OK;
+        }
+        private void btnCancel_Click(object sender, EventArgs e)
+        {
+            this.DialogResult = DialogResult.Cancel;
+        }
+        private void btnAddPEn_Click(object sender, EventArgs e)
+        {
+            int newDepth = 0;
+            int bRowInt = dgvRowIdx(dgvPE);
+            int aRowInt = bRowInt - 1;
+            if (aRowInt < 0)
+            {
+                newDepth = rtPE.Sons().Last().DepthInt() + 3000;
+            }
+            else
+            {
+                int tDepth = (int)Math.Round((rtPE.Son(bRowInt).DepthInt() + rtPE.Son(aRowInt).DepthInt()) / 2.0, 0);
+                if (rtPE.SonKeys().Contains(tDepth.ToString()))
+                    newDepth = rtPE.Sons().Last().DepthInt() + 3000;
+                else
+                    newDepth = tDepth;
+            }
+            rtPE.Add(new mcPEn(newDepth));
+            fls_dgvPE();
+        }
+
+        private void iniData(mcPE pmPE)
+        {
+            oPE = mscTools.DeepClone(pmPE);
+            rtPE = mscTools.DeepClone(pmPE);
+        }
+        private void iniDropItems()
         {
             cboExv.DataSource = mcPE.sExvCat;
             cboDockMat.DataSource = mcPE.sDockPos;
             cboFndMat.DataSource = mcPE.sFndMat;
             cboFndAgl.DataSource = mcPE.sFndAgl;
-            
         }
-        private void initShowPEpara()
+
+        private void fls_gbPEpara(mcPE pPE)
         {
-            txtPEname.Text = oPE.GetName();
-            txtCovMat.Text = oPE.CovMat;
-            txtCuhMat.Text = oPE.CuhMat;
-            txtCuhThk.Text = oPE.CuhThk;
-            txtDockMat.Text = oPE.DockMat;
-            cboDockMat.Text = oPE.DockPos;
-            cboExv.Text = oPE.ExvCat;
-            cboFndAgl.Text = oPE.FndAgl;
-            cboFndMat.Text = oPE.FndMat;
+            txtPEname.Text = pPE.GetName();
+            //gbPEparaDock
+            txtCovMat.Text = pPE.CovMat;
+            txtCuhMat.Text = pPE.CuhMat;
+            txtCuhThk.Text = pPE.CuhThk;
+            txtDockMat.Text = pPE.DockMat;
+            //gbPEparaFound
+            cboDockMat.Text = pPE.DockPos;
+            cboExv.Text = pPE.ExvCat;
+            cboFndAgl.Text = pPE.FndAgl;
+            cboFndMat.Text = pPE.FndMat;
         }
-        private void flashdgvPE()
+        private void fls_dgvPE()
         {
-            dgvPE.Rows.Add(resultPE.Count());
-            int i = 0;
-            foreach(var fePEn in resultPE.Sons())
-            {
-                DataGridViewRow tDGVR = dgvPE.Rows[i];
-                tDGVR.Cells[0].Value = fePEn.Depth().ToString();
-                tDGVR.Cells[1].Value = i + 1 == resultPE.Count() ? "+∞" : resultPE.Son(i + 1).Depth().ToString();
-                tDGVR.Cells[2].Value = fePEn.Cat();
-                tDGVR.Cells[3].Value = fePEn.Discribe();
-                i++;
-            }
+            int cnt = rtPE.Count();
+            mscTools.DgvAdjRowsCnt(dgvPE, cnt);
+            for (int i = 0; i < cnt; i++)
+                fls_dgvPErow(i);
         }
+        private void fls_dgvPErow(int pIdx)
+        {
+            mcPEn tPEn = rtPE.Son(pIdx);
+            DataGridViewRow tDGVR = dgvPE.Rows[pIdx];
+            tDGVR.Cells[0].Value = tPEn.DepthDoub().ToString();
+            tDGVR.Cells[1].Value = pIdx + 1 == rtPE.Count() ? "+∞" : rtPE.Son(pIdx + 1).DepthDoub().ToString();
+            tDGVR.Cells[2].Value = tPEn.Cat();
+            tDGVR.Cells[3].Value = tPEn.Discribe();
+        }
+
+        private void getPEpara()
+        {
+            rtPE.SetName(txtPEname.Text);
+            //gbPEparaDock
+            rtPE.CovMat = txtCovMat.Text;
+            rtPE.CuhMat = txtCuhMat.Text;
+            rtPE.CuhThk = txtCuhThk.Text;
+            rtPE.DockMat = txtDockMat.Text;
+            //gbPEparaFound
+             rtPE.DockPos = cboDockMat.Text;
+             rtPE.ExvCat= cboExv.Text;
+             rtPE.FndAgl= cboFndAgl.Text;
+             rtPE.FndMat = cboFndMat.Text;
+        }
+
+        private int dgvRowIdx(DataGridView pDGV)
+        {
+            return pDGV.SelectedCells[0].RowIndex;
+        }
+
 
     }
 }

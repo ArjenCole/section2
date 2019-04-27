@@ -12,6 +12,15 @@ namespace section2
 {
     public static class mscTools
     {
+        #region 数据格式转换
+        public static string ToString(object pObj)
+        {
+            try { return pObj.ToString(); }
+            catch (Exception) { return string.Empty; }
+        }
+        #endregion
+
+        #region 自定义数据格式运算
         public static List<mcQ> sumQ(List<mcQ> pL1, List<mcQ> pL2)
         {
             List<mcQ> rtL = new List<mcQ>();
@@ -43,7 +52,6 @@ namespace section2
             }
             return rtName;
         }
-        
         public static Dictionary<string,T> OrderDic<T>(Dictionary<string, T> pDic)
         {
             IOrderedEnumerable<KeyValuePair<string, T>> dicSort = from objDic in pDic orderby mscExp.Doub(objDic.Key) select objDic;
@@ -54,7 +62,9 @@ namespace section2
                 rtDic.Add(feKVP.Key ,feKVP.Value);
             return rtDic;
         }
+        #endregion
 
+        #region 序列化
         public static string toJson<T>(T pT)
         {
             var serializer = new JavaScriptSerializer();
@@ -65,13 +75,14 @@ namespace section2
             var serializer = new JavaScriptSerializer();
             return serializer.Deserialize<T>(pJsonStr);
         }
-
         public static T DeepClone<T>(T pT)
         {
             string tJsonStr = toJson<T>(pT);
             return anJson<T>(tJsonStr);
         }
+        #endregion
 
+        #region 控件处理
         /// <summary>
         /// 利用反射机制修改TableLayoutPanel的Protected的DoubleBuffered属性 避免闪烁
         /// </summary>
@@ -83,6 +94,15 @@ namespace section2
                 .SetValue(pO, true, null);
         }
 
+        public static void DgvAdjRowsCnt(DataGridView pDGV, int pCnt)
+        {
+            int cnt = pDGV.Rows.Count;
+            if (cnt == pCnt) return;
+            if (cnt < pCnt) { pDGV.Rows.Add(pCnt - cnt);return; }
+            for (int i = cnt; i <= pCnt; i--)
+                pDGV.Rows.RemoveAt(i - 1);
+        }
+        #endregion
         /// <summary>
         /// 读取CSV文件
         /// </summary>
@@ -132,16 +152,5 @@ namespace section2
             return rtDT;
         }
 
-        public static string ToString(object pObj)
-        {
-            try
-            {
-                return pObj.ToString();
-            }
-            catch (Exception)
-            {
-                return string.Empty;
-            }
-        }
     }
 }
