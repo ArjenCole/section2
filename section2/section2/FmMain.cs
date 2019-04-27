@@ -16,6 +16,7 @@ namespace section2
         public FmMain()
         {
             InitializeComponent();
+            initPcpTab();
             mscVctrl.ini();
         }
         private void FmMain_Load(object sender, EventArgs e)
@@ -60,9 +61,11 @@ namespace section2
             }
         }
 
-        private void initFlashPcpTab()
+        private void initPcpTab()
         {
-
+            mscTools.DoubleBuffered(SCpcpHigh);
+            mscTools.DoubleBuffered(TLPmPE);
+            mscTools.DoubleBuffered(TLPmPF);
         }
 
         private void flashTVdc()
