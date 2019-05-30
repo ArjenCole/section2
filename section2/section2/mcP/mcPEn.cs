@@ -59,11 +59,11 @@ namespace section2.mcP
 
         public void SetStopWater()
         {
-            //StopWater = mscInventory.DicStopWater.Values.First();
+            StopWater = mscInventory.DicStopWater.Values.First();
         }
         public void SetStopWater(string pCat)
         {
-            //StopWater = mscInventory.DicStopWater[pCat];
+            StopWater = mscInventory.DicStopWater[pCat];
         }
 
         public string Cat()

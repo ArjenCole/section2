@@ -186,7 +186,7 @@ namespace section2
             tDGVR.Cells[0].Value = tPEn.DepthDoub().ToString();
             tDGVR.Cells[1].Value = pIdx + 1 == rtPE.Count() ? "+∞" : rtPE.Son(pIdx + 1).DepthDoub().ToString();
             tDGVR.Cells[2].Value = tPEn.Cat();
-            //tDGVR.Cells[3].Value = tPEn.StopWater.Name;
+            tDGVR.Cells[3].Value = tPEn.StopWater.Name;
         }
 
         private void getPEpara()
