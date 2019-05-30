@@ -81,5 +81,10 @@ namespace section2.mcP
             else
                return ListPEns.Count.ToString() + "级围护";
         }
+
+        public int Count()
+        {
+            return ListPEns.Count;
+        }
     }
 }

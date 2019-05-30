@@ -56,6 +56,14 @@ namespace section2
 
 
         }
+        public static mcPEn EditPEn(mcPEn pPEn)
+        {
+            FmPEn fmPEn = new FmPEn(pPEn);
+            if (fmPEn.ShowDialog() == DialogResult.OK)
+                return fmPEn.rtPEn;
+            else
+                return fmPEn.oPEn;
+        }
         public static mcCpt EditCpt(mcCpt pC)
         {
             FmCptEditor fmCptEditor = new FmCptEditor(pC);

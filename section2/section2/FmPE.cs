@@ -36,29 +36,13 @@ namespace section2
             switch (tColName)
             {
                 case "eColPEnDis":
-                    if (tPEn.Cat() == "多级围护")//mcPEn.StrMultiPEns)//多级围护
-                    {/*
-                        FormEcls formEcls = new FormEcls(mPEcrt.mList[e.RowIndex]);
-                        if (formEcls.ShowDialog() == DialogResult.Yes)
-                        {
-                            mPEcrt.mList[e.RowIndex] = formEcls.mEclscrt;
-                            FlashdGVPERow(e.RowIndex);
-                        }*/
-                    }
+                    if (tPEn.Cat() == "多级围护")//多级围护
+                        tPEn = mscVctrl.EditPEn(tPEn);
                     else//单级围护
-                    {
                         tPEn.ListPEns[0].Cpt = mscVctrl.EditCpt(tPEn.ListPEns[0].Cpt);
-                    }
                     break;
                 case "eColSWDis":
                     tPEn.StopWater = mscVctrl.EditCpt(tPEn.StopWater);
-                    /*
-                    FormCpntEdit formCpntEdit2 = new FormCpntEdit(mPEcrt.mList[e.RowIndex].WSCpnt);
-                    if (formCpntEdit2.ShowDialog() == DialogResult.Yes)
-                    {
-                        mPEcrt.mList[e.RowIndex].WSCpnt = formCpntEdit2.mCcrt;
-                        FlashdGVPERow(e.RowIndex);
-                    }*/
                     break;
                 default:
                     //dGVPE.BeginEdit(true);
