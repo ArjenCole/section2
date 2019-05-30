@@ -47,11 +47,11 @@ namespace section2
                     }
                     else//单级围护
                     {
-                        mscVctrl.ShowCpt(tPEn.ListPEns[0].Cpt);
+                        tPEn.ListPEns[0].Cpt = mscVctrl.EditCpt(tPEn.ListPEns[0].Cpt);
                     }
                     break;
                 case "eColSWDis":
-                    mscVctrl.ShowCpt(tPEn.StopWater);
+                    tPEn.StopWater = mscVctrl.EditCpt(tPEn.StopWater);
                     /*
                     FormCpntEdit formCpntEdit2 = new FormCpntEdit(mPEcrt.mList[e.RowIndex].WSCpnt);
                     if (formCpntEdit2.ShowDialog() == DialogResult.Yes)
@@ -105,6 +105,7 @@ namespace section2
             switch (colName)
             {
                 case "eColPEnDis":
+                    if (tTxt == dgvPE[colIdx, rowIdx].Value.ToString()) break;//如果选中类型与现类型一致，不发生变化
                     if (mscInventory.ListPEnsKeys().Contains(tTxt))
                     {
                         mcPEn tmcPEn = new mcPEn(rtPE.Son(rowIdx).DepthStr(), tTxt);
@@ -113,6 +114,7 @@ namespace section2
                     }
                     break;
                 case "eColSWDis":
+                    if (tTxt == dgvPE[colIdx, rowIdx].Value.ToString()) break;//如果选中类型与现类型一致，不发生变化
                     if (mscInventory.ListStopWaterKeys().Contains(tTxt))
                     {
                         rtPE.Son(rowIdx).SetStopWater(tTxt);

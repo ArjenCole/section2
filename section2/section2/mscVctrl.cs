@@ -56,10 +56,13 @@ namespace section2
 
 
         }
-        public static void ShowCpt(mcCpt pC)
+        public static mcCpt EditCpt(mcCpt pC)
         {
             FmCptEditor fmCptEditor = new FmCptEditor(pC);
-            fmCptEditor.ShowDialog();
+            if (fmCptEditor.ShowDialog() == DialogResult.OK)
+                return fmCptEditor.rtmC;
+            else
+                return fmCptEditor.omC;
         }
     }
 }

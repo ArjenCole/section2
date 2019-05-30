@@ -12,12 +12,13 @@ namespace section2.FmTool
 {
     public partial class FmCptEditor : Form
     {
-        private mcCpt omC;
+        public mcCpt omC;
         public mcCpt rtmC;
         public FmCptEditor(mcCpt pmC)
         {
             InitializeComponent();
             omC = mscTools.DeepClone(pmC);
+            rtmC = mscTools.DeepClone(pmC);
             showCpt();
         }
 
@@ -43,9 +44,29 @@ namespace section2.FmTool
             }
         }
 
+        private List<mcQ> getQs(DataGridView pDGV)
+        {
+            List<mcQ> rtList = new List<mcData.mcQ>();
+            foreach (DataGridViewRow feRow in pDGV.Rows)
+            {
+                mcQ tmQ = new mcData.mcQ();
+                tmQ.Cat = feRow.Cells[0].Value.ToString();
+                tmQ.Name = feRow.Cells[1].Value.ToString();
+                tmQ.Unit = feRow.Cells[2].Value.ToString();
+                tmQ.Exp = feRow.Cells[3].Value.ToString();
+                rtList.Add(tmQ);
+            }
+            return rtList;
+        }
+
         private void BTNyes_Click(object sender, EventArgs e)
         {
-
+            List<mcQ> tListQ = getQs(dgvPara);
+            rtmC.mDic.Clear();
+            foreach (mcQ femQ in tListQ)
+                rtmC.Add(femQ);
+            rtmC.Qlist = getQs(dgvExp);
+            this.DialogResult = DialogResult.OK;
         }
 
         private void BTNcancel_Click(object sender, EventArgs e)
