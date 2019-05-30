@@ -89,6 +89,7 @@
             this.dgvPEn.SelectionMode = System.Windows.Forms.DataGridViewSelectionMode.CellSelect;
             this.dgvPEn.Size = new System.Drawing.Size(602, 328);
             this.dgvPEn.TabIndex = 63;
+            this.dgvPEn.CellContentClick += new System.Windows.Forms.DataGridViewCellEventHandler(this.dgvPEn_CellContentClick);
             this.dgvPEn.CellValueChanged += new System.Windows.Forms.DataGridViewCellEventHandler(this.dgvPEn_CellValueChanged);
             // 
             // eColFix

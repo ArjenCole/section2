@@ -52,13 +52,18 @@ namespace section2
 
         private void dgvPEn_CellValueChanged(object sender, DataGridViewCellEventArgs e)
         {
+
+        }
+
+        private void dgvPEn_CellContentClick(object sender, DataGridViewCellEventArgs e)
+        {
             if (e.RowIndex < 0) return;
             mcPEns tPEns = rtPEn.ListPEns[e.RowIndex];
             if (e.ColumnIndex == 0)
             {
                 var tCellCheck = dgvPEn.Rows[e.RowIndex].Cells[0];
                 var tCellH = dgvPEn.Rows[e.RowIndex].Cells[1];
-                if (bool.Parse(tCellCheck.Value.ToString()))
+                if (!bool.Parse(tCellCheck.Value.ToString()))//点击时，值尚未改变
                     tPEns.Height = 1;
                 else
                     tPEns.Height = -1;
