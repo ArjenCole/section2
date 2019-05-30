@@ -42,5 +42,15 @@ namespace section2.FmTool
                 i++;
             }
         }
+
+        private void BTNyes_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void BTNcancel_Click(object sender, EventArgs e)
+        {
+            this.DialogResult = DialogResult.Cancel;
+        }
     }
 }

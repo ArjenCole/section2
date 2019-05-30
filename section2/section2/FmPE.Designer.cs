@@ -37,10 +37,6 @@
             this.tpPE = new System.Windows.Forms.TabPage();
             this.btnAddPEn = new System.Windows.Forms.Button();
             this.dgvPE = new System.Windows.Forms.DataGridView();
-            this.eColdepth = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.eColrange = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.eColPEnDis = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.eColWSDis = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.cmsDrop = new System.Windows.Forms.ContextMenuStrip(this.components);
             this.tpPD = new System.Windows.Forms.TabPage();
             this.tpPW = new System.Windows.Forms.TabPage();
@@ -73,6 +69,10 @@
             this.LBLPEname = new System.Windows.Forms.Label();
             this.btnOK = new System.Windows.Forms.Button();
             this.btnCancel = new System.Windows.Forms.Button();
+            this.eColdepth = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.eColrange = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.eColPEnDis = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.eColSWDis = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.tcMain.SuspendLayout();
             this.tpPE.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.dgvPE)).BeginInit();
@@ -136,7 +136,7 @@
             this.eColdepth,
             this.eColrange,
             this.eColPEnDis,
-            this.eColWSDis});
+            this.eColSWDis});
             this.dgvPE.ContextMenuStrip = this.cmsDrop;
             dataGridViewCellStyle4.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
             dataGridViewCellStyle4.BackColor = System.Drawing.SystemColors.Window;
@@ -157,42 +157,6 @@
             this.dgvPE.CellDoubleClick += new System.Windows.Forms.DataGridViewCellEventHandler(this.dgvPE_CellDoubleClick);
             this.dgvPE.CellMouseUp += new System.Windows.Forms.DataGridViewCellMouseEventHandler(this.dgvPE_CellMouseUp);
             // 
-            // eColdepth
-            // 
-            dataGridViewCellStyle2.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleRight;
-            this.eColdepth.DefaultCellStyle = dataGridViewCellStyle2;
-            this.eColdepth.HeaderText = "埋深";
-            this.eColdepth.Name = "eColdepth";
-            this.eColdepth.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
-            this.eColdepth.Width = 70;
-            // 
-            // eColrange
-            // 
-            dataGridViewCellStyle3.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
-            this.eColrange.DefaultCellStyle = dataGridViewCellStyle3;
-            this.eColrange.HeaderText = "范围";
-            this.eColrange.Name = "eColrange";
-            this.eColrange.ReadOnly = true;
-            this.eColrange.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
-            this.eColrange.Width = 70;
-            // 
-            // eColPEnDis
-            // 
-            this.eColPEnDis.HeaderText = "围护(右键选择,双击编辑)";
-            this.eColPEnDis.Name = "eColPEnDis";
-            this.eColPEnDis.ReadOnly = true;
-            this.eColPEnDis.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
-            this.eColPEnDis.ToolTipText = "双击编辑围护形式";
-            this.eColPEnDis.Width = 200;
-            // 
-            // eColWSDis
-            // 
-            this.eColWSDis.HeaderText = "止水(右键选择,双击编辑)";
-            this.eColWSDis.Name = "eColWSDis";
-            this.eColWSDis.ReadOnly = true;
-            this.eColWSDis.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
-            this.eColWSDis.Width = 200;
-            // 
             // cmsDrop
             // 
             this.cmsDrop.Name = "cmsDrop";
@@ -204,7 +168,7 @@
             this.tpPD.Location = new System.Drawing.Point(4, 22);
             this.tpPD.Name = "tpPD";
             this.tpPD.Padding = new System.Windows.Forms.Padding(3);
-            this.tpPD.Size = new System.Drawing.Size(791, 316);
+            this.tpPD.Size = new System.Drawing.Size(590, 316);
             this.tpPD.TabIndex = 1;
             this.tpPD.Text = "降水原则";
             this.tpPD.UseVisualStyleBackColor = true;
@@ -214,7 +178,7 @@
             this.tpPW.Controls.Add(this.tcPW);
             this.tpPW.Location = new System.Drawing.Point(4, 22);
             this.tpPW.Name = "tpPW";
-            this.tpPW.Size = new System.Drawing.Size(791, 316);
+            this.tpPW.Size = new System.Drawing.Size(590, 316);
             this.tpPW.TabIndex = 2;
             this.tpPW.Text = "工作面宽度";
             this.tpPW.UseVisualStyleBackColor = true;
@@ -231,7 +195,7 @@
             this.tcPW.Location = new System.Drawing.Point(0, 0);
             this.tcPW.Name = "tcPW";
             this.tcPW.SelectedIndex = 0;
-            this.tcPW.Size = new System.Drawing.Size(791, 316);
+            this.tcPW.Size = new System.Drawing.Size(590, 316);
             this.tcPW.TabIndex = 0;
             // 
             // tabPage4
@@ -239,7 +203,7 @@
             this.tabPage4.Location = new System.Drawing.Point(4, 22);
             this.tabPage4.Name = "tabPage4";
             this.tabPage4.Padding = new System.Windows.Forms.Padding(3);
-            this.tabPage4.Size = new System.Drawing.Size(783, 290);
+            this.tabPage4.Size = new System.Drawing.Size(582, 290);
             this.tabPage4.TabIndex = 0;
             this.tabPage4.Text = "tabPage4";
             this.tabPage4.UseVisualStyleBackColor = true;
@@ -505,7 +469,7 @@
             this.btnOK.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
             this.btnOK.Location = new System.Drawing.Point(464, 5);
             this.btnOK.Name = "btnOK";
-            this.btnOK.Size = new System.Drawing.Size(79, 62);
+            this.btnOK.Size = new System.Drawing.Size(141, 110);
             this.btnOK.TabIndex = 70;
             this.btnOK.Text = "确定";
             this.btnOK.UseVisualStyleBackColor = true;
@@ -515,13 +479,49 @@
             // 
             this.btnCancel.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
             this.btnCancel.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.btnCancel.Location = new System.Drawing.Point(464, 73);
+            this.btnCancel.Location = new System.Drawing.Point(464, 121);
             this.btnCancel.Name = "btnCancel";
-            this.btnCancel.Size = new System.Drawing.Size(79, 62);
+            this.btnCancel.Size = new System.Drawing.Size(141, 67);
             this.btnCancel.TabIndex = 71;
             this.btnCancel.Text = "取消";
             this.btnCancel.UseVisualStyleBackColor = true;
             this.btnCancel.Click += new System.EventHandler(this.btnCancel_Click);
+            // 
+            // eColdepth
+            // 
+            dataGridViewCellStyle2.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleRight;
+            this.eColdepth.DefaultCellStyle = dataGridViewCellStyle2;
+            this.eColdepth.HeaderText = "埋深";
+            this.eColdepth.Name = "eColdepth";
+            this.eColdepth.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
+            this.eColdepth.Width = 70;
+            // 
+            // eColrange
+            // 
+            dataGridViewCellStyle3.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
+            this.eColrange.DefaultCellStyle = dataGridViewCellStyle3;
+            this.eColrange.HeaderText = "范围";
+            this.eColrange.Name = "eColrange";
+            this.eColrange.ReadOnly = true;
+            this.eColrange.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
+            this.eColrange.Width = 70;
+            // 
+            // eColPEnDis
+            // 
+            this.eColPEnDis.HeaderText = "围护(右键选择,双击编辑)";
+            this.eColPEnDis.Name = "eColPEnDis";
+            this.eColPEnDis.ReadOnly = true;
+            this.eColPEnDis.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
+            this.eColPEnDis.ToolTipText = "双击编辑围护形式";
+            this.eColPEnDis.Width = 200;
+            // 
+            // eColSWDis
+            // 
+            this.eColSWDis.HeaderText = "止水(右键选择,双击编辑)";
+            this.eColSWDis.Name = "eColSWDis";
+            this.eColSWDis.ReadOnly = true;
+            this.eColSWDis.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
+            this.eColSWDis.Width = 200;
             // 
             // FmPE
             // 
@@ -592,11 +592,11 @@
         private System.Windows.Forms.Button btnAddPEn;
         private System.Windows.Forms.DataGridView dgvPE;
         private System.Windows.Forms.ContextMenuStrip cmsDrop;
+        private System.Windows.Forms.Button btnOK;
+        private System.Windows.Forms.Button btnCancel;
         private System.Windows.Forms.DataGridViewTextBoxColumn eColdepth;
         private System.Windows.Forms.DataGridViewTextBoxColumn eColrange;
         private System.Windows.Forms.DataGridViewTextBoxColumn eColPEnDis;
-        private System.Windows.Forms.DataGridViewTextBoxColumn eColWSDis;
-        private System.Windows.Forms.Button btnOK;
-        private System.Windows.Forms.Button btnCancel;
+        private System.Windows.Forms.DataGridViewTextBoxColumn eColSWDis;
     }
 }

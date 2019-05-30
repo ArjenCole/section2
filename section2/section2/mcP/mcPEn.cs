@@ -18,7 +18,7 @@ namespace section2.mcP
         public const string StrMultiPEns= "多级围护";
         
         public List<mcPEns> ListPEns = null;
-        public mcCpt cptStopWater;//止水
+        public mcCpt StopWater;//止水
 
         public string DepthStr()
         {
@@ -37,12 +37,14 @@ namespace section2.mcP
             SetName("0");
             ListPEns = new List<mcPEns>();
             ListPEns.Add(new mcPEns());
+            SetStopWater();
         }
         public mcPEn(int pDepth)
         {
             SetName(pDepth.ToString());
             ListPEns = new List<mcPEns>();
             ListPEns.Add(new mcPEns());
+            SetStopWater();
         }
         public mcPEn(string pDepth,string pCat)
         {
@@ -52,6 +54,16 @@ namespace section2.mcP
                 ListPEns = new List<mcPEns>();
                 ListPEns.Add(new mcPEns(mscInventory.DicPEns[pCat]));
             }
+            SetStopWater();
+        }
+
+        public void SetStopWater()
+        {
+            StopWater = mscInventory.DicStopWater.Values.First();
+        }
+        public void SetStopWater(string pCat)
+        {
+            StopWater = mscInventory.DicStopWater[pCat];
         }
 
         public string Cat()

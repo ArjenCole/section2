@@ -28,8 +28,8 @@
         /// </summary>
         private void InitializeComponent()
         {
-            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle1 = new System.Windows.Forms.DataGridViewCellStyle();
-            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle2 = new System.Windows.Forms.DataGridViewCellStyle();
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle5 = new System.Windows.Forms.DataGridViewCellStyle();
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle6 = new System.Windows.Forms.DataGridViewCellStyle();
             this.BTNcancel = new System.Windows.Forms.Button();
             this.BTNyes = new System.Windows.Forms.Button();
             this.dgvExp = new System.Windows.Forms.DataGridView();
@@ -48,21 +48,25 @@
             // 
             // BTNcancel
             // 
+            this.BTNcancel.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
             this.BTNcancel.Location = new System.Drawing.Point(843, 342);
             this.BTNcancel.Name = "BTNcancel";
             this.BTNcancel.Size = new System.Drawing.Size(65, 30);
             this.BTNcancel.TabIndex = 76;
             this.BTNcancel.Text = "取消修改";
             this.BTNcancel.UseVisualStyleBackColor = true;
+            this.BTNcancel.Click += new System.EventHandler(this.BTNcancel_Click);
             // 
             // BTNyes
             // 
+            this.BTNyes.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
             this.BTNyes.Location = new System.Drawing.Point(772, 342);
             this.BTNyes.Name = "BTNyes";
             this.BTNyes.Size = new System.Drawing.Size(65, 30);
             this.BTNyes.TabIndex = 75;
             this.BTNyes.Text = "确认修改";
             this.BTNyes.UseVisualStyleBackColor = true;
+            this.BTNyes.Click += new System.EventHandler(this.BTNyes_Click);
             // 
             // dgvExp
             // 
@@ -101,8 +105,8 @@
             // 
             // qColUnit
             // 
-            dataGridViewCellStyle1.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-            this.qColUnit.DefaultCellStyle = dataGridViewCellStyle1;
+            dataGridViewCellStyle5.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+            this.qColUnit.DefaultCellStyle = dataGridViewCellStyle5;
             this.qColUnit.HeaderText = "单位";
             this.qColUnit.Name = "qColUnit";
             this.qColUnit.Width = 55;
@@ -139,7 +143,7 @@
             this.dataGridViewTextBoxColumn1.Name = "dataGridViewTextBoxColumn1";
             this.dataGridViewTextBoxColumn1.Resizable = System.Windows.Forms.DataGridViewTriState.False;
             this.dataGridViewTextBoxColumn1.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
-            this.dataGridViewTextBoxColumn1.Width = 55;
+            this.dataGridViewTextBoxColumn1.Width = 35;
             // 
             // dataGridViewTextBoxColumn2
             // 
@@ -147,12 +151,11 @@
             this.dataGridViewTextBoxColumn2.Name = "dataGridViewTextBoxColumn2";
             this.dataGridViewTextBoxColumn2.Resizable = System.Windows.Forms.DataGridViewTriState.False;
             this.dataGridViewTextBoxColumn2.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
-            this.dataGridViewTextBoxColumn2.Width = 80;
             // 
             // dataGridViewTextBoxColumn3
             // 
-            dataGridViewCellStyle2.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-            this.dataGridViewTextBoxColumn3.DefaultCellStyle = dataGridViewCellStyle2;
+            dataGridViewCellStyle6.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+            this.dataGridViewTextBoxColumn3.DefaultCellStyle = dataGridViewCellStyle6;
             this.dataGridViewTextBoxColumn3.HeaderText = "单位";
             this.dataGridViewTextBoxColumn3.Name = "dataGridViewTextBoxColumn3";
             this.dataGridViewTextBoxColumn3.Width = 55;

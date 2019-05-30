@@ -19,15 +19,24 @@ namespace section2
             return listPEnsKeys;
         }
 
+        public static Dictionary<string, mcCpt> DicStopWater;
+        private static List<string> listStopWaterKeys = new List<string>();
+        public static List<string> ListStopWaterKeys()
+        {
+            listPEnsKeys = DicStopWater.Keys.ToList();
+            return listPEnsKeys;
+        }
+
         const string Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
         public static void ini()
         {
-            DicPEns = loadDicPEn("DicPEn");
+            DicPEns = loadCSV("DicPEn");
+            DicStopWater = loadCSV("DicStopWater");
         }
 
 
-        private static Dictionary<string, mcCpt> loadDicPEn(string pFileName)
+        private static Dictionary<string, mcCpt> loadCSV(string pFileName)
         {
             DataTable tmpDT = mscTools.OpenCSV(@"Inventory\" + pFileName + ".CSV");
             return getRowsByFilter(tmpDT);
@@ -86,25 +95,29 @@ namespace section2
                         break;
                     }   
                 }
-                foreach (char feChar in Alphabet)
+                try
                 {
-                    string tKey = "Z" + mscTools.ToString(feChar);
-                    string tDis = mscTools.ToString(foundRowsDis[i][tKey]);
-                    if (tDis != "")
+                    foreach (char feChar in Alphabet)
                     {
-                        if (!tDis.Contains("|")) tDis += "|";
-                        string[] tDisS = tDis.Split(new[] { "|" }, StringSplitOptions.None);
-                        string tCat = tDisS[0];
-                        string tName = tDisS[1];
-                        string tUnit = tDisS[2];
-                        string tExp = mscTools.ToString(foundRowsValue[i][tKey]);
-                        tmC.Qlist.Add(new mcQ("支撑", tName, tExp, tUnit));
-                    }
-                    else
-                    {
-                        break;
+                        string tKey = "Z" + mscTools.ToString(feChar);
+                        string tDis = mscTools.ToString(foundRowsDis[i][tKey]);
+                        if (tDis != "")
+                        {
+                            if (!tDis.Contains("|")) tDis += "|";
+                            string[] tDisS = tDis.Split(new[] { "|" }, StringSplitOptions.None);
+                            string tCat = tDisS[0];
+                            string tName = tDisS[1];
+                            string tUnit = tDisS[2];
+                            string tExp = mscTools.ToString(foundRowsValue[i][tKey]);
+                            tmC.Qlist.Add(new mcQ("支撑", tName, tExp, tUnit));
+                        }
+                        else
+                        {
+                            break;
+                        }
                     }
                 }
+                catch { }
                 rtDic.Add(mscTools.ToString(foundRowsDis[i]["name"]), tmC);
             }
             return rtDic;

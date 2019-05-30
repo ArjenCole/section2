@@ -52,6 +52,7 @@
             // CBatlas
             // 
             this.CBatlas.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.CBatlas.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
             this.CBatlas.FormattingEnabled = true;
             this.CBatlas.Location = new System.Drawing.Point(246, 231);
             this.CBatlas.Name = "CBatlas";
@@ -90,6 +91,7 @@
             // 
             // BTNok
             // 
+            this.BTNok.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
             this.BTNok.Location = new System.Drawing.Point(246, 266);
             this.BTNok.Name = "BTNok";
             this.BTNok.Size = new System.Drawing.Size(101, 32);

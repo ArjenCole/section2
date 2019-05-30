@@ -50,7 +50,9 @@ namespace section2
                         mscVctrl.ShowCpt(tPEn.ListPEns[0].Cpt);
                     }
                     break;
-                case "ColWSDis":/*
+                case "eColSWDis":
+                    mscVctrl.ShowCpt(tPEn.StopWater);
+                    /*
                     FormCpntEdit formCpntEdit2 = new FormCpntEdit(mPEcrt.mList[e.RowIndex].WSCpnt);
                     if (formCpntEdit2.ShowDialog() == DialogResult.Yes)
                     {
@@ -65,6 +67,7 @@ namespace section2
         }
         private void dgvPE_CellMouseUp(object sender, DataGridViewCellMouseEventArgs e)
         {
+            if (e.RowIndex < 0) return;
             if (e.Button == MouseButtons.Right)
             {
                 dgvPE.ClearSelection();
@@ -81,6 +84,11 @@ namespace section2
                             cmsDrop.Items.Add(feStr);
                         cmsDrop.Visible = true;
                         break;
+                    case "eColSWDis":
+                        foreach (string feStr in mscInventory.ListStopWaterKeys())
+                            cmsDrop.Items.Add(feStr);
+                        cmsDrop.Visible = true;
+                        break;
                     default:
                         cmsDrop.Visible = false;
                         break;
@@ -93,16 +101,22 @@ namespace section2
             var colIdx = ((Point)cmsDrop.Tag).Y;
             string colName = dgvPE.Columns[colIdx].Name;
 
+            string tTxt = e.ClickedItem.Text;
             switch (colName)
             {
                 case "eColPEnDis":
-                    string tTxt = e.ClickedItem.Text;
                     if (mscInventory.ListPEnsKeys().Contains(tTxt))
                     {
-                        dgvPE[colIdx, rowIdx].Value
-                            = new mcPEn(rtPE.Son(rowIdx).DepthStr(), tTxt)
-                            .Discribe();
-                        rtPE.UpdateSon(rowIdx, new mcPEn(rtPE.Son(rowIdx).DepthStr(), tTxt));
+                        mcPEn tmcPEn = new mcPEn(rtPE.Son(rowIdx).DepthStr(), tTxt);
+                        dgvPE[colIdx, rowIdx].Value = tmcPEn.Discribe();
+                        rtPE.UpdateSon(rowIdx, tmcPEn);
+                    }
+                    break;
+                case "eColSWDis":
+                    if (mscInventory.ListStopWaterKeys().Contains(tTxt))
+                    {
+                        rtPE.Son(rowIdx).SetStopWater(tTxt);
+                        dgvPE[colIdx, rowIdx].Value = rtPE.Son(rowIdx).StopWater.Name;
                     }
                     break;
                 default:
@@ -182,7 +196,7 @@ namespace section2
             tDGVR.Cells[0].Value = tPEn.DepthDoub().ToString();
             tDGVR.Cells[1].Value = pIdx + 1 == rtPE.Count() ? "+∞" : rtPE.Son(pIdx + 1).DepthDoub().ToString();
             tDGVR.Cells[2].Value = tPEn.Cat();
-            tDGVR.Cells[3].Value = tPEn.Discribe();
+            tDGVR.Cells[3].Value = tPEn.StopWater.Name;
         }
 
         private void getPEpara()
