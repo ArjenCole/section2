@@ -19,7 +19,7 @@ namespace section2.mcP
         public mcPEns(string pCat)
         {
             if (mscInventory.DicPEns.Keys.Contains(pCat))
-                Cpt = mscInventory.DicPEns[pCat];
+                Cpt = mscTools.DeepClone(mscInventory.DicPEns[pCat]);
             else
                 Cpt = mscTools.DeepClone(mscInventory.DicPEns.First().Value);
         }

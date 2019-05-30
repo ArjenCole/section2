@@ -32,7 +32,7 @@ namespace section2
             int rowIdx = e.RowIndex;
             if (e.RowIndex < 0) return;
             string tColName = dgvPE.Columns[e.ColumnIndex].Name;
-            var tPEn = rtPE.Son(rowIdx);
+            var tPEn = mscTools.DeepClone(rtPE.Son(rowIdx));
             switch (tColName)
             {
                 case "eColPEnDis":
@@ -48,6 +48,7 @@ namespace section2
                     //dGVPE.BeginEdit(true);
                     break;
             }
+            rtPE.UpdateSon(rowIdx, tPEn);
         }
         private void dgvPE_CellMouseUp(object sender, DataGridViewCellMouseEventArgs e)
         {
@@ -92,21 +93,16 @@ namespace section2
                     if (tTxt == dgvPE[colIdx, rowIdx].Value.ToString()) break;//如果选中类型与现类型一致，不发生变化
                     mcPEn tPEn = new mcPEn(rtPE.Son(rowIdx).DepthStr(), tTxt);
                     if (tTxt.Contains("级围护"))
-                    {
                         tPEn = mscVctrl.EditPEn(new mcPEn());
-                    }
-                    else if (mscInventory.ListPEnsKeysAddMult().Contains(tTxt))
-                    {
-                        dgvPE[colIdx, rowIdx].Value = tPEn.Discribe();
-                    }
                     rtPE.UpdateSon(rowIdx, tPEn);
+                    fls_dgvPErow(rowIdx);
                     break;
                 case "eColSWDis":
                     if (tTxt == dgvPE[colIdx, rowIdx].Value.ToString()) break;//如果选中类型与现类型一致，不发生变化
                     if (mscInventory.ListStopWaterKeys().Contains(tTxt))
                     {
                         rtPE.Son(rowIdx).SetStopWater(tTxt);
-                        dgvPE[colIdx, rowIdx].Value = rtPE.Son(rowIdx).StopWater.Name;
+                        fls_dgvPErow(rowIdx);
                     }
                     break;
                 default:

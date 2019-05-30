@@ -139,5 +139,28 @@ namespace section2
                     break;
             }
         }
+
+        private void getPara()
+        {
+            for (int i = 0; i < rtPEn.Count(); i++)
+            {
+                if (bool.Parse(dgvPEn.Rows[i].Cells[0].Value.ToString()))
+                    rtPEn.ListPEns[i].Height = int.Parse(dgvPEn.Rows[i].Cells[1].Value.ToString());
+                else
+                    rtPEn.ListPEns[i].Height = -1;
+                rtPEn.ListPEns[i].Width = int.Parse(dgvPEn.Rows[i].Cells[2].Value.ToString());
+            }
+        }
+
+        private void btnOK_Click(object sender, EventArgs e)
+        {
+            getPara();
+            this.DialogResult = DialogResult.OK;
+        }
+
+        private void btnCancel_Click(object sender, EventArgs e)
+        {
+            this.DialogResult = DialogResult.Cancel;
+        }
     }
 }
