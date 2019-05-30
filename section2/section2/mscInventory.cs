@@ -32,7 +32,7 @@ namespace section2
         public static void ini()
         {
             DicPEns = loadCSV("DicPEn");
-            DicStopWater = loadCSV("DicStopWater");
+            //DicStopWater = loadCSV("DicStopWater");
         }
 
 
