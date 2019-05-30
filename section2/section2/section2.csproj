@@ -58,6 +58,12 @@
     <Compile Include="FmPE.Designer.cs">
       <DependentUpon>FmPE.cs</DependentUpon>
     </Compile>
+    <Compile Include="FmPEn.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FmPEn.Designer.cs">
+      <DependentUpon>FmPEn.cs</DependentUpon>
+    </Compile>
     <Compile Include="FmTool\FmCover.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -110,6 +116,9 @@
     </EmbeddedResource>
     <EmbeddedResource Include="FmPE.resx">
       <DependentUpon>FmPE.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="FmPEn.resx">
+      <DependentUpon>FmPEn.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="FmTool\FmCover.resx">
       <DependentUpon>FmCover.cs</DependentUpon>

@@ -45,6 +45,7 @@
             this.TLPmPF = new System.Windows.Forms.TableLayoutPanel();
             this.TLPmPE = new System.Windows.Forms.TableLayoutPanel();
             this.pUN = new System.Windows.Forms.Panel();
+            this.dgvUnit = new System.Windows.Forms.DataGridView();
             this.msMain.SuspendLayout();
             this.scMain.Panel1.SuspendLayout();
             this.scMain.Panel2.SuspendLayout();
@@ -58,6 +59,8 @@
             this.scPcp.Panel1.SuspendLayout();
             this.scPcp.Panel2.SuspendLayout();
             this.scPcp.SuspendLayout();
+            this.pUN.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)(this.dgvUnit)).BeginInit();
             this.SuspendLayout();
             // 
             // msMain
@@ -155,6 +158,7 @@
             // 
             // scRight
             // 
+            this.scRight.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
             this.scRight.Dock = System.Windows.Forms.DockStyle.Fill;
             this.scRight.FixedPanel = System.Windows.Forms.FixedPanel.Panel1;
             this.scRight.IsSplitterFixed = true;
@@ -191,7 +195,7 @@
             this.scPcp.Panel2.Controls.Add(this.btnPcpAdd);
             this.scPcp.Panel2.Controls.Add(this.TLPmPF);
             this.scPcp.Panel2.Controls.Add(this.TLPmPE);
-            this.scPcp.Size = new System.Drawing.Size(920, 52);
+            this.scPcp.Size = new System.Drawing.Size(918, 50);
             this.scPcp.SplitterDistance = 105;
             this.scPcp.TabIndex = 2;
             // 
@@ -232,7 +236,7 @@
             this.btnPcpAdd.Font = new System.Drawing.Font("幼圆", 15.75F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
             this.btnPcpAdd.Location = new System.Drawing.Point(8, 0);
             this.btnPcpAdd.Name = "btnPcpAdd";
-            this.btnPcpAdd.Size = new System.Drawing.Size(24, 52);
+            this.btnPcpAdd.Size = new System.Drawing.Size(24, 50);
             this.btnPcpAdd.TabIndex = 5;
             this.btnPcpAdd.TabStop = false;
             this.btnPcpAdd.Text = "+";
@@ -251,7 +255,7 @@
             this.TLPmPF.Name = "TLPmPF";
             this.TLPmPF.RowCount = 1;
             this.TLPmPF.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            this.TLPmPF.Size = new System.Drawing.Size(4, 52);
+            this.TLPmPF.Size = new System.Drawing.Size(4, 50);
             this.TLPmPF.TabIndex = 4;
             // 
             // TLPmPE
@@ -266,15 +270,25 @@
             this.TLPmPE.Name = "TLPmPE";
             this.TLPmPE.RowCount = 1;
             this.TLPmPE.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            this.TLPmPE.Size = new System.Drawing.Size(4, 52);
+            this.TLPmPE.Size = new System.Drawing.Size(4, 50);
             this.TLPmPE.TabIndex = 3;
             // 
             // pUN
             // 
-            this.pUN.Location = new System.Drawing.Point(88, 46);
+            this.pUN.Controls.Add(this.dgvUnit);
+            this.pUN.Location = new System.Drawing.Point(64, 77);
             this.pUN.Name = "pUN";
             this.pUN.Size = new System.Drawing.Size(629, 245);
             this.pUN.TabIndex = 0;
+            // 
+            // dgvUnit
+            // 
+            this.dgvUnit.ColumnHeadersHeightSizeMode = System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+            this.dgvUnit.Location = new System.Drawing.Point(17, 12);
+            this.dgvUnit.Name = "dgvUnit";
+            this.dgvUnit.RowTemplate.Height = 23;
+            this.dgvUnit.Size = new System.Drawing.Size(225, 61);
+            this.dgvUnit.TabIndex = 0;
             // 
             // FmMain
             // 
@@ -303,6 +317,8 @@
             this.scPcp.Panel2.ResumeLayout(false);
             this.scPcp.Panel2.PerformLayout();
             this.scPcp.ResumeLayout(false);
+            this.pUN.ResumeLayout(false);
+            ((System.ComponentModel.ISupportInitialize)(this.dgvUnit)).EndInit();
             this.ResumeLayout(false);
             this.PerformLayout();
 
@@ -326,6 +342,7 @@
         private System.Windows.Forms.Button btnPcpAdd;
         private System.Windows.Forms.TableLayoutPanel TLPmPF;
         private System.Windows.Forms.TableLayoutPanel TLPmPE;
+        private System.Windows.Forms.DataGridView dgvUnit;
     }
 }
 
