@@ -90,12 +90,16 @@ namespace section2
             {
                 case "eColPEnDis":
                     if (tTxt == dgvPE[colIdx, rowIdx].Value.ToString()) break;//如果选中类型与现类型一致，不发生变化
-                    if (mscInventory.ListPEnsKeys().Contains(tTxt))
+                    mcPEn tPEn = new mcPEn(rtPE.Son(rowIdx).DepthStr(), tTxt);
+                    if (tTxt.Contains("级围护"))
                     {
-                        mcPEn tmcPEn = new mcPEn(rtPE.Son(rowIdx).DepthStr(), tTxt);
-                        dgvPE[colIdx, rowIdx].Value = tmcPEn.Discribe();
-                        rtPE.UpdateSon(rowIdx, tmcPEn);
+                        tPEn = mscVctrl.EditPEn(new mcPEn());
                     }
+                    else if (mscInventory.ListPEnsKeys().Contains(tTxt))
+                    {
+                        dgvPE[colIdx, rowIdx].Value = tPEn.Discribe();
+                    }
+                    rtPE.UpdateSon(rowIdx, tPEn);
                     break;
                 case "eColSWDis":
                     if (tTxt == dgvPE[colIdx, rowIdx].Value.ToString()) break;//如果选中类型与现类型一致，不发生变化

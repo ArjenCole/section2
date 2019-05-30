@@ -37,8 +37,9 @@ namespace section2
         {
             mcPEns tPEns = rtPEn.ListPEns[pIdx];
             DataGridViewRow tDGVR = dgvPEn.Rows[pIdx];
-            tDGVR.Cells[0].Value = tPEns.Height < 0 ? true : false;
-            tDGVR.Cells[1].Value = tPEns.Height;
+            tDGVR.Cells[0].Value = tPEns.Height < 0 ? false : true;
+            tDGVR.Cells[1].Value = tPEns.Height < 0 ? "均分" : tPEns.Height.ToString();
+            tDGVR.Cells[1].ReadOnly = tPEns.Height < 0 ? true : false;
             tDGVR.Cells[2].Value = tPEns.Width;
             tDGVR.Cells[3].Value = tPEns.Cpt.GetName();
         }
@@ -47,6 +48,22 @@ namespace section2
         {
             oPEn = mscTools.DeepClone(pPEn);
             rtPEn = mscTools.DeepClone(pPEn);
+        }
+
+        private void dgvPEn_CellValueChanged(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0) return;
+            mcPEns tPEns = rtPEn.ListPEns[e.RowIndex];
+            if (e.ColumnIndex == 0)
+            {
+                var tCellCheck = dgvPEn.Rows[e.RowIndex].Cells[0];
+                var tCellH = dgvPEn.Rows[e.RowIndex].Cells[1];
+                if (bool.Parse(tCellCheck.Value.ToString()))
+                    tPEns.Height = 1;
+                else
+                    tPEns.Height = -1;
+                fls_dgvPErow(e.RowIndex);
+            }
         }
     }
 }

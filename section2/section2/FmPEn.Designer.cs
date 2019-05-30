@@ -29,9 +29,10 @@
         private void InitializeComponent()
         {
             System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle1 = new System.Windows.Forms.DataGridViewCellStyle();
-            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle4 = new System.Windows.Forms.DataGridViewCellStyle();
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle5 = new System.Windows.Forms.DataGridViewCellStyle();
             System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle2 = new System.Windows.Forms.DataGridViewCellStyle();
             System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle3 = new System.Windows.Forms.DataGridViewCellStyle();
+            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle4 = new System.Windows.Forms.DataGridViewCellStyle();
             this.btnAddPEn = new System.Windows.Forms.Button();
             this.dgvPEn = new System.Windows.Forms.DataGridView();
             this.eColFix = new System.Windows.Forms.DataGridViewCheckBoxColumn();
@@ -72,14 +73,14 @@
             this.eColHeight,
             this.eColWidth,
             this.eColPEnDis});
-            dataGridViewCellStyle4.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
-            dataGridViewCellStyle4.BackColor = System.Drawing.SystemColors.Window;
-            dataGridViewCellStyle4.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            dataGridViewCellStyle4.ForeColor = System.Drawing.SystemColors.ControlText;
-            dataGridViewCellStyle4.SelectionBackColor = System.Drawing.SystemColors.Highlight;
-            dataGridViewCellStyle4.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
-            dataGridViewCellStyle4.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
-            this.dgvPEn.DefaultCellStyle = dataGridViewCellStyle4;
+            dataGridViewCellStyle5.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
+            dataGridViewCellStyle5.BackColor = System.Drawing.SystemColors.Window;
+            dataGridViewCellStyle5.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            dataGridViewCellStyle5.ForeColor = System.Drawing.SystemColors.ControlText;
+            dataGridViewCellStyle5.SelectionBackColor = System.Drawing.SystemColors.Highlight;
+            dataGridViewCellStyle5.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
+            dataGridViewCellStyle5.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
+            this.dgvPEn.DefaultCellStyle = dataGridViewCellStyle5;
             this.dgvPEn.Dock = System.Windows.Forms.DockStyle.Fill;
             this.dgvPEn.Location = new System.Drawing.Point(0, 0);
             this.dgvPEn.Name = "dgvPEn";
@@ -88,6 +89,7 @@
             this.dgvPEn.SelectionMode = System.Windows.Forms.DataGridViewSelectionMode.CellSelect;
             this.dgvPEn.Size = new System.Drawing.Size(602, 328);
             this.dgvPEn.TabIndex = 63;
+            this.dgvPEn.CellValueChanged += new System.Windows.Forms.DataGridViewCellEventHandler(this.dgvPEn_CellValueChanged);
             // 
             // eColFix
             // 
@@ -103,15 +105,17 @@
             // 
             // eColHeight
             // 
-            dataGridViewCellStyle3.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleRight;
+            dataGridViewCellStyle3.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
             this.eColHeight.DefaultCellStyle = dataGridViewCellStyle3;
-            this.eColHeight.HeaderText = "埋深";
+            this.eColHeight.HeaderText = "高度";
             this.eColHeight.Name = "eColHeight";
             this.eColHeight.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
             this.eColHeight.Width = 70;
             // 
             // eColWidth
             // 
+            dataGridViewCellStyle4.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+            this.eColWidth.DefaultCellStyle = dataGridViewCellStyle4;
             this.eColWidth.HeaderText = "平台宽度";
             this.eColWidth.Name = "eColWidth";
             // 
@@ -133,6 +137,7 @@
             this.Controls.Add(this.dgvPEn);
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedToolWindow;
             this.Name = "FmPEn";
+            this.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
             this.Text = "FmPEn";
             this.Load += new System.EventHandler(this.FmPEn_Load);
             ((System.ComponentModel.ISupportInitialize)(this.dgvPEn)).EndInit();
