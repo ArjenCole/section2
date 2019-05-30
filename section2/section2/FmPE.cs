@@ -64,7 +64,7 @@ namespace section2
                 switch (colName)
                 {
                     case "eColPEnDis":
-                        foreach (string feStr in mscInventory.ListPEnsKeys())
+                        foreach (string feStr in mscInventory.ListPEnsKeysAddMult())
                             cmsDrop.Items.Add(feStr);
                         cmsDrop.Visible = true;
                         break;
@@ -95,7 +95,7 @@ namespace section2
                     {
                         tPEn = mscVctrl.EditPEn(new mcPEn());
                     }
-                    else if (mscInventory.ListPEnsKeys().Contains(tTxt))
+                    else if (mscInventory.ListPEnsKeysAddMult().Contains(tTxt))
                     {
                         dgvPE[colIdx, rowIdx].Value = tPEn.Discribe();
                     }

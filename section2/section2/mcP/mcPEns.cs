@@ -16,6 +16,13 @@ namespace section2.mcP
         {
             Cpt = mscTools.DeepClone(mscInventory.DicPEns.First().Value);
         }
+        public mcPEns(string pCat)
+        {
+            if (mscInventory.DicPEns.Keys.Contains(pCat))
+                Cpt = mscInventory.DicPEns[pCat];
+            else
+                Cpt = mscTools.DeepClone(mscInventory.DicPEns.First().Value);
+        }
         public mcPEns(mcCpt pC)
         {
             Cpt = mscTools.DeepClone(pC);

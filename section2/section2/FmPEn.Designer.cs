@@ -28,6 +28,7 @@
         /// </summary>
         private void InitializeComponent()
         {
+            this.components = new System.ComponentModel.Container();
             System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle1 = new System.Windows.Forms.DataGridViewCellStyle();
             System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle5 = new System.Windows.Forms.DataGridViewCellStyle();
             System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle2 = new System.Windows.Forms.DataGridViewCellStyle();
@@ -39,6 +40,7 @@
             this.eColHeight = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.eColWidth = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.eColPEnDis = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.cmsDrop = new System.Windows.Forms.ContextMenuStrip(this.components);
             ((System.ComponentModel.ISupportInitialize)(this.dgvPEn)).BeginInit();
             this.SuspendLayout();
             // 
@@ -47,12 +49,13 @@
             this.btnAddPEn.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
             this.btnAddPEn.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
             this.btnAddPEn.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.btnAddPEn.Location = new System.Drawing.Point(443, 0);
+            this.btnAddPEn.Location = new System.Drawing.Point(412, 0);
             this.btnAddPEn.Name = "btnAddPEn";
-            this.btnAddPEn.Size = new System.Drawing.Size(41, 30);
+            this.btnAddPEn.Size = new System.Drawing.Size(41, 26);
             this.btnAddPEn.TabIndex = 64;
             this.btnAddPEn.Text = "+";
             this.btnAddPEn.UseVisualStyleBackColor = true;
+            this.btnAddPEn.Click += new System.EventHandler(this.btnAddPEn_Click);
             // 
             // dgvPEn
             // 
@@ -73,6 +76,7 @@
             this.eColHeight,
             this.eColWidth,
             this.eColPEnDis});
+            this.dgvPEn.ContextMenuStrip = this.cmsDrop;
             dataGridViewCellStyle5.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
             dataGridViewCellStyle5.BackColor = System.Drawing.SystemColors.Window;
             dataGridViewCellStyle5.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
@@ -87,9 +91,11 @@
             this.dgvPEn.RowHeadersVisible = false;
             this.dgvPEn.RowTemplate.Height = 23;
             this.dgvPEn.SelectionMode = System.Windows.Forms.DataGridViewSelectionMode.CellSelect;
-            this.dgvPEn.Size = new System.Drawing.Size(602, 328);
+            this.dgvPEn.Size = new System.Drawing.Size(453, 223);
             this.dgvPEn.TabIndex = 63;
             this.dgvPEn.CellContentClick += new System.Windows.Forms.DataGridViewCellEventHandler(this.dgvPEn_CellContentClick);
+            this.dgvPEn.CellDoubleClick += new System.Windows.Forms.DataGridViewCellEventHandler(this.dgvPEn_CellDoubleClick);
+            this.dgvPEn.CellMouseUp += new System.Windows.Forms.DataGridViewCellMouseEventHandler(this.dgvPEn_CellMouseUp);
             this.dgvPEn.CellValueChanged += new System.Windows.Forms.DataGridViewCellEventHandler(this.dgvPEn_CellValueChanged);
             // 
             // eColFix
@@ -119,6 +125,8 @@
             this.eColWidth.DefaultCellStyle = dataGridViewCellStyle4;
             this.eColWidth.HeaderText = "平台宽度";
             this.eColWidth.Name = "eColWidth";
+            this.eColWidth.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
+            this.eColWidth.Width = 70;
             // 
             // eColPEnDis
             // 
@@ -129,11 +137,17 @@
             this.eColPEnDis.ToolTipText = "双击编辑围护形式";
             this.eColPEnDis.Width = 200;
             // 
+            // cmsDrop
+            // 
+            this.cmsDrop.Name = "cmsDrop";
+            this.cmsDrop.Size = new System.Drawing.Size(61, 4);
+            this.cmsDrop.ItemClicked += new System.Windows.Forms.ToolStripItemClickedEventHandler(this.cmsDrop_ItemClicked);
+            // 
             // FmPEn
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(602, 328);
+            this.ClientSize = new System.Drawing.Size(453, 223);
             this.Controls.Add(this.btnAddPEn);
             this.Controls.Add(this.dgvPEn);
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedToolWindow;
@@ -154,5 +168,6 @@
         private System.Windows.Forms.DataGridViewTextBoxColumn eColHeight;
         private System.Windows.Forms.DataGridViewTextBoxColumn eColWidth;
         private System.Windows.Forms.DataGridViewTextBoxColumn eColPEnDis;
+        private System.Windows.Forms.ContextMenuStrip cmsDrop;
     }
 }

@@ -12,13 +12,17 @@ namespace section2
     {
         public static Dictionary<string, mcCpt> DicPEns;
         private static List<string> listPEnsKeys = new List<string>();
-        public static List<string> ListPEnsKeys()
+        public static List<string> ListPEnsKeysAddMult()
         {
             listPEnsKeys = DicPEns.Keys.ToList();
             listPEnsKeys.Add(mcPEn.StrMultiPEns);
             return listPEnsKeys;
         }
-
+        public static List<string> ListPEnsKeys()
+        {
+            listPEnsKeys = DicPEns.Keys.ToList();
+            return listPEnsKeys;
+        }
         public static Dictionary<string, mcCpt> DicStopWater;
         private static List<string> listStopWaterKeys = new List<string>();
         public static List<string> ListStopWaterKeys()

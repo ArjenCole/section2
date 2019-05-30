@@ -70,5 +70,74 @@ namespace section2
                 fls_dgvPErow(e.RowIndex);
             }
         }
+
+        private void btnAddPEn_Click(object sender, EventArgs e)
+        {
+            rtPEn.ListPEns.Add(new mcPEns());
+            fls_dgvPEn();
+        }
+
+        private void dgvPEn_CellMouseUp(object sender, DataGridViewCellMouseEventArgs e)
+        {
+            if (e.RowIndex < 0) return;
+            if (e.Button == MouseButtons.Right)
+            {
+                dgvPEn.ClearSelection();
+                dgvPEn[e.ColumnIndex, e.RowIndex].Selected = true;
+                cmsDrop.Items.Clear();
+                var colIdx = e.ColumnIndex;
+                var rowIdx = e.RowIndex;
+                string colName = dgvPEn.Columns[colIdx].Name;
+                cmsDrop.Tag = new Point(rowIdx, colIdx);
+                switch (colName)
+                {
+                    case "eColPEnDis":
+                        foreach (string feStr in mscInventory.ListPEnsKeys())
+                            cmsDrop.Items.Add(feStr);
+                        cmsDrop.Visible = true;
+                        break;
+                    default:
+                        cmsDrop.Visible = false;
+                        break;
+                }
+            }
+        }
+        private void cmsDrop_ItemClicked(object sender, ToolStripItemClickedEventArgs e)
+        {
+            var rowIdx = ((Point)cmsDrop.Tag).X;
+            var colIdx = ((Point)cmsDrop.Tag).Y;
+            string colName = dgvPEn.Columns[colIdx].Name;
+
+            string tTxt = e.ClickedItem.Text;
+            switch (colName)
+            {
+                case "eColPEnDis":
+                    if (tTxt == dgvPEn[colIdx, rowIdx].Value.ToString()) break;//如果选中类型与现类型一致，不发生变化
+                    rtPEn.ListPEns[rowIdx] = new mcP.mcPEns(tTxt);
+                    fls_dgvPErow(rowIdx);
+                    break;
+                default:
+                    cmsDrop.Visible = false;
+                    break;
+            }
+        }
+
+        private void dgvPEn_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
+        {
+            int rowIdx = e.RowIndex;
+            if (e.RowIndex < 0) return;
+            string tColName = dgvPEn.Columns[e.ColumnIndex].Name;
+            var tPEns = rtPEn.ListPEns[rowIdx];
+            switch (tColName)
+            {
+                case "eColPEnDis":
+                    tPEns.Cpt = mscVctrl.EditCpt(tPEns.Cpt);
+                    break;
+
+                default:
+                    //dGVPE.BeginEdit(true);
+                    break;
+            }
+        }
     }
 }
