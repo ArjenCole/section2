@@ -1,4 +1,5 @@
-﻿using System;
+﻿using section2.mcStruct;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -6,7 +7,7 @@ using System.Text;
 namespace section2.mcP
 {
     //降水原则
-    public class mcPD : mcStruct.macDicDoub<mcData.mcCpt>
+    public class mcPD : macDicRange<mcPDn>
     {
         public mcPD()
         {

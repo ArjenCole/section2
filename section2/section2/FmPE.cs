@@ -122,9 +122,9 @@ namespace section2
         }
         private void btnAddPEn_Click(object sender, EventArgs e)
         {
-            int newDepth = 0;
-            int bRowInt = dgvRowIdx(dgvPE);
-            int aRowInt = bRowInt - 1;
+            int tRowIdx = dgvRowIdx(dgvPE);
+            rtPE.AddAt(tRowIdx, new mcPEn());
+            /*
             if (aRowInt < 0)
             {
                 newDepth = rtPE.Sons().Last().DepthInt() + 3000;
@@ -138,6 +138,7 @@ namespace section2
                     newDepth = tDepth;
             }
             rtPE.Add(new mcPEn(newDepth));
+            */
             fls_dgvPE();
         }
 

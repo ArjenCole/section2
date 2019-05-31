@@ -8,7 +8,7 @@ namespace section2.mcP
     /// <summary>
     /// 工作面宽度原则
     /// </summary>
-    public class mcPW : mcStruct.macDicDoub<mcData.mcCpt>
+    public class mcPW : mcStruct.macDic<mcData.mcCpt>
     {
         public mcPW()
         {

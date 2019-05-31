@@ -83,7 +83,9 @@
       <DependentUpon>FmGuide.cs</DependentUpon>
     </Compile>
     <Compile Include="mcData\mcCpt.cs" />
+    <Compile Include="mcP\mcPB.cs" />
     <Compile Include="mcP\mcPD.cs" />
+    <Compile Include="mcP\mcPDn.cs" />
     <Compile Include="mcP\mcPE.cs" />
     <Compile Include="mcP\mcPEn.cs" />
     <Compile Include="mcP\mcPEns.cs" />
@@ -93,7 +95,7 @@
     <Compile Include="mcStruct\Iname.cs" />
     <Compile Include="mcStruct\macDic.cs" />
     <Compile Include="mcData\mcBI.cs" />
-    <Compile Include="mcStruct\macDicDoub.cs" />
+    <Compile Include="mcStruct\macDicRange.cs" />
     <Compile Include="mcStruct\macList.cs" />
     <Compile Include="mcStruct\mcDC.cs" />
     <Compile Include="mcData\mcQ.cs" />

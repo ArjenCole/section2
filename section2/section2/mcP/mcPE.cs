@@ -7,7 +7,7 @@ using section2.mcStruct;
 
 namespace section2.mcP
 {
-    public class mcPE:macDicDoub<mcPEn>
+    public class mcPE:macDicRange<mcPEn>
     {
         #region 下拉框数据源
         public static string[] sExvCat = new[] { "Ⅰ、Ⅱ类土", "Ⅲ类土", "Ⅳ类土", "松石", "次坚石", "普坚石", "特坚石" };

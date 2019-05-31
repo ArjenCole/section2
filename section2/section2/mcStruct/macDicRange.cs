@@ -5,8 +5,52 @@ using System.Text;
 
 namespace section2.mcStruct
 {
-    public abstract class macDicDoub<T> :macDic<T>
+    public abstract class macDicRange<T> :macDic<T>
     {
+        public void AddAt(int pIdx, T pT)
+        {
+            int tIdx = pIdx - 1;
+            int newDepth = 0;
+            if ((tIdx < 0) || (tIdx == mDic.Count - 1)) 
+            {
+                newDepth = DofT(mDic.Last().Value) + 3000;
+            }
+            else
+            {
+                T tT1 = SonAt(tIdx);
+                T tT2 = SonAt(tIdx + 1);
+                int tDepth = (int)Math.Round((DofT(tT1)+ DofT(tT2)) / 2.0, 0);
+                newDepth = tDepth;
+            }
+            ((Iname)pT).SetName(newDepth.ToString());
+            Add(pT);
+        }
+        public override void Add(T pT)
+        {
+            mDic.Add(((Iname)pT).GetName(), pT);
+            orderDic();
+        }
+
+        /// <summary>
+        /// 获得指定索引号对应的子项
+        /// </summary>
+        /// <param name="pIdx"></param>
+        /// <returns></returns>
+        public T SonAt(int pIdx)
+        {
+            string tKey = mDic.Keys.ToList()[pIdx];
+            return mDic[tKey];
+        }
+        /// <summary>
+        /// 获得子项的埋深并转为int
+        /// </summary>
+        /// <param name="pT"></param>
+        /// <returns></returns>
+        public int DofT(T pT)
+        {
+            return int.Parse(((Iname)pT).GetName());
+        }
+
         public int SonIdx(string pKey)
         {
             orderDic();
@@ -57,13 +101,7 @@ namespace section2.mcStruct
 
         public List<T> Sons() { return mDic.Values.ToList(); }
 
-        public override void Add(T pT)
-        {
-            mDic.Add(((Iname)pT).GetName(), pT);
-            orderDic();
 
-            //TODO: 添加项后自动排序
-        }
 
         private void orderDic()
         {
