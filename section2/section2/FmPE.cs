@@ -149,25 +149,25 @@ namespace section2
         }
         private void iniDropItems()
         {
-            cboExv.DataSource = mcPE.sExvCat;
-            cboDockMat.DataSource = mcPE.sDockPos;
-            cboFndMat.DataSource = mcPE.sFndMat;
-            cboFndAgl.DataSource = mcPE.sFndAgl;
+            cboExv.DataSource = mcPB.sExvCat;
+            cboDockMat.DataSource = mcPB.sDockPos;
+            cboFndMat.DataSource = mcPB.sFndMat;
+            cboFndAgl.DataSource = mcPB.sFndAgl;
         }
 
         private void fls_gbPEpara(mcPE pPE)
         {
             txtPEname.Text = pPE.GetName();
             //gbPEparaDock
-            txtCovMat.Text = pPE.CovMat;
-            txtCuhMat.Text = pPE.CuhMat;
-            txtCuhThk.Text = pPE.CuhThk;
-            txtDockMat.Text = pPE.DockMat;
+            txtCovMat.Text = pPE.PB.CovMat;
+            txtCuhMat.Text = pPE.PB.CuhMat;
+            txtCuhThk.Text = pPE.PB.CuhThk;
+            txtDockMat.Text = pPE.PB.DockMat;
             //gbPEparaFound
-            cboDockMat.Text = pPE.DockPos;
-            cboExv.Text = pPE.ExvCat;
-            cboFndAgl.Text = pPE.FndAgl;
-            cboFndMat.Text = pPE.FndMat;
+            cboDockMat.Text = pPE.PB.DockPos;
+            cboExv.Text = pPE.PB.ExvCat;
+            cboFndAgl.Text = pPE.PB.FndAgl;
+            cboFndMat.Text = pPE.PB.FndMat;
         }
         private void fls_dgvPE()
         {
@@ -190,15 +190,15 @@ namespace section2
         {
             rtPE.SetName(txtPEname.Text);
             //gbPEparaDock
-            rtPE.CovMat = txtCovMat.Text;
-            rtPE.CuhMat = txtCuhMat.Text;
-            rtPE.CuhThk = txtCuhThk.Text;
-            rtPE.DockMat = txtDockMat.Text;
+            rtPE.PB.CovMat = txtCovMat.Text;
+            rtPE.PB.CuhMat = txtCuhMat.Text;
+            rtPE.PB.CuhThk = txtCuhThk.Text;
+            rtPE.PB.DockMat = txtDockMat.Text;
             //gbPEparaFound
-             rtPE.DockPos = cboDockMat.Text;
-             rtPE.ExvCat= cboExv.Text;
-             rtPE.FndAgl= cboFndAgl.Text;
-             rtPE.FndMat = cboFndMat.Text;
+            rtPE.PB.DockPos = cboDockMat.Text;
+            rtPE.PB.ExvCat = cboExv.Text;
+            rtPE.PB.FndAgl = cboFndAgl.Text;
+            rtPE.PB.FndMat = cboFndMat.Text;
         }
 
         private int dgvRowIdx(DataGridView pDGV)

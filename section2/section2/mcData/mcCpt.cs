@@ -5,7 +5,7 @@ using System.Text;
 
 namespace section2.mcData
 {
-    public class mcCpt:mcStruct.macDic<mcQ>
+    public class mcCpt:macDic<mcQ>
     {
         public static List<string> KeepWords = new List<string>
         {

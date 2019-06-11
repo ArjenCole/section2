@@ -53,7 +53,7 @@ namespace section2
 
         public static mcDic<mcPE> getPEdic()
         {
-            return getDC().PEdic;
+            return getDC().PE;
         }
         public static mcPE getPE(string pName)
         {
@@ -61,7 +61,7 @@ namespace section2
         }
         public static mcDic<mcPF> getPFdic()
         {
-            return getDC().PFdic;
+            return getDC().PF;
         }
         public static mcPF getPF(string pName)
         {
@@ -71,19 +71,19 @@ namespace section2
 
         public static void Add(mcPE pPE)
         {
-            dc.PEdic.Add(pPE);
+            dc.PE.Add(pPE);
         }
         public static void Add(mcPF pPF)
         {
-            dc.PFdic.Add(pPF);
+            dc.PF.Add(pPF);
         }
         public static void Update(string pOname, mcPE pPE)
         {
-            dc.PEdic.UpdateSon(pOname, pPE);
+            dc.PE.UpdateSon(pOname, pPE);
         }
         public static void Update(string pOname, mcPF pPF)
         {
-            dc.PFdic.UpdateSon(pOname, pPF);
+            dc.PF.UpdateSon(pOname, pPF);
         }
     }
 }

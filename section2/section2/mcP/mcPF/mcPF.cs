@@ -6,7 +6,7 @@ using section2.mcData;
 
 namespace section2.mcP
 {
-    public class mcPF:mcStruct.Iname
+    public class mcPF:Iname
     {
         public string GetName() { return name; }
         public void SetName(string pName) { name = pName; }

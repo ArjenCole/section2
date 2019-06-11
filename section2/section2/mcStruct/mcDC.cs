@@ -11,8 +11,8 @@ namespace section2.mcStruct
     {
         public mcBI BI;
 
-        public mcDic<mcPE> PEdic = new mcDic<mcPE>();
-        public mcDic<mcPF> PFdic = new mcDic<mcPF>();
+        public mcDic<mcPE> PE = new mcDic<mcPE>();
+        public mcDic<mcPF> PF = new mcDic<mcPF>();
 
         public mcDC()
         {
@@ -20,8 +20,8 @@ namespace section2.mcStruct
 
             BI = new mcBI();
             
-            PEdic.Add(new mcPE());
-            PFdic.Add(new mcPF());
+            PE.Add(new mcPE());
+            PF.Add(new mcPF());
         }
     }
 }

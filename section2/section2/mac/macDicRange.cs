@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
-namespace section2.mcStruct
+namespace section2
 {
     public abstract class macDicRange<T> :macDic<T>
     {
@@ -115,6 +115,11 @@ namespace section2.mcStruct
         {
             return mDic.ElementAt(pIdx).Value;
         }
+
     }
 
+    public class mcDicRange<T> : macDicRange<T>
+    {
+
+    }
 }
