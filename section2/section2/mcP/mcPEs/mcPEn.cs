@@ -7,13 +7,22 @@ using section2.mcStruct;
 
 namespace section2.mcP
 {
-    public class mcPEn:Iname
+    public class mcPEn:Iname,IdgvTxt
     {
         #region 实现接口
         public string GetName() { return Name; }
         public void SetName(string pName) { Name = pName; }
         public string Name = "";//应该为私有变量拒绝直接修改，但是为了深拷贝不得不改为公共变量
 
+        public string[] GetDgvTxt()
+        {
+            string[] rtStrs = new string[4];
+            rtStrs[0] = DepthDoub().ToString();
+            rtStrs[1] = "+∞";
+            rtStrs[2] = Cat();
+            rtStrs[3] = StopWater.Name;
+            return rtStrs;
+        }
         #endregion
         public const string StrMultiPEns= "多级围护";
         
@@ -24,13 +33,10 @@ namespace section2.mcP
         {
             return Name;
         }
-        public int DepthInt()
-        {
-            return int.Parse(Name);
-        }
+
         public double DepthDoub()
         {
-            return (double)(DepthInt() / 1000.0);
+            return (double)((int.Parse(Name)) / 1000.0);
         }
 
         public mcPEn()

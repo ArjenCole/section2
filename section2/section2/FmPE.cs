@@ -15,12 +15,47 @@ namespace section2
         public mcPE oPE = new mcPE();
         public mcPE rtPE = new mcPE();
 
+        mcDataGridView dgvPD;
+        List<mcDataGridView> dgvPW;
+
         public FmPE(mcPE pmPE)
         {
             InitializeComponent();
             iniData(pmPE);
             iniDropItems();
+
+            iniDgvPD();
+            iniDgvPW();
+
         }
+
+        private void iniDgvPD()
+        {
+            Dictionary<string, string> tDic = new Dictionary<string, string>();
+            tDic.Add("colDepth", "埋深");
+            tDic.Add("colRange", "范围");
+            tDic.Add("colPD", "降水方式");
+            addmcDgv("dgvPD", tDic, tpPD);
+        }
+        private void iniDgvPW()
+        {
+            Dictionary<string, string> tDic = new Dictionary<string, string>();
+            tDic.Add("colDepth", "尺寸");
+            tDic.Add("colRange", "范围");
+            tDic.Add("colWidth", "工作面宽度");
+            foreach (TabPage feTP in tcPW.Controls)
+                addmcDgv("dgvPW", tDic, feTP);
+        }
+        private void addmcDgv(string pName, Dictionary<string, string> pDic, Control pC)
+        {
+            mcDataGridView tDGV = new mcDataGridView(pName, pDic);
+            foreach (DataGridViewColumn feDGVC in tDGV.Columns)
+                if (feDGVC.HeaderText.Count() > 3)
+                    feDGVC.Width = feDGVC.HeaderText.Count() * 40;
+            pC.Controls.Add(tDGV);
+        }
+
+
         private void FmPE_Load(object sender, EventArgs e)
         {
             fls_gbPEpara(oPE);
@@ -95,14 +130,14 @@ namespace section2
                     if (tTxt.Contains("级围护"))
                         tPEn = mscVctrl.EditPEn(new mcPEn());
                     rtPE.UpdateSon(rowIdx, tPEn);
-                    fls_dgvPErow(rowIdx);
+                    fls_dgvPErow(rowIdx, rtPE.Son(rowIdx));
                     break;
                 case "eColSWDis":
                     if (tTxt == dgvPE[colIdx, rowIdx].Value.ToString()) break;//如果选中类型与现类型一致，不发生变化
                     if (mscInventory.ListStopWaterKeys().Contains(tTxt))
                     {
                         rtPE.Son(rowIdx).SetStopWater(tTxt);
-                        fls_dgvPErow(rowIdx);
+                        fls_dgvPErow(rowIdx, rtPE.Son(rowIdx));
                     }
                     break;
                 default:
@@ -174,16 +209,17 @@ namespace section2
             int cnt = rtPE.Count();
             mscTools.DgvAdjRowsCnt(dgvPE, cnt);
             for (int i = 0; i < cnt; i++)
-                fls_dgvPErow(i);
+                fls_dgvPErow(i, rtPE.Son(i));
         }
-        private void fls_dgvPErow(int pIdx)
+        private void fls_dgvPErow(int pIdx,IdgvTxt pDgvTxt)
         {
-            mcPEn tPEn = rtPE.Son(pIdx);
             DataGridViewRow tDGVR = dgvPE.Rows[pIdx];
-            tDGVR.Cells[0].Value = tPEn.DepthDoub().ToString();
-            tDGVR.Cells[1].Value = pIdx + 1 == rtPE.Count() ? "+∞" : rtPE.Son(pIdx + 1).DepthDoub().ToString();
-            tDGVR.Cells[2].Value = tPEn.Cat();
-            tDGVR.Cells[3].Value = tPEn.StopWater.Name;
+
+            string[] tStrs = pDgvTxt.GetDgvTxt();
+
+            for (int i = 0; i < tStrs.Count(); i++)
+                tDGVR.Cells[i].Value = tStrs[i];
+            if (pIdx > 0) dgvPE.Rows[pIdx - 1].Cells[1].Value = tStrs[0];
         }
 
         private void getPEpara()
@@ -205,6 +241,10 @@ namespace section2
         {
             return pDGV.SelectedCells[0].RowIndex;
         }
-        
+
+        private void dgvPE_CellEndEdit(object sender, DataGridViewCellEventArgs e)
+        {
+
+        }
     }
 }

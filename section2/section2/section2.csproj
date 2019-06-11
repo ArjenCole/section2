@@ -82,6 +82,10 @@
     <Compile Include="FmTool\FmGuide.Designer.cs">
       <DependentUpon>FmGuide.cs</DependentUpon>
     </Compile>
+    <Compile Include="mac\IdgvTxt.cs" />
+    <Compile Include="mcDataGridView.cs">
+      <SubType>Component</SubType>
+    </Compile>
     <Compile Include="mcData\mcCpt.cs" />
     <Compile Include="mcP\mcPEs\mcPB.cs" />
     <Compile Include="mcP\mcPEs\mcPE.cs" />

@@ -29,10 +29,6 @@
         private void InitializeComponent()
         {
             this.components = new System.ComponentModel.Container();
-            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle1 = new System.Windows.Forms.DataGridViewCellStyle();
-            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle4 = new System.Windows.Forms.DataGridViewCellStyle();
-            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle2 = new System.Windows.Forms.DataGridViewCellStyle();
-            System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle3 = new System.Windows.Forms.DataGridViewCellStyle();
             System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle5 = new System.Windows.Forms.DataGridViewCellStyle();
             System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle8 = new System.Windows.Forms.DataGridViewCellStyle();
             System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle6 = new System.Windows.Forms.DataGridViewCellStyle();
@@ -47,10 +43,9 @@
             this.eColSWDis = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.cmsDrop = new System.Windows.Forms.ContextMenuStrip(this.components);
             this.tpPD = new System.Windows.Forms.TabPage();
+            this.btnAddPD = new System.Windows.Forms.Button();
             this.tpPW = new System.Windows.Forms.TabPage();
             this.tcPW = new System.Windows.Forms.TabControl();
-            this.tabPage4 = new System.Windows.Forms.TabPage();
-            this.tabPage5 = new System.Windows.Forms.TabPage();
             this.tabPage6 = new System.Windows.Forms.TabPage();
             this.tabPage7 = new System.Windows.Forms.TabPage();
             this.tabPage8 = new System.Windows.Forms.TabPage();
@@ -77,11 +72,8 @@
             this.LBLPEname = new System.Windows.Forms.Label();
             this.btnOK = new System.Windows.Forms.Button();
             this.btnCancel = new System.Windows.Forms.Button();
-            this.btnAddPD = new System.Windows.Forms.Button();
-            this.dgvPD = new System.Windows.Forms.DataGridView();
-            this.dColDepth = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.dColRange = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.dCol = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.tabPage1 = new System.Windows.Forms.TabPage();
+            this.tabPage2 = new System.Windows.Forms.TabPage();
             this.tcMain.SuspendLayout();
             this.tpPE.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.dgvPE)).BeginInit();
@@ -90,7 +82,6 @@
             this.tcPW.SuspendLayout();
             this.gbPEparaDock.SuspendLayout();
             this.gbPEparaFound.SuspendLayout();
-            ((System.ComponentModel.ISupportInitialize)(this.dgvPD)).BeginInit();
             this.SuspendLayout();
             // 
             // tcMain
@@ -134,14 +125,14 @@
             this.dgvPE.AllowUserToAddRows = false;
             this.dgvPE.AllowUserToResizeColumns = false;
             this.dgvPE.AllowUserToResizeRows = false;
-            dataGridViewCellStyle1.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-            dataGridViewCellStyle1.BackColor = System.Drawing.SystemColors.Control;
-            dataGridViewCellStyle1.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            dataGridViewCellStyle1.ForeColor = System.Drawing.SystemColors.WindowText;
-            dataGridViewCellStyle1.SelectionBackColor = System.Drawing.SystemColors.Highlight;
-            dataGridViewCellStyle1.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
-            dataGridViewCellStyle1.WrapMode = System.Windows.Forms.DataGridViewTriState.True;
-            this.dgvPE.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle1;
+            dataGridViewCellStyle5.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+            dataGridViewCellStyle5.BackColor = System.Drawing.SystemColors.Control;
+            dataGridViewCellStyle5.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            dataGridViewCellStyle5.ForeColor = System.Drawing.SystemColors.WindowText;
+            dataGridViewCellStyle5.SelectionBackColor = System.Drawing.SystemColors.Highlight;
+            dataGridViewCellStyle5.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
+            dataGridViewCellStyle5.WrapMode = System.Windows.Forms.DataGridViewTriState.True;
+            this.dgvPE.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle5;
             this.dgvPE.ColumnHeadersHeightSizeMode = System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode.AutoSize;
             this.dgvPE.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
             this.eColdepth,
@@ -149,14 +140,14 @@
             this.eColPEnDis,
             this.eColSWDis});
             this.dgvPE.ContextMenuStrip = this.cmsDrop;
-            dataGridViewCellStyle4.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
-            dataGridViewCellStyle4.BackColor = System.Drawing.SystemColors.Window;
-            dataGridViewCellStyle4.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            dataGridViewCellStyle4.ForeColor = System.Drawing.SystemColors.ControlText;
-            dataGridViewCellStyle4.SelectionBackColor = System.Drawing.SystemColors.Highlight;
-            dataGridViewCellStyle4.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
-            dataGridViewCellStyle4.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
-            this.dgvPE.DefaultCellStyle = dataGridViewCellStyle4;
+            dataGridViewCellStyle8.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
+            dataGridViewCellStyle8.BackColor = System.Drawing.SystemColors.Window;
+            dataGridViewCellStyle8.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            dataGridViewCellStyle8.ForeColor = System.Drawing.SystemColors.ControlText;
+            dataGridViewCellStyle8.SelectionBackColor = System.Drawing.SystemColors.Highlight;
+            dataGridViewCellStyle8.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
+            dataGridViewCellStyle8.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
+            this.dgvPE.DefaultCellStyle = dataGridViewCellStyle8;
             this.dgvPE.Dock = System.Windows.Forms.DockStyle.Fill;
             this.dgvPE.Location = new System.Drawing.Point(3, 3);
             this.dgvPE.Name = "dgvPE";
@@ -166,12 +157,13 @@
             this.dgvPE.Size = new System.Drawing.Size(584, 310);
             this.dgvPE.TabIndex = 61;
             this.dgvPE.CellDoubleClick += new System.Windows.Forms.DataGridViewCellEventHandler(this.dgvPE_CellDoubleClick);
+            this.dgvPE.CellEndEdit += new System.Windows.Forms.DataGridViewCellEventHandler(this.dgvPE_CellEndEdit);
             this.dgvPE.CellMouseUp += new System.Windows.Forms.DataGridViewCellMouseEventHandler(this.dgvPE_CellMouseUp);
             // 
             // eColdepth
             // 
-            dataGridViewCellStyle2.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleRight;
-            this.eColdepth.DefaultCellStyle = dataGridViewCellStyle2;
+            dataGridViewCellStyle6.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleRight;
+            this.eColdepth.DefaultCellStyle = dataGridViewCellStyle6;
             this.eColdepth.HeaderText = "埋深";
             this.eColdepth.Name = "eColdepth";
             this.eColdepth.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
@@ -179,8 +171,8 @@
             // 
             // eColrange
             // 
-            dataGridViewCellStyle3.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
-            this.eColrange.DefaultCellStyle = dataGridViewCellStyle3;
+            dataGridViewCellStyle7.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
+            this.eColrange.DefaultCellStyle = dataGridViewCellStyle7;
             this.eColrange.HeaderText = "范围";
             this.eColrange.Name = "eColrange";
             this.eColrange.ReadOnly = true;
@@ -213,7 +205,6 @@
             // tpPD
             // 
             this.tpPD.Controls.Add(this.btnAddPD);
-            this.tpPD.Controls.Add(this.dgvPD);
             this.tpPD.Location = new System.Drawing.Point(4, 22);
             this.tpPD.Name = "tpPD";
             this.tpPD.Padding = new System.Windows.Forms.Padding(3);
@@ -221,6 +212,18 @@
             this.tpPD.TabIndex = 1;
             this.tpPD.Text = "降水原则";
             this.tpPD.UseVisualStyleBackColor = true;
+            // 
+            // btnAddPD
+            // 
+            this.btnAddPD.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
+            this.btnAddPD.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
+            this.btnAddPD.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
+            this.btnAddPD.Location = new System.Drawing.Point(545, 3);
+            this.btnAddPD.Name = "btnAddPD";
+            this.btnAddPD.Size = new System.Drawing.Size(41, 30);
+            this.btnAddPD.TabIndex = 64;
+            this.btnAddPD.Text = "+";
+            this.btnAddPD.UseVisualStyleBackColor = true;
             // 
             // tpPW
             // 
@@ -234,38 +237,18 @@
             // 
             // tcPW
             // 
-            this.tcPW.Controls.Add(this.tabPage4);
-            this.tcPW.Controls.Add(this.tabPage5);
             this.tcPW.Controls.Add(this.tabPage6);
             this.tcPW.Controls.Add(this.tabPage7);
             this.tcPW.Controls.Add(this.tabPage8);
             this.tcPW.Controls.Add(this.tabPage9);
+            this.tcPW.Controls.Add(this.tabPage1);
+            this.tcPW.Controls.Add(this.tabPage2);
             this.tcPW.Dock = System.Windows.Forms.DockStyle.Fill;
             this.tcPW.Location = new System.Drawing.Point(0, 0);
             this.tcPW.Name = "tcPW";
             this.tcPW.SelectedIndex = 0;
             this.tcPW.Size = new System.Drawing.Size(590, 316);
             this.tcPW.TabIndex = 0;
-            // 
-            // tabPage4
-            // 
-            this.tabPage4.Location = new System.Drawing.Point(4, 22);
-            this.tabPage4.Name = "tabPage4";
-            this.tabPage4.Padding = new System.Windows.Forms.Padding(3);
-            this.tabPage4.Size = new System.Drawing.Size(582, 290);
-            this.tabPage4.TabIndex = 0;
-            this.tabPage4.Text = "tabPage4";
-            this.tabPage4.UseVisualStyleBackColor = true;
-            // 
-            // tabPage5
-            // 
-            this.tabPage5.Location = new System.Drawing.Point(4, 22);
-            this.tabPage5.Name = "tabPage5";
-            this.tabPage5.Padding = new System.Windows.Forms.Padding(3);
-            this.tabPage5.Size = new System.Drawing.Size(582, 290);
-            this.tabPage5.TabIndex = 1;
-            this.tabPage5.Text = "tabPage5";
-            this.tabPage5.UseVisualStyleBackColor = true;
             // 
             // tabPage6
             // 
@@ -536,81 +519,23 @@
             this.btnCancel.UseVisualStyleBackColor = true;
             this.btnCancel.Click += new System.EventHandler(this.btnCancel_Click);
             // 
-            // btnAddPD
+            // tabPage1
             // 
-            this.btnAddPD.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
-            this.btnAddPD.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
-            this.btnAddPD.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            this.btnAddPD.Location = new System.Drawing.Point(545, 3);
-            this.btnAddPD.Name = "btnAddPD";
-            this.btnAddPD.Size = new System.Drawing.Size(41, 30);
-            this.btnAddPD.TabIndex = 64;
-            this.btnAddPD.Text = "+";
-            this.btnAddPD.UseVisualStyleBackColor = true;
+            this.tabPage1.Location = new System.Drawing.Point(4, 22);
+            this.tabPage1.Name = "tabPage9";
+            this.tabPage1.Size = new System.Drawing.Size(582, 290);
+            this.tabPage1.TabIndex = 5;
+            this.tabPage1.Text = "tabPage9";
+            this.tabPage1.UseVisualStyleBackColor = true;
             // 
-            // dgvPD
+            // tabPage2
             // 
-            this.dgvPD.AllowUserToAddRows = false;
-            this.dgvPD.AllowUserToResizeColumns = false;
-            this.dgvPD.AllowUserToResizeRows = false;
-            dataGridViewCellStyle5.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-            dataGridViewCellStyle5.BackColor = System.Drawing.SystemColors.Control;
-            dataGridViewCellStyle5.Font = new System.Drawing.Font("微软雅黑", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            dataGridViewCellStyle5.ForeColor = System.Drawing.SystemColors.WindowText;
-            dataGridViewCellStyle5.SelectionBackColor = System.Drawing.SystemColors.Highlight;
-            dataGridViewCellStyle5.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
-            dataGridViewCellStyle5.WrapMode = System.Windows.Forms.DataGridViewTriState.True;
-            this.dgvPD.ColumnHeadersDefaultCellStyle = dataGridViewCellStyle5;
-            this.dgvPD.ColumnHeadersHeightSizeMode = System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode.AutoSize;
-            this.dgvPD.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
-            this.dColDepth,
-            this.dColRange,
-            this.dCol});
-            this.dgvPD.ContextMenuStrip = this.cmsDrop;
-            dataGridViewCellStyle8.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
-            dataGridViewCellStyle8.BackColor = System.Drawing.SystemColors.Window;
-            dataGridViewCellStyle8.Font = new System.Drawing.Font("微软雅黑", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
-            dataGridViewCellStyle8.ForeColor = System.Drawing.SystemColors.ControlText;
-            dataGridViewCellStyle8.SelectionBackColor = System.Drawing.SystemColors.Highlight;
-            dataGridViewCellStyle8.SelectionForeColor = System.Drawing.SystemColors.HighlightText;
-            dataGridViewCellStyle8.WrapMode = System.Windows.Forms.DataGridViewTriState.False;
-            this.dgvPD.DefaultCellStyle = dataGridViewCellStyle8;
-            this.dgvPD.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.dgvPD.Location = new System.Drawing.Point(3, 3);
-            this.dgvPD.Name = "dgvPD";
-            this.dgvPD.RowHeadersVisible = false;
-            this.dgvPD.RowTemplate.Height = 23;
-            this.dgvPD.SelectionMode = System.Windows.Forms.DataGridViewSelectionMode.CellSelect;
-            this.dgvPD.Size = new System.Drawing.Size(584, 310);
-            this.dgvPD.TabIndex = 63;
-            // 
-            // dColDepth
-            // 
-            dataGridViewCellStyle6.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleRight;
-            this.dColDepth.DefaultCellStyle = dataGridViewCellStyle6;
-            this.dColDepth.HeaderText = "埋深";
-            this.dColDepth.Name = "dColDepth";
-            this.dColDepth.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
-            this.dColDepth.Width = 70;
-            // 
-            // dColRange
-            // 
-            dataGridViewCellStyle7.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
-            this.dColRange.DefaultCellStyle = dataGridViewCellStyle7;
-            this.dColRange.HeaderText = "范围";
-            this.dColRange.Name = "dColRange";
-            this.dColRange.ReadOnly = true;
-            this.dColRange.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
-            this.dColRange.Width = 70;
-            // 
-            // dCol
-            // 
-            this.dCol.HeaderText = "降水";
-            this.dCol.Name = "dCol";
-            this.dCol.ReadOnly = true;
-            this.dCol.SortMode = System.Windows.Forms.DataGridViewColumnSortMode.NotSortable;
-            this.dCol.ToolTipText = "双击编辑围护形式";
-            this.dCol.Width = 200;
+            this.tabPage2.Location = new System.Drawing.Point(4, 22);
+            this.tabPage2.Name = "tabPage2";
+            this.tabPage2.Size = new System.Drawing.Size(582, 290);
+            this.tabPage2.TabIndex = 7;
+            this.tabPage2.Text = "tabPage2";
+            this.tabPage2.UseVisualStyleBackColor = true;
             // 
             // FmPE
             // 
@@ -641,7 +566,6 @@
             this.gbPEparaDock.PerformLayout();
             this.gbPEparaFound.ResumeLayout(false);
             this.gbPEparaFound.PerformLayout();
-            ((System.ComponentModel.ISupportInitialize)(this.dgvPD)).EndInit();
             this.ResumeLayout(false);
             this.PerformLayout();
 
@@ -654,8 +578,6 @@
         private System.Windows.Forms.TabPage tpPD;
         private System.Windows.Forms.TabPage tpPW;
         private System.Windows.Forms.TabControl tcPW;
-        private System.Windows.Forms.TabPage tabPage4;
-        private System.Windows.Forms.TabPage tabPage5;
         private System.Windows.Forms.TabPage tabPage6;
         private System.Windows.Forms.TabPage tabPage7;
         private System.Windows.Forms.TabPage tabPage8;
@@ -681,7 +603,6 @@
         private System.Windows.Forms.TextBox txtPEname;
         private System.Windows.Forms.Label LBLPEname;
         private System.Windows.Forms.Button btnAddPEn;
-        private System.Windows.Forms.DataGridView dgvPE;
         private System.Windows.Forms.ContextMenuStrip cmsDrop;
         private System.Windows.Forms.Button btnOK;
         private System.Windows.Forms.Button btnCancel;
@@ -690,9 +611,8 @@
         private System.Windows.Forms.DataGridViewTextBoxColumn eColPEnDis;
         private System.Windows.Forms.DataGridViewTextBoxColumn eColSWDis;
         private System.Windows.Forms.Button btnAddPD;
-        private System.Windows.Forms.DataGridView dgvPD;
-        private System.Windows.Forms.DataGridViewTextBoxColumn dColDepth;
-        private System.Windows.Forms.DataGridViewTextBoxColumn dColRange;
-        private System.Windows.Forms.DataGridViewTextBoxColumn dCol;
+        private System.Windows.Forms.DataGridView dgvPE;
+        private System.Windows.Forms.TabPage tabPage1;
+        private System.Windows.Forms.TabPage tabPage2;
     }
 }
