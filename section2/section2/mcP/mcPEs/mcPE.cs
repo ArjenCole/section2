@@ -32,7 +32,7 @@ namespace section2.mcP
         #endregion
 
         public mcPB PB = new mcPB();
-        public mcDicRange<mcCpt> PD = new mcDicRange<mcCpt>();
+        public mcDicRange<mcPD> PD = new mcDicRange<mcPD>();
         public List<mcPW> PW = new List<mcPW>();
 
         public mcPE()
@@ -48,6 +48,7 @@ namespace section2.mcP
         public void init()
         {
             this.Add(new mcPEn());
+            this.PD.Add(new mcPD());
         }
 
         public mcQ Fc1() { return new mcQ("垫层", choseMat("Fc1")); }

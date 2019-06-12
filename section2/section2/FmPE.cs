@@ -50,8 +50,14 @@ namespace section2
         {
             mcDataGridView tDGV = new mcDataGridView(pName, pDic);
             foreach (DataGridViewColumn feDGVC in tDGV.Columns)
+            {
                 if (feDGVC.HeaderText.Count() > 3)
                     feDGVC.Width = feDGVC.HeaderText.Count() * 40;
+                if (feDGVC.Index == 0)
+                    feDGVC.ReadOnly = false;
+                else
+                    feDGVC.ReadOnly = true;
+            }
             pC.Controls.Add(tDGV);
         }
 
@@ -214,7 +220,6 @@ namespace section2
         private void fls_dgvPErow(int pIdx,IdgvTxt pDgvTxt)
         {
             DataGridViewRow tDGVR = dgvPE.Rows[pIdx];
-
             string[] tStrs = pDgvTxt.GetDgvTxt();
 
             for (int i = 0; i < tStrs.Count(); i++)
@@ -244,7 +249,10 @@ namespace section2
 
         private void dgvPE_CellEndEdit(object sender, DataGridViewCellEventArgs e)
         {
-
+            if (((DataGridView)sender).Columns[e.ColumnIndex].Name.EndsWith("depth"))
+            {
+                var t = 1;
+            }
         }
     }
 }

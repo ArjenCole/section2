@@ -88,6 +88,7 @@
     </Compile>
     <Compile Include="mcData\mcCpt.cs" />
     <Compile Include="mcP\mcPEs\mcPB.cs" />
+    <Compile Include="mcP\mcPEs\mcPD.cs" />
     <Compile Include="mcP\mcPEs\mcPE.cs" />
     <Compile Include="mcP\mcPEs\mcPEn.cs" />
     <Compile Include="mcP\mcPEs\mcPEns.cs" />

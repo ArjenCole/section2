@@ -35,7 +35,10 @@ namespace section2
             */
 
             foreach (string feStr in pDic.Keys)
+            {
                 this.Columns.Add(pName + "_" + feStr, pDic[feStr]);
+                this.Columns[this.Columns.Count - 1].SortMode = DataGridViewColumnSortMode.NotSortable;
+            }
 
             DataGridViewCellStyle DefaultCellStyle = new DataGridViewCellStyle();
             DefaultCellStyle.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;

@@ -23,6 +23,7 @@ namespace section2
             listPEnsKeys = DicPEns.Keys.ToList();
             return listPEnsKeys;
         }
+
         public static Dictionary<string, mcCpt> DicStopWater;
         private static List<string> listStopWaterKeys = new List<string>();
         public static List<string> ListStopWaterKeys()
@@ -31,12 +32,15 @@ namespace section2
             return listPEnsKeys;
         }
 
+        public static Dictionary<string, mcCpt> PD;
+
         const string Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
         public static void ini()
         {
             DicPEns = loadCSV("DicPEn");
             DicStopWater = loadCSV("DicStopWater");
+            PD = loadCSV("PD");
         }
 
 
