@@ -92,7 +92,7 @@
     <Compile Include="mcP\mcPEs\mcPEn.cs" />
     <Compile Include="mcP\mcPEs\mcPEns.cs" />
     <Compile Include="mcP\mcPEs\mcPWn.cs" />
-    <Compile Include="mcP\mcPF\mcPF.cs" />
+    <Compile Include="mcP\mcPFs\mcPF.cs" />
     <Compile Include="mcP\mcPEs\mcPW.cs" />
     <Compile Include="mac\Ijson.cs" />
     <Compile Include="mac\Iname.cs" />
