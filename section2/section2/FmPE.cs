@@ -73,7 +73,7 @@ namespace section2
             int rowIdx = e.RowIndex;
             if (e.RowIndex < 0) return;
             string tColName = dgvPE.Columns[e.ColumnIndex].Name;
-            var tPEn = mscTools.DeepClone(rtPE.Son(rowIdx));
+            mcPEn tPEn = (mcPEn)mscTools.DeepClone(rtPE[rowIdx]);
             switch (tColName)
             {
                 case "eColPEnDis":
@@ -89,7 +89,7 @@ namespace section2
                     //dGVPE.BeginEdit(true);
                     break;
             }
-            rtPE.UpdateSon(rowIdx, tPEn);
+            rtPE.Update(rowIdx, tPEn);
         }
         private void dgvPE_CellMouseUp(object sender, DataGridViewCellMouseEventArgs e)
         {
@@ -132,18 +132,18 @@ namespace section2
             {
                 case "eColPEnDis":
                     if (tTxt == dgvPE[colIdx, rowIdx].Value.ToString()) break;//如果选中类型与现类型一致，不发生变化
-                    mcPEn tPEn = new mcPEn(rtPE.Son(rowIdx).DepthStr(), tTxt);
+                    mcPEn tPEn = new mcPEn(((mcPEn)rtPE[rowIdx]).DepthStr(), tTxt);
                     if (tTxt.Contains("级围护"))
                         tPEn = mscVctrl.EditPEn(new mcPEn());
-                    rtPE.UpdateSon(rowIdx, tPEn);
-                    fls_dgvPErow(rowIdx, rtPE.Son(rowIdx));
+                    rtPE.Update(rowIdx, tPEn);
+                    fls_dgvPErow(rowIdx, ((mcPEn)rtPE[rowIdx]));
                     break;
                 case "eColSWDis":
                     if (tTxt == dgvPE[colIdx, rowIdx].Value.ToString()) break;//如果选中类型与现类型一致，不发生变化
                     if (mscInventory.ListStopWaterKeys().Contains(tTxt))
                     {
-                        rtPE.Son(rowIdx).SetStopWater(tTxt);
-                        fls_dgvPErow(rowIdx, rtPE.Son(rowIdx));
+                        ((mcPEn)rtPE[rowIdx]).SetStopWater(tTxt);
+                        fls_dgvPErow(rowIdx, ((mcPEn)rtPE[rowIdx]));
                     }
                     break;
                 default:
@@ -215,7 +215,7 @@ namespace section2
             int cnt = rtPE.Count();
             mscTools.DgvAdjRowsCnt(dgvPE, cnt);
             for (int i = 0; i < cnt; i++)
-                fls_dgvPErow(i, rtPE.Son(i));
+                fls_dgvPErow(i, (mcPEn)rtPE[i]);
         }
         private void fls_dgvPErow(int pIdx,IdgvTxt pDgvTxt)
         {

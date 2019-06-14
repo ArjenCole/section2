@@ -8,7 +8,7 @@ using section2.mcStruct;
 
 namespace section2.mcP
 {
-    public class mcPEn:macRange,Iname,IdgvTxt
+    public class mcPEn:mcRange,Iname,IdgvTxt
     {
         #region 实现接口
         public string GetName() { return Name; }

@@ -21,17 +21,17 @@ namespace section2
         #endregion
 
         #region 自定义数据格式运算
-        public static List<mcQ> sumQ(List<mcQ> pL1, List<mcQ> pL2)
+        public static List<mcExp> sumQ(List<mcExp> pL1, List<mcExp> pL2)
         {
-            List<mcQ> rtL = new List<mcQ>();
+            List<mcExp> rtL = new List<mcExp>();
             rtL.AddRange(pL1);
             rtL.AddRange(pL2);
             return sumQ(rtL);
         }
-        public static List<mcQ> sumQ(List<mcQ> pL1)
+        public static List<mcExp> sumQ(List<mcExp> pL1)
         {
-            Dictionary<string, mcQ> tD = new Dictionary<string, mcQ>();
-            foreach (mcQ feQ in pL1)
+            Dictionary<string, mcExp> tD = new Dictionary<string, mcExp>();
+            foreach (mcExp feQ in pL1)
                 if (tD.Keys.Contains(feQ.CNU()))
                     tD[feQ.CNU()].Exp += "+" + feQ.Exp;
                 else

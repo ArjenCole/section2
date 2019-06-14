@@ -13,15 +13,15 @@ namespace section2
         private static double depth0 = 0;
         private static double depth1 = 0;
         
-        public static List<mcQ> Cal(mcS pmS)
+        public static List<mcExp> Cal(mcS pmS)
         {
             crtS = pmS;
             analyze();
-            List<mcQ> Qs = calS();
-            List<mcQ> Qpit = null;
-            List<mcQ> Qocp = null;
+            List<mcExp> Qs = calS();
+            List<mcExp> Qpit = null;
+            List<mcExp> Qocp = null;
 
-            List<mcQ> rtQ = null;
+            List<mcExp> rtQ = null;
             rtQ = mscTools.sumQ(rtQ, Qs);
             rtQ = mscTools.sumQ(rtQ, Qpit);
             rtQ = mscTools.sumQ(rtQ, Qocp);
@@ -60,7 +60,7 @@ namespace section2
 
         }
 
-        private static List<mcQ> calS()
+        private static List<mcExp> calS()
         {
             switch (crtS.Type)
             {
@@ -79,19 +79,19 @@ namespace section2
             }
         }
 
-        private static List<mcQ> calSpipe()
+        private static List<mcExp> calSpipe()
         {
             return null;
         }
-        private static List<mcQ> calSconBox()
+        private static List<mcExp> calSconBox()
         {
             return null;
         }
-        private static List<mcQ> calSjacking()
+        private static List<mcExp> calSjacking()
         {
             return null;
         }
-        private static List<mcQ> calScustom()
+        private static List<mcExp> calScustom()
         {
             return null;
         }

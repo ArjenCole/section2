@@ -5,7 +5,7 @@ using System.Text;
 
 namespace section2.mcData
 {
-    public class mcCpt:macDic<mcQ>
+    public class mcCpt:mcDic<mcExp>
     {
         public static List<string> KeepWords = new List<string>
         {
@@ -22,7 +22,7 @@ namespace section2.mcData
             "保留字2"
         };
         public string NameExp = "";
-        public List<mcQ> Qlist = new List<mcQ>();
+        public List<mcExp> Qlist = new List<mcExp>();
         
         /*
         private Dictionary<string, string> keepPara = new Dictionary<string, string>();

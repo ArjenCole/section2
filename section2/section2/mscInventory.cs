@@ -77,7 +77,7 @@ namespace section2
                         string tName = tDisS[0];
                         string tUnit = tDisS[1];
                         string tExp = mscTools.ToString(foundRowsValue[i][tKey]);
-                        tmC.Add(new mcQ(tKey, tName, tExp, tUnit));
+                        tmC.Add(new mcExp(tKey, tName, tExp, tUnit));
                     }
                     else
                     {
@@ -96,7 +96,7 @@ namespace section2
                         string tName = tDisS[1];
                         string tUnit = tDisS[2];
                         string tExp = mscTools.ToString(foundRowsValue[i][tKey]);
-                        tmC.Qlist.Add(new mcQ("围护", tName, tExp, tUnit));
+                        tmC.Qlist.Add(new mcExp("围护", tName, tExp, tUnit));
                     }
                     else
                     {
@@ -117,7 +117,7 @@ namespace section2
                             string tName = tDisS[1];
                             string tUnit = tDisS[2];
                             string tExp = mscTools.ToString(foundRowsValue[i][tKey]);
-                            tmC.Qlist.Add(new mcQ("支撑", tName, tExp, tUnit));
+                            tmC.Qlist.Add(new mcExp("支撑", tName, tExp, tUnit));
                         }
                         else
                         {

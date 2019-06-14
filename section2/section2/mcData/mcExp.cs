@@ -6,7 +6,7 @@ using section2.mcStruct;
 
 namespace section2.mcData
 {
-    public class mcQ:Iname
+    public class mcExp:Iname
     {
         #region 实现接口
         public string GetName() { return Name; }
@@ -18,15 +18,15 @@ namespace section2.mcData
         public string Exp = "";
         public string Unit = "";
         
-        public mcQ()
+        public mcExp()
         {
 
         }
-        public mcQ(string pCat,string pName)
+        public mcExp(string pCat,string pName)
         {
             Cat = pCat;Name = pName;
         }
-        public mcQ(string pCat, string pName,string pExp,string pUnit)
+        public mcExp(string pCat, string pName,string pExp,string pUnit)
         {
             Cat = pCat; Name = pName;Exp = pExp;Unit = pUnit;
         }

@@ -27,7 +27,7 @@ namespace section2.FmTool
             showQs(dgvPara, omC.mDic.Values);
             showQs(dgvExp, omC.Qlist);
         }
-        private void showQs(DataGridView pDGV, IEnumerable<mcQ> pmcQs)
+        private void showQs(DataGridView pDGV, IEnumerable<mcExp> pmcQs)
         {
             int cnt = pmcQs.Count();
             if (cnt == 0) return;
@@ -44,12 +44,12 @@ namespace section2.FmTool
             }
         }
 
-        private List<mcQ> getQs(DataGridView pDGV)
+        private List<mcExp> getQs(DataGridView pDGV)
         {
-            List<mcQ> rtList = new List<mcData.mcQ>();
+            List<mcExp> rtList = new List<mcData.mcExp>();
             foreach (DataGridViewRow feRow in pDGV.Rows)
             {
-                mcQ tmQ = new mcData.mcQ();
+                mcExp tmQ = new mcData.mcExp();
                 tmQ.Cat = feRow.Cells[0].Value.ToString();
                 tmQ.Name = feRow.Cells[1].Value.ToString();
                 tmQ.Unit = feRow.Cells[2].Value.ToString();
@@ -61,9 +61,9 @@ namespace section2.FmTool
 
         private void BTNyes_Click(object sender, EventArgs e)
         {
-            List<mcQ> tListQ = getQs(dgvPara);
+            List<mcExp> tListQ = getQs(dgvPara);
             rtmC.mDic.Clear();
-            foreach (mcQ femQ in tListQ)
+            foreach (mcExp femQ in tListQ)
                 rtmC.Add(femQ);
             rtmC.Qlist = getQs(dgvExp);
             this.DialogResult = DialogResult.OK;

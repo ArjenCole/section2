@@ -37,12 +37,12 @@ namespace section2.mcData
         /// <param name="pPEname"></param>
         /// <param name="pPFname"></param>
         /// <returns></returns>
-        private List<mcQ> pitQ(string pPEname, string pPFname) { return null; }
+        private List<mcExp> pitQ(string pPEname, string pPFname) { return null; }
 
-        protected virtual List<mcQ> eleQ() { return null; }
-        public virtual List<mcQ> Q()
+        protected virtual List<mcExp> eleQ() { return null; }
+        public virtual List<mcExp> Q()
         {
-            List<mcQ> rtL = new List<mcQ>();
+            List<mcExp> rtL = new List<mcExp>();
             foreach (string fePE in PEdic.Keys)
                 foreach (string fePF in PFdic.Keys)
                     rtL = mscTools.sumQ(rtL, pitQ(fePE, fePF));

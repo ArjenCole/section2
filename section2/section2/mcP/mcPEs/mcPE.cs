@@ -33,15 +33,15 @@ namespace section2.mcP
         }
         public void init()
         {
-            this.Add(new mcPEn());
+            this.orderAdd(new mcPEn());
         }
 
-        public mcQ Fc1() { return new mcQ("垫层", choseMat("Fc1")); }
-        public mcQ Fc2() { return new mcQ("垫层", choseMat("Fc2")); }
-        public mcQ Fr1() { return new mcQ("回填", choseMat("Fr1")); }
-        public mcQ Fr2() { return new mcQ("回填", choseMat("Fr2")); }
-        public mcQ Fc3() { return new mcQ("回填", choseMat("Fr3")); }
-        public mcQ Fc4() { return new mcQ("回填", choseMat("Fc4")); }
+        public mcExp Fc1() { return new mcExp("垫层", choseMat("Fc1")); }
+        public mcExp Fc2() { return new mcExp("垫层", choseMat("Fc2")); }
+        public mcExp Fr1() { return new mcExp("回填", choseMat("Fr1")); }
+        public mcExp Fr2() { return new mcExp("回填", choseMat("Fr2")); }
+        public mcExp Fc3() { return new mcExp("回填", choseMat("Fr3")); }
+        public mcExp Fc4() { return new mcExp("回填", choseMat("Fc4")); }
         private string choseMat(string pPos)
         {
             Dictionary<string, string> tD = new Dictionary<string, string>();

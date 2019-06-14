@@ -7,7 +7,7 @@ using System.Text;
 
 namespace section2.mcP
 {
-    public class mcPD 
+    public class mcPD:mcRange
     {
         public mcCpt Cpt;
 

@@ -5,7 +5,7 @@ using System.Text;
 
 namespace section2.mac
 {
-    public abstract class macRange
+    public abstract class mcRange
     {
         public int StartNum;
     }
