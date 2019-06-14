@@ -83,6 +83,8 @@
       <DependentUpon>FmGuide.cs</DependentUpon>
     </Compile>
     <Compile Include="mac\IdgvTxt.cs" />
+    <Compile Include="mac\macRange.cs" />
+    <Compile Include="mac\mcRangeList.cs" />
     <Compile Include="mcDataGridView.cs">
       <SubType>Component</SubType>
     </Compile>
@@ -97,10 +99,8 @@
     <Compile Include="mcP\mcPEs\mcPW.cs" />
     <Compile Include="mac\Ijson.cs" />
     <Compile Include="mac\Iname.cs" />
-    <Compile Include="mac\macDic.cs" />
+    <Compile Include="mac\mcDic.cs" />
     <Compile Include="mcData\mcBI.cs" />
-    <Compile Include="mac\macDicRange.cs" />
-    <Compile Include="mac\macList.cs" />
     <Compile Include="mcStruct\mcDC.cs" />
     <Compile Include="mcData\mcQ.cs" />
     <Compile Include="mcData\mcS.cs" />

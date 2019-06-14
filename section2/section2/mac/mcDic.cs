@@ -5,7 +5,7 @@ using System.Text;
 
 namespace section2
 {
-    public abstract class macDic<T> : Iname
+    public class mcDic<T> : Iname
     {
         #region 实现接口
         public string GetName() { return Name; }
@@ -49,9 +49,5 @@ namespace section2
                 Add(pT);
             }
         }
-    }
-    public class mcDic<T> :macDic<T>
-    {
-
     }
 }

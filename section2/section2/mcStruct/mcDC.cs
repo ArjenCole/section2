@@ -7,7 +7,7 @@ using section2.mcP;
 
 namespace section2.mcStruct
 {
-    public class mcDC:macDic<mcSG>
+    public class mcDC:mcDic<mcSG>
     {
         public mcBI BI;
 

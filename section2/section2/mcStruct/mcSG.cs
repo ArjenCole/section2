@@ -5,7 +5,7 @@ using System.Text;
 
 namespace section2.mcStruct
 {
-    public class mcSG:macDic<mcUN>
+    public class mcSG:mcDic<mcUN>
     {
         public mcSG()
         {

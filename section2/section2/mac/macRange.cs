@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
-namespace section2
+namespace section2.mac
 {
-    public abstract class macList<T>
+    public abstract class macRange
     {
-
+        public int StartNum;
     }
 }

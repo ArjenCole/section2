@@ -6,7 +6,7 @@ using section2.mcData;
 
 namespace section2.mcStruct
 {
-    public class mcUN:macDic<mcS>
+    public class mcUN:mcDic<mcS>
     {
         public mcUN()
         {

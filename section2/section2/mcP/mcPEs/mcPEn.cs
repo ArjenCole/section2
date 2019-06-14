@@ -2,12 +2,13 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using section2.mac;
 using section2.mcData;
 using section2.mcStruct;
 
 namespace section2.mcP
 {
-    public class mcPEn:Iname,IdgvTxt
+    public class mcPEn:macRange,Iname,IdgvTxt
     {
         #region 实现接口
         public string GetName() { return Name; }
