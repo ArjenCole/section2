@@ -1,0 +1,202 @@
+"""项目树视图模型（计划 §7.1）。
+
+数据来源：project_io 读库 → 组装 TreeNode 树 → 交给树面板渲染。
+增删改后统一 commit 落盘并广播 tree_structure_changed。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from PySide6.QtCore import QObject, Signal
+
+from app.core.event_bus import bus
+from app.orm.models import Segment, Unit
+from app.services import project_io
+
+KIND_PROJECT = "project"
+KIND_SEGMENT = "segment"
+KIND_UNIT = "unit"
+
+
+@dataclass
+class TreeNode:
+    """树节点。id 为 None 表示工程根（虚拟节点）。"""
+
+    kind: str
+    name: str
+    id: int | None = None
+    order_no: int = 0
+    parent_id: int | None = None
+    children: list["TreeNode"] = field(default_factory=list)
+
+    @property
+    def is_project(self) -> bool:
+        return self.kind == KIND_PROJECT
+
+    @property
+    def is_segment(self) -> bool:
+        return self.kind == KIND_SEGMENT
+
+    @property
+    def is_unit(self) -> bool:
+        return self.kind == KIND_UNIT
+
+
+def build_tree() -> TreeNode | None:
+    """读库组装整棵树；未打开工程时返回 None。"""
+    if not project_io.is_open():
+        return None
+    root = TreeNode(
+        kind=KIND_PROJECT,
+        name=project_io.project_name() or "未命名工程",
+        id=None,
+    )
+    for segment in project_io.segments():
+        segment_node = TreeNode(
+            kind=KIND_SEGMENT,
+            name=segment.name,
+            id=segment.id,
+            order_no=segment.order_no,
+        )
+        for unit in project_io.units(segment.id):
+            segment_node.children.append(
+                TreeNode(
+                    kind=KIND_UNIT,
+                    name=unit.name,
+                    id=unit.id,
+                    order_no=unit.order_no,
+                    parent_id=segment.id,
+                )
+            )
+        root.children.append(segment_node)
+    return root
+
+
+class ProjectViewModel(QObject):
+    tree_loaded = Signal(object)  # TreeNode（根）或 None
+    selection_changed = Signal(object)  # TreeNode | None
+    error_occurred = Signal(str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._current: TreeNode | None = None
+
+    # --- 加载与选中 ---
+    def load(self) -> None:
+        self.tree_loaded.emit(build_tree())
+
+    def current(self) -> TreeNode | None:
+        return self._current
+
+    def select(self, node: TreeNode | None) -> None:
+        self._current = node
+        self.selection_changed.emit(node)
+
+    def reselect(self, kind: str, node_id: int | None) -> None:
+        """按 kind+id 在树里找回节点（重建树后保持选中）。"""
+        root = build_tree()
+        found = _find(root, kind, node_id)
+        self._current = found
+        self.selection_changed.emit(found)
+
+    # --- 结构增删改 ---
+    def add_segment(self, name: str = "新建标段") -> TreeNode | None:
+        if not project_io.is_open():
+            return None
+        session = project_io.orm.session()
+        segment = Segment(name=name, order_no=project_io.next_order_no(Segment))
+        session.add(segment)
+        project_io.commit()
+        self._after_change()
+        return TreeNode(kind=KIND_SEGMENT, name=segment.name, id=segment.id, order_no=segment.order_no)
+
+    def add_unit(self, segment_id: int, name: str = "新建单位工程") -> TreeNode | None:
+        if not project_io.is_open():
+            return None
+        session = project_io.orm.session()
+        unit = Unit(
+            segment_id=segment_id,
+            name=name,
+            order_no=project_io.next_order_no(Unit, segment_id=segment_id),
+        )
+        session.add(unit)
+        project_io.commit()
+        self._after_change()
+        return TreeNode(kind=KIND_UNIT, name=unit.name, id=unit.id, parent_id=segment_id)
+
+    def rename(self, node: TreeNode, name: str) -> None:
+        name = name.strip()
+        if not name:
+            self.error_occurred.emit("名称不可为空。")
+            return
+        target = self._entity(node)
+        if target is None:
+            return
+        if target.name == name:
+            return
+        target.name = name
+        project_io.commit()
+        self._after_change()
+
+    def delete(self, node: TreeNode) -> None:
+        """删除标段/单位工程（级联删除下属构件、管道）。"""
+        target = self._entity(node)
+        if target is None:
+            return
+        project_io.orm.session().delete(target)
+        project_io.commit()
+        self._current = None
+        self.selection_changed.emit(None)
+        self._after_change()
+
+    def move(self, node: TreeNode, delta: int) -> None:
+        """上移/下移（delta = -1 / +1）。"""
+        target = self._entity(node)
+        if target is None:
+            return
+        siblings = (
+            project_io.units(target.segment_id)
+            if isinstance(target, Unit)
+            else project_io.segments()
+        )
+        ordered = list(siblings)
+        try:
+            index = ordered.index(target)
+        except ValueError:
+            return
+        new_index = index + delta
+        if new_index < 0 or new_index >= len(ordered):
+            return
+        ordered[index], ordered[new_index] = ordered[new_index], ordered[index]
+        # 历史数据可能有重复 order_no，整列重编号保证顺序确定
+        for position, item in enumerate(ordered):
+            item.order_no = position
+        project_io.commit()
+        self._after_change()
+
+    # --- 内部 ---
+    def _after_change(self) -> None:
+        self.load()
+        bus().tree_structure_changed.emit()
+
+    def _entity(self, node: TreeNode | None):
+        if node is None or node.id is None or not project_io.is_open():
+            return None
+        if node.kind == KIND_SEGMENT:
+            return project_io.orm.session().get(Segment, node.id)
+        if node.kind == KIND_UNIT:
+            return project_io.orm.session().get(Unit, node.id)
+        return None
+
+
+def _find(node: TreeNode | None, kind: str, node_id: int | None) -> TreeNode | None:
+    if node is None:
+        return None
+    if node.kind == kind and node.id == node_id:
+        return node
+    for child in node.children:
+        found = _find(child, kind, node_id)
+        if found is not None:
+            return found
+    return None

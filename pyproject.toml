@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "section2"
+version = "2.0.0.0"
+description = "线性工程（市政管道）工程量计算软件 2.0"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6>=6.6",
+    "SQLAlchemy>=2.0",
+    "lxml>=5.0",
+    "openpyxl>=3.1",
+    "httpx>=0.27",
+    "keyring>=25",
+    "platformdirs>=4",
+    "simpleeval>=1.0",
+    "pydantic>=2.6",
+    # config.toml 写入（读取用标准库 tomllib）
+    "tomli-w>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pyinstaller>=6",
+]
+
+[project.scripts]
+section2 = "app.main:main"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
