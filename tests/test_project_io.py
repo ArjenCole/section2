@@ -317,3 +317,77 @@ def test_new_project_overwrites_existing(tmp_path: Path) -> None:
     assert project_io.segments()[0].name == "第一标段"
     assert orm.session().query(BasicInfo).count() == 1
     assert orm.session().query(Segment).count() == 2
+
+
+# --------------------------------------------------------------------------- #
+# 临时工程（新建不选路径，首次保存时才定位置，与 Quotor 一致）
+# --------------------------------------------------------------------------- #
+def test_transient_new_project_has_no_path(tmp_path: Path) -> None:
+    spec = NewProjectSpec(project_name="临时工程", unit_names=["雨水工程"])
+    project_io.new_project(spec)
+
+    assert project_io.is_open()
+    assert project_io.is_transient()
+    assert project_io.current_path() is None  # 没有正式文件，标题栏/最近列表不能拿到路径
+    assert project_io.project_name() == "临时工程"
+    # 数据本身完整可用
+    assert [u.name for u in project_io.units(project_io.segments()[0].id)] == ["雨水工程"]
+    assert project_io.enclosure_names() == ["默认围护原则"]
+
+
+def test_transient_save_requires_path_first(tmp_path: Path) -> None:
+    spec = NewProjectSpec(project_name="临时工程")
+    project_io.new_project(spec)
+
+    with pytest.raises(ProjectIoError):
+        project_io.save()  # 界面层引导用户走另存为；直接 save 必须报错而不是写丢
+
+
+def test_transient_first_save_promotes_to_real_file(tmp_path: Path) -> None:
+    spec = NewProjectSpec(project_name="首次保存")
+    project_io.new_project(spec)
+    temp_path = orm.database_path()
+    assert temp_path is not None and temp_path.exists()
+
+    target = tmp_path / "首次保存.stn2"
+    saved = project_io.save_as(target)
+
+    assert saved == target
+    assert target.exists()
+    assert not project_io.is_transient()
+    assert project_io.current_path() == target
+    assert lock_path(target).exists()  # 首次保存后才有文件锁
+    assert not temp_path.exists()  # 临时库用完即删
+    # 保存后的工程数据完整
+    assert project_io.project_name() == "首次保存"
+
+
+def test_transient_close_discards_temp_database(tmp_path: Path) -> None:
+    spec = NewProjectSpec(project_name="关闭即弃")
+    project_io.new_project(spec)
+    temp_path = orm.database_path()
+
+    project_io.close_project()
+
+    assert not project_io.is_open()
+    assert temp_path is not None and not temp_path.exists()  # 临时库不残留
+    assert project_io.current_path() is None
+
+
+def test_transient_switching_to_open_keeps_data(tmp_path: Path) -> None:
+    spec = NewProjectSpec(project_name="带数据临时工程", unit_names=["雨水工程"])
+    project_io.new_project(spec)
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    element = unit_vm.create_element(unit.id, category=1, name="雨水管 D800")
+    assert element is not None
+    temp_path = orm.database_path()
+
+    target = tmp_path / "带数据临时工程.stn2"
+    project_io.save_as(target)
+    project_io.close_project()
+    project_io.open_project(target)
+
+    units = project_io.units(project_io.segments()[0].id)
+    assert units
+    assert orm.session().query(Element).filter(Element.unit_id == units[0].id).count() >= 1
+    assert temp_path is not None and not temp_path.exists()

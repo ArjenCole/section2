@@ -17,11 +17,15 @@ from app.services import project_io
 KIND_PROJECT = "project"
 KIND_SEGMENT = "segment"
 KIND_UNIT = "unit"
+KIND_ENCLOSURE_GROUP = "enclosure_group"
+KIND_ENCLOSURE = "enclosure"
+KIND_FOUNDATION_GROUP = "foundation_group"
+KIND_FOUNDATION = "foundation"
 
 
 @dataclass
 class TreeNode:
-    """树节点。id 为 None 表示工程根（虚拟节点）。"""
+    """树节点。id 为 None 表示工程根 / 分组（虚拟节点）。"""
 
     kind: str
     name: str
@@ -41,6 +45,18 @@ class TreeNode:
     @property
     def is_unit(self) -> bool:
         return self.kind == KIND_UNIT
+
+    @property
+    def is_enclosure(self) -> bool:
+        return self.kind == KIND_ENCLOSURE
+
+    @property
+    def is_foundation(self) -> bool:
+        return self.kind == KIND_FOUNDATION
+
+    @property
+    def is_group(self) -> bool:
+        return self.kind in (KIND_ENCLOSURE_GROUP, KIND_FOUNDATION_GROUP)
 
 
 def build_tree() -> TreeNode | None:
@@ -70,6 +86,8 @@ def build_tree() -> TreeNode | None:
                 )
             )
         root.children.append(segment_node)
+
+    # 复刻原版：树只有 项目 → 标段 → 单位工程 三层，原则全部在原则横条上管理
     return root
 
 
@@ -130,22 +148,36 @@ class ProjectViewModel(QObject):
         if not name:
             self.error_occurred.emit("名称不可为空。")
             return
-        target = self._entity(node)
-        if target is None:
-            return
-        if target.name == name:
-            return
-        target.name = name
-        project_io.commit()
+        if node.is_enclosure:
+            project_io.rename_enclosure(node.id, name)
+        elif node.is_foundation:
+            project_io.rename_foundation(node.id, name)
+        else:
+            target = self._entity(node)
+            if target is None:
+                return
+            if target.name == name:
+                return
+            target.name = name
+            project_io.commit()
         self._after_change()
 
     def delete(self, node: TreeNode) -> None:
-        """删除标段/单位工程（级联删除下属构件、管道）。"""
-        target = self._entity(node)
-        if target is None:
+        """删除标段/单位工程/原则（级联删除下属数据）。"""
+        if node.is_enclosure:
+            error = project_io.delete_enclosure(node.id)
+        elif node.is_foundation:
+            error = project_io.delete_foundation(node.id)
+        else:
+            target = self._entity(node)
+            if target is None:
+                return
+            orm.session().delete(target)
+            error = None
+            project_io.commit()
+        if error:
+            self.error_occurred.emit(error)
             return
-        project_io.orm.session().delete(target)
-        project_io.commit()
         self._current = None
         self.selection_changed.emit(None)
         self._after_change()

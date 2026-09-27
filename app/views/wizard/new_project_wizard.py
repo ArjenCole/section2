@@ -79,7 +79,12 @@ class BasicInfoPage(QWizardPage):
         layout.addWidget(structure_box)
         layout.addStretch(1)
 
-        self.registerField("project_name*", self.project_name)
+        # 不用 registerField("name*")：Qt 6.9+ 把必填字段判定为“当前值 ≠ 初始值”，
+        # 预填的默认名会令下一步一直禁用，这里显式按非空判断。
+        self.project_name.textChanged.connect(self.completeChanged)
+
+    def isComplete(self) -> bool:
+        return bool(self.project_name.text().strip())
 
     def unit_names(self) -> list[str]:
         return [box.text() for box in self.major_boxes if box.isChecked()]

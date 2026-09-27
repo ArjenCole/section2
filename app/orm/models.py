@@ -228,6 +228,8 @@ class Element(Base):
     amount: Mapped[str] = mapped_column(String(100), default="0")
     pe_name: Mapped[str] = mapped_column(String(200), default="")
     pf_name: Mapped[str] = mapped_column(String(200), default="")
+    #: 来源（旧版主表格“来源”列，构件库插入时记录模板出处）
+    source: Mapped[str] = mapped_column(String(200), default="")
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     unit: Mapped[Unit] = relationship(back_populates="elements")
@@ -320,7 +322,16 @@ class PcpEnclosure(Base):
         passive_deletes=True,
         order_by="WorkWidth.order_no",
     )
+    works: Mapped[list["EnclosureWork"]] = relationship(
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="EnclosureWork.order_no",
+        primaryjoin="PcpEnclosure.id == EnclosureWork.enclosure_id",
+    )
 
+    def works_sorted(self) -> list["EnclosureWork"]:
+        """做法列表（按 order_no）；计算时按此顺序取最后一个 min_depth ≤ 深度的做法。"""
+        return sorted(self.works, key=lambda work: (work.order_no, work.id))
 
 class EnclosureCushion(Base):
     """围护原则下的垫层 / 换填层（对应旧版 mcReplacement Cush）。
@@ -379,11 +390,12 @@ class PcpFoundation(Base):
         passive_deletes=True,
         order_by="FoundationReplacement.order_no",
     )
+    #: 特殊地基构件（旧版 mcPcpFoundation.Foundation，至多一个）
     components: Mapped[list["Component"]] = relationship(
-        back_populates="foundation",
         cascade="all, delete-orphan",
         passive_deletes=True,
         order_by="Component.order_no",
+        primaryjoin="PcpFoundation.id == Component.foundation_id",
     )
 
 
@@ -405,20 +417,32 @@ class FoundationReplacement(Base):
 
 
 class Component(Base):
-    """特殊地基构件（对应旧版 mcComponent）：名称 + 描述公式，参数另存 component_param。"""
+    """构件（对应旧版 mcComponent）：名称 + 描述公式，参数另存 component_param。
+
+    一个构件挂在三种所有者之一上（对应旧版 mcComponent 被三处复用）：
+
+    * ``foundation_id`` —— 地基原则的特殊地基构件（PF.Foundation）；
+    * ``enclosure_level_id`` —— 围护做法某一级的围护构件（mcEclsCpnt.Cpnt）；
+    * ``enclosure_work_id`` —— 围护做法的止水构件（mcEnclosure.WSCpnt）。
+    """
 
     __tablename__ = "component"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    foundation_id: Mapped[int] = mapped_column(
-        ForeignKey("principle_foundation.id", ondelete="CASCADE"), index=True
+    foundation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("principle_foundation.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    enclosure_level_id: Mapped[int | None] = mapped_column(
+        ForeignKey("enclosure_level.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    enclosure_work_id: Mapped[int | None] = mapped_column(
+        ForeignKey("enclosure_work.id", ondelete="CASCADE"), index=True, nullable=True
     )
     name: Mapped[str] = mapped_column(String(100), default="")
     #: 描述公式（旧版 mcComponent.DiscribeFmla）
     formula: Mapped[str] = mapped_column(Text, default="")
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
-    foundation: Mapped[PcpFoundation] = relationship(back_populates="components")
     params: Mapped[list["ComponentParam"]] = relationship(
         back_populates="component",
         cascade="all, delete-orphan",
@@ -444,6 +468,68 @@ class ComponentParam(Base):
     value: Mapped[str] = mapped_column(Text, default="")
 
     component: Mapped[Component] = relationship(back_populates="params")
+
+
+class EnclosureWork(Base):
+    """围护做法（对应旧版 mcEnclosure）：按 min_depth 选用的做法，含多级围护与止水构件。
+
+    旧版围护原则 PE 下是做法列表，计算时 ChoiceEcls(沟槽深度) 取最后一个
+    min_depth <= 深度 的做法；做法内是若干级围护构件（多级围护）+ 一个止水构件。
+    """
+
+    __tablename__ = "enclosure_work"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    enclosure_id: Mapped[int] = mapped_column(
+        ForeignKey("principle_enclosure.id", ondelete="CASCADE"), index=True
+    )
+    #: 最小适用埋深 m（旧版 MinDepth）
+    min_depth: Mapped[float] = mapped_column(Float, default=0.0)
+    #: 做法类别名（旧版 eCpntCat：库构件名或“多级围护”）
+    cpnt_cat: Mapped[str] = mapped_column(String(100), default="")
+    order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    levels: Mapped[list["EnclosureLevel"]] = relationship(
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="EnclosureLevel.order_no",
+        primaryjoin="EnclosureWork.id == EnclosureLevel.work_id",
+    )
+    #: 止水构件（旧版 WSCpnt，至多一个）
+    waterstops: Mapped[list["Component"]] = relationship(
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="Component.order_no",
+        primaryjoin="EnclosureWork.id == Component.enclosure_work_id",
+    )
+
+
+class EnclosureLevel(Base):
+    """围护做法的一级构件（对应旧版 mcEclsCpnt）。
+
+    ``h`` 为该级固定高度 m；``h < 0`` 表示与其它负值级均分剩余深度（旧版约定）。
+    """
+
+    __tablename__ = "enclosure_level"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    work_id: Mapped[int] = mapped_column(
+        ForeignKey("enclosure_work.id", ondelete="CASCADE"), index=True
+    )
+    #: 库构件名（旧版 name，指向构件库 Ei 里的条目）
+    name: Mapped[str] = mapped_column(String(100), default="")
+    h: Mapped[float] = mapped_column(Float, default=-1.0)
+    #: 平台宽度 m（旧版 stepWidth）
+    step_width: Mapped[float] = mapped_column(Float, default=1.0)
+    order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    #: 该级的围护构件（旧版 Cpnt）
+    components: Mapped[list["Component"]] = relationship(
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="Component.order_no",
+        primaryjoin="EnclosureLevel.id == Component.enclosure_level_id",
+    )
 
 
 class Price(Base):

@@ -52,9 +52,18 @@ _session_factory: sessionmaker[Session] | None = None
 _path: Path | None = None
 _session: Session | None = None
 
-#: 结构迁移入口（计划 §5：预留，一期为空）。
-#: 键为源版本号，值为“从该版本迁到 +1 版本”的函数；SCHEMA_VERSION 升到 2 时在此登记。
-_MIGRATIONS: dict[int, "callable"] = {}
+def _migrate_v1_add_element_source(engine: Engine) -> None:
+    """v1 → v2：element 表加 source 列（复刻旧版主表格“来源”列）。"""
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE element ADD COLUMN source VARCHAR(200) DEFAULT ''")
+        )
+
+
+#: 结构迁移入口（计划 §5）。键为源版本号，值为“从该版本迁到 +1 版本”的函数。
+_MIGRATIONS: dict[int, "callable"] = {
+    1: _migrate_v1_add_element_source,
+}
 
 
 def _make_engine(path: Path) -> Engine:

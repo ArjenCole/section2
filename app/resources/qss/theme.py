@@ -180,6 +180,22 @@ QMenuBar {
     border-bottom: 1px solid $border;
     padding: 2px 4px;
 }
+QMenuBar#TitleBarMenuBar { background: transparent; border: none; padding: 0; }
+QMenuBar#TitleBarMenuBar::item { padding: 5px 10px; background: transparent; border-radius: 6px; }
+QFrame#FramelessTitleBar {
+    background-color: $bg_card;
+    border-bottom: 1px solid $border;
+}
+QLabel#TitleBarIcon { color: $primary; font-weight: 700; font-size: 15px; background: transparent; }
+QToolButton#WindowBtn {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+}
+QToolButton#WindowBtn:hover { background-color: $bg_hover; }
+QToolButton#WindowBtn:pressed { background-color: $bg_pressed; }
+QToolButton#WindowBtn[kind="close"]:hover { background-color: $danger; }
 QMenuBar::item { padding: 5px 10px; background: transparent; border-radius: 6px; }
 QMenuBar::item:selected { background-color: $bg_hover; }
 QMenuBar::item:pressed { background-color: $bg_pressed; }

@@ -37,12 +37,15 @@ _OPERATORS: dict[type, Any] = {
     ast.UAdd: operator.pos,
 }
 
-#: 白名单函数与常量，对应旧版 mscExp.ProcessFunction / ProcessSymbol
+#: 白名单函数与常量，对应旧版 mscExp.ProcessFunction / ProcessSymbol；
+#: sin/cos 为弓形面积算式（计算引擎输出）所需
 _FUNCTIONS: dict[str, Any] = {
     "abs": abs,
     "round": lambda value, digits=2: round(value, int(digits)),
     "sqrt": math.sqrt,
     "power": safe_power,
+    "sin": math.sin,
+    "cos": math.cos,
 }
 _NAMES: dict[str, Any] = {"pi": math.pi, "PI": math.pi}
 
@@ -62,20 +65,27 @@ _SYMBOLS = {
     "＝": "=",
 }
 
+#: 上标数字 → 乘方（表达式记录器输出的可读写法）
+_SUPERSCRIPTS = {"⁰": 0, "¹": 1, "²": 2, "³": 3, "⁴": 4, "⁵": 5, "⁶": 6, "⁷": 7, "⁸": 8, "⁹": 9}
+
 _POWER_MARK = re.compile(r"\^")
 
 
 def normalize(text: str) -> str:
-    """全角符号转半角、`^` 视作乘方、去掉首尾空白。
+    """全角符号转半角、`^`/上标视作乘方、函数名转小写、去掉首尾空白。
 
-    旧版用 SoftCircuits Eval，公式库里写的是 `^` 乘方、`PI()`，
+    旧版用 SoftCircuits Eval，公式库里写的是 `^` 乘方、`PI()`、大写 ROUND，
     这里一并归一化成 Python 可求值的形式。
     """
     result = text.strip()
     for source, target in _SYMBOLS.items():
         result = result.replace(source, target)
     result = _POWER_MARK.sub("**", result)
+    for character, exponent in _SUPERSCRIPTS.items():
+        result = result.replace(character, f"**{exponent}")
     result = result.replace("PI()", "pi").replace("pi()", "pi")
+    for name in ("ROUND", "SQRT", "ABS", "POWER", "SIN", "COS"):
+        result = re.sub(r"\b" + name + r"\b", name.lower(), result)
     return result
 
 

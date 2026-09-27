@@ -1,8 +1,10 @@
 """中部工作区：单位工程（计划 §7.1、§7.2）。
 
-上半区：工程量表（定额工程量 / 清单工程量）——“计算表达式”列在“工程量”列之前，
-        计算结果由 M4 的计算引擎填充，这里先把表结构与空状态做好。
-下半区：构件录入表 + 选中构件的明细（管材 / 构件参数）。
+上部：构件录入表（复刻旧版 dGVmain）。
+下部横向三栏（旧版 FormUnit 的 spltCtnerR 布局）：
+  左  选中构件的明细（管材 / 构件参数）；
+  中  工程量表（定额工程量 / 清单工程量）——“计算表达式”列在“工程量”列之前；
+  右  断面示意图（旧版 mcPictureBox，随选中构件联动重绘）。
 
 埋深、数量两列允许写算式（如 2.5+0.3）：单元格 tooltip 显示求值结果，
 算式不合法时用警示色标出并给出原因，不静默按 0 处理。
@@ -39,12 +41,14 @@ from app.viewmodels.project_vm import TreeNode
 from app.viewmodels.unit_vm import ElementRow, ParamRow, PipeRow, UnitViewModel
 
 _ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
-_COL_NAME, _COL_CATEGORY, _COL_DEPTH, _COL_UNIT, _COL_AMOUNT, _COL_PE, _COL_PF = range(7)
-_ELEMENT_HEADERS = ["名称", "类型", "埋深", "单位", "数量", "沟槽围护原则", "地基处理原则"]
-#: 中部宽度有限，列宽按 7 列约 700px 排布（最后一列自适应剩余空间）
-_ELEMENT_WIDTHS = [170, 100, 80, 50, 80, 110, 110]
+_COL_NAME, _COL_CATEGORY, _COL_SPEC, _COL_DEPTH, _COL_UNIT, _COL_AMOUNT, _COL_PE, _COL_PF, _COL_SOURCE = range(9)
+_ELEMENT_HEADERS = ["名称", "类型", "规格", "埋深", "单位", "数量", "沟槽围护原则", "地基处理原则", "来源"]
+#: 复刻旧版 dGVmain 列结构（规格 / 来源列只读）
+_ELEMENT_WIDTHS = [130, 90, 140, 60, 40, 70, 110, 110, 80]
 
 _QUANTITY_HEADERS = ["编号", "类别", "项目", "单位", "计算表达式", "工程量"]
+_QCOL_EXPRESSION = 4
+_QCOL_AMOUNT = 5
 
 _PIPE_ROLE = Qt.ItemDataRole.UserRole + 1
 _PIPE_HEADERS = ["管材", "管径(mm)", "含量"]
@@ -85,11 +89,11 @@ class UnitPanel(QWidget):
         layout.addLayout(header)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(self._build_quantity_area())
-        splitter.addWidget(self._build_entry_area())
+        splitter.addWidget(self._build_element_table())
+        splitter.addWidget(self._build_bottom_area())
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 3)
-        splitter.setSizes([180, 580])
+        splitter.setSizes([240, 560])
         self._work_area = splitter
         layout.addWidget(splitter, 1)
 
@@ -107,38 +111,23 @@ class UnitPanel(QWidget):
         button.clicked.connect(slot)
         return button
 
-    def _build_quantity_area(self) -> QWidget:
-        tabs = QTabWidget()
-        self._quantity_tables: dict[str, QTableWidget] = {}
-        for name in ("定额工程量", "清单工程量"):
-            page = QWidget()
-            page_layout = QVBoxLayout(page)
-            page_layout.setContentsMargins(6, 6, 6, 6)
-            page_layout.setSpacing(4)
-            hint = QLabel("计算引擎将在 M4 实现：届时按构件列出工程量，并在“工程量”列前给出计算表达式。")
-            hint.setProperty("role", "hint")
-            hint.setWordWrap(True)
-            page_layout.addWidget(hint)
-            table = self._make_table(_QUANTITY_HEADERS)
-            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-            self._quantity_tables[name] = table
-            page_layout.addWidget(table, 1)
-            tabs.addTab(page, name)
-        self._quantity_tabs = tabs
-        return tabs
-
-    def _build_entry_area(self) -> QWidget:
-        """录入表在上、选中构件的明细（管材 / 构件参数）在下，两者都用满中部宽度。"""
-        splitter = QSplitter(Qt.Orientation.Vertical)
-
+    def _build_element_table(self) -> QTableWidget:
         self._element_table = self._make_table(_ELEMENT_HEADERS)
         for index, width in enumerate(_ELEMENT_WIDTHS[:-1]):
             self._element_table.setColumnWidth(index, width)
-        self._element_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
-        self._element_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._element_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._element_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._element_table.setSortingEnabled(False)
-        splitter.addWidget(self._element_table)
+        self._element_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._element_table.customContextMenuRequested.connect(self._on_element_context_menu)
+        self._element_table.installEventFilter(self)
+        return self._element_table
 
+    def _build_bottom_area(self) -> QWidget:
+        """横向三栏：构件明细（管材/构件参数）｜工程量表（定额/清单）｜断面示意图。"""
+        bottom = QSplitter(Qt.Orientation.Horizontal)
+
+        # 左：选中构件的明细
         detail = QTabWidget()
         self._pipe_table = self._make_table(_PIPE_HEADERS)
         self._param_table = self._make_table(_PARAM_HEADERS)
@@ -168,11 +157,48 @@ class UnitPanel(QWidget):
         detail.addTab(pipe_page, "管材")
         detail.addTab(param_page, "构件参数")
         self._detail_tabs = detail
-        splitter.addWidget(detail)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
-        splitter.setSizes([330, 250])
-        return splitter
+        bottom.addWidget(detail)
+
+        # 中：工程量表（定额工程量 / 清单工程量）
+        bottom.addWidget(self._build_quantity_area())
+
+        # 右：断面示意图（旧版 FormUnit 右侧 spltCtnerR.Panel2）
+        section_page = QWidget()
+        section_layout = QVBoxLayout(section_page)
+        section_layout.setContentsMargins(6, 6, 6, 6)
+        section_layout.setSpacing(4)
+        section_title = QLabel("断 面 示 意 图")
+        section_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        section_layout.addWidget(section_title)
+        from app.views.panels.section_view import SectionView
+
+        self._section_view = SectionView()
+        section_layout.addWidget(self._section_view, 1)
+        bottom.addWidget(section_page)
+
+        bottom.setStretchFactor(0, 2)
+        bottom.setStretchFactor(1, 3)
+        bottom.setStretchFactor(2, 2)
+        bottom.setSizes([300, 440, 300])
+        return bottom
+
+    def _build_quantity_area(self) -> QWidget:
+        tabs = QTabWidget()
+        self._quantity_tables: dict[str, QTableWidget] = {}
+        for name in ("定额工程量", "清单工程量"):
+            page = QWidget()
+            page_layout = QVBoxLayout(page)
+            page_layout.setContentsMargins(6, 6, 6, 6)
+            page_layout.setSpacing(4)
+            table = self._make_table(_QUANTITY_HEADERS)
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            table.setWordWrap(False)
+            table.itemDoubleClicked.connect(self._show_expression_detail)
+            self._quantity_tables[name] = table
+            page_layout.addWidget(table, 1)
+            tabs.addTab(page, name)
+        self._quantity_tabs = tabs
+        return tabs
 
     @staticmethod
     def _make_table(headers: list[str]) -> QTableWidget:
@@ -215,6 +241,7 @@ class UnitPanel(QWidget):
             self._element_table.setRowCount(0)
             self._pipe_table.setRowCount(0)
             self._param_table.setRowCount(0)
+            self._section_view.set_element(None)
             return
         self._vm.load_unit(unit_id)
 
@@ -234,6 +261,109 @@ class UnitPanel(QWidget):
         finally:
             self._loading = False
         self._restore_current_element(keep_element, keep_column)
+        self._fill_quantities()
+        self._section_view.set_element(self._current_element_id())
+
+    def _fill_quantities(self) -> None:
+        """计算并填充工程量表（定额汇总 / 清单逐构件，含计算表达式列）。"""
+        from app.services.calc.tracer import fmt as calc_fmt
+        from app.services.calc.tracer import sorted_items
+        from app.viewmodels.unit_vm import compute_unit
+
+        if self._unit_id is None:
+            for table in self._quantity_tables.values():
+                table.setRowCount(0)
+            return
+        summary, detail = compute_unit(self._unit_id)
+
+        digests = self._quantity_tables["定额工程量"]
+        digests.setRowCount(0)
+        quantities = sorted_items(summary)
+        digests.setRowCount(len(quantities))
+        for row_index, quantity in enumerate(quantities):
+            parts = quantity.key.split("|")
+            category = parts[0] if parts else ""
+            item_name = parts[1] if len(parts) > 1 else ""
+            unit_name = parts[2] if len(parts) > 2 else ""
+            for column, text in enumerate(("", category, item_name, unit_name)):
+                item = QTableWidgetItem(text)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                digests.setItem(row_index, column, item)
+            expression = QTableWidgetItem(quantity.expression)
+            expression.setFlags(expression.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            expression.setData(Qt.ItemDataRole.UserRole, quantity.expression)
+            expression.setToolTip(quantity.expression)
+            if quantity.details:
+                expression.setToolTip(quantity.expression + "\n\n" + "\n".join(quantity.details))
+            digests.setItem(row_index, _QCOL_EXPRESSION, expression)
+            amount = QTableWidgetItem(calc_fmt(quantity.value))
+            amount.setFlags(amount.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            digests.setItem(row_index, _QCOL_AMOUNT, amount)
+
+        listing = self._quantity_tables["清单工程量"]
+        listing.setRowCount(0)
+        row_index = 0
+        from app.orm.models import category_name
+
+        for element_row, dq in detail:
+            listing.setRowCount(row_index + 1 + len(dq.items()))
+            header = QTableWidgetItem("清单项目")
+            header.setFlags(header.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            listing.setItem(row_index, 0, header)
+            values = (category_name(element_row.category), element_row.spec or element_row.name,
+                      element_row.unit, calc_fmt(element_row.amount_value))
+            for offset, text in enumerate(values, start=1):
+                item = QTableWidgetItem(text)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                listing.setItem(row_index, offset, item)
+            from app.resources.qss.theme import ThemeManager
+
+            highlight = QBrush(QColor(ThemeManager.instance().current().primary_soft))
+            for column in range(len(_QUANTITY_HEADERS)):
+                cell = listing.item(row_index, column)
+                if cell is None:
+                    cell = QTableWidgetItem("")
+                    cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    listing.setItem(row_index, column, cell)
+                cell.setBackground(highlight)
+            row_index += 1
+
+            for quantity in sorted_items(dq):
+                parts = quantity.key.split("|")
+                cells = (
+                    "",
+                    parts[0] if parts else "",
+                    parts[1] if len(parts) > 1 else "",
+                    parts[2] if len(parts) > 2 else "",
+                    quantity.expression,
+                    calc_fmt(quantity.value),
+                )
+                for column, text in enumerate(cells):
+                    item = QTableWidgetItem(text)
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    if column == _QCOL_EXPRESSION:
+                        item.setData(Qt.ItemDataRole.UserRole, quantity.expression)
+                        tooltip = quantity.expression
+                        if quantity.details:
+                            tooltip += "\n\n" + "\n".join(quantity.details)
+                        item.setToolTip(tooltip)
+                    listing.setItem(row_index, column, item)
+                row_index += 1
+
+    def _show_expression_detail(self, item: QTableWidgetItem) -> None:
+        """双击“计算表达式”列：弹窗展示完整算式与中间步骤。"""
+        expression = item.data(Qt.ItemDataRole.UserRole)
+        if not expression:
+            return
+        details = item.toolTip()
+        box = QMessageBox(self)
+        box.setWindowTitle("计算表达式")
+        box.setText(f"工程量 = {expression.split(' = ')[0] if ' = ' in expression else expression}")
+        informative = details if details and "\n\n" in details else ""
+        box.setInformativeText(f"<pre style='white-space:pre-wrap'>{expression}</pre>"
+                               + (f"<br><br>中间步骤：<br>{informative.split(chr(10)+chr(10))[-1]}" if informative else ""))
+        box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        box.exec()
 
     def _fill_element_row(
         self,
@@ -253,6 +383,11 @@ class UnitPanel(QWidget):
             lambda position, element_id=row.id: self._on_category_changed(element_id, position)
         )
         self._element_table.setCellWidget(index, _COL_CATEGORY, category)
+
+        spec_item = QTableWidgetItem(row.spec)
+        spec_item.setFlags(spec_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        spec_item.setForeground(QBrush(_secondary_color()))
+        self._element_table.setItem(index, _COL_SPEC, spec_item)
 
         depth_item = QTableWidgetItem(row.depth)
         self._element_table.setItem(index, _COL_DEPTH, depth_item)
@@ -282,6 +417,11 @@ class UnitPanel(QWidget):
             lambda text, element_id=row.id: self._vm.set_element_field(element_id, "pf_name", text)
         )
         self._element_table.setCellWidget(index, _COL_PF, pf_combo)
+
+        source_item = QTableWidgetItem(row.source)
+        source_item.setFlags(source_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        source_item.setForeground(QBrush(_secondary_color()))
+        self._element_table.setItem(index, _COL_SOURCE, source_item)
 
     def _on_element_item_changed(self, item: QTableWidgetItem) -> None:
         if self._loading:
@@ -314,7 +454,9 @@ class UnitPanel(QWidget):
     def _on_current_element_changed(self, row: int, _column: int, _previous_row: int, _previous_column: int) -> None:
         if self._loading:
             return
-        self._vm.load_detail(self._element_id_at(row))
+        element_id = self._element_id_at(row)
+        self._vm.load_detail(element_id)
+        self._section_view.set_element(element_id)
 
     def _current_element_id(self) -> int | None:
         return self._element_id_at(self._element_table.currentRow())
@@ -367,6 +509,124 @@ class UnitPanel(QWidget):
         if element_id is not None:
             self._vm.move_element(element_id, delta)
 
+    # ------------------------------------------------------------------ 主表格快捷键 / 右键菜单（复刻旧版 dGVmain_KeyUp / CMSmain）
+    def eventFilter(self, source, event) -> bool:  # noqa: N802
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+
+        if source is self._element_table and event.type() == QEvent.Type.KeyPress:
+            assert isinstance(event, QKeyEvent)
+            if event.key() == Qt.Key.Key_Insert:
+                self._insert_blank_before_current()
+                return True
+            if event.key() == Qt.Key.Key_Delete:
+                self._delete_selected_elements()
+                return True
+        return super().eventFilter(source, event)
+
+    def _selected_element_ids(self) -> list[int]:
+        """选中行对应的构件 id（多选，按行号升序）。"""
+        rows = sorted({index.row() for index in self._element_table.selectedIndexes()})
+        return [element_id for element_id in (self._element_id_at(row) for row in rows) if element_id]
+
+    def _insert_blank_before_current(self) -> None:
+        if self._unit_id is None:
+            return
+        from app.viewmodels.unit_vm import insert_blank_element
+
+        insert_blank_element(self._unit_id, self._current_element_id())
+
+    def _delete_selected_elements(self) -> None:
+        """Delete 键：直接删除选中行（与原版一致，不经确认）。"""
+        for element_id in self._selected_element_ids():
+            self._vm.remove_element(element_id)
+
+    def _on_element_context_menu(self, position) -> None:
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        menu.addAction("复制", self._copy_elements)
+        menu.addAction("剪切", self._cut_elements)
+        paste = menu.addAction("粘贴", self._paste_elements)
+        paste.setEnabled(self._clipboard is not None)
+        menu.addSeparator()
+        principle_menu = menu.addMenu("选择沟槽围护原则")
+        for name in project_io.enclosure_names():
+            principle_menu.addAction(name, lambda name=name: self._apply_to_selected("pe_name", name))
+        foundation_menu = menu.addMenu("选择地基处理原则")
+        for name in project_io.foundation_names():
+            foundation_menu.addAction(name, lambda name=name: self._apply_to_selected("pf_name", name))
+        menu.addSeparator()
+        menu.addAction("复制原则", self._copy_principles)
+        apply_menu = menu.addMenu("应用原则")
+        apply_menu.addAction("应用沟槽及地基原则", lambda: self._paste_principles(True, True))
+        apply_menu.addAction("应用沟槽围护原则", lambda: self._paste_principles(True, False))
+        apply_menu.addAction("应用地基处理原则", lambda: self._paste_principles(False, True))
+        menu.exec(self._element_table.viewport().mapToGlobal(position))
+
+    #: 行剪贴板 / 原则剪贴板（原版 mClipboard / mClipboard_PCP 的内存版）
+    _clipboard: list[dict] | None = None
+    _principle_clipboard: tuple[str, str] | None = None
+
+    def _copy_elements(self, *, cut: bool = False) -> None:
+        ids = self._selected_element_ids()
+        if not ids:
+            return
+        from app.viewmodels.unit_vm import element_snapshot
+
+        self._clipboard = [element_snapshot(element_id) for element_id in ids]
+        if cut:
+            for element_id in ids:
+                self._vm.remove_element(element_id)
+
+    def _cut_elements(self) -> None:
+        self._copy_elements(cut=True)
+
+    def _paste_elements(self) -> None:
+        if not self._clipboard or self._unit_id is None:
+            return
+        from app.viewmodels.unit_vm import insert_element_data
+
+        anchor = self._current_element_id()
+        for data in self._clipboard:
+            element = insert_element_data(self._unit_id, data, anchor)
+            anchor = element.id if element is not None else anchor
+
+    def _copy_principles(self) -> None:
+        element_id = self._current_element_id()
+        if element_id is None:
+            return
+        from app.viewmodels.unit_vm import element_snapshot
+
+        data = element_snapshot(element_id)
+        if data is not None:
+            self._principle_clipboard = (data["pe_name"], data["pf_name"])
+
+    def _apply_to_selected(self, field: str, value: str) -> None:
+        for element_id in self._selected_element_ids():
+            self._vm.set_element_field(element_id, field, value)
+
+    def _paste_principles(self, use_pe: bool, use_pf: bool) -> None:
+        """CopyPCP/PastePCP：把记住的原则批量应用到选中行。"""
+        if self._principle_clipboard is None:
+            return
+        pe_name, pf_name = self._principle_clipboard
+        for element_id in self._selected_element_ids():
+            if use_pe:
+                self._vm.set_element_field(element_id, "pe_name", pe_name)
+            if use_pf:
+                self._vm.set_element_field(element_id, "pf_name", pf_name)
+
+    # ------------------------------------------------------------------ 构件库插入（原版 FormMdi 构件库双击）
+    def insert_template(self, template) -> None:
+        """把构件库模板插入当前单位工程主表格（选中行之前）。"""
+        if self._unit_id is None:
+            bus().status_message.emit("请先选中单位工程，再从构件库插入。", 4000)
+            return
+        from app.viewmodels.unit_vm import insert_element_template
+
+        insert_element_template(self._unit_id, template, self._current_element_id())
+
     # ------------------------------------------------------------------ 明细
     def _on_detail_loaded(self, element_id: int, pipes: list[PipeRow], params: list[ParamRow]) -> None:
         self._loading = True
@@ -387,6 +647,11 @@ class UnitPanel(QWidget):
                 self._param_table.setItem(index, 1, QTableWidgetItem(param.value))
         finally:
             self._loading = False
+        # 管径/参数（包封宽高、壁厚、内壁道数…）都影响断面几何，明细变化后重绘
+        if element_id:
+            self._section_view.set_element(element_id)
+        else:
+            self._section_view.set_element(None)
 
     def _on_pipe_item_changed(self, item: QTableWidgetItem) -> None:
         if self._loading:

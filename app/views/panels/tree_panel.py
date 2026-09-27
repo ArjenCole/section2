@@ -1,12 +1,14 @@
-"""左侧项目树（计划 §7.1，宽 280px）。
+"""左侧面板（复刻旧版 FormMdi 左栏 splitContainerLeft）。
 
-树结构：工程 → 标段 → 单位工程（原则节点在 M3 加入）。
+上半段：项目数据结构（工程 → 标段 → 单位工程；复刻原版树右键菜单）。
+下半段：构件库（类别下拉 + 两级模板树，双击元素插入主表格）。
+
 选中节点通过 EventBus.node_selected 广播，中部工作区据此切换内容。
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -14,6 +16,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMenu,
     QMessageBox,
+    QSplitter,
     QStackedWidget,
     QToolButton,
     QTreeWidget,
@@ -30,12 +33,18 @@ from app.viewmodels.project_vm import (
     ProjectViewModel,
     TreeNode,
 )
+from app.views.panels.element_library_panel import ElementLibraryPanel
 
 _NODE_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
 class TreePanel(QWidget):
-    """项目树面板。"""
+    """左侧面板：上半项目树 + 下半构件库。"""
+
+    #: 双击构件库元素模板（ElementTemplate）
+    insert_requested = Signal(object)
+    #: 右键菜单“项目/标段/单位工程汇总”
+    summary_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -51,14 +60,25 @@ class TreePanel(QWidget):
     def vm(self) -> ProjectViewModel:
         return self._vm
 
+    @property
+    def current_node(self) -> TreeNode | None:
+        return self._current_node()
+
     # ------------------------------------------------------------------ 界面
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setSpacing(4)
 
+        splitter = QSplitter(Qt.Orientation.Vertical)
+
+        # ---- 上半段：项目数据结构
+        tree_page = QWidget()
+        tree_layout = QVBoxLayout(tree_page)
+        tree_layout.setContentsMargins(0, 0, 0, 0)
+        tree_layout.setSpacing(4)
         header = QHBoxLayout()
-        title = QLabel("工程结构")
+        title = QLabel("项目数据结构")
         title.setProperty("role", "panel-title")
         header.addWidget(title)
         header.addStretch(1)
@@ -67,16 +87,7 @@ class TreePanel(QWidget):
         self._btn_delete = self._make_button("✕", "删除选中节点", self._delete)
         for button in (self._btn_move_up, self._btn_move_down, self._btn_delete):
             header.addWidget(button)
-        layout.addLayout(header)
-
-        # 面板只有 280px 宽，新增按钮单独一行，避免标题被挤掉
-        add_row = QHBoxLayout()
-        self._btn_add_segment = self._make_button("＋标段", "新增标段", self._add_segment)
-        self._btn_add_unit = self._make_button("＋单位工程", "在选中标段下新增单位工程", self._add_unit)
-        add_row.addWidget(self._btn_add_segment)
-        add_row.addWidget(self._btn_add_unit)
-        add_row.addStretch(1)
-        layout.addLayout(add_row)
+        tree_layout.addLayout(header)
 
         self._stack = QStackedWidget()
         hint = QLabel("尚未打开工程。\n文件 → 新建工程 / 打开工程")
@@ -92,7 +103,16 @@ class TreePanel(QWidget):
         self._tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._stack.addWidget(self._tree)
-        layout.addWidget(self._stack, 1)
+        tree_layout.addWidget(self._stack, 1)
+        splitter.addWidget(tree_page)
+
+        # ---- 下半段：构件库
+        self._library = ElementLibraryPanel()
+        self._library.insert_requested.connect(self.insert_requested.emit)
+        splitter.addWidget(self._library)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        layout.addWidget(splitter, 1)
 
     def _make_button(self, text: str, tooltip: str, slot) -> QToolButton:
         button = QToolButton()
@@ -140,21 +160,34 @@ class TreePanel(QWidget):
         bus().node_selected.emit(node)
         self._update_actions()
 
+    # ------------------------------------------------------------------ 右键菜单（复刻原版 CMStvDC / CMStvSegment / CMStvUnit）
     def _on_context_menu(self, position) -> None:
         node = self._current_node()
         menu = QMenu(self)
         if node is None or node.is_project:
-            menu.addAction("新增标段", self._add_segment)
-        if node is not None and (node.is_project or node.is_segment):
-            menu.addAction("新增单位工程", self._add_unit)
-        if node is not None and not node.is_project:
+            menu.addAction("项目汇总", self.summary_requested.emit)
             menu.addSeparator()
-            menu.addAction("重命名", self._rename)
-            menu.addAction("上移", lambda: self._move(-1))
-            menu.addAction("下移", lambda: self._move(1))
+            menu.addAction("添加标段", self._add_segment)
+        elif node.is_segment:
+            menu.addAction("标段汇总", self.summary_requested.emit)
             menu.addSeparator()
-            menu.addAction("删除", self._delete)
+            menu.addAction("添加标段", self._add_segment)
+            menu.addAction("添加单位工程", self._add_unit)
+            menu.addSeparator()
+            menu.addAction("删除标段", self._delete)
+        elif node.is_unit:
+            menu.addAction("单位工程汇总", self.summary_requested.emit)
+            menu.addSeparator()
+            menu.addAction("添加标段", self._add_segment)
+            menu.addAction("添加单位工程", self._add_unit)
+            menu.addSeparator()
+            menu.addAction("删除单位工程", self._delete)
+        else:
+            return
         menu.addSeparator()
+        # 新版保留：重命名（原版为 F2 行内编辑）、展开/折叠
+        if node is not None and not node.is_project:
+            menu.addAction("重命名", self._rename)
         menu.addAction("展开全部", self._tree.expandAll)
         menu.addAction("折叠全部", self._tree.collapseAll)
         menu.exec(self._tree.viewport().mapToGlobal(position))
@@ -183,7 +216,7 @@ class TreePanel(QWidget):
             if root is not None and root.childCount() > 0:
                 segment_id = self._node_of(root.child(0)).id
         if segment_id is None:
-            bus().status_message.emit("请先新增标段，再新增单位工程。", 4000)
+            bus().status_message.emit("请于项目树中选中标段以添加单位工程。", 4000)
             return
         self._vm.add_unit(segment_id)
 
@@ -224,6 +257,10 @@ class TreePanel(QWidget):
             return
         self._selected_key = (node.kind, node.id)
         self._vm.move(node, delta)
+
+    def move_selected(self, delta: int) -> None:
+        """原则横条 ↑/↓ 入口：移动项目树当前选中节点（原版 btnMoveUp/Down）。"""
+        self._move(delta)
 
     # ------------------------------------------------------------------ 辅助
     def _current_node(self) -> TreeNode | None:
@@ -268,9 +305,6 @@ class TreePanel(QWidget):
 
     def _update_actions(self) -> None:
         node = self._current_node()
-        has_project = self._stack.currentIndex() == 1
-        self._btn_add_segment.setEnabled(has_project)
-        self._btn_add_unit.setEnabled(has_project)
         editable = node is not None and not node.is_project
         for button in (self._btn_move_up, self._btn_move_down, self._btn_delete):
             button.setEnabled(editable)
