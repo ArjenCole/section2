@@ -502,6 +502,15 @@ class MainWindow(QMainWindow):
             action.setShortcut(QKeySequence(shortcut))
         return action
 
+    def _set_theme_action_icon(self) -> None:
+        """主题按钮图标：暗色显示太阳（切到亮色）、亮色显示月亮（切到暗色），Quotor 同款。"""
+        from app.views.widgets.frameless_dialog import load_icon
+
+        dark = ThemeManager.instance().is_dark()
+        self._act_theme.setData("sun" if dark else "moon")
+        color = ThemeManager.instance().current().text_primary
+        self._act_theme.setIcon(load_icon("sun" if dark else "moon", color, 16))
+
     def _build_menus(self) -> None:
         menubar = self._title_bar.menu_bar  # 无边框：菜单栏在自绘标题栏内
 
@@ -575,8 +584,9 @@ class MainWindow(QMainWindow):
         bus().status_message.connect(self._set_status)
         bus().ai_panel_toggle_requested.connect(self._apply_ai_visible)
         ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
-        # 主题切换按钮文字随当前主题变化：暗色 → 「切换亮色…」、亮色 → 「切换暗色…」
+        # 主题切换按钮文字与图标随当前主题变化：暗色 → 太阳「切换亮色…」、亮色 → 月亮「切换暗色…」
         self._act_theme.setText("切换亮色主题" if ThemeManager.instance().is_dark() else "切换暗色主题")
+        self._set_theme_action_icon()
 
     def _on_project_opened(self, path: str) -> None:
         if project_io.is_transient():
@@ -612,6 +622,7 @@ class MainWindow(QMainWindow):
 
     def _on_theme_changed(self, _name: str) -> None:
         self._act_theme.setText("切换亮色主题" if ThemeManager.instance().is_dark() else "切换暗色主题")
+        self._set_theme_action_icon()
         self._title_bar.refresh_theme(ThemeManager.instance().current())
         self._unit_panel.refresh()
         self._ai_panel.refresh_theme()

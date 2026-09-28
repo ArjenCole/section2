@@ -72,6 +72,7 @@ class FoundationEditDialog(QDialog):
         self._replace_table.horizontalHeader().setStretchLastSection(True)
         table_row.addWidget(self._replace_table, 1)
         self._btn_add = QPushButton("+")
+        self._btn_add.setProperty("role", "icon-btn")
         self._btn_add.setFixedSize(28, 28)
         self._btn_add.clicked.connect(lambda: self._insert_replacement())
         table_row.addWidget(self._btn_add)

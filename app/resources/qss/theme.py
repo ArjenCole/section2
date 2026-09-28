@@ -257,7 +257,7 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDateEdit, QTimeEdit, QPlainText
     background-color: $bg_input;
     border: 1px solid $border;
     border-radius: 6px;
-    padding: 4px 8px;
+    padding: 6px 10px;
     selection-background-color: $primary;
     selection-color: $text_inverse;
 }
@@ -288,13 +288,16 @@ QComboBox QAbstractItemView {
     outline: none;
 }
 QComboBox QAbstractItemView::item {
-    padding: 2px 4px;
+    padding: 0px 0px;
     border-radius: 4px;
     color: $text_primary;
     background-color: transparent;
 }
 QComboBox QAbstractItemView::item:hover,
-QComboBox QAbstractItemView::item:selected { background-color: $item_hover; color: $text_primary; }
+QComboBox QAbstractItemView::item:selected {
+    background-color: $item_hover;
+    color: $text_primary;
+}
 
 /* ===================== 按钮 ===================== */
 QPushButton {
@@ -319,6 +322,8 @@ QPushButton[danger="true"] { color: $danger; border-color: $danger; background-c
 QPushButton[danger="true"]:hover { background-color: $danger; color: $text_inverse; }
 QPushButton[flat="true"] { border-color: transparent; background: transparent; }
 QPushButton[flat="true"]:hover { background-color: $bg_hover; }
+/* 固定尺寸的小方块按钮（+、↑、↓ 等）：默认内边距会把单字符裁掉 */
+QPushButton[role="icon-btn"] { padding: 2px; font-size: 18px; }
 
 /* ===================== 勾选 ===================== */
 QCheckBox, QRadioButton { background: transparent; spacing: 6px; }

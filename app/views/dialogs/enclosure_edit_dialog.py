@@ -103,6 +103,7 @@ class EnclosureEditDialog(QDialog):
         # 「+」紧贴表格右侧（原版 BTNadd 在 止水形式描述 列右边，与首行同高）
         add_column = QVBoxLayout()
         self._btn_add = QPushButton("+")
+        self._btn_add.setProperty("role", "icon-btn")
         self._btn_add.setFixedSize(28, 34)
         self._btn_add.setToolTip("添加围护做法（Insert）")
         self._btn_add.clicked.connect(lambda: self._insert_work())
@@ -499,6 +500,8 @@ class _WorkTable(QTableWidget):
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.verticalHeader().setVisible(False)
+        # 行高容得下单元格里的围护类型 / 止水类型下拉框
+        self.verticalHeader().setDefaultSectionSize(34)
         self.setColumnWidth(0, 70)
         self.setColumnWidth(1, 70)
         self.setColumnWidth(2, 130)

@@ -17,7 +17,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
-    QDialog,
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
@@ -47,7 +46,7 @@ from app.orm.models import (
     parse_precipitation,
 )
 from app.services import project_io
-from app.views.widgets.frameless_dialog import FramelessMessageBox
+from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 
 _WIDTH_DNS = tuple(range(0, 3100, 100))
 
@@ -112,12 +111,11 @@ def precipitation_text(enclosure: PcpEnclosure) -> str:
     return text
 
 
-class PrincipleSubDialog(QDialog):
-    """原则子编辑对话框的公共骨架：确定 = 写库，取消 = 丢弃。"""
+class PrincipleSubDialog(FramelessDialog):
+    """原则子编辑对话框的公共骨架：无边框（Quotor 风格）+ 确定 = 写库 / 取消 = 丢弃。"""
 
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(title)
+        super().__init__(parent, title)
         self.setMinimumWidth(560)
         self.saved = False
         self._loading = False
@@ -127,10 +125,13 @@ class PrincipleSubDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("primary", "true")
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
-        outer = QVBoxLayout(self)
+        outer = self.bodyLayout()
+        outer.setContentsMargins(16, 14, 16, 12)
+        outer.setSpacing(10)
         outer.addLayout(self._body)
         outer.addWidget(buttons)
 

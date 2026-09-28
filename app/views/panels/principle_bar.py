@@ -84,6 +84,7 @@ class PrincipleBar(QWidget):
         self._label_layout.setContentsMargins(0, 0, 0, 0)
         self._label_layout.setSpacing(4)
         self._btn_add = QPushButton("+")
+        self._btn_add.setProperty("role", "icon-btn")
         self._btn_add.setFixedSize(32, 41)
         self._btn_add.clicked.connect(self._add_principle)
         self._label_layout.addWidget(self._btn_add)

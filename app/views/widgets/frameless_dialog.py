@@ -59,6 +59,16 @@ _ICON_BODIES = {
         '<circle cx="12" cy="12" r="10" />'
         '<path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" />'
     ),
+    "moon": (
+        '<path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803'
+        'a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" />'
+    ),
+    "sun": (
+        '<circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" />'
+        '<path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" />'
+        '<path d="M2 12h2" /><path d="M20 12h2" /><path d="m6.34 17.66-1.41 1.41" />'
+        '<path d="m19.07 4.93-1.41 1.41" />'
+    ),
 }
 
 _ICON_SVG = {
@@ -98,8 +108,8 @@ _ALL_BUTTONS = [
 ]
 
 
-def _load_icon(name: str, color: str, size: int = 24) -> QIcon:
-    """把内置 Lucide SVG 按 color 着色渲染成 QIcon。"""
+def load_icon(name: str, color: str, size: int = 24) -> QIcon:
+    """把内置 Lucide SVG 按 color 着色渲染成 QIcon（供菜单/工具栏动作复用）。"""
     body = _ICON_BODIES[name]
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" '
@@ -356,7 +366,7 @@ class FramelessMessageBox(FramelessDialog):
         svg_name = _ICON_SVG.get(icon_type)
         if svg_name:
             color = _ICON_COLOR.get(icon_type, "#3B82F6")
-            self._icon_label.setPixmap(_load_icon(svg_name, color, 24).pixmap(24, 24))
+            self._icon_label.setPixmap(load_icon(svg_name, color, 24).pixmap(24, 24))
         else:
             self._icon_label.clear()
 
