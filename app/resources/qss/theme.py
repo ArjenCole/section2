@@ -274,16 +274,27 @@ QPlainTextEdit:disabled, QTextEdit:disabled {
     color: $text_disabled;
 }
 QLineEdit[invalid="true"], QComboBox[invalid="true"] { border-color: $warning; }
-QComboBox::drop-down { width: 22px; border: none; background: transparent; }
-QComboBox::down-arrow { image: url($combo_arrow); width: 12px; height: 12px; }
+/* 组合框：与 Quotor 新建窗体一致（下拉箭头用主题色 SVG，列表项圆角悬停） */
+QComboBox::drop-down { border: none; width: 24px; background: transparent; }
+QComboBox::down-arrow { image: url($combo_arrow); width: 12px; height: 12px; margin-right: 8px; }
+QComboBox::down-arrow:disabled { image: url($combo_arrow_disabled); }
 QComboBox QAbstractItemView {
     background-color: $bg_card;
     border: 1px solid $border;
     border-radius: 6px;
+    padding: 4px;
     selection-background-color: $item_hover;
     selection-color: $text_primary;
-    padding: 4px;
+    outline: none;
 }
+QComboBox QAbstractItemView::item {
+    padding: 2px 4px;
+    border-radius: 4px;
+    color: $text_primary;
+    background-color: transparent;
+}
+QComboBox QAbstractItemView::item:hover,
+QComboBox QAbstractItemView::item:selected { background-color: $item_hover; color: $text_primary; }
 
 /* ===================== 按钮 ===================== */
 QPushButton {
@@ -449,6 +460,32 @@ QToolTip {
 QFrame[role="hline"] { background-color: $border; max-height: 1px; border: none; }
 QMessageBox { background-color: $bg_dialog; }
 QMessageBox QLabel { color: $text_primary; }
+QMessageBox QPushButton { min-width: 72px; padding: 6px 16px; }
+
+/* ===================== 无边框对话框 / 统一消息框 ===================== */
+/* QDialog QWidget 透明会让对话框里的表格丢背景，这里恢复输入类控件的原色 */
+QDialog QTableWidget, QDialog QTableView, QDialog QTreeWidget, QDialog QListView {
+    background-color: $bg_card;
+}
+QDialog QHeaderView::section { background-color: $bg_card; color: $text_secondary; }
+QDialog #FramelessTitleBar, QDialog #FramelessDialogBody { background-color: $bg_dialog; }
+QLabel[role="dialog-title"] { font-size: 14px; font-weight: 600; color: $text_primary; }
+
+/* ===================== 表格/列表里的勾选指示器 ===================== */
+QTableView::indicator, QTableWidget::indicator, QTreeView::indicator, QListView::indicator {
+    width: 15px;
+    height: 15px;
+    background-color: $bg_input;
+    border: 1px solid $border_strong;
+    border-radius: 4px;
+}
+QTableView::indicator:checked, QTableWidget::indicator:checked,
+QTreeView::indicator:checked, QListView::indicator:checked {
+    background-color: $primary;
+    border-color: $primary;
+    image: url($check_mark);
+}
+QTableView::indicator:disabled, QTableWidget::indicator:disabled { background-color: $bg_hover; border-color: $border; }
 QDialog QWidget { background-color: transparent; }
 QDialog QMenu { background-color: $bg_card; }
 QDialog QComboBox QAbstractItemView { background-color: $bg_card; }
@@ -461,12 +498,16 @@ def build_stylesheet(colors: ThemeColors) -> str:
     combo_arrow = _write_svg(
         "combo-arrow", colors.text_secondary, '<path d="m6 9 6 6 6-6" />'
     )
+    combo_arrow_disabled = _write_svg(
+        "combo-arrow", colors.text_disabled, '<path d="m6 9 6 6 6-6" />'
+    )
     check_mark = _write_svg(
         "check-mark", colors.text_inverse, '<path d="m5 12 5 5 9-10" />'
     )
     return _QSS.substitute(
         **{field: getattr(colors, field) for field in colors.__dataclass_fields__},
         combo_arrow=combo_arrow,
+        combo_arrow_disabled=combo_arrow_disabled,
         check_mark=check_mark,
     )
 

@@ -27,7 +27,7 @@ _bootstrap_path()
 import app  # noqa: E402,F401  先导入本包：内含 Windows 系统 ICU 预加载，必须早于 PySide6
 from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator  # noqa: E402
 from PySide6.QtGui import QFontDatabase  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from app.core.paths import fonts_dir, log_dir  # noqa: E402
 from app.core.version import (  # noqa: E402
@@ -40,6 +40,7 @@ from app.core.version import (  # noqa: E402
 )
 from app.resources.qss.theme import apply_initial_theme  # noqa: E402
 from app.views.main_window import MainWindow  # noqa: E402
+from app.views.widgets.frameless_dialog import FramelessMessageBox
 
 _logger = logging.getLogger("section2")
 
@@ -67,7 +68,7 @@ def _install_excepthook() -> None:
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
             return
         _logger.error("未捕获异常", exc_info=(exc_type, exc_value, exc_traceback))
-        QMessageBox.critical(
+        FramelessMessageBox.critical(
             None,
             "程序错误",
             f"发生未处理的错误：\n{exc_type.__name__}: {exc_value}\n\n"

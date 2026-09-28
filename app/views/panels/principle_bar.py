@@ -1,7 +1,8 @@
 """原则横条（复刻旧版 FormMdi 的 panelPrincple，位于主表格上方）。
 
-布局照抄原版：[↑][↓]（移动项目树选中节点）+「沟槽围护 / 地基处理」单选 +
-原则名标签横排（围护底色 #448AFF、地基底色 #455A64、白字居中）+「+」按钮。
+布局照抄原版：左侧竖排「沟槽围护 / 地基处理」单选（原版 RBmPE / RBmPF 上下排列）+
+原则名标签横排（围护底色 #448AFF、地基底色 #455A64、白字居中），「+」按钮紧贴
+最右侧原则块（原版 BTNaddPCP 与标签同处一个滚动区）。
 
 交互照抄原版：
 
@@ -22,7 +23,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
-    QMessageBox,
     QPushButton,
     QRadioButton,
     QScrollArea,
@@ -34,6 +34,7 @@ from app.core.event_bus import bus
 from app.services import project_io
 from app.views.dialogs.enclosure_edit_dialog import EnclosureEditDialog
 from app.views.dialogs.foundation_edit_dialog import FoundationEditDialog
+from app.views.widgets.frameless_dialog import FramelessMessageBox
 
 _KIND_ENCLOSURE = "enclosure"
 _KIND_FOUNDATION = "foundation"
@@ -46,9 +47,6 @@ _FOUNDATION_COLOR = "#455A64"
 
 class PrincipleBar(QWidget):
     """主表格上方的原则横条。"""
-
-    #: ↑/↓ 请求移动项目树选中节点（+1 下移 / -1 上移）
-    move_node_requested = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -64,36 +62,31 @@ class PrincipleBar(QWidget):
         layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(8)
 
-        move_column = QVBoxLayout()
-        move_column.setSpacing(2)
-        btn_up = QPushButton("↑")
-        btn_up.setFixedSize(22, 24)
-        btn_up.setToolTip("节点上移")
-        btn_up.clicked.connect(lambda: self.move_node_requested.emit(-1))
-        btn_down = QPushButton("↓")
-        btn_down.setFixedSize(22, 24)
-        btn_down.setToolTip("节点下移")
-        btn_down.clicked.connect(lambda: self.move_node_requested.emit(1))
-        move_column.addWidget(btn_up)
-        move_column.addWidget(btn_down)
-        layout.addLayout(move_column)
+        # 单选竖排（原版 RBmPE 上、RBmPF 下）
+        radio_column = QVBoxLayout()
+        radio_column.setSpacing(2)
+        self._radio_enclosure = QRadioButton("沟槽围护")
+        self._radio_enclosure.setChecked(True)
+        self._radio_enclosure.toggled.connect(self._reload_labels)
+        self._radio_foundation = QRadioButton("地基处理")
+        radio_column.addWidget(self._radio_enclosure)
+        radio_column.addWidget(self._radio_foundation)
+        layout.addLayout(radio_column)
 
         line = QFrame()
         line.setFrameShape(QFrame.Shape.VLine)
         line.setProperty("role", "hline")
         layout.addWidget(line)
 
-        self._radio_enclosure = QRadioButton("沟槽围护")
-        self._radio_enclosure.setChecked(True)
-        self._radio_enclosure.toggled.connect(self._reload_labels)
-        self._radio_foundation = QRadioButton("地基处理")
-        layout.addWidget(self._radio_enclosure)
-        layout.addWidget(self._radio_foundation)
-
+        # 标签 + 「+」按钮同处一个滚动区，「+」始终紧贴最右侧原则块
         self._label_host = QWidget()
         self._label_layout = QHBoxLayout(self._label_host)
         self._label_layout.setContentsMargins(0, 0, 0, 0)
         self._label_layout.setSpacing(4)
+        self._btn_add = QPushButton("+")
+        self._btn_add.setFixedSize(32, 41)
+        self._btn_add.clicked.connect(self._add_principle)
+        self._label_layout.addWidget(self._btn_add)
         self._label_layout.addStretch(1)
         scroll = QScrollArea()
         scroll.setWidget(self._label_host)
@@ -103,11 +96,6 @@ class PrincipleBar(QWidget):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setFixedHeight(_LABEL_SIZE[1] + 8)
         layout.addWidget(scroll, 1)
-
-        self._btn_add = QPushButton("+")
-        self._btn_add.setFixedSize(32, 41)
-        self._btn_add.clicked.connect(self._add_principle)
-        layout.addWidget(self._btn_add)
 
     # ------------------------------------------------------------------ 刷新
     def reload(self) -> None:
@@ -124,8 +112,10 @@ class PrincipleBar(QWidget):
     def _reload_labels(self) -> None:
         while self._label_layout.count():
             item = self._label_layout.takeAt(0)
-            if item.widget() is not None:
-                item.widget().deleteLater()
+            widget = item.widget()
+            # 「+」按钮是常驻控件，重建标签时保留
+            if widget is not None and widget is not self._btn_add:
+                widget.deleteLater()
         if self._radio_enclosure.isChecked():
             for enclosure in project_io.enclosures():
                 self._label_layout.addWidget(
@@ -136,6 +126,7 @@ class PrincipleBar(QWidget):
                 self._label_layout.addWidget(
                     self._make_label(_KIND_FOUNDATION, foundation.name, _FOUNDATION_COLOR)
                 )
+        self._label_layout.addWidget(self._btn_add)
         self._label_layout.addStretch(1)
 
     def _make_label(self, kind: str, name: str, color: str) -> QLabel:
@@ -215,9 +206,9 @@ class PrincipleBar(QWidget):
             if enclosure is None:
                 return
             if target is None:
-                QMessageBox.information(self, "提示", "至少需要一种沟槽围护原则。")
+                FramelessMessageBox.information(self, "提示", "至少需要一种沟槽围护原则。")
                 return
-            answer = QMessageBox.question(
+            answer = FramelessMessageBox.question(
                 self, "提示",
                 f"删除后该原则的引用将被<{target}>替代,确认删除?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -226,16 +217,16 @@ class PrincipleBar(QWidget):
                 return
             error = project_io.delete_enclosure(enclosure.id, target)
             if error:
-                QMessageBox.information(self, "提示", error)
+                FramelessMessageBox.information(self, "提示", error)
         else:
             target = project_io.merge_target_foundation(name)
             foundation = next((f for f in project_io.foundations() if f.name == name), None)
             if foundation is None:
                 return
             if target is None:
-                QMessageBox.information(self, "提示", "至少需要一种地基处理原则。")
+                FramelessMessageBox.information(self, "提示", "至少需要一种地基处理原则。")
                 return
-            answer = QMessageBox.question(
+            answer = FramelessMessageBox.question(
                 self, "提示",
                 f"删除后该原则的引用将被<{target}>替代,确认删除?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -244,7 +235,7 @@ class PrincipleBar(QWidget):
                 return
             error = project_io.delete_foundation(foundation.id, target)
             if error:
-                QMessageBox.information(self, "提示", error)
+                FramelessMessageBox.information(self, "提示", error)
         bus().tree_structure_changed.emit()
 
     def _export_principle(self, kind: str, name: str) -> None:
@@ -263,7 +254,7 @@ class PrincipleBar(QWidget):
                 if foundation is not None:
                     project_io.export_foundation_spcp(foundation.id, path)
         except Exception as error:
-            QMessageBox.warning(self, "导出失败", str(error))
+            FramelessMessageBox.warning(self, "导出失败", str(error))
             return
         bus().status_message.emit(f"原则已导出：{path}", 3000)
 
@@ -275,7 +266,7 @@ class PrincipleBar(QWidget):
         try:
             kind, name = project_io.import_spcp(path)
         except Exception as error:
-            QMessageBox.warning(self, "导入失败", str(error))
+            FramelessMessageBox.warning(self, "导入失败", str(error))
             return
         if kind == _KIND_ENCLOSURE:
             self._radio_enclosure.setChecked(True)

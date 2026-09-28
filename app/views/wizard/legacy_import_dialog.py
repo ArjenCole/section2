@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.config import update_config
+from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.core.event_bus import bus
 from app.services import project_io, stn_migration
 from app.views.wizard.new_project_wizard import suggested_dir
@@ -91,7 +91,7 @@ class LegacyImportDialog(QWidget):
         try:
             self._legacy = stn_migration.parse_legacy(target)
         except stn_migration.MigrationError as error:
-            QMessageBox.warning(self, "无法读取", str(error))
+            FramelessMessageBox.warning(self, "无法读取", str(error))
             return
         self._source = Path(target)
         self._btn_target.setEnabled(True)
@@ -133,13 +133,13 @@ class LegacyImportDialog(QWidget):
         try:
             report = stn_migration.migrate(self._source, self._target)
         except Exception as error:
-            QMessageBox.critical(self, "迁移失败", f"{error}\n\n半成品文件已删除，原 .stn 未被修改。")
+            FramelessMessageBox.critical(self, "迁移失败", f"{error}\n\n半成品文件已删除，原 .stn 未被修改。")
             return
         update_config({"ui": {"last_dir": str(self._target.parent)}})
         self._summary.setPlainText(report.text())
         self._btn_copy.setEnabled(True)
         self._btn_run.setEnabled(False)
-        QMessageBox.information(
+        FramelessMessageBox.information(
             self, "迁移完成",
             f"已生成 {report.target}\n"
             f"构件 {report.elements} 条、警告 {len(report.warnings)} 条、跳过 {len(report.skipped)} 条。\n"

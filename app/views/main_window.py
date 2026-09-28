@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMenuBar,
-    QMessageBox,
     QSizePolicy,
     QSplitter,
     QStackedWidget,
@@ -50,9 +49,9 @@ from app.services.project_io import ProjectIoError, ProjectLockedError, NewProje
 from app.viewmodels.project_vm import KIND_UNIT, TreeNode
 from app.views.panels.ai_panel import AiPanel
 from app.views.panels.principle_bar import PrincipleBar
-from app.views.panels.summary_panel import SummaryPanel
 from app.views.panels.tree_panel import TreePanel
 from app.views.panels.unit_panel import UnitPanel
+from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.views.wizard.new_project_wizard import (
     NewProjectWizard,
     suggested_dir,
@@ -374,7 +373,6 @@ class MainWindow(QMainWindow):
     def _build_central(self) -> None:
         self._tree_panel = TreePanel()
         self._unit_panel = UnitPanel()
-        self._summary_panel = SummaryPanel()
         self._ai_panel = AiPanel()
 
         self._center_stack = QStackedWidget()
@@ -382,18 +380,12 @@ class MainWindow(QMainWindow):
         placeholder.setProperty("role", "placeholder")
         placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._center_stack.addWidget(placeholder)
-
-        self._workbench = QTabWidget()
-        self._workbench.addTab(self._unit_panel, "单位工程")
-        self._workbench.addTab(self._summary_panel, "汇总")
-        self._center_stack.addWidget(self._workbench)
+        self._center_stack.addWidget(self._unit_panel)
 
         # 原则横条（复刻原版 panelPrincple）：位于中部工作区上方，未打开工程时隐藏
         self._principle_bar = PrincipleBar()
         self._principle_bar.setVisible(False)
-        self._principle_bar.move_node_requested.connect(self._tree_panel.move_selected)
         self._tree_panel.insert_requested.connect(self._insert_template)
-        self._tree_panel.summary_requested.connect(lambda: self._show_tab(1))
 
         center_page = QWidget()
         center_layout = QVBoxLayout(center_page)
@@ -433,7 +425,6 @@ class MainWindow(QMainWindow):
         if node is None or not node.is_unit:
             self._set_status("请于项目树中选中单位工程后再插入构件。", 4000)
             return
-        self._show_tab(0)
         self._unit_panel.insert_template(template)
 
     def _apply_ai_visible(self, expanded: bool, *, initial: bool = False) -> None:
@@ -541,8 +532,6 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self._act_theme)
         view_menu.addSeparator()
         view_menu.addAction(self._act_ai_panel)
-        view_menu.addAction(self._action("单位工程工作台", lambda: self._show_tab(0)))
-        view_menu.addAction(self._action("汇总", lambda: self._show_tab(1)))
 
         ai_menu = menubar.addMenu("AI(&A)")
         ai_menu.addAction(self._act_ai_settings)
@@ -586,6 +575,8 @@ class MainWindow(QMainWindow):
         bus().status_message.connect(self._set_status)
         bus().ai_panel_toggle_requested.connect(self._apply_ai_visible)
         ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
+        # 主题切换按钮文字随当前主题变化：暗色 → 「切换亮色…」、亮色 → 「切换暗色…」
+        self._act_theme.setText("切换亮色主题" if ThemeManager.instance().is_dark() else "切换暗色主题")
 
     def _on_project_opened(self, path: str) -> None:
         if project_io.is_transient():
@@ -594,7 +585,6 @@ class MainWindow(QMainWindow):
             self._update_title()
             self._status_path.setText("（尚未保存到文件）")
             self._set_status("已创建临时工程（尚未保存），点击「保存」选择文件位置", 5000)
-            self._summary_panel.refresh()
             return
         add_recent_project(path)
         update_config({"ui": {"last_dir": str(Path(path).parent)}})
@@ -603,7 +593,6 @@ class MainWindow(QMainWindow):
         self._update_title()
         self._status_path.setText(str(path))
         self._set_status(f"已打开工程：{path}")
-        self._summary_panel.refresh()
 
     def _on_project_closed(self) -> None:
         self._set_project_actions(False)
@@ -620,16 +609,9 @@ class MainWindow(QMainWindow):
             self._center_stack.setCurrentIndex(0)
             return
         self._center_stack.setCurrentIndex(1)
-        if node.kind == KIND_UNIT:
-            self._show_tab(0)
-        else:
-            self._show_tab(1)
-
-    def _show_tab(self, index: int) -> None:
-        self._center_stack.setCurrentIndex(1)
-        self._workbench.setCurrentIndex(index)
 
     def _on_theme_changed(self, _name: str) -> None:
+        self._act_theme.setText("切换亮色主题" if ThemeManager.instance().is_dark() else "切换暗色主题")
         self._title_bar.refresh_theme(ThemeManager.instance().current())
         self._unit_panel.refresh()
         self._ai_panel.refresh_theme()
@@ -691,21 +673,21 @@ class MainWindow(QMainWindow):
         if not project_io.is_transient():
             return True
         name = project_io.project_name() or "当前工程"
-        reply = QMessageBox.question(
+        reply = FramelessMessageBox.question(
             self,
             f"确认{verb}",
             f"“{name}”尚未保存到文件，是否在{verb}前保存？",
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.Discard
-            | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Save,
+            FramelessMessageBox.StandardButton.Save
+            | FramelessMessageBox.StandardButton.Discard
+            | FramelessMessageBox.StandardButton.Cancel,
+            FramelessMessageBox.StandardButton.Save,
         )
-        if reply == QMessageBox.StandardButton.Save:
+        if reply == FramelessMessageBox.StandardButton.Save:
             target = self._prompt_save_as_path("保存工程")
             if target is None:
                 return False
             return self._save_as_target(target, "保存失败")
-        return reply == QMessageBox.StandardButton.Discard
+        return reply == FramelessMessageBox.StandardButton.Discard
 
     def _open_project(self) -> None:
         if not self._prompt_save_if_unsaved():
@@ -805,12 +787,10 @@ class MainWindow(QMainWindow):
         if node is None or not node.is_unit:
             self._set_status("请先在左侧选择单位工程。", 4000)
             return
-        self._show_tab(0)
         self._unit_panel.add_element()
 
     def _refresh(self) -> None:
         self._tree_panel.vm.load()
-        self._summary_panel.refresh()
         self._unit_panel.refresh()
         self._set_status("已刷新", 2000)
 
@@ -833,7 +813,7 @@ class MainWindow(QMainWindow):
         self._ai_panel._refresh_hint()
 
     def _about(self) -> None:
-        QMessageBox.about(
+        FramelessMessageBox.about(
             self,
             "关于 Section",
             f"{APP_DISPLAY_NAME}　版本 {APP_VERSION}<br><br>"
@@ -843,7 +823,7 @@ class MainWindow(QMainWindow):
         )
 
     def _error(self, title: str, message: str) -> None:
-        QMessageBox.warning(self, title, message)
+        FramelessMessageBox.warning(self, title, message)
 
     # ------------------------------------------------------------------ 退出
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt 命名

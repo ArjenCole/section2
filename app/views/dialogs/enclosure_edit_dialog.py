@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -49,6 +48,7 @@ from app.views.dialogs.principle_dialogs import (
     describe_component,
     precipitation_text,
 )
+from app.views.widgets.frameless_dialog import FramelessMessageBox
 
 #: 旧版 mcEnclosure.MultiScpntTxt
 MULTI_LEVEL_TEXT = "多级围护"
@@ -100,12 +100,14 @@ class EnclosureEditDialog(QDialog):
         self._work_table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         self._work_table.horizontalHeader().setStretchLastSection(True)
         table_row.addWidget(self._work_table, 1)
+        # 「+」紧贴表格右侧（原版 BTNadd 在 止水形式描述 列右边，与首行同高）
         add_column = QVBoxLayout()
-        add_column.addStretch(1)
         self._btn_add = QPushButton("+")
-        self._btn_add.setFixedSize(28, 28)
+        self._btn_add.setFixedSize(28, 34)
+        self._btn_add.setToolTip("添加围护做法（Insert）")
         self._btn_add.clicked.connect(lambda: self._insert_work())
         add_column.addWidget(self._btn_add)
+        add_column.addStretch(1)
         table_row.addLayout(add_column)
         root.addLayout(table_row, 1)
 
@@ -159,12 +161,13 @@ class EnclosureEditDialog(QDialog):
         column = QWidget()
         layout = QVBoxLayout(column)
         layout.setContentsMargins(0, 0, 0, 0)
-        btn_yes = QPushButton("确认修改")
-        btn_yes.setFixedSize(76, 48)
+        # 原版按钮文字分两行：确认/修改、取消/修改
+        btn_yes = QPushButton("确认\n修改")
+        btn_yes.setFixedSize(76, 52)
         btn_yes.setProperty("primary", "true")
         btn_yes.clicked.connect(self._confirm)
-        btn_cancel = QPushButton("取消修改")
-        btn_cancel.setFixedSize(76, 48)
+        btn_cancel = QPushButton("取消\n修改")
+        btn_cancel.setFixedSize(76, 52)
         btn_cancel.clicked.connect(self.reject)
         layout.addWidget(btn_yes)
         layout.addWidget(btn_cancel)
@@ -387,7 +390,7 @@ class EnclosureEditDialog(QDialog):
             return
         works = enclosure.works_sorted()
         if len(rows) >= len(works):
-            QMessageBox.information(self, "提示", "至少需要一种围护做法。")
+            FramelessMessageBox.information(self, "提示", "至少需要一种围护做法。")
             return
         for row in rows:
             work = self._work_at(row)
@@ -431,7 +434,7 @@ class EnclosureEditDialog(QDialog):
             return
         name = self._name.text().strip()
         if not name:
-            QMessageBox.warning(self, "提示", "原则名称不得为空。")
+            FramelessMessageBox.warning(self, "提示", "原则名称不得为空。")
             return
         if name != enclosure.name:
             project_io.rename_enclosure(enclosure.id, name)

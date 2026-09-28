@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QMenu,
-    QMessageBox,
     QSplitter,
     QStackedWidget,
     QToolButton,
@@ -34,6 +33,7 @@ from app.viewmodels.project_vm import (
     TreeNode,
 )
 from app.views.panels.element_library_panel import ElementLibraryPanel
+from app.views.widgets.frameless_dialog import FramelessMessageBox
 
 _NODE_ROLE = Qt.ItemDataRole.UserRole + 1
 
@@ -43,8 +43,6 @@ class TreePanel(QWidget):
 
     #: 双击构件库元素模板（ElementTemplate）
     insert_requested = Signal(object)
-    #: 右键菜单“项目/标段/单位工程汇总”
-    summary_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -84,8 +82,7 @@ class TreePanel(QWidget):
         header.addStretch(1)
         self._btn_move_up = self._make_button("↑", "上移", lambda: self._move(-1))
         self._btn_move_down = self._make_button("↓", "下移", lambda: self._move(1))
-        self._btn_delete = self._make_button("✕", "删除选中节点", self._delete)
-        for button in (self._btn_move_up, self._btn_move_down, self._btn_delete):
+        for button in (self._btn_move_up, self._btn_move_down):
             header.addWidget(button)
         tree_layout.addLayout(header)
 
@@ -165,19 +162,13 @@ class TreePanel(QWidget):
         node = self._current_node()
         menu = QMenu(self)
         if node is None or node.is_project:
-            menu.addAction("项目汇总", self.summary_requested.emit)
-            menu.addSeparator()
             menu.addAction("添加标段", self._add_segment)
         elif node.is_segment:
-            menu.addAction("标段汇总", self.summary_requested.emit)
-            menu.addSeparator()
             menu.addAction("添加标段", self._add_segment)
             menu.addAction("添加单位工程", self._add_unit)
             menu.addSeparator()
             menu.addAction("删除标段", self._delete)
         elif node.is_unit:
-            menu.addAction("单位工程汇总", self.summary_requested.emit)
-            menu.addSeparator()
             menu.addAction("添加标段", self._add_segment)
             menu.addAction("添加单位工程", self._add_unit)
             menu.addSeparator()
@@ -237,7 +228,7 @@ class TreePanel(QWidget):
             question = f"确定删除标段“{node.name}”及其下全部单位工程、构件条目？"
         else:
             question = f"确定删除单位工程“{node.name}”及其下全部构件条目？"
-        answer = QMessageBox.question(
+        answer = FramelessMessageBox.question(
             self,
             "删除确认",
             question,
@@ -306,7 +297,7 @@ class TreePanel(QWidget):
     def _update_actions(self) -> None:
         node = self._current_node()
         editable = node is not None and not node.is_project
-        for button in (self._btn_move_up, self._btn_move_down, self._btn_delete):
+        for button in (self._btn_move_up, self._btn_move_down):
             button.setEnabled(editable)
 
 

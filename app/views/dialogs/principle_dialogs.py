@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QRadioButton,
     QTableWidget,
@@ -48,6 +47,7 @@ from app.orm.models import (
     parse_precipitation,
 )
 from app.services import project_io
+from app.views.widgets.frameless_dialog import FramelessMessageBox
 
 _WIDTH_DNS = tuple(range(0, 3100, 100))
 
@@ -85,7 +85,10 @@ def precipitation_enabled(key: str, enclosure: PcpEnclosure) -> tuple[bool, floa
 
 
 def precipitation_text(enclosure: PcpEnclosure) -> str:
-    """降水描述（复刻旧版 mcPcpEnclosure.DiscribePreciptitation）。"""
+    """降水描述（复刻旧版 mcPcpEnclosure.DiscribePreciptitation）。
+
+    每个深度范围独占一行（旧版标签是多行文本）；末行以句号结尾。
+    """
     lines: list[str] = []
     current: float | None = None
     for key in ("light_well", "jet_well", "big_well", "deep_well"):
@@ -101,10 +104,12 @@ def precipitation_text(enclosure: PcpEnclosure) -> str:
             lines.insert(0, f"深度{current:g}m以下，采用湿土排水；")
         else:
             lines.insert(0, "不采用湿土排水；")
-    text = "".join(lines)
+    if not lines:
+        return "未设置降水。"
+    text = "\n".join(lines)
     if text.endswith("；"):
-        text = text[:-1]
-    return text + "。" if text else "未设置降水。"
+        text = text[:-1] + "。"
+    return text
 
 
 class PrincipleSubDialog(QDialog):
@@ -244,7 +249,7 @@ class EnclosureWorkDialog(PrincipleSubDialog):
         if row < 0 or row >= len(levels):
             return
         if len(levels) <= 1:
-            QMessageBox.information(self, "提示", "至少需要一级围护。")
+            FramelessMessageBox.information(self, "提示", "至少需要一级围护。")
             return
         orm.session().delete(levels[row])
         orm.session().flush()

@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QMessageBox,
     QPushButton,
     QSplitter,
     QStackedWidget,
@@ -39,6 +38,7 @@ from app.resources.qss.theme import ThemeManager
 from app.services import project_io
 from app.viewmodels.project_vm import TreeNode
 from app.viewmodels.unit_vm import ElementRow, ParamRow, PipeRow, UnitViewModel
+from app.views.widgets.frameless_dialog import FramelessMessageBox
 
 _ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
 _COL_NAME, _COL_CATEGORY, _COL_SPEC, _COL_DEPTH, _COL_UNIT, _COL_AMOUNT, _COL_PE, _COL_PF, _COL_SOURCE = range(9)
@@ -74,19 +74,6 @@ class UnitPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
-
-        header = QHBoxLayout()
-        self._title = QLabel("单位工程")
-        self._title.setProperty("role", "panel-title")
-        header.addWidget(self._title)
-        header.addStretch(1)
-        self._btn_add = self._make_button("＋构件", "新增构件条目", self._add_element)
-        self._btn_delete = self._make_button("✕", "删除选中构件条目", self._delete_element)
-        self._btn_up = self._make_button("↑", "上移", lambda: self._move_element(-1))
-        self._btn_down = self._make_button("↓", "下移", lambda: self._move_element(1))
-        for button in (self._btn_add, self._btn_delete, self._btn_up, self._btn_down):
-            header.addWidget(button)
-        layout.addLayout(header)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(self._build_element_table())
@@ -207,7 +194,8 @@ class UnitPanel(QWidget):
         table.setAlternatingRowColors(True)
         table.horizontalHeader().setStretchLastSection(True)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        table.verticalHeader().setDefaultSectionSize(26)
+        # 行高要容得下单元格里的下拉框（QSS 内边距 6px×2 + 13px 字 + 边框）
+        table.verticalHeader().setDefaultSectionSize(34)
         table.setWordWrap(False)
         return table
 
@@ -231,11 +219,9 @@ class UnitPanel(QWidget):
 
     def _show_unit(self, unit_id: int | None, name: str = "") -> None:
         self._unit_id = unit_id
-        self._title.setText(name or "单位工程")
         has_unit = unit_id is not None
         self._placeholder.setVisible(not has_unit)
         self._work_area.setVisible(has_unit)
-        self._btn_add.setEnabled(has_unit)
         if not has_unit:
             self._vm.load_unit(None)
             self._element_table.setRowCount(0)
@@ -356,14 +342,12 @@ class UnitPanel(QWidget):
         if not expression:
             return
         details = item.toolTip()
-        box = QMessageBox(self)
-        box.setWindowTitle("计算表达式")
-        box.setText(f"工程量 = {expression.split(' = ')[0] if ' = ' in expression else expression}")
         informative = details if details and "\n\n" in details else ""
-        box.setInformativeText(f"<pre style='white-space:pre-wrap'>{expression}</pre>"
-                               + (f"<br><br>中间步骤：<br>{informative.split(chr(10)+chr(10))[-1]}" if informative else ""))
-        box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        box.exec()
+        html = (
+            f"<pre style='white-space:pre-wrap'>{expression}</pre>"
+            + (f"<br><br>中间步骤：<br>{informative.split(chr(10)+chr(10))[-1]}" if informative else "")
+        )
+        FramelessMessageBox.information(self, "计算表达式", html)
 
     def _fill_element_row(
         self,
@@ -494,14 +478,14 @@ class UnitPanel(QWidget):
         element_id = self._current_element_id()
         if element_id is None:
             return
-        answer = QMessageBox.question(
+        answer = FramelessMessageBox.question(
             self,
             "删除确认",
             "确定删除该构件条目及其管材、参数？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+            FramelessMessageBox.StandardButton.Yes | FramelessMessageBox.StandardButton.No,
+            FramelessMessageBox.StandardButton.No,
         )
-        if answer == QMessageBox.StandardButton.Yes:
+        if answer == FramelessMessageBox.StandardButton.Yes:
             self._vm.remove_element(element_id)
 
     def _move_element(self, delta: int) -> None:
@@ -545,6 +529,9 @@ class UnitPanel(QWidget):
         from PySide6.QtWidgets import QMenu
 
         menu = QMenu(self)
+        menu.addAction("添加构件", self._add_element)
+        menu.addAction("删除选中构件", self._delete_selected_elements)
+        menu.addSeparator()
         menu.addAction("复制", self._copy_elements)
         menu.addAction("剪切", self._cut_elements)
         paste = menu.addAction("粘贴", self._paste_elements)

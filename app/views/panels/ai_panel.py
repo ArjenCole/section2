@@ -15,7 +15,6 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QTextBrowser,
@@ -29,6 +28,7 @@ from app.core.config import get_config
 from app.core.event_bus import bus
 from app.services.ai import ai_keychain
 from app.services.ai.ai_provider import AiProviderError, ChatMessage, ProviderConfig
+from app.views.widgets.frameless_dialog import FramelessMessageBox
 
 _SYSTEM_PROMPT = (
     "你是 section2（市政管道等线性工程工程量计算软件）的助手。"
@@ -231,17 +231,23 @@ class AiPanel(QWidget):
         self._btn_stop.setEnabled(False)
         self._loop = None
         if isinstance(message, str) and "401" in message:
-            QMessageBox.warning(self, "AI 端点", "鉴权失败，请检查 API key。")
+            FramelessMessageBox.warning(self, "AI 端点", "鉴权失败，请检查 API key。")
 
     def _on_confirm(self, description: str) -> None:
-        box = QMessageBox(self)
-        box.setWindowTitle("AI 写操作确认")
-        box.setText(description)
-        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        box.button(QMessageBox.StandardButton.Yes).setText("允许执行")
-        box.button(QMessageBox.StandardButton.No).setText("拒绝")
-        box.setDefaultButton(QMessageBox.StandardButton.No)
-        approved = box.exec() == QMessageBox.StandardButton.Yes
+        approved = (
+            FramelessMessageBox.question(
+                self,
+                "AI 写操作确认",
+                description,
+                FramelessMessageBox.StandardButton.Yes | FramelessMessageBox.StandardButton.No,
+                FramelessMessageBox.StandardButton.No,
+                button_texts={
+                    FramelessMessageBox.StandardButton.Yes: "允许执行",
+                    FramelessMessageBox.StandardButton.No: "拒绝",
+                },
+            )
+            == FramelessMessageBox.StandardButton.Yes
+        )
         if self._loop is not None:
             self._loop.answer_confirm(approved)
             if approved:

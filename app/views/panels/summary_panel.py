@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -27,6 +26,7 @@ from app.core.evaluator import format_number
 from app.core.event_bus import bus
 from app.services import excel_export, project_io
 from app.services.atlas import default_price_table
+from app.views.widgets.frameless_dialog import FramelessMessageBox
 
 _PRICE_ROLE = Qt.ItemDataRole.UserRole + 1
 _HEADERS = ["编号", "类别", "项目", "单位", "计算表达式", "工程量", "单价", "合价"]
@@ -198,7 +198,7 @@ class SummaryPanel(QWidget):
         """批量载价（旧版 FormSum：从价格库 Price.xlsx 载入）。"""
         library = default_price_table()
         if not library:
-            QMessageBox.information(self, "批量载价", "价格库文件缺失（app/resources/inventory/Price.xlsx）。")
+            FramelessMessageBox.information(self, "批量载价", "价格库文件缺失（app/resources/inventory/Price.xlsx）。")
             return
         names = sorted(library)
         picker = QComboBox(self)
@@ -223,7 +223,7 @@ class SummaryPanel(QWidget):
         name = picker.currentText()
         mapping = library.get(name, {})
         if not mapping:
-            QMessageBox.warning(self, "批量载价", f"价格库 {name} 为空。")
+            FramelessMessageBox.warning(self, "批量载价", f"价格库 {name} 为空。")
             return
         overwrite = self._ask_overwrite()
         if overwrite is None:
@@ -237,31 +237,32 @@ class SummaryPanel(QWidget):
         self.refresh()
 
     def _ask_overwrite(self) -> bool | None:
-        box = QMessageBox(self)
-        box.setWindowTitle("批量载价")
-        box.setText("是否覆盖当前已填写的价格信息？")
-        box.setStandardButtons(
-            QMessageBox.StandardButton.Yes
-            | QMessageBox.StandardButton.No
-            | QMessageBox.StandardButton.Cancel
+        result = FramelessMessageBox.question(
+            self,
+            "批量载价",
+            "是否覆盖当前已填写的价格信息？",
+            FramelessMessageBox.StandardButton.Yes
+            | FramelessMessageBox.StandardButton.No
+            | FramelessMessageBox.StandardButton.Cancel,
+            FramelessMessageBox.StandardButton.Yes,
+            button_texts={
+                FramelessMessageBox.StandardButton.Yes: "覆盖",
+                FramelessMessageBox.StandardButton.No: "只补空",
+            },
         )
-        box.button(QMessageBox.StandardButton.Yes).setText("覆盖")
-        box.button(QMessageBox.StandardButton.No).setText("只补空")
-        box.button(QMessageBox.StandardButton.Cancel).setText("取消")
-        result = box.exec()
-        if result == QMessageBox.StandardButton.Yes:
+        if result == FramelessMessageBox.StandardButton.Yes:
             return True
-        if result == QMessageBox.StandardButton.No:
+        if result == FramelessMessageBox.StandardButton.No:
             return False
         return None
 
     def _clear_prices(self) -> None:
-        answer = QMessageBox.question(
+        answer = FramelessMessageBox.question(
             self, "清空价格", "确定清空所有单价？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+            FramelessMessageBox.StandardButton.Yes | FramelessMessageBox.StandardButton.No,
+            FramelessMessageBox.StandardButton.No,
         )
-        if answer == QMessageBox.StandardButton.Yes:
+        if answer == FramelessMessageBox.StandardButton.Yes:
             project_io.clear_prices()
             self.refresh()
 
@@ -276,7 +277,7 @@ class SummaryPanel(QWidget):
         try:
             excel_export.export_excel(target, self._data)
         except PermissionError:
-            QMessageBox.warning(self, "导出错误", "文件可能正在使用，请关闭后重试。")
+            FramelessMessageBox.warning(self, "导出错误", "文件可能正在使用，请关闭后重试。")
             return
         bus().status_message.emit(f"已导出：{target}", 5000)
 

@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -26,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from app.core.config import get_config, update_config
 from app.services.ai import ai_keychain
+from app.views.widgets.frameless_dialog import FramelessMessageBox
 
 _NAME_ROLE = Qt.ItemDataRole.UserRole + 1
 
@@ -181,7 +181,7 @@ class AiSettingsDialog(QDialog):
         providers = self._collect()
         names = [provider["name"] for provider in providers]
         if len(names) != len(set(names)):
-            QMessageBox.warning(self, "AI 设置", "配置名称重复，请修改。")
+            FramelessMessageBox.warning(self, "AI 设置", "配置名称重复，请修改。")
             return
         old_names = {provider.get("name") for provider in get_config().ai_providers}
         for name in old_names - set(names):

@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -35,6 +34,7 @@ from app.orm import base as orm
 from app.orm.models import FoundationReplacement, PcpFoundation
 from app.services import project_io
 from app.views.dialogs.principle_dialogs import ComponentEditDialog, describe_component
+from app.views.widgets.frameless_dialog import FramelessMessageBox
 
 _COL_MATERIAL, _COL_THICKNESS = 0, 1
 
@@ -245,7 +245,7 @@ class FoundationEditDialog(QDialog):
             return
         name = self._name.text().strip()
         if not name:
-            QMessageBox.warning(self, "提示", "原则名称不得为空。")
+            FramelessMessageBox.warning(self, "提示", "原则名称不得为空。")
             return
         if name != foundation.name:
             project_io.rename_foundation(foundation.id, name)

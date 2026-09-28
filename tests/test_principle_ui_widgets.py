@@ -43,12 +43,13 @@ def test_principle_bar_labels_and_radio(qapp, project):
     bar = PrincipleBar()
     bar.reload()
     assert bar.isVisibleTo(bar.parentWidget())
-    assert bar._label_layout.count() - 1 == 1  # 默认 1 条围护原则
+    # 标签布局 = 原则标签 + 常驻「+」按钮 + stretch
+    assert bar._label_layout.count() - 2 == 1  # 默认 1 条围护原则
     bar._radio_foundation.setChecked(True)
-    assert bar._label_layout.count() - 1 == 1  # 1 条地基原则
+    assert bar._label_layout.count() - 2 == 1  # 1 条地基原则
     bar.add_enclosure()
     bar._radio_enclosure.setChecked(True)
-    assert bar._label_layout.count() - 1 == 2
+    assert bar._label_layout.count() - 2 == 2
 
 
 def test_enclosure_dialog_insert_rules(qapp, project, monkeypatch):
@@ -63,7 +64,7 @@ def test_enclosure_dialog_insert_rules(qapp, project, monkeypatch):
     # Delete 全选 → 提示“至少需要一种围护做法。”，且不删除
     shown: list[str] = []
     monkeypatch.setattr(
-        "app.views.dialogs.enclosure_edit_dialog.QMessageBox.information",
+        "app.views.dialogs.enclosure_edit_dialog.FramelessMessageBox.information",
         lambda *_args, **_kwargs: shown.append("blocked"),
     )
     dialog._work_table.selectAll()
@@ -113,9 +114,8 @@ def test_main_window_replica_layout(qapp, project):
         bus().project_opened.emit(str(project))
         window._tree_panel.vm.load()
         qapp.processEvents()
-        # 原则横条可见，工作区只有 单位工程 / 汇总 两个页签
+        # 原则横条可见，选中单位工程后工作区直达单位工程面板（无页签）
         assert window._principle_bar.isVisibleTo(window._principle_bar.parentWidget())
-        assert window._workbench.count() == 2
         # 主表格 9 列
         table = window._unit_panel._element_table
         assert table.columnCount() == 9
