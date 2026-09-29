@@ -442,6 +442,39 @@ def units(segment_id: int) -> list[Unit]:
     )
 
 
+def move_segment(segment_id: int, index: int) -> None:
+    """把标段移到同级第 index 个位置（其余标段顺序归一化；Quotor move_node 语义）。"""
+    if not orm.is_open():
+        return
+    session = orm.session()
+    segment = session.get(Segment, segment_id)
+    if segment is None:
+        return
+    ordered = [item for item in segments() if item.id != segment_id]
+    index = max(0, min(index, len(ordered)))
+    ordered.insert(index, segment)
+    for position, item in enumerate(ordered):
+        item.order_no = position
+    commit()
+
+
+def move_unit(unit_id: int, target_segment_id: int, index: int) -> None:
+    """把单位工程移到 target_segment 下第 index 个位置（跨标段移动与排序二合一）。"""
+    if not orm.is_open():
+        return
+    session = orm.session()
+    unit = session.get(Unit, unit_id)
+    if unit is None or session.get(Segment, target_segment_id) is None:
+        return
+    unit.segment_id = target_segment_id
+    siblings = [item for item in units(target_segment_id) if item.id != unit_id]
+    index = max(0, min(index, len(siblings)))
+    siblings.insert(index, unit)
+    for position, item in enumerate(siblings):
+        item.order_no = position
+    commit()
+
+
 def unit_names() -> list[str]:
     if not orm.is_open():
         return []

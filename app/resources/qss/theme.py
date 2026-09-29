@@ -161,7 +161,7 @@ QWidget[role="toolbar-strip"] {
 }
 QLabel { background: transparent; }
 QLabel[role="panel-title"] { font-size: 13px; font-weight: 600; color: $text_primary; }
-QLabel[role="title"] { font-size: 15px; font-weight: 600; }
+QLabel[role="title"] { font-size: 13px; font-weight: 600; color: $text_secondary; padding: 2px 4px; }
 QLabel[role="hint"] { color: $text_secondary; }
 QLabel[role="error"] { color: $danger; }
 QLabel[role="mono"] { font-family: $font_family_mono; }
@@ -180,13 +180,15 @@ QMenuBar {
     border-bottom: 1px solid $border;
     padding: 2px 4px;
 }
-QMenuBar#TitleBarMenuBar { background: transparent; border: none; padding: 0; }
-QMenuBar#TitleBarMenuBar::item { padding: 5px 10px; background: transparent; border-radius: 6px; }
+QMenuBar#TitleBarMenuBar { background: transparent; border: none; spacing: 2px; }
+QMenuBar#TitleBarMenuBar::item { padding: 6px 10px; background: transparent; border-radius: 4px; color: $text_secondary; }
+QMenuBar#TitleBarMenuBar::item:selected { background-color: $bg_hover; color: $text_primary; }
+QMenuBar#TitleBarMenuBar::item:pressed { background-color: $bg_pressed; }
 QFrame#FramelessTitleBar {
     background-color: $bg_card;
     border-bottom: 1px solid $border;
 }
-QLabel#TitleBarIcon { color: $primary; font-weight: 700; font-size: 15px; background: transparent; }
+QLabel#TitleBarIcon { color: $primary; font-weight: 700; font-size: 15px; background: transparent; padding: 0 2px 0 0; }
 QToolButton#WindowBtn {
     background: transparent;
     border: none;
@@ -214,15 +216,15 @@ QMenu::separator { height: 1px; background-color: $border; margin: 4px 8px; }
 QToolBar {
     background-color: $bg_card;
     border-bottom: 1px solid $border;
-    padding: 4px 6px;
+    padding: 6px 10px;
     spacing: 4px;
 }
-QToolBar::separator { width: 1px; background-color: $border; margin: 4px 6px; }
+QToolBar::separator { width: 1px; background-color: $border; margin: 6px 6px; }
 QToolButton {
     background: transparent;
     border: 1px solid transparent;
     border-radius: 6px;
-    padding: 5px 10px;
+    padding: 6px 10px;
     color: $text_primary;
 }
 QToolButton:hover { background-color: $bg_hover; }
@@ -322,6 +324,8 @@ QPushButton[danger="true"] { color: $danger; border-color: $danger; background-c
 QPushButton[danger="true"]:hover { background-color: $danger; color: $text_inverse; }
 QPushButton[flat="true"] { border-color: transparent; background: transparent; }
 QPushButton[flat="true"]:hover { background-color: $bg_hover; }
+QPushButton[secondary="true"] { background: transparent; color: $text_secondary; }
+QPushButton[secondary="true"]:hover { background-color: $bg_hover; color: $text_primary; }
 /* 固定尺寸的小方块按钮（+、↑、↓ 等）：默认内边距会把单字符裁掉 */
 QPushButton[role="icon-btn"] { padding: 2px; font-size: 18px; }
 
@@ -387,11 +391,14 @@ QTabBar::tab:selected {
 
 /* ===================== 树 ===================== */
 QTreeWidget, QTreeView {
-    background-color: $bg_card;
+    background-color: $bg_window;
     border: none;
     show-decoration-selected: 1;
+    selection-background-color: $table_selected_bg;
+    selection-color: $text_primary;
+    outline: none;
 }
-QTreeView::item { padding: 5px 4px; border-radius: 4px; color: $text_primary; }
+QTreeView::item { padding: 5px 8px; border: none; color: $text_primary; }
 QTreeView::item:hover { background-color: $item_hover; }
 QTreeView::item:selected { background-color: $table_selected_bg; color: $text_primary; }
 QTreeView::item:selected:active { background-color: $table_selected_bg; }
@@ -406,24 +413,24 @@ QTableWidget, QTableView {
     selection-background-color: $table_selected_bg;
     selection-color: $text_primary;
 }
-QTableWidget::item, QTableView::item { padding: 3px 6px; }
+QTableWidget::item, QTableView::item { padding: 5px 8px; }
 QTableWidget::item:selected, QTableView::item:selected {
     background-color: $table_selected_bg;
     color: $text_primary;
 }
-QHeaderView { background-color: $bg_card; }
+QHeaderView { background-color: transparent; border: none; }
 QHeaderView::section {
-    background-color: $bg_card;
+    background-color: $bg_window;
     color: $text_secondary;
-    font-weight: 600;
+    font-weight: 500;
     border: none;
-    border-right: 1px solid $border;
-    border-bottom: 1px solid $border;
-    padding: 6px 6px;
+    border-right: 1px solid $table_grid;
+    border-bottom: 1px solid $table_grid;
+    padding: 8px 10px;
 }
 QHeaderView::section:last { border-right: none; }
 QHeaderView::section:hover { background-color: $bg_hover; }
-QTableCornerButton::section { background-color: $bg_card; border: none; }
+QTableCornerButton::section { background-color: $bg_window; border: none; }
 
 /* ===================== 列表 ===================== */
 QListView {
@@ -475,6 +482,30 @@ QDialog QTableWidget, QDialog QTableView, QDialog QTreeWidget, QDialog QListView
 QDialog QHeaderView::section { background-color: $bg_card; color: $text_secondary; }
 QDialog #FramelessTitleBar, QDialog #FramelessDialogBody { background-color: $bg_dialog; }
 QLabel[role="dialog-title"] { font-size: 14px; font-weight: 600; color: $text_primary; }
+
+/* ===================== AI 面板 ===================== */
+/* AI 面板输入框: 圆角矩形布满宽度, 作为发送按钮的 overlay 容器 */
+QPlainTextEdit#aiInputEdit {
+    border-radius: 10px;
+    padding: 8px 12px;
+    background-color: $bg_input;
+    border: 1px solid $border;
+}
+QPlainTextEdit#aiInputEdit:hover { border-color: $border_strong; }
+QPlainTextEdit#aiInputEdit:focus { border-color: $border_focus; }
+
+/* AI 面板发送按钮: 小正方形 overlay, 处于输入框右下角 */
+QPushButton#aiSendBtn {
+    border: none;
+    border-radius: 8px;
+    padding: 0;
+    margin: 0;
+    background-color: $primary;
+    color: $text_inverse;
+}
+QPushButton#aiSendBtn:hover { background-color: $primary_hover; }
+QPushButton#aiSendBtn:pressed { background-color: $primary_pressed; }
+QPushButton#aiSendBtn:disabled { background-color: $bg_pressed; color: $text_disabled; }
 
 /* ===================== 表格/列表里的勾选指示器 ===================== */
 QTableView::indicator, QTableWidget::indicator, QTreeView::indicator, QListView::indicator {

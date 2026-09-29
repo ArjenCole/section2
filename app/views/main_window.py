@@ -457,6 +457,19 @@ class MainWindow(QMainWindow):
         self._splitter.setSizes(sizes)
 
     # ------------------------------------------------------------------ 动作
+    #: 工具栏动作 → Lucide 图标名（svg 随主题重着色，Quotor 同款机制）
+    _ACTION_ICONS = {
+        "act_new": "file-plus",
+        "act_open": "folder-open",
+        "act_save": "save",
+        "act_add_segment": "folder-plus",
+        "act_add_unit": "file-text",
+        "act_add_element": "plus",
+        "act_refresh": "refresh-cw",
+        "act_theme": "moon",
+        "act_ai_panel": "panel-right",
+    }
+
     def _build_actions(self) -> None:
         self._act_new = self._action("新建工程(&N)", self._new_project, "Ctrl+N")
         self._act_open = self._action("打开工程(&O)…", self._open_project, "Ctrl+O")
@@ -474,6 +487,12 @@ class MainWindow(QMainWindow):
         self._act_ai_panel = self._action("AI 助手", lambda: self._toggle_ai_panel(), "Ctrl+L")
         self._act_ai_settings = self._action("AI 设置…", self._ai_settings)
         self._act_about = self._action("关于 Section", self._about)
+
+        for attr, icon_name in self._ACTION_ICONS.items():
+            action = getattr(self, f"_{attr}")
+            # setData 存图标名，主题切换时按新主题色重载（Quotor _make_action 同款）
+            action.setData(icon_name)
+            self._apply_action_icon(action)
 
         for action in (
             self._act_save,
@@ -502,14 +521,35 @@ class MainWindow(QMainWindow):
             action.setShortcut(QKeySequence(shortcut))
         return action
 
-    def _set_theme_action_icon(self) -> None:
-        """主题按钮图标：暗色显示太阳（切到亮色）、亮色显示月亮（切到暗色），Quotor 同款。"""
+    def _apply_action_icon(self, action: QAction) -> None:
+        """按 action.data() 里存的图标名，用当前主题色渲染 SVG 图标。"""
+        icon_name = action.data()
+        if not isinstance(icon_name, str) or not icon_name:
+            return
         from app.views.widgets.frameless_dialog import load_icon
 
+        color = ThemeManager.instance().current().text_primary
+        action.setIcon(load_icon(icon_name, color=color, size=18))
+
+    def _refresh_action_icons(self) -> None:
+        """主题切换后遍历工具栏 + 菜单栏动作，用新主题色重载图标（Quotor 同款）。"""
+        containers = [self._title_bar.menu_bar]
+        toolbar = self.toolbar()
+        if toolbar is not None:
+            containers.append(toolbar)
+        for container in containers:
+            for action in container.actions():
+                self._apply_action_icon(action)
+                menu = action.menu()
+                if menu is not None:
+                    for sub_action in menu.actions():
+                        self._apply_action_icon(sub_action)
+
+    def _set_theme_action_icon(self) -> None:
+        """主题按钮图标：暗色显示太阳（切到亮色）、亮色显示月亮（切到暗色），Quotor 同款。"""
         dark = ThemeManager.instance().is_dark()
         self._act_theme.setData("sun" if dark else "moon")
-        color = ThemeManager.instance().current().text_primary
-        self._act_theme.setIcon(load_icon("sun" if dark else "moon", color, 16))
+        self._apply_action_icon(self._act_theme)
 
     def _build_menus(self) -> None:
         menubar = self._title_bar.menu_bar  # 无边框：菜单栏在自绘标题栏内
@@ -552,8 +592,8 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("主工具栏", self)
         toolbar.setMovable(False)
-        toolbar.setIconSize(QSize(18, 18))
-        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        toolbar.setIconSize(QSize(18, 18))  # Quotor 同款：纯图标 + 18px
+        self.addToolBar(toolbar)
         toolbar.addAction(self._act_new)
         toolbar.addAction(self._act_open)
         toolbar.addAction(self._act_save)
@@ -623,6 +663,7 @@ class MainWindow(QMainWindow):
     def _on_theme_changed(self, _name: str) -> None:
         self._act_theme.setText("切换亮色主题" if ThemeManager.instance().is_dark() else "切换暗色主题")
         self._set_theme_action_icon()
+        self._refresh_action_icons()
         self._title_bar.refresh_theme(ThemeManager.instance().current())
         self._unit_panel.refresh()
         self._ai_panel.refresh_theme()

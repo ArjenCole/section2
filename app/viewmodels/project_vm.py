@@ -182,6 +182,26 @@ class ProjectViewModel(QObject):
         self.selection_changed.emit(None)
         self._after_change()
 
+    def move_node(self, node: TreeNode, parent_id: int | None, index: int) -> bool:
+        """拖拽移动：node 放到 parent_id（None = 项目根）下第 index 个兄弟位置。
+
+        标段只能在项目根下并排重排；单位工程可在标段内排序或跨标段移动。
+        移动成功返回 True。
+        """
+        target = self._entity(node)
+        if target is None:
+            return False
+        if isinstance(target, Unit):
+            if parent_id is None:
+                return False
+            project_io.move_unit(target.id, parent_id, index)
+        else:
+            if parent_id is not None:
+                return False
+            project_io.move_segment(target.id, index)
+        self._after_change()
+        return True
+
     def move(self, node: TreeNode, delta: int) -> None:
         """上移/下移（delta = -1 / +1）。"""
         target = self._entity(node)

@@ -1,14 +1,22 @@
-"""左侧面板（复刻旧版 FormMdi 左栏 splitContainerLeft）。
+"""左侧面板（复刻旧版 FormMdi 左栏 splitContainerLeft，交互对齐 Quotor 项目结构树）。
 
-上半段：项目数据结构（工程 → 标段 → 单位工程；复刻原版树右键菜单）。
+上半段：项目结构（工程 → 标段 → 单位工程；复刻原版树右键菜单 + Quotor 拖拽移动）。
 下半段：构件库（类别下拉 + 两级模板树，双击元素插入主表格）。
+
+树交互与 Quotor 同款：
+* 节点图标 Lucide 单色线条（工程=folder、标段=folder-open、单位工程=file-text），
+  18px，text_secondary 着色；
+* 拖拽仅 MoveAction：标段可与标段并排重排，单位工程可在标段内排序或跨标段移动；
+  根节点不可拖；dropEvent 只记录意图，模态拖拽循环结束后才写库；
+* 悬停折叠容器 250ms 自动展开。
 
 选中节点通过 EventBus.node_selected 广播，中部工作区据此切换内容。
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtGui import QCursor, QDrag, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -25,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.event_bus import bus
+from app.resources.qss.theme import ThemeManager
 from app.viewmodels.project_vm import (
     KIND_PROJECT,
     KIND_SEGMENT,
@@ -33,20 +42,162 @@ from app.viewmodels.project_vm import (
     TreeNode,
 )
 from app.views.panels.element_library_panel import ElementLibraryPanel
-from app.views.widgets.frameless_dialog import FramelessMessageBox
+from app.views.widgets.frameless_dialog import load_icon
 
 _NODE_ROLE = Qt.ItemDataRole.UserRole + 1
 
+#: 节点类型图标（Quotor tree_panel._NODE_ICONS 同款）
+_NODE_ICONS = {
+    KIND_PROJECT: "folder",  # 根目录: 合上的文件夹
+    KIND_SEGMENT: "folder-open",  # 标段: 打开的文件夹
+    KIND_UNIT: "file-text",  # 单位工程: 文档
+}
+
+
+def _node_icon(node: TreeNode):
+    color = ThemeManager.instance().current().text_secondary
+    return load_icon(_NODE_ICONS.get(node.kind, "folder"), color=color, size=18)
+
+
+class _ProjectTree(QTreeWidget):
+    """项目结构树：拖拽移动节点（Quotor _ProjectTree 同款交互）。"""
+
+    #: (source_node, target_parent_id, index)；index 为排除自身后的兄弟位置
+    move_node_requested = Signal(object, int, int)
+    drop_rejected = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setHeaderHidden(True)
+        self.setRootIsDecorated(False)  # 根级不显示展开箭头
+        self.setAnimated(True)
+        self.setIndentation(16)
+        self.setAutoExpandDelay(250)  # 悬停折叠容器片刻后自动展开
+        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self._dragging_item: QTreeWidgetItem | None = None
+        self._pending_move: tuple[object, int, int] | None = None
+
+    # --- 拖拽（Quotor 同款：自建 QDrag + 半透明影像；drop 只记录、循环结束后写库） ---
+    def startDrag(self, supported_actions) -> None:  # noqa: N802 - Qt 命名
+        items = self.selectedItems()
+        if not items:
+            return
+        item = items[0]
+        if item.parent() is None:  # 根节点（工程）不可拖
+            return
+        self._dragging_item = item
+        drag = QDrag(self)
+        drag.setMimeData(self.model().mimeData([self.indexFromItem(item)]))
+        rect = self.visualItemRect(item)
+        dpr = self.devicePixelRatioF() or 1.0
+        pixmap = QPixmap(rect.size() * dpr)
+        pixmap.setDevicePixelRatio(dpr)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setOpacity(0.8)
+        painter.drawPixmap(0, 0, self.viewport().grab(rect))
+        painter.end()
+        drag.setPixmap(pixmap)
+        hotspot = self.viewport().mapFromGlobal(QCursor.pos()) - rect.topLeft()
+        drag.exec(Qt.DropAction.MoveAction, Qt.DropAction.MoveAction, QPoint(hotspot))
+        self._dragging_item = None
+        self._consume_pending_move()
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if event.source() is not self:  # 只接受树内部拖拽
+            event.ignore()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if event.source() is not self:
+            event.ignore()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if event.source() is not self:
+            event.ignore()
+            return
+        source_item = self._dragging_item
+        if source_item is None:
+            event.ignore()
+            return
+        target_item = self.itemAt(event.position().toPoint())
+        status, payload = self._resolve_drop(
+            self._node_of(source_item), target_item, self.dropIndicatorPosition()
+        )
+        if status == "ok":
+            self._dragging_item = None
+            self._pending_move = payload
+            event.acceptProposedAction()
+            return
+        event.ignore()
+        if status == "invalid":
+            self.drop_rejected.emit(payload)
+
+    def _consume_pending_move(self) -> None:
+        pending, self._pending_move = self._pending_move, None
+        if pending is not None:
+            self.move_node_requested.emit(*pending)
+
+    @staticmethod
+    def _node_of(item: QTreeWidgetItem) -> TreeNode:
+        return item.data(0, _NODE_ROLE)
+
+    # --- 落点解析：section2 层级为 工程→标段→单位工程 ---
+    def _resolve_drop(
+        self, source: TreeNode, target_item: QTreeWidgetItem | None, indicator
+    ) -> tuple[str, tuple[object, int, int] | str]:
+        from app.services import project_io
+
+        target = self._node_of(target_item) if target_item is not None else None
+        on_item = indicator == QAbstractItemView.DropIndicatorPosition.OnItem
+        above = indicator == QAbstractItemView.DropIndicatorPosition.AboveItem
+        below = indicator == QAbstractItemView.DropIndicatorPosition.BelowItem
+
+        if source.kind == KIND_SEGMENT:
+            if target is None or target.kind != KIND_SEGMENT or on_item or not (above or below):
+                return "invalid", "标段只能拖到其它标段的上方或下方并排。"
+            siblings = [item for item in project_io.segments() if item.id != source.id]
+            index = next((i for i, item in enumerate(siblings) if item.id == target.id), 0)
+            if below:
+                index += 1
+            return "ok", (source, None, index)
+
+        if source.kind == KIND_UNIT:
+            if target is None:
+                return "invalid", "单位工程必须放到某个标段内。"
+            if target.kind == KIND_SEGMENT:
+                if on_item:
+                    index = len([u for u in project_io.units(target.id) if u.id != source.id])
+                    return "ok", (source, target.id, index)
+                return "invalid", "单位工程请拖到标段上（放入）或其它单位工程旁。"
+            # target 是单位工程
+            siblings = [u for u in project_io.units(target.parent_id or 0) if u.id != source.id]
+            index = next((i for i, item in enumerate(siblings) if item.id == target.id), 0)
+            if below or on_item:
+                index += 1
+            return "ok", (source, target.parent_id, index)
+
+        return "invalid", "该节点不能移动。"
+
 
 class TreePanel(QWidget):
-    """左侧面板：上半项目树 + 下半构件库。"""
+    """左侧面板：上半项目结构 + 下半构件库。"""
 
     #: 双击构件库元素模板（ElementTemplate）
     insert_requested = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setProperty("role", "panel")
         self.setMinimumWidth(200)
         self._vm = ProjectViewModel()
         self._selected_key: tuple[str, int | None] | None = None
@@ -70,18 +221,19 @@ class TreePanel(QWidget):
 
         splitter = QSplitter(Qt.Orientation.Vertical)
 
-        # ---- 上半段：项目数据结构
+        # ---- 上半段：项目结构
         tree_page = QWidget()
         tree_layout = QVBoxLayout(tree_page)
         tree_layout.setContentsMargins(0, 0, 0, 0)
         tree_layout.setSpacing(4)
         header = QHBoxLayout()
-        title = QLabel("项目数据结构")
-        title.setProperty("role", "panel-title")
+        header.setSpacing(2)
+        title = QLabel("项目结构")
+        title.setProperty("role", "title")
         header.addWidget(title)
         header.addStretch(1)
-        self._btn_move_up = self._make_button("↑", "上移", lambda: self._move(-1))
-        self._btn_move_down = self._make_button("↓", "下移", lambda: self._move(1))
+        self._btn_move_up = self._make_icon_button("chevron-up", "上移", lambda: self._move(-1))
+        self._btn_move_down = self._make_icon_button("chevron-down", "下移", lambda: self._move(1))
         for button in (self._btn_move_up, self._btn_move_down):
             header.addWidget(button)
         tree_layout.addLayout(header)
@@ -93,12 +245,8 @@ class TreePanel(QWidget):
         hint.setWordWrap(True)
         self._stack.addWidget(hint)
 
-        self._tree = QTreeWidget()
-        self._tree.setHeaderHidden(True)
-        self._tree.setUniformRowHeights(True)
-        self._tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree = _ProjectTree()
+        self._tree.customContextMenuRequested.connect(self._on_context_menu)
         self._stack.addWidget(self._tree)
         tree_layout.addWidget(self._stack, 1)
         splitter.addWidget(tree_page)
@@ -111,11 +259,14 @@ class TreePanel(QWidget):
         splitter.setStretchFactor(1, 2)
         layout.addWidget(splitter, 1)
 
-    def _make_button(self, text: str, tooltip: str, slot) -> QToolButton:
+    def _make_icon_button(self, icon_name: str, tooltip: str, slot) -> QToolButton:
         button = QToolButton()
-        button.setText(text)
         button.setToolTip(tooltip)
         button.setProperty("role", "icon-btn")
+        button.setAutoRaise(True)
+        button.setIcon(
+            load_icon(icon_name, color=ThemeManager.instance().current().text_secondary, size=16)
+        )
         button.clicked.connect(slot)
         return button
 
@@ -123,9 +274,16 @@ class TreePanel(QWidget):
         self._vm.tree_loaded.connect(self._on_tree_loaded)
         self._vm.error_occurred.connect(lambda message: bus().status_message.emit(message, 4000))
         self._tree.itemSelectionChanged.connect(self._on_selection_changed)
-        self._tree.customContextMenuRequested.connect(self._on_context_menu)
+        self._tree.move_node_requested.connect(self._on_move_node_requested)
+        self._tree.drop_rejected.connect(lambda message: bus().status_message.emit(message, 5000))
         bus().project_opened.connect(lambda _path: self._vm.load())
         bus().project_closed.connect(self._on_project_closed)
+        ThemeManager.instance().theme_changed.connect(self._refresh_icons)
+
+    # ------------------------------------------------------------------ 拖拽移动
+    def _on_move_node_requested(self, node: TreeNode, parent_id: int | None, index: int) -> None:
+        self._selected_key = (node.kind, node.id)
+        self._vm.move_node(node, parent_id, index)
 
     # ------------------------------------------------------------------ 槽
     def _on_project_closed(self) -> None:
@@ -205,7 +363,7 @@ class TreePanel(QWidget):
         else:
             root = self._tree.topLevelItem(0)
             if root is not None and root.childCount() > 0:
-                segment_id = self._node_of(root.child(0)).id
+                segment_id = self._tree._node_of(root.child(0)).id
         if segment_id is None:
             bus().status_message.emit("请于项目树中选中标段以添加单位工程。", 4000)
             return
@@ -228,14 +386,16 @@ class TreePanel(QWidget):
             question = f"确定删除标段“{node.name}”及其下全部单位工程、构件条目？"
         else:
             question = f"确定删除单位工程“{node.name}”及其下全部构件条目？"
+        from app.views.widgets.frameless_dialog import FramelessMessageBox
+
         answer = FramelessMessageBox.question(
             self,
             "删除确认",
             question,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+            FramelessMessageBox.StandardButton.Yes | FramelessMessageBox.StandardButton.No,
+            FramelessMessageBox.StandardButton.No,
         )
-        if answer != QMessageBox.StandardButton.Yes:
+        if answer != FramelessMessageBox.StandardButton.Yes:
             return
         parent = self._parent_key(node)
         self._vm.delete(node)
@@ -250,21 +410,35 @@ class TreePanel(QWidget):
         self._vm.move(node, delta)
 
     def move_selected(self, delta: int) -> None:
-        """原则横条 ↑/↓ 入口：移动项目树当前选中节点（原版 btnMoveUp/Down）。"""
+        """外部入口：移动项目树当前选中节点。"""
         self._move(delta)
 
     # ------------------------------------------------------------------ 辅助
+    def _refresh_icons(self) -> None:
+        """主题切换后按新主题色重绘节点与按钮图标。"""
+        stack = [self._tree.topLevelItem(index) for index in range(self._tree.topLevelItemCount())]
+        while stack:
+            item = stack.pop()
+            if item is None:
+                continue
+            item.setIcon(0, _node_icon(self._tree._node_of(item)))
+            stack.extend(item.child(index) for index in range(item.childCount()))
+        for name, button in (
+            ("chevron-up", self._btn_move_up),
+            ("chevron-down", self._btn_move_down),
+        ):
+            button.setIcon(
+                load_icon(name, color=ThemeManager.instance().current().text_secondary, size=16)
+            )
+
     def _current_node(self) -> TreeNode | None:
         item = self._tree.currentItem()
-        return self._node_of(item) if item is not None else None
-
-    @staticmethod
-    def _node_of(item: QTreeWidgetItem) -> TreeNode:
-        return item.data(0, _NODE_ROLE)
+        return self._tree._node_of(item) if item is not None else None
 
     def _make_item(self, node: TreeNode) -> QTreeWidgetItem:
         item = QTreeWidgetItem([node.name])
         item.setData(0, _NODE_ROLE, node)
+        item.setIcon(0, _node_icon(node))
         item.setToolTip(0, _tooltip(node))
         if node.is_project:
             font = item.font(0)
@@ -283,7 +457,7 @@ class TreePanel(QWidget):
             item = stack.pop()
             if item is None:
                 continue
-            node = self._node_of(item)
+            node = self._tree._node_of(item)
             if node.kind == kind and node.id == node_id:
                 return item
             stack.extend(item.child(index) for index in range(item.childCount()))

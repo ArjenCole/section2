@@ -44,7 +44,9 @@ _ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
 _COL_NAME, _COL_CATEGORY, _COL_SPEC, _COL_DEPTH, _COL_UNIT, _COL_AMOUNT, _COL_PE, _COL_PF, _COL_SOURCE = range(9)
 _ELEMENT_HEADERS = ["名称", "类型", "规格", "埋深", "单位", "数量", "沟槽围护原则", "地基处理原则", "来源"]
 #: 复刻旧版 dGVmain 列结构（规格 / 来源列只读）
-_ELEMENT_WIDTHS = [130, 90, 140, 60, 40, 70, 110, 110, 80]
+#: 类型与沟槽围护原则列同宽；围护/地基原则列须完整显示下拉框里 6 个字；
+#: 规格列取两倍宽；埋深/单位/数量三列文字在填充时居中
+_ELEMENT_WIDTHS = [130, 110, 280, 60, 40, 70, 130, 130, 80]
 
 _QUANTITY_HEADERS = ["编号", "类别", "项目", "单位", "计算表达式", "工程量"]
 _QCOL_EXPRESSION = 4
@@ -374,15 +376,18 @@ class UnitPanel(QWidget):
         self._element_table.setItem(index, _COL_SPEC, spec_item)
 
         depth_item = QTableWidgetItem(row.depth)
+        depth_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self._element_table.setItem(index, _COL_DEPTH, depth_item)
         _apply_expression_hint(depth_item, row.depth, row.depth_error)
 
         unit_item = QTableWidgetItem(row.unit)
         unit_item.setFlags(unit_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        unit_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         unit_item.setForeground(QBrush(_secondary_color()))
         self._element_table.setItem(index, _COL_UNIT, unit_item)
 
         amount_item = QTableWidgetItem(row.amount)
+        amount_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self._element_table.setItem(index, _COL_AMOUNT, amount_item)
         _apply_expression_hint(amount_item, row.amount, row.amount_error)
 
