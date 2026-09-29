@@ -121,7 +121,9 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName(APP_ORG_NAME)
     app.setOrganizationDomain(APP_ORG_DOMAIN)
-    app.setStyle("Fusion")  # 三平台外观一致，配合 QSS 主题
+    # 不设 Fusion：Fusion 对非可编辑组合框返回 SH_ComboBox_Popup=true，弹出层被按
+    # 菜单渲染（位置带偏移、容器带框和阴影）；系统原生样式（windowsvista）下弹出层
+    # 紧贴输入框、无框无影，与 Quotor / brackets2 的表现一致。外观差异由 QSS 统一。
 
     _load_fonts()
     install_translations(app)
