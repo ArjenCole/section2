@@ -517,6 +517,12 @@ class AiPanel(QWidget):
             FramelessMessageBox.warning(self, "AI 端点", "鉴权失败，请检查 API key。")
 
     def _on_confirm(self, description: str) -> None:
+        # 「AI 执行操作前需人工确认」关闭时自动放行（AI 设置里即改即存）
+        if not get_config().ai_require_confirmation:
+            bus().status_message.emit("AI 写操作已自动执行（已关闭人工确认）", 3000)
+            if self._loop is not None:
+                self._loop.answer_confirm(True)
+            return
         approved = (
             FramelessMessageBox.question(
                 self,

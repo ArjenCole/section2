@@ -37,6 +37,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "ai": {
         "active_provider": "",
         "temperature": 0.2,
+        "require_confirmation": True,
         "providers": [],
     },
     "recent_projects": [],
@@ -147,6 +148,11 @@ class _Proxy:
     @property
     def ai_active_provider(self) -> str:
         return str(self.ai.get("active_provider", ""))
+
+    @property
+    def ai_require_confirmation(self) -> bool:
+        """AI 写操作是否需要人工确认（AI 设置里即改即存）。"""
+        return bool(self.ai.get("require_confirmation", True))
 
     @property
     def ai_temperature(self) -> float:

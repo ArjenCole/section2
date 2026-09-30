@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCursor, QDrag, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -106,7 +106,11 @@ class _ProjectTree(QTreeWidget):
         painter.end()
         drag.setPixmap(pixmap)
         hotspot = self.viewport().mapFromGlobal(QCursor.pos()) - rect.topLeft()
-        drag.exec(Qt.DropAction.MoveAction, Qt.DropAction.MoveAction, QPoint(hotspot))
+        hotspot.setX(max(0, min(hotspot.x(), rect.width())))
+        hotspot.setY(max(0, min(hotspot.y(), rect.height())))
+        drag.setHotSpot(hotspot)
+        # 只允许移动动作, Ctrl 等修饰键不会切换成复制
+        drag.exec(Qt.DropAction.MoveAction, Qt.DropAction.MoveAction)
         self._dragging_item = None
         self._consume_pending_move()
 

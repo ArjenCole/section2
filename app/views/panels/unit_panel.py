@@ -196,8 +196,9 @@ class UnitPanel(QWidget):
         table.setAlternatingRowColors(True)
         table.horizontalHeader().setStretchLastSection(True)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        # 行高要容得下单元格里的下拉框（QSS 内边距 6px×2 + 13px 字 + 边框）
-        table.verticalHeader().setDefaultSectionSize(34)
+        # 行高要容得下单元格里的下拉框：QSS 内边距 6px×2 + 13px 字体行高 + 边框，
+        # 34px 时中文字体行高恰好顶满导致文字上下被裁，38px 留出余量
+        table.verticalHeader().setDefaultSectionSize(38)
         table.setWordWrap(False)
         return table
 
