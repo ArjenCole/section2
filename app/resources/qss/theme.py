@@ -276,9 +276,10 @@ QPlainTextEdit:disabled, QTextEdit:disabled {
     color: $text_disabled;
 }
 QLineEdit[invalid="true"], QComboBox[invalid="true"] { border-color: $warning; }
-/* 组合框：与 Quotor 新建窗体一致（下拉箭头用主题色 SVG，列表项圆角悬停） */
-QComboBox::drop-down { border: none; width: 24px; background: transparent; }
-QComboBox::down-arrow { image: url($combo_arrow); width: 12px; height: 12px; margin-right: 8px; }
+/* 组合框：与 Quotor 新建窗体一致（下拉箭头用主题色 SVG，列表项圆角悬停）；
+   箭头区 16px 比Quotor 的 24px 窄，避免表格单元格里箭头白边挤占文字 */
+QComboBox::drop-down { border: none; width: 16px; background: transparent; }
+QComboBox::down-arrow { image: url($combo_arrow); width: 12px; height: 12px; margin-right: 4px; }
 QComboBox::down-arrow:disabled { image: url($combo_arrow_disabled); }
 QComboBox QAbstractItemView {
     background-color: $bg_card;
