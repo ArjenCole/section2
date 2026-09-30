@@ -58,7 +58,7 @@ from app.views.wizard.new_project_wizard import (
     suggested_file_name,
 )
 
-_TREE_WIDTH = 280
+_TREE_WIDTH = 250  # 左侧面板默认宽度（取自运行实例实测）
 _AI_WIDTH = 360
 _AI_TOGGLE_WIDTH = 14
 

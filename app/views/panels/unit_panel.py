@@ -54,6 +54,8 @@ _ELEMENT_WIDTHS = [130, 110, 280, 70, 48, 70, 130, 130, 80]
 _QUANTITY_HEADERS = ["编号", "类别", "项目", "单位", "计算表达式", "工程量"]
 _QCOL_EXPRESSION = 4
 _QCOL_AMOUNT = 5
+#: 定额/清单表格列宽默认值（取自运行实例实测；末列不拉伸，保持实测宽度）
+_QUANTITY_WIDTHS = [77, 140, 100, 52, 462, 135]
 
 _PIPE_ROLE = Qt.ItemDataRole.UserRole + 1
 _PIPE_HEADERS = ["管材", "管径(mm)", "含量"]
@@ -62,6 +64,8 @@ _PARAM_HEADERS = ["参数名", "参数值"]
 
 #: 共享单元格焦点的归属标记（挂在 QTableWidget 实例属性上，Quotor _GLOBAL_LATEST 同款）
 _FOCUS_OWNER_ATTR = "_unit_panel_focus_owner"
+#: 明细面板四张表标记（多选边框 / 选区互斥只作用于它们，主表格行选不受影响）
+_DETAIL_TABLE_ATTR = "_unit_panel_detail_table"
 
 
 class _FocusCellDelegate(QStyledItemDelegate):
@@ -70,25 +74,69 @@ class _FocusCellDelegate(QStyledItemDelegate):
     主表格与下方面板（管材/构件参数/定额工程量/清单工程量）共享唯一焦点：
     只有"最新点选"的那张表（``_FOCUS_OWNER_ATTR`` 为 True）绘制当前单元格
     边框，其余表的选中行保持普通高亮，不画边框。
+
+    明细面板四张表（``_DETAIL_TABLE_ATTR`` 为 True）额外支持多选边框：
+    拖拽 / Ctrl 点选的每个选中单元格画 2px 边框，相邻单元格的边自动
+    合并成包围整个选区的外框（逐边判断：跨边邻居被选中则不画该边）。
     """
 
     def paint(self, painter: QPainter, option, index) -> None:  # noqa: N802 - Qt 命名
         view = self.parent()
+        is_table = isinstance(view, QTableWidget)
         is_focus_cell = (
-            isinstance(view, QTableWidget)
+            is_table
             and getattr(view, _FOCUS_OWNER_ATTR, False)
             and view.currentIndex() == index
         )
+        is_detail = is_table and getattr(view, _DETAIL_TABLE_ATTR, False)
         # 去掉默认的虚线焦点框，统一用边框表示
         option.state &= ~QStyle.StateFlag.State_HasFocus
         super().paint(painter, option, index)
-        if not is_focus_cell:
+        if is_focus_cell:
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            painter.setPen(QPen(QColor(ThemeManager.instance().current().table_selected_border), 3))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(QRect(option.rect).adjusted(1, 1, -2, -2))
+            painter.restore()
+        if is_detail:
+            self._draw_selection_outline(painter, option, index, view)
+
+    def _draw_selection_outline(self, painter: QPainter, option, index, view: QTableWidget) -> None:
+        """给选中单元格画 2px 边框；相邻选中格的边自动合并成选区外框。"""
+        selection_model = view.selectionModel()
+        if selection_model is None or not selection_model.isSelected(index):
             return
+        row, column = index.row(), index.column()
+
+        def selected(neighbor_row: int, neighbor_column: int) -> bool:
+            if not (0 <= neighbor_row < view.rowCount() and 0 <= neighbor_column < view.columnCount()):
+                return False
+            return selection_model.isSelected(view.model().index(neighbor_row, neighbor_column))
+
+        top = not selected(row - 1, column)
+        bottom = not selected(row + 1, column)
+        left = not selected(row, column - 1)
+        right = not selected(row, column + 1)
+        if not (top or bottom or left or right):
+            return  # 四边都有选中邻居：整个大选区的内部，无需画线
+
+        rect = QRect(option.rect)
+        line_left = rect.left() + 1
+        line_top = rect.top() + 1
+        line_right = rect.right() - 1
+        line_bottom = rect.bottom() - 1
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-        painter.setPen(QPen(QColor(ThemeManager.instance().current().table_selected_border), 3))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(QRect(option.rect).adjusted(1, 1, -2, -2))
+        painter.setPen(QPen(QColor(ThemeManager.instance().current().table_selected_border), 2))
+        if top:
+            painter.drawLine(line_left, line_top, line_right, line_top)
+        if bottom:
+            painter.drawLine(line_left, line_bottom, line_right, line_bottom)
+        if left:
+            painter.drawLine(line_left, line_top, line_left, line_bottom)
+        if right:
+            painter.drawLine(line_right, line_top, line_right, line_bottom)
         painter.restore()
 
     # --- 编辑态：去掉 QLineEdit 的边框和文本边距并占满单元格，
@@ -134,8 +182,8 @@ class UnitPanel(QWidget):
         splitter.addWidget(self._build_bottom_area())
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 3)
-        # 明细面板默认高度为主表格的一半
-        splitter.setSizes([240, 280])
+        # 主表格区 / 明细面板默认高度（取自运行实例实测）
+        splitter.setSizes([536, 311])
         self._work_area = splitter
         layout.addWidget(splitter, 1)
 
@@ -221,7 +269,8 @@ class UnitPanel(QWidget):
         bottom.setStretchFactor(0, 2)
         bottom.setStretchFactor(1, 3)
         bottom.setStretchFactor(2, 2)
-        bottom.setSizes([300, 440, 300])
+        # 管材/构件参数｜定额/清单｜断面图 默认宽度（取自运行实例实测）
+        bottom.setSizes([323, 1027, 286])
         return bottom
 
     def _build_quantity_area(self) -> QWidget:
@@ -236,6 +285,10 @@ class UnitPanel(QWidget):
             table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
             table.setWordWrap(False)
             table.itemDoubleClicked.connect(self._show_expression_detail)
+            # 列宽取自运行实例实测（定额/清单共用同一组），末列不再拉伸以保持实测值
+            table.horizontalHeader().setStretchLastSection(False)
+            for index, width in enumerate(_QUANTITY_WIDTHS):
+                table.setColumnWidth(index, width)
             self._quantity_tables[name] = table
             page_layout.addWidget(table, 1)
             tabs.addTab(page, name)
@@ -266,6 +319,14 @@ class UnitPanel(QWidget):
             *self._quantity_tables.values(),
         ]
 
+    def _detail_tables(self) -> list[QTableWidget]:
+        """明细面板四张表（多选边框 / 选区互斥的作用范围）。"""
+        return [
+            self._pipe_table,
+            self._param_table,
+            *self._quantity_tables.values(),
+        ]
+
     def _mark_focus_table(self, table: QTableWidget) -> None:
         """把共享焦点转移到 table：只有它绘制当前单元格边框。"""
         for other in self._focus_tables():
@@ -273,6 +334,41 @@ class UnitPanel(QWidget):
             if getattr(other, _FOCUS_OWNER_ATTR, False) != is_owner:
                 setattr(other, _FOCUS_OWNER_ATTR, is_owner)
                 other.viewport().update()
+
+    def _on_detail_selection_changed(self, source: QTableWidget) -> None:
+        """四张明细表只能有一个处于多选状态：一张表出现新选区，其余三张自动取消。
+
+        选区变化时强制重绘整个视口：拖拽扩选时 Qt 只重绘状态变化的单元格，
+        而已选中单元格的内侧边（邻居新加入选中）也变了，不重绘会残留边框线。
+        """
+        if self._syncing_detail_selection:
+            return
+        self._syncing_detail_selection = True
+        try:
+            for other in self._detail_tables():
+                if other is not source:
+                    if other.selectionModel().hasSelection():
+                        other.clearSelection()
+                    other.viewport().update()
+            source.viewport().update()  # 擦掉大边框内部因扩选残留的边框线
+        finally:
+            self._syncing_detail_selection = False
+
+    def _on_detail_tab_changed(self, *_args) -> None:
+        """切走 tab 时清空该 tab 下表格的多选（管材↔构件参数、定额↔清单）。"""
+        self._clear_detail_selections(self._pipe_table, self._param_table)
+        self._clear_detail_selections(*self._quantity_tables.values())
+
+    def _clear_detail_selections(self, *tables: QTableWidget) -> None:
+        if self._syncing_detail_selection:
+            return
+        self._syncing_detail_selection = True
+        try:
+            for table in tables:
+                if table.selectionModel().hasSelection():
+                    table.clearSelection()
+        finally:
+            self._syncing_detail_selection = False
 
     def _connect(self) -> None:
         self._vm.unit_loaded.connect(self._on_unit_loaded)
@@ -290,6 +386,16 @@ class UnitPanel(QWidget):
                 lambda _r, _c, _pr, _pc, t=table: self._mark_focus_table(t)
             )
         setattr(self._element_table, _FOCUS_OWNER_ATTR, True)  # 初始焦点在主表格
+        # 明细面板四张表：多选边框 + 选区互斥（一张表出现新选区，其余自动取消）
+        self._syncing_detail_selection = False
+        for table in self._detail_tables():
+            setattr(table, _DETAIL_TABLE_ATTR, True)
+            table.itemSelectionChanged.connect(
+                lambda t=table: self._on_detail_selection_changed(t)
+            )
+        # 切走 tab 时清空该 tab 下表格的多选
+        self._detail_tabs.currentChanged.connect(self._on_detail_tab_changed)
+        self._quantity_tabs.currentChanged.connect(self._on_detail_tab_changed)
         bus().node_selected.connect(self._on_node_selected)
         bus().project_closed.connect(lambda: self._show_unit(None))
         bus().project_opened.connect(lambda _path: self._show_unit(None))

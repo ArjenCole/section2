@@ -261,6 +261,8 @@ class TreePanel(QWidget):
         splitter.addWidget(self._library)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
+        # 项目结构 / 构件库默认高度（取自运行实例实测）
+        splitter.setSizes([336, 566])
         layout.addWidget(splitter, 1)
 
     def _make_icon_button(self, icon_name: str, tooltip: str, slot) -> QToolButton:
