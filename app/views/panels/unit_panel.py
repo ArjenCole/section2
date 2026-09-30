@@ -55,7 +55,7 @@ _QUANTITY_HEADERS = ["编号", "类别", "项目", "单位", "计算表达式", 
 _QCOL_EXPRESSION = 4
 _QCOL_AMOUNT = 5
 #: 定额/清单表格列宽默认值（取自运行实例实测；末列不拉伸，保持实测宽度）
-_QUANTITY_WIDTHS = [77, 140, 100, 52, 462, 135]
+_QUANTITY_WIDTHS = [77, 66, 193, 48, 434, 135]
 
 _PIPE_ROLE = Qt.ItemDataRole.UserRole + 1
 _PIPE_HEADERS = ["管材", "管径(mm)", "含量"]
