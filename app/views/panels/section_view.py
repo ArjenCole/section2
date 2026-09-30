@@ -112,6 +112,13 @@ class SectionView(QWidget):
         self._element_id = element_id
         self._refresh()
 
+    def show_multi(self) -> None:
+        """主表格选中多行：不绘制具体断面，居中显示占位提示。"""
+        self._element_id = None
+        self._scene = None
+        self._hint = "*多种断面"
+        self.update()
+
     def refresh(self) -> None:
         """构件数据变化后重算重绘。"""
         self._refresh()

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSplitter,
     QStackedWidget,
@@ -46,9 +47,9 @@ _ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
 _COL_NAME, _COL_CATEGORY, _COL_SPEC, _COL_DEPTH, _COL_UNIT, _COL_AMOUNT, _COL_PE, _COL_PF, _COL_SOURCE = range(9)
 _ELEMENT_HEADERS = ["名称", "类型", "规格", "埋深", "单位", "数量", "沟槽围护原则", "地基处理原则", "来源"]
 #: 复刻旧版 dGVmain 列结构（规格 / 来源列只读）
-#: 类型与沟槽围护原则列同宽；围护/地基原则列须完整显示下拉框里 6 个字；
-#: 规格列取两倍宽；埋深/单位/数量三列文字在填充时居中
-_ELEMENT_WIDTHS = [130, 110, 280, 60, 40, 70, 130, 130, 80]
+#: 类型与沟槽围护原则列同宽；围护/地基原则两列等宽（下拉框完整显示 6 个字）；
+#: 规格列两倍宽；埋深=数量列宽；单位列容得下表头两字；埋深/单位/数量居中
+_ELEMENT_WIDTHS = [130, 110, 280, 70, 48, 70, 130, 130, 80]
 
 _QUANTITY_HEADERS = ["编号", "类别", "项目", "单位", "计算表达式", "工程量"]
 _QCOL_EXPRESSION = 4
@@ -90,6 +91,21 @@ class _FocusCellDelegate(QStyledItemDelegate):
         painter.drawRect(QRect(option.rect).adjusted(1, 1, -2, -2))
         painter.restore()
 
+    # --- 编辑态：去掉 QLineEdit 的边框和文本边距并占满单元格，
+    #     否则 32px 行高里默认编辑器的 2px 边框 + 4px 文本边距会裁掉文字上下 ---
+    def createEditor(self, parent: QWidget, option, index) -> QWidget:  # noqa: N802
+        editor = super().createEditor(parent, option, index)
+        if isinstance(editor, QLineEdit):
+            editor.setFrame(False)
+            editor.setContentsMargins(0, 0, 0, 0)
+            editor.setTextMargins(0, 0, 0, 0)
+            editor.setMinimumSize(0, 0)
+        return editor
+
+    def updateEditorGeometry(self, editor: QWidget, option, index) -> None:  # noqa: N802
+        editor.setMinimumSize(0, 0)
+        editor.setGeometry(option.rect)
+
 
 class UnitPanel(QWidget):
     """单位工程工作台。"""
@@ -100,6 +116,9 @@ class UnitPanel(QWidget):
         self._vm = UnitViewModel()
         self._unit_id: int | None = None
         self._loading = False
+        # 明细面板跟随主表格选中行：多选时左右中三块都显示占位/合计
+        self._multi_detail = False
+        self._current_detail_id: int | None = None
         self._build_ui()
         self._connect()
         self._show_unit(None)
@@ -115,7 +134,8 @@ class UnitPanel(QWidget):
         splitter.addWidget(self._build_bottom_area())
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 3)
-        splitter.setSizes([240, 560])
+        # 明细面板默认高度为主表格的一半
+        splitter.setSizes([240, 280])
         self._work_area = splitter
         layout.addWidget(splitter, 1)
 
@@ -260,6 +280,7 @@ class UnitPanel(QWidget):
         self._vm.error_occurred.connect(lambda message: bus().status_message.emit(message, 4000))
         self._element_table.itemChanged.connect(self._on_element_item_changed)
         self._element_table.currentCellChanged.connect(self._on_current_element_changed)
+        self._element_table.itemSelectionChanged.connect(self._on_element_selection_changed)
         self._pipe_table.itemChanged.connect(self._on_pipe_item_changed)
         self._param_table.itemChanged.connect(self._on_param_item_changed)
         # 共享单元格焦点：任一表被点选/键盘导航即成为焦点归属表
@@ -281,6 +302,8 @@ class UnitPanel(QWidget):
 
     def _show_unit(self, unit_id: int | None, name: str = "") -> None:
         self._unit_id = unit_id
+        self._multi_detail = False
+        self._current_detail_id = None
         has_unit = unit_id is not None
         self._placeholder.setVisible(not has_unit)
         self._work_area.setVisible(has_unit)
@@ -313,20 +336,36 @@ class UnitPanel(QWidget):
         self._section_view.set_element(self._current_element_id())
 
     def _fill_quantities(self) -> None:
-        """计算并填充工程量表（定额汇总 / 清单逐构件，含计算表达式列）。"""
+        """填充工程量表：显示主表格当前选中行的工程量与计算表达式。
+
+        单行 → 该行的定额/清单；多行 → 各键求和（表达式用 " + " 连接，
+        仍可直接求值复核）。
+        """
         from app.services.calc.tracer import fmt as calc_fmt
-        from app.services.calc.tracer import sorted_items
+        from app.services.calc.tracer import order_key, sorted_items
         from app.viewmodels.unit_vm import compute_unit
 
         if self._unit_id is None:
             for table in self._quantity_tables.values():
                 table.setRowCount(0)
             return
-        summary, detail = compute_unit(self._unit_id)
+        _summary, detail = compute_unit(self._unit_id)
+        per_element = {row.id: (row, dq) for row, dq in detail}
+        ids = self._selected_element_ids() or (
+            [self._current_detail_id] if self._current_detail_id else []
+        )
+        chosen = [per_element[i] for i in ids if i in per_element]
+        if not chosen:
+            for table in self._quantity_tables.values():
+                table.setRowCount(0)
+            return
 
         digests = self._quantity_tables["定额工程量"]
         digests.setRowCount(0)
-        quantities = sorted_items(summary)
+        if len(chosen) == 1:
+            quantities = sorted_items(chosen[0][1])
+        else:
+            quantities = self._merge_quantities([dq for _row, dq in chosen])
         digests.setRowCount(len(quantities))
         for row_index, quantity in enumerate(quantities):
             parts = quantity.key.split("|")
@@ -349,34 +388,50 @@ class UnitPanel(QWidget):
             digests.setItem(row_index, _QCOL_AMOUNT, amount)
 
         listing = self._quantity_tables["清单工程量"]
+        listing.clearSpans()
         listing.setRowCount(0)
         row_index = 0
         from app.orm.models import category_name
 
-        for element_row, dq in detail:
-            listing.setRowCount(row_index + 1 + len(dq.items()))
-            header = QTableWidgetItem("清单项目")
-            header.setFlags(header.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            listing.setItem(row_index, 0, header)
-            values = (category_name(element_row.category), element_row.spec or element_row.name,
-                      element_row.unit, calc_fmt(element_row.amount_value))
-            for offset, text in enumerate(values, start=1):
+        def _fill_listing_header(row: int, cells: tuple[str, ...]) -> None:
+            listing.setRowCount(row + 1)
+            for offset, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                listing.setItem(row_index, offset, item)
+                listing.setItem(row, offset, item)
             from app.resources.qss.theme import ThemeManager
 
             highlight = QBrush(QColor(ThemeManager.instance().current().primary_soft))
             for column in range(len(_QUANTITY_HEADERS)):
-                cell = listing.item(row_index, column)
+                cell = listing.item(row, column)
                 if cell is None:
                     cell = QTableWidgetItem("")
                     cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    listing.setItem(row_index, column, cell)
+                    listing.setItem(row, column, cell)
                 cell.setBackground(highlight)
-            row_index += 1
 
+        if len(chosen) == 1:
+            element_row, _dq = chosen[0]
+            _fill_listing_header(
+                0,
+                (
+                    "清单项目",
+                    f"{category_name(element_row.category)} {element_row.spec or element_row.name}",
+                    element_row.unit,
+                    calc_fmt(element_row.amount_value),
+                ),
+            )
+        else:
+            total_amount = sum(element_row.amount_value for element_row, _dq in chosen)
+            _fill_listing_header(
+                0,
+                ("清单项目", f"（{len(chosen)} 行合计）", "", calc_fmt(total_amount)),
+            )
+        row_index = 1
+
+        for element_row, dq in chosen:
             for quantity in sorted_items(dq):
+                listing.setRowCount(row_index + 1)
                 parts = quantity.key.split("|")
                 cells = (
                     "",
@@ -397,6 +452,34 @@ class UnitPanel(QWidget):
                         item.setToolTip(tooltip)
                     listing.setItem(row_index, column, item)
                 row_index += 1
+
+    @staticmethod
+    def _merge_quantities(qlists: list) -> list:
+        """把多个构件的工程量按键合并：数值求和、表达式用 " + " 连接。"""
+        from app.services.calc.tracer import order_key
+
+        merged: dict[str, dict] = {}
+        for dq in qlists:
+            for quantity in sorted(dq.items(), key=lambda q: (order_key(q.key), q.key)):
+                entry = merged.setdefault(quantity.key, {"value": 0.0, "exprs": [], "details": []})
+                entry["value"] += quantity.value
+                if quantity.value or quantity.expression not in ("", "0"):
+                    entry["exprs"].append(quantity.expression)
+                entry["details"].extend(quantity.details)
+
+        class _Merged:
+            __slots__ = ("key", "value", "expression", "details")
+
+            def __init__(self, key: str, value: float, expression: str, details: list[str]) -> None:
+                self.key = key
+                self.value = value
+                self.expression = expression
+                self.details = details
+
+        return [
+            _Merged(key, entry["value"], " + ".join(entry["exprs"]) or "0", entry["details"])
+            for key, entry in merged.items()
+        ]
 
     def _show_expression_detail(self, item: QTableWidgetItem) -> None:
         """双击“计算表达式”列：弹窗展示完整算式与中间步骤。"""
@@ -503,9 +586,60 @@ class UnitPanel(QWidget):
     def _on_current_element_changed(self, row: int, _column: int, _previous_row: int, _previous_column: int) -> None:
         if self._loading:
             return
-        element_id = self._element_id_at(row)
+        self._sync_detail_to_selection()
+
+    def _on_element_selection_changed(self) -> None:
+        if self._loading:
+            return
+        self._sync_detail_to_selection()
+
+    # ------------------------------------------------------------------ 明细面板跟随选中行
+    def _sync_detail_to_selection(self) -> None:
+        """明细面板（管材/参数、工程量、断面）显示主表格当前选中行的内容。
+
+        多选（≥2 行）→ 左侧显示 *多种管材/*多种参数、断面显示 *多种断面、
+        工程量显示选中行求和；单行 → 显示该行内容。
+        """
+        ids = self._selected_element_ids()
+        if len(ids) >= 2:
+            self._show_multi_detail()
+            return
+        element_id = ids[0] if ids else self._current_element_id()
+        if element_id is None:
+            return
+        if self._multi_detail or element_id != self._current_detail_id:
+            self._show_single_detail(element_id)
+        else:
+            self._fill_quantities()  # 同一行重新选中：只刷新工程量
+
+    def _show_single_detail(self, element_id: int) -> None:
+        self._multi_detail = False
+        self._current_detail_id = element_id
         self._vm.load_detail(element_id)
         self._section_view.set_element(element_id)
+        self._fill_quantities()
+
+    def _show_multi_detail(self) -> None:
+        self._multi_detail = True
+        self._current_detail_id = None
+        self._fill_multi_placeholders()
+        self._section_view.show_multi()
+        self._fill_quantities()
+
+    def _fill_multi_placeholders(self) -> None:
+        """管材 / 构件参数两张表显示居中的“*多种…”占位行。"""
+        for table, text in (
+            (self._pipe_table, "*多种管材"),
+            (self._param_table, "*多种参数"),
+        ):
+            table.clearSpans()
+            table.setRowCount(1)
+            placeholder = QTableWidgetItem(text)
+            placeholder.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            placeholder.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            placeholder.setForeground(QBrush(_secondary_color()))
+            table.setItem(0, 0, placeholder)
+            table.setSpan(0, 0, 1, table.columnCount())
 
     def _current_element_id(self) -> int | None:
         return self._element_id_at(self._element_table.currentRow())
@@ -681,8 +815,11 @@ class UnitPanel(QWidget):
 
     # ------------------------------------------------------------------ 明细
     def _on_detail_loaded(self, element_id: int, pipes: list[PipeRow], params: list[ParamRow]) -> None:
+        if self._multi_detail:
+            return  # 多选模式显示占位行，不显示具体条目
         self._loading = True
         try:
+            self._pipe_table.clearSpans()
             self._pipe_table.setRowCount(len(pipes))
             for index, pipe in enumerate(pipes):
                 mat_item = QTableWidgetItem(pipe.mat)
@@ -691,6 +828,7 @@ class UnitPanel(QWidget):
                 self._pipe_table.setItem(index, 1, QTableWidgetItem(str(pipe.dn)))
                 self._pipe_table.setItem(index, 2, QTableWidgetItem(pipe.content))
 
+            self._param_table.clearSpans()
             self._param_table.setRowCount(len(params))
             for index, param in enumerate(params):
                 key_item = QTableWidgetItem(param.key)
