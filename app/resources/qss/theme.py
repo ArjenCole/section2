@@ -121,18 +121,19 @@ DARK = ThemeColors(
 )
 
 
-def _write_svg(name: str, color: str, body: str) -> str:
+def _write_svg(name: str, color: str, body: str, view_box: str = "0 0 24 24") -> str:
     """把随主题变色的极简 SVG 写到用户数据目录并返回 QSS 可用的路径。
 
     组合框箭头、复选框对勾用 QSS 的 border 画在高分屏上会变成小圆点，
-    所以照 Quotor 的做法落成 svg 文件。
+    所以照 Quotor 的做法落成 svg 文件。``view_box`` 可裁掉 glyph 周围的
+    空白（如下拉箭头只占 24 视图框的中间部分），让 12px 图像里箭头贴满。
     """
-    path = ensure_app_data_dir() / f"section2-{name}-{color.lstrip('#')}.svg"
+    path = ensure_app_data_dir() / f"section2-{name}-{color.lstrip('#')}-{view_box.replace(' ', '')}.svg"
     if not path.exists():
         path.write_text(
-            '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" '
+            '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="{box}" '
             'fill="none" stroke="{color}" stroke-width="2.4" stroke-linecap="round" '
-            'stroke-linejoin="round">{body}</svg>'.format(color=color, body=body),
+            'stroke-linejoin="round">{body}</svg>'.format(box=view_box, color=color, body=body),
             encoding="utf-8",
         )
     return path.as_posix()
@@ -276,10 +277,14 @@ QPlainTextEdit:disabled, QTextEdit:disabled {
     color: $text_disabled;
 }
 QLineEdit[invalid="true"], QComboBox[invalid="true"] { border-color: $warning; }
-/* 组合框：与 Quotor 新建窗体一致（下拉箭头用主题色 SVG，列表项圆角悬停）；
-   箭头区 16px 比Quotor 的 24px 窄，避免表格单元格里箭头白边挤占文字 */
-QComboBox::drop-down { border: none; width: 16px; background: transparent; }
-QComboBox::down-arrow { image: url($combo_arrow); width: 12px; height: 12px; margin-right: 4px; }
+/* 组合框：与 Quotor 新建窗体一致（下拉箭头用主题色 SVG，列表项圆角悬停）。
+   右内边距压到 2px（左 10px 不变）：文字与箭头之间的白边主要是右内边距 +
+   箭头区叠加出来的，收掉右内边距即可，箭头图形本身保持原样 */
+QComboBox {
+    padding: 6px 2px 6px 10px;
+}
+QComboBox::drop-down { border: none; width: 14px; background: transparent; }
+QComboBox::down-arrow { image: url($combo_arrow); width: 12px; height: 12px; margin-right: 2px; }
 QComboBox::down-arrow:disabled { image: url($combo_arrow_disabled); }
 QComboBox QAbstractItemView {
     background-color: $bg_card;
