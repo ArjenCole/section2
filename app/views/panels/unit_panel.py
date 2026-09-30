@@ -498,16 +498,11 @@ class UnitPanel(QWidget):
         listing.setRowCount(0)
         row_index = 0
         from app.orm.models import category_name
+        from app.resources.qss.theme import ThemeManager
 
-        def _fill_listing_header(row: int, cells: tuple[str, ...]) -> None:
-            listing.setRowCount(row + 1)
-            for offset, text in enumerate(cells):
-                item = QTableWidgetItem(text)
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                listing.setItem(row, offset, item)
-            from app.resources.qss.theme import ThemeManager
+        highlight = QBrush(QColor(ThemeManager.instance().current().primary_soft))
 
-            highlight = QBrush(QColor(ThemeManager.instance().current().primary_soft))
+        def _shade_row(row: int) -> None:
             for column in range(len(_QUANTITY_HEADERS)):
                 cell = listing.item(row, column)
                 if cell is None:
@@ -516,26 +511,39 @@ class UnitPanel(QWidget):
                     listing.setItem(row, column, cell)
                 cell.setBackground(highlight)
 
-        if len(chosen) == 1:
-            element_row, _dq = chosen[0]
-            _fill_listing_header(
-                0,
-                (
-                    "清单项目",
-                    f"{category_name(element_row.category)} {element_row.spec or element_row.name}",
-                    element_row.unit,
-                    calc_fmt(element_row.amount_value),
-                ),
-            )
-        else:
+        # 多选时先给一行合计（工程量 = 选中行数量求和）
+        if len(chosen) > 1:
+            listing.setRowCount(row_index + 1)
             total_amount = sum(element_row.amount_value for element_row, _dq in chosen)
-            _fill_listing_header(
-                0,
-                ("清单项目", f"（{len(chosen)} 行合计）", "", calc_fmt(total_amount)),
-            )
-        row_index = 1
+            for offset, text in enumerate(
+                ("清单项目", f"（{len(chosen)} 行合计）", "", "", calc_fmt(total_amount))
+            ):
+                item = QTableWidgetItem(text)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                listing.setItem(row_index, offset, item)
+            _shade_row(row_index)
+            row_index += 1
 
         for element_row, dq in chosen:
+            # 清单项目行（浅蓝标记行）：类别 / 项目（规格）/ 单位 /
+            # 计算表达式 = 用户输入的数量算式 / 工程量 = 算式的计算结果
+            listing.setRowCount(row_index + 1)
+            header_cells = (
+                "清单项目",
+                category_name(element_row.category),
+                element_row.spec or element_row.name,
+                element_row.unit,
+                element_row.amount,
+                calc_fmt(element_row.amount_value),
+            )
+            for offset, text in enumerate(header_cells):
+                item = QTableWidgetItem(text)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                listing.setItem(row_index, offset, item)
+            _shade_row(row_index)
+            row_index += 1
+
+            # 定额拆解行（原样式）
             for quantity in sorted_items(dq):
                 listing.setRowCount(row_index + 1)
                 parts = quantity.key.split("|")
