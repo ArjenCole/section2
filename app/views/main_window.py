@@ -533,10 +533,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_action_icons(self) -> None:
         """主题切换后遍历工具栏 + 菜单栏动作，用新主题色重载图标（Quotor 同款）。"""
-        containers = [self._title_bar.menu_bar]
-        toolbar = self.toolbar()
-        if toolbar is not None:
-            containers.append(toolbar)
+        containers = [self._title_bar.menu_bar, self._toolbar]
         for container in containers:
             for action in container.actions():
                 self._apply_action_icon(action)
@@ -594,6 +591,7 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(18, 18))  # Quotor 同款：纯图标 + 18px
         self.addToolBar(toolbar)
+        self._toolbar = toolbar
         toolbar.addAction(self._act_new)
         toolbar.addAction(self._act_open)
         toolbar.addAction(self._act_save)

@@ -500,8 +500,8 @@ class _WorkTable(QTableWidget):
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.verticalHeader().setVisible(False)
-        # 行高容得下单元格里的围护类型 / 止水类型下拉框
-        self.verticalHeader().setDefaultSectionSize(34)
+        # 行高与主表格一致（32px）；单元格内下拉框的纵向内边距已由 QSS 压小
+        self.verticalHeader().setDefaultSectionSize(32)
         self.setColumnWidth(0, 70)
         self.setColumnWidth(1, 70)
         self.setColumnWidth(2, 130)

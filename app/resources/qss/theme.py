@@ -440,6 +440,11 @@ QHeaderView::section {
 QHeaderView::section:last { border-right: none; }
 QHeaderView::section:hover { background-color: $bg_hover; }
 QTableCornerButton::section { background-color: $bg_window; border: none; }
+/* 表格单元格内嵌的下拉框：纵向内边距压小，行高才能收回到 32px 且文字完整 */
+QTableWidget QComboBox, QTableView QComboBox {
+    padding-top: 2px;
+    padding-bottom: 2px;
+}
 
 /* ===================== 列表 ===================== */
 QListView {
