@@ -12,8 +12,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QStackedWidget,
+    QStyledItemDelegate,
+    QStyle,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -56,6 +58,37 @@ _PIPE_ROLE = Qt.ItemDataRole.UserRole + 1
 _PIPE_HEADERS = ["管材", "管径(mm)", "含量"]
 _PARAM_ROLE = Qt.ItemDataRole.UserRole + 1
 _PARAM_HEADERS = ["参数名", "参数值"]
+
+#: 共享单元格焦点的归属标记（挂在 QTableWidget 实例属性上，Quotor _GLOBAL_LATEST 同款）
+_FOCUS_OWNER_ATTR = "_unit_panel_focus_owner"
+
+
+class _FocusCellDelegate(QStyledItemDelegate):
+    """当前单元格用加粗边框表示（Quotor FullCellDelegate 同款）。
+
+    主表格与下方面板（管材/构件参数/定额工程量/清单工程量）共享唯一焦点：
+    只有"最新点选"的那张表（``_FOCUS_OWNER_ATTR`` 为 True）绘制当前单元格
+    边框，其余表的选中行保持普通高亮，不画边框。
+    """
+
+    def paint(self, painter: QPainter, option, index) -> None:  # noqa: N802 - Qt 命名
+        view = self.parent()
+        is_focus_cell = (
+            isinstance(view, QTableWidget)
+            and getattr(view, _FOCUS_OWNER_ATTR, False)
+            and view.currentIndex() == index
+        )
+        # 去掉默认的虚线焦点框，统一用边框表示
+        option.state &= ~QStyle.StateFlag.State_HasFocus
+        super().paint(painter, option, index)
+        if not is_focus_cell:
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.setPen(QPen(QColor(ThemeManager.instance().current().table_selected_border), 3))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(QRect(option.rect).adjusted(1, 1, -2, -2))
+        painter.restore()
 
 
 class UnitPanel(QWidget):
@@ -200,7 +233,26 @@ class UnitPanel(QWidget):
         # 34px 时中文字体行高恰好顶满导致文字上下被裁，38px 留出余量
         table.verticalHeader().setDefaultSectionSize(38)
         table.setWordWrap(False)
+        table.setItemDelegate(_FocusCellDelegate(table))
+        setattr(table, _FOCUS_OWNER_ATTR, False)
         return table
+
+    def _focus_tables(self) -> list[QTableWidget]:
+        """共享单元格焦点的五张表：主表格 + 管材/构件参数/定额/清单。"""
+        return [
+            self._element_table,
+            self._pipe_table,
+            self._param_table,
+            *self._quantity_tables.values(),
+        ]
+
+    def _mark_focus_table(self, table: QTableWidget) -> None:
+        """把共享焦点转移到 table：只有它绘制当前单元格边框。"""
+        for other in self._focus_tables():
+            is_owner = other is table
+            if getattr(other, _FOCUS_OWNER_ATTR, False) != is_owner:
+                setattr(other, _FOCUS_OWNER_ATTR, is_owner)
+                other.viewport().update()
 
     def _connect(self) -> None:
         self._vm.unit_loaded.connect(self._on_unit_loaded)
@@ -210,6 +262,13 @@ class UnitPanel(QWidget):
         self._element_table.currentCellChanged.connect(self._on_current_element_changed)
         self._pipe_table.itemChanged.connect(self._on_pipe_item_changed)
         self._param_table.itemChanged.connect(self._on_param_item_changed)
+        # 共享单元格焦点：任一表被点选/键盘导航即成为焦点归属表
+        for table in self._focus_tables():
+            table.cellClicked.connect(lambda _row, _col, t=table: self._mark_focus_table(t))
+            table.currentCellChanged.connect(
+                lambda _r, _c, _pr, _pc, t=table: self._mark_focus_table(t)
+            )
+        setattr(self._element_table, _FOCUS_OWNER_ATTR, True)  # 初始焦点在主表格
         bus().node_selected.connect(self._on_node_selected)
         bus().project_closed.connect(lambda: self._show_unit(None))
         bus().project_opened.connect(lambda _path: self._show_unit(None))

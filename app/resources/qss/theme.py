@@ -45,6 +45,7 @@ class ThemeColors:
     table_alt_row: str
     table_grid: str
     table_selected_bg: str
+    table_selected_border: str
     scrollbar_handle: str
     scrollbar_handle_hover: str
     font_family: str
@@ -81,6 +82,7 @@ LIGHT = ThemeColors(
     table_alt_row="#F2F4F7",
     table_grid="#D1D5DB",
     table_selected_bg="#B4D6FF",
+    table_selected_border="#1D4ED8",
     scrollbar_handle="#CBD5E1",
     scrollbar_handle_hover="#94A3B8",
     font_family=_CJK_FONTS,
@@ -114,6 +116,7 @@ DARK = ThemeColors(
     table_alt_row="#383838",
     table_grid="#4A4A4A",
     table_selected_bg="#345E8C",
+    table_selected_border="#6366F1",
     scrollbar_handle="#5A5A5A",
     scrollbar_handle_hover="#6A6A6A",
     font_family=_CJK_FONTS,
