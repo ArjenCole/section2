@@ -9,6 +9,7 @@ from __future__ import annotations
 import getpass
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
 from app.core.config import get_config
 from app.core.paths import atlas_dir
 from app.core.version import DEFAULT_ATLAS_NAME
+from app.views.widgets.frameless_dialog import FramelessDialog
 
 #: 旧版 FormNewGuide 的“涵盖专业”勾选项，勾上的会建成单位工程
 _MAJORS = ("雨水工程", "污水工程", "给水工程", "中水工程")
@@ -158,15 +160,13 @@ class AtlasPage(QWizardPage):
             self.hint.setText(f"尚未复制图集数据文件（{folder}），M3 会从旧版 bin\\Debug\\Atlas 复制。")
 
 
-class NewProjectWizard(QWizard):
-    """新建工程向导。"""
+class NewProjectWizardCore(QWizard):
+    """新建工程向导核心（QWizard 页面流，由 NewProjectWizard 无边框容器承载）。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("新建工程向导")
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage, True)
-        self.setMinimumSize(560, 460)
         self._basic_page = BasicInfoPage()
         self._principle_page = PrinciplePage()
         self._atlas_page = AtlasPage()
@@ -192,6 +192,55 @@ class NewProjectWizard(QWizard):
             "enclosure_con_found": self._principle_page.con_found.currentText().startswith("采用"),
             "foundation_name": self._principle_page.foundation_name.text().strip(),
         }
+
+
+class NewProjectWizard(FramelessDialog):
+    """新建工程向导（无边框：自绘标题栏 + 内嵌 QWizard 页面流）。
+
+    对外接口与原 QWizard 版一致：exec() / values()，并把常用的
+    QWizard 导航 API（restart/next/button/currentPage）与三个页面
+    属性委托到内嵌向导。
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent, "新建工程向导")
+        self.setMinimumSize(560, 460)
+        self._wizard = NewProjectWizardCore(self)
+        # QWizard 是 QDialog，嵌入布局前把窗口类型降为普通子控件
+        self._wizard.setWindowFlags(Qt.WindowType.Widget)
+        self._wizard.setVisible(True)
+        self.bodyLayout().addWidget(self._wizard)
+
+    def values(self) -> dict:
+        return self._wizard.values()
+
+    # --- QWizard API 委托（测试与外部调用沿用原接口） ---
+    def restart(self) -> None:
+        self._wizard.restart()
+
+    def next(self) -> None:
+        self._wizard.next()
+
+    def back(self) -> None:
+        self._wizard.back()
+
+    def button(self, which) -> "QWizard":
+        return self._wizard.button(which)
+
+    def currentPage(self):
+        return self._wizard.currentPage()
+
+    @property
+    def _basic_page(self):
+        return self._wizard._basic_page
+
+    @property
+    def _principle_page(self):
+        return self._wizard._principle_page
+
+    @property
+    def _atlas_page(self):
+        return self._wizard._atlas_page
 
 
 def _available_atlases(configured: str = "") -> list[str]:

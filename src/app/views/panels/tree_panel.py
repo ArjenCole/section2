@@ -20,7 +20,6 @@ from PySide6.QtGui import QCursor, QDrag, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QMenu,
     QSplitter,
@@ -42,7 +41,7 @@ from app.viewmodels.project_vm import (
     TreeNode,
 )
 from app.views.panels.element_library_panel import ElementLibraryPanel
-from app.views.widgets.frameless_dialog import load_icon
+from app.views.widgets.frameless_dialog import FramelessInputDialog, load_icon
 
 _NODE_ROLE = Qt.ItemDataRole.UserRole + 1
 
@@ -379,7 +378,7 @@ class TreePanel(QWidget):
         node = self._current_node()
         if node is None or node.is_project:
             return
-        text, ok = QInputDialog.getText(self, "重命名", "名称：", text=node.name)
+        text, ok = FramelessInputDialog.getText(self, "重命名", "名称：", text=node.name)
         if not ok:
             return
         self._vm.rename(node, text)

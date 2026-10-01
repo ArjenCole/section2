@@ -21,18 +21,17 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.config import update_config
-from app.views.widgets.frameless_dialog import FramelessMessageBox
+from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 from app.core.event_bus import bus
 from app.services import project_io, stn_migration
 from app.views.dialogs.new_project_wizard import suggested_dir
 
 
-class LegacyImportDialog(QWidget):
-    """旧工程导入向导（非模态流程，用窗口自身承载步骤）。"""
+class LegacyImportDialog(FramelessDialog):
+    """旧工程导入向导（非模态流程，用窗口自身承载步骤；无边框自绘标题栏）。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("导入旧版工程(.stn)")
+        super().__init__(parent, "导入旧版工程(.stn)")
         self.resize(680, 520)
         self._source: Path | None = None
         self._target: Path | None = None
@@ -40,7 +39,9 @@ class LegacyImportDialog(QWidget):
         self._build()
 
     def _build(self) -> None:
-        layout = QVBoxLayout(self)
+        layout = self.bodyLayout()
+        layout.setContentsMargins(14, 10, 14, 12)
+        layout.setSpacing(8)
         hint = QLabel(
             "把 2017 年老软件（C# 版）的 .stn 工程一次性迁移为 .stn2。\n"
             "原 .stn 文件只读，不会被修改；原则引用匹配不到的会按默认值补齐并列出警告。"

@@ -26,7 +26,7 @@ from app.core.evaluator import format_number
 from app.core.event_bus import bus
 from app.services import excel_export, project_io
 from app.services.atlas import default_price_table
-from app.views.widgets.frameless_dialog import FramelessMessageBox
+from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 
 _PRICE_ROLE = Qt.ItemDataRole.UserRole + 1
 _HEADERS = ["编号", "类别", "项目", "单位", "计算表达式", "工程量", "单价", "合价"]
@@ -203,17 +203,20 @@ class SummaryPanel(QWidget):
         names = sorted(library)
         picker = QComboBox(self)
         picker.addItems(names)
-        from PySide6.QtWidgets import QDialog, QDialogButtonBox, QVBoxLayout
+        from PySide6.QtWidgets import QDialogButtonBox
 
-        dialog = QDialog(self)
-        dialog.setWindowTitle("批量载价")
-        layout = QVBoxLayout(dialog)
+        dialog = FramelessDialog(self, "批量载价")
+        dialog.setMinimumWidth(360)
+        layout = dialog.bodyLayout()
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(10)
         layout.addWidget(QLabel("选择价格库套价："))
         layout.addWidget(picker)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("primary", True)
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QToolButton,
@@ -538,3 +539,44 @@ class FramelessMessageBox(FramelessDialog):
         box._set_text(text)
         box._add_buttons(QMessageBox.StandardButton.Ok, QMessageBox.StandardButton.Ok)
         box.exec()
+
+
+class FramelessInputDialog(FramelessDialog):
+    """无边框文本输入对话框（QInputDialog.getText 的自绘替代，API 一致）。"""
+
+    def __init__(
+        self, parent: QWidget | None, title: str, label: str, text: str = ""
+    ) -> None:
+        super().__init__(parent, title)
+        self.setMinimumWidth(380)
+        layout = self.bodyLayout()
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(12)
+        self._label = QLabel(label)
+        self._label.setWordWrap(True)
+        layout.addWidget(self._label)
+        self._edit = QLineEdit(text)
+        self._edit.selectAll()
+        layout.addWidget(self._edit)
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        ok = QPushButton("确定")
+        ok.setProperty("primary", True)
+        ok.clicked.connect(self.accept)
+        cancel = QPushButton("取消")
+        cancel.clicked.connect(self.reject)
+        button_row.addWidget(ok)
+        button_row.addWidget(cancel)
+        layout.addLayout(button_row)
+
+    def textValue(self) -> str:
+        return self._edit.text()
+
+    @staticmethod
+    def getText(
+        parent: QWidget | None, title: str, label: str, text: str = ""
+    ) -> tuple[str, bool]:
+        """返回 (文本, 是否确认)，签名与 QInputDialog.getText 一致。"""
+        dialog = FramelessInputDialog(parent, title, label, text)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        return dialog.textValue(), accepted

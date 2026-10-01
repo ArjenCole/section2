@@ -16,7 +16,6 @@ from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -34,17 +33,16 @@ from app.core.models import base as orm
 from app.core.models.models import FoundationReplacement, PcpFoundation
 from app.services import project_io
 from app.views.dialogs.principle_dialogs import ComponentEditDialog, describe_component
-from app.views.widgets.frameless_dialog import FramelessMessageBox
+from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 
 _COL_MATERIAL, _COL_THICKNESS = 0, 1
 
 
-class FoundationEditDialog(QDialog):
-    """地基处理原则编辑（FormPF）。"""
+class FoundationEditDialog(FramelessDialog):
+    """地基处理原则编辑（FormPF，无边框自绘标题栏）。"""
 
     def __init__(self, foundation_id: int, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("地基处理原则编辑")
+        super().__init__(parent, "地基处理原则编辑")
         self.resize(460, 400)
         self._foundation_id = foundation_id
         self._loading = False
@@ -53,7 +51,8 @@ class FoundationEditDialog(QDialog):
 
     # ------------------------------------------------------------------ 界面
     def _build_ui(self) -> None:
-        root = QVBoxLayout(self)
+        root = self.bodyLayout()
+        root.setContentsMargins(12, 10, 12, 10)
         root.setSpacing(6)
 
         name_row = QHBoxLayout()

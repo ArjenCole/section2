@@ -21,7 +21,6 @@ from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QDialog,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -48,7 +47,7 @@ from app.views.dialogs.principle_dialogs import (
     describe_component,
     precipitation_text,
 )
-from app.views.widgets.frameless_dialog import FramelessMessageBox
+from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 
 #: 旧版 mcEnclosure.MultiScpntTxt
 MULTI_LEVEL_TEXT = "多级围护"
@@ -61,12 +60,11 @@ _ANGLE_CHOICES = ("90", "120", "150", "180")
 _COL_DEPTH, _COL_RANGE, _COL_ECLS_CAT, _COL_ECLS_DIS, _COL_WS_CAT, _COL_WS_DIS = range(6)
 
 
-class EnclosureEditDialog(QDialog):
-    """围护原则编辑（FormPE）。"""
+class EnclosureEditDialog(FramelessDialog):
+    """围护原则编辑（FormPE，无边框自绘标题栏）。"""
 
     def __init__(self, enclosure_id: int, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("围护原则编辑")
+        super().__init__(parent, "围护原则编辑")
         self.resize(816, 581)
         self._enclosure_id = enclosure_id
         self._loading = False
@@ -76,7 +74,8 @@ class EnclosureEditDialog(QDialog):
 
     # ------------------------------------------------------------------ 界面
     def _build_ui(self) -> None:
-        root = QVBoxLayout(self)
+        root = self.bodyLayout()
+        root.setContentsMargins(12, 10, 12, 10)
         root.setSpacing(6)
 
         name_row = QHBoxLayout()
