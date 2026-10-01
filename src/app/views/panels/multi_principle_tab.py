@@ -44,6 +44,7 @@ from app.viewmodels.unit_vm import (
     update_principle_ref,
 )
 from app.views.widgets.frameless_dialog import FramelessMessageBox
+from app.views.widgets.table_edit_delegate import TableEditDelegate
 
 _REF_ROLE = Qt.ItemDataRole.UserRole + 1
 
@@ -96,6 +97,9 @@ class MultiPrincipleTab(QWidget):
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.setColumnWidth(0, 130)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        # 比例列编辑态抛光：32px 行高里去掉 QLineEdit 编辑器的边框/内边距，
+        # 否则文字上下被裁掉（与主表格各表的编辑器处理一致）
+        self._table.setItemDelegate(TableEditDelegate(self._table))
         self._table.itemChanged.connect(self._on_item_changed)
 
         self._btn_host = QWidget()
@@ -149,7 +153,7 @@ class MultiPrincipleTab(QWidget):
             self._content.setVisible(active)
             self._placeholder.setVisible(not active)
             if not active:
-                self._table.setRowCount(0)
+                self._clear_rows()
             else:
                 self._fill_rows()
         finally:
@@ -158,18 +162,21 @@ class MultiPrincipleTab(QWidget):
         if active and not was_active:
             self.became_active.emit()
 
+    def _clear_rows(self) -> None:
+        """清空表格并销毁单元格控件（避免隐藏的旧下拉框残留）。"""
+        for row in range(self._table.rowCount()):
+            old = self._table.cellWidget(row, 0)
+            if old is not None:
+                self._table.removeCellWidget(row, 0)
+                old.deleteLater()
+        self._table.setRowCount(0)
+
     def _fill_rows(self) -> None:
         rows = principle_ref_rows(self._element_id, self._kind)
         names = project_io.enclosure_names() if self._kind == _KIND_PE else project_io.foundation_names()
         self._table.setRowCount(len(rows))
         for index, ref in enumerate(rows):
-            combo = QComboBox()
-            combo.addItems([ref.name] + names if ref.name not in names else names)
-            combo.setCurrentText(ref.name)
-            combo.currentTextChanged.connect(
-                lambda text, ref_id=ref.id: self._on_name_changed(ref_id, text)
-            )
-            self._table.setCellWidget(index, 0, combo)
+            self._replace_cell_widget(index, self._make_ref_combo(ref, names))
 
             ratio_item = QTableWidgetItem(format_number(ref.ratio))
             ratio_item.setData(_REF_ROLE, ref.id)
@@ -183,6 +190,24 @@ class MultiPrincipleTab(QWidget):
             main = next((ref.name for ref in rows if ref.is_main), main_names[0] if main_names else "")
             self._main_combo.setCurrentText(main)
             self._main_combo.blockSignals(False)
+
+    def _make_ref_combo(self, ref, names: list[str]) -> QComboBox:
+        combo = QComboBox()
+        combo.addItems([ref.name] + names if ref.name not in names else names)
+        combo.setCurrentText(ref.name)
+        combo.currentTextChanged.connect(
+            lambda text, ref_id=ref.id: self._on_name_changed(ref_id, text)
+        )
+        return combo
+
+    def _replace_cell_widget(self, row: int, widget: QWidget) -> None:
+        """替换单元格控件前显式销毁旧的：setCellWidget 在 PySide6 下只隐藏旧控件，
+        残留的旧下拉框会与新控件叠加渲染（文字/箭头重影）。"""
+        old = self._table.cellWidget(row, 0)
+        if old is not None:
+            self._table.removeCellWidget(row, 0)
+            old.deleteLater()
+        self._table.setCellWidget(row, 0, widget)
 
     def _element_active(self) -> bool:
         """当前选中构件是否处于本 Tab 的多原则模式（旧版 PNLPE.Visible 条件）。"""

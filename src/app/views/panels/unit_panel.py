@@ -20,11 +20,9 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QPushButton,
     QSplitter,
     QStackedWidget,
-    QStyledItemDelegate,
     QStyle,
     QTabWidget,
     QTableWidget,
@@ -50,6 +48,7 @@ from app.viewmodels.project_vm import TreeNode
 from app.viewmodels.unit_vm import ElementRow, ParamRow, PipeRow, UnitViewModel
 from app.views.panels.multi_principle_tab import MultiPrincipleTab
 from app.views.widgets.frameless_dialog import FramelessMessageBox
+from app.views.widgets.table_edit_delegate import TableEditDelegate
 
 _ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
 _COL_NAME, _COL_CATEGORY, _COL_SPEC, _COL_DEPTH, _COL_UNIT, _COL_AMOUNT, _COL_PE, _COL_PF, _COL_SOURCE = range(9)
@@ -76,7 +75,7 @@ _FOCUS_OWNER_ATTR = "_unit_panel_focus_owner"
 _DETAIL_TABLE_ATTR = "_unit_panel_detail_table"
 
 
-class _FocusCellDelegate(QStyledItemDelegate):
+class _FocusCellDelegate(TableEditDelegate):
     """当前单元格用加粗边框表示（Quotor FullCellDelegate 同款）。
 
     主表格与下方面板（管材/构件参数/定额工程量/清单工程量）共享唯一焦点：
@@ -86,6 +85,8 @@ class _FocusCellDelegate(QStyledItemDelegate):
     明细面板四张表（``_DETAIL_TABLE_ATTR`` 为 True）额外支持多选边框：
     拖拽 / Ctrl 点选的每个选中单元格画 2px 边框，相邻单元格的边自动
     合并成包围整个选区的外框（逐边判断：跨边邻居被选中则不画该边）。
+
+    编辑态抛光（去边框/清边距/占满单元格）由基类 TableEditDelegate 提供。
     """
 
     def paint(self, painter: QPainter, option, index) -> None:  # noqa: N802 - Qt 命名
@@ -147,20 +148,7 @@ class _FocusCellDelegate(QStyledItemDelegate):
             painter.drawLine(line_right, line_top, line_right, line_bottom)
         painter.restore()
 
-    # --- 编辑态：去掉 QLineEdit 的边框和文本边距并占满单元格，
-    #     否则 32px 行高里默认编辑器的 2px 边框 + 4px 文本边距会裁掉文字上下 ---
-    def createEditor(self, parent: QWidget, option, index) -> QWidget:  # noqa: N802
-        editor = super().createEditor(parent, option, index)
-        if isinstance(editor, QLineEdit):
-            editor.setFrame(False)
-            editor.setContentsMargins(0, 0, 0, 0)
-            editor.setTextMargins(0, 0, 0, 0)
-            editor.setMinimumSize(0, 0)
-        return editor
-
-    def updateEditorGeometry(self, editor: QWidget, option, index) -> None:  # noqa: N802
-        editor.setMinimumSize(0, 0)
-        editor.setGeometry(option.rect)
+    # --- 编辑态抛光见基类 TableEditDelegate（去 QLineEdit 边框/边距并占满单元格） ---
 
 
 class UnitPanel(QWidget):
@@ -266,6 +254,9 @@ class UnitPanel(QWidget):
         )
         detail.addTab(self._multi_pe_tab, MULTI_PE_TEXT)
         detail.addTab(self._multi_pf_tab, MULTI_PF_TEXT)
+        # 四个页签（管材/构件参数/多围护原则/多地基原则）在窄面板下会被省略并出
+        # 现滚动箭头：按页签条完整宽度设最小宽度，保证全部页签可见
+        detail.setMinimumWidth(detail.tabBar().sizeHint().width() + 16)
         self._detail_tabs = detail
         bottom.addWidget(detail)
 
@@ -289,8 +280,8 @@ class UnitPanel(QWidget):
         bottom.setStretchFactor(0, 2)
         bottom.setStretchFactor(1, 3)
         bottom.setStretchFactor(2, 2)
-        # 管材/构件参数｜定额/清单｜断面图 默认宽度（取自运行实例实测）
-        bottom.setSizes([323, 1027, 286])
+        # 管材/构件参数｜定额/清单｜断面图 默认宽度：左栏加宽以容下四个明细页签
+        bottom.setSizes([440, 910, 286])
         return bottom
 
     def _build_quantity_area(self) -> QWidget:
@@ -452,6 +443,7 @@ class UnitPanel(QWidget):
         keep_column = self._element_table.currentColumn()
         self._loading = True
         try:
+            _clear_cell_widgets(self._element_table)  # 旧内嵌下拉框显式销毁，避免残留叠加
             self._element_table.setRowCount(len(rows))
             enclosure_names = _combo_names(
                 project_io.enclosure_names() + [MULTI_PE_TEXT], rows, "pe_name"
@@ -1069,6 +1061,17 @@ class UnitPanel(QWidget):
 # --------------------------------------------------------------------------- #
 # 辅助
 # --------------------------------------------------------------------------- #
+def _clear_cell_widgets(table: QTableWidget) -> None:
+    """显式销毁表格里的旧单元格控件：QTableWidget.setCellWidget 在 PySide6 下
+    只隐藏被替换的控件并不删除，残留的旧内嵌下拉框会与新控件叠加渲染。"""
+    for row in range(table.rowCount()):
+        for column in range(table.columnCount()):
+            old = table.cellWidget(row, column)
+            if old is not None:
+                table.removeCellWidget(row, column)
+                old.deleteLater()
+
+
 def _structure_locked_param_keys(element_id: int | None) -> set[str]:
     """附属构筑物锁定参数键的集合（-名称 / -单位，旧版 dGVdetail 前 1/2 行键只读）。"""
     if element_id is None:
