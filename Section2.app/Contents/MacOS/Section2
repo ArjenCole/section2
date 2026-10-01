@@ -1,0 +1,12 @@
+#!/bin/zsh
+# Section 2.0 启动器壳：实时运行本项目 src/ 里的最新源码
+# 本文件位于 <项目根>/Section2.app/Contents/MacOS/，向上三级即项目根
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+cd "$ROOT" || exit 1
+
+if [ ! -x ".venv/bin/python" ]; then
+  osascript -e 'display dialog "未找到虚拟环境 .venv\n\n请在项目目录下执行：\nuv venv --python 3.12\nuv pip install -e \".[dev]\"" with icon stop buttons {"好"} default button "好"'
+  exit 1
+fi
+
+exec .venv/bin/python src/app/main.py "$@"
