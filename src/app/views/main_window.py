@@ -52,7 +52,7 @@ from app.views.panels.principle_bar import PrincipleBar
 from app.views.panels.tree_panel import TreePanel
 from app.views.panels.unit_panel import UnitPanel
 from app.views.widgets.frameless_dialog import FramelessMessageBox
-from app.views.widgets.mac_window import TRAFFIC_LIGHT_INSET_ALL, apply_mac_window_chrome, is_mac
+from app.views.widgets.mac_window import apply_mac_window_chrome, is_mac
 from app.views.dialogs.new_project_wizard import (
     NewProjectWizard,
     suggested_dir,
@@ -306,8 +306,13 @@ class MainWindow(QMainWindow):
         else:
             self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.resize(1440, 900)
-        self._title_bar = FramelessTitleBar()
-        self.setMenuWidget(self._title_bar)  # 标题栏替代原生菜单栏行
+        if is_mac():
+            # Apple HIG：主窗体不放自绘标题栏行，菜单挂系统菜单栏，
+            # 红绿灯（系统绘制）浮在工具栏上方左上角
+            self._title_bar = None
+        else:
+            self._title_bar = FramelessTitleBar()
+            self.setMenuWidget(self._title_bar)  # 标题栏替代原生菜单栏行
         self._build_central()
         self._build_actions()
         self._build_menus()
@@ -318,9 +323,10 @@ class MainWindow(QMainWindow):
         self._refresh_recent_menu()
         self._enable_win11_rounded_corners()
         if is_mac():
-            # 先创建原生句柄并在显示前套用 chrome，避免首帧闪现系统标题栏
+            # mac 的 chrome 在首次 showEvent 里套用：show 时 Qt 会按窗口标志重置
+            # NSWindow 样式掩码，提前设置会被覆盖（对话框无此问题，见 FramelessDialog）
+            self._mac_chrome_applied = False
             self.winId()
-            apply_mac_window_chrome(self)
         if project_path:
             QTimer.singleShot(0, lambda: self._open_path(project_path))
 
@@ -378,8 +384,17 @@ class MainWindow(QMainWindow):
                     return True, 15
         return super().nativeEvent(event_type, message)
 
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if is_mac() and not self._mac_chrome_applied:
+            self._mac_chrome_applied = True
+            apply_mac_window_chrome(self)
+        super().showEvent(event)
+
     def changeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
-        if event.type() == QEvent.Type.WindowStateChange and hasattr(self, "_title_bar"):
+        if (
+            event.type() == QEvent.Type.WindowStateChange
+            and getattr(self, "_title_bar", None) is not None
+        ):
             self._title_bar.update_max_icon()
         super().changeEvent(event)
 
@@ -547,7 +562,8 @@ class MainWindow(QMainWindow):
 
     def _refresh_action_icons(self) -> None:
         """主题切换后遍历工具栏 + 菜单栏动作，用新主题色重载图标（Quotor 同款）。"""
-        containers = [self._title_bar.menu_bar, self._toolbar]
+        menubar = self.menuBar() if self._title_bar is None else self._title_bar.menu_bar
+        containers = [menubar, self._toolbar]
         for container in containers:
             for action in container.actions():
                 self._apply_action_icon(action)
@@ -563,7 +579,13 @@ class MainWindow(QMainWindow):
         self._apply_action_icon(self._act_theme)
 
     def _build_menus(self) -> None:
-        menubar = self._title_bar.menu_bar  # 无边框：菜单栏在自绘标题栏内
+        if self._title_bar is not None:
+            menubar = self._title_bar.menu_bar  # Windows 无边框：菜单栏在自绘标题栏内
+        else:
+            menubar = self.menuBar()  # mac：原生菜单栏（QMenuBar 在 mac 默认原生化）
+            # Apple HIG：「退出」「关于」归系统菜单栏的应用菜单，从业务菜单里移走
+            self._act_exit.setMenuRole(QAction.MenuRole.QuitRole)
+            self._act_about.setMenuRole(QAction.MenuRole.AboutRole)
 
         file_menu = menubar.addMenu("文件(&F)")
         file_menu.addAction(self._act_new)
@@ -676,7 +698,8 @@ class MainWindow(QMainWindow):
         self._act_theme.setText("切换亮色主题" if ThemeManager.instance().is_dark() else "切换暗色主题")
         self._set_theme_action_icon()
         self._refresh_action_icons()
-        self._title_bar.refresh_theme(ThemeManager.instance().current())
+        if self._title_bar is not None:  # mac 上没有自绘标题栏
+            self._title_bar.refresh_theme(ThemeManager.instance().current())
         self._unit_panel.refresh()
         self._ai_panel.refresh_theme()
 
@@ -695,7 +718,8 @@ class MainWindow(QMainWindow):
             name = project_io.project_name() or "未命名工程"
             title = f"{name} - {APP_DISPLAY_NAME} {APP_VERSION}"
         self.setWindowTitle(title)
-        self._title_bar.setToolTip(title)
+        if self._title_bar is not None:  # mac 上标题只由系统菜单栏/红绿灯行呈现
+            self._title_bar.setToolTip(title)
 
     def _refresh_recent_menu(self) -> None:
         self._recent_menu.clear()

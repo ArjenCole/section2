@@ -333,9 +333,11 @@ class FramelessDialog(QDialog):
         outer.addWidget(self._body, stretch=1)
 
         if is_mac():
-            # 先创建原生句柄并在显示前套用 chrome，避免首帧闪现系统标题栏
+            # 先创建原生句柄并预套 mac chrome；show 时 Qt 可能重置 NSWindow 样式掩码，
+            # 首次 showEvent 里会再补一次（见 showEvent），两处均幂等
             self.winId()
             apply_mac_window_chrome(self, close_only=True)
+            self._mac_chrome_reapplied = False
 
     def bodyLayout(self) -> QVBoxLayout:
         return self._body_layout
@@ -348,6 +350,10 @@ class FramelessDialog(QDialog):
         self._title_bar.set_title(title)
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if is_mac() and not getattr(self, "_mac_chrome_reapplied", True):
+            # show 时 Qt 会按窗口标志重置 NSWindow 样式掩码，这里补套 mac chrome
+            self._mac_chrome_reapplied = True
+            apply_mac_window_chrome(self, close_only=True)
         super().showEvent(event)
         self._enable_win11_rounded_corners()
 

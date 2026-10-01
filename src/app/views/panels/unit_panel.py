@@ -218,6 +218,8 @@ class UnitPanel(QWidget):
         # documentMode：页签文字统一左对齐（macOS 原生样式默认把页签条整体居中）；
         # 页签/窗格外观仍由全局 QSS 控制，Windows 观感不变
         detail.setDocumentMode(True)
+        # documentMode 会在页签条下画原生底座（mac 上随系统暗色成深色条），关掉
+        detail.tabBar().setDrawBase(False)
         self._pipe_table = self._make_table(_PIPE_HEADERS)
         self._param_table = self._make_table(_PARAM_HEADERS)
 
@@ -290,6 +292,7 @@ class UnitPanel(QWidget):
     def _build_quantity_area(self) -> QWidget:
         tabs = QTabWidget()
         tabs.setDocumentMode(True)
+        tabs.tabBar().setDrawBase(False)
         self._quantity_tables: dict[str, QTableWidget] = {}
         for name in ("定额工程量", "清单工程量"):
             page = QWidget()
