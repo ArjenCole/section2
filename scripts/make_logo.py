@@ -5,8 +5,9 @@
 2.0 造型按苹果现代 macOS 图标设计语言重绘（Big Sur → Tahoe 同一形状体系）：
     - 1024 画布上 824 的 superellipse(n=5) squircle（对系统图标实测拟合）；
     - 明显的液态玻璃光感：左上柔光 + 顶部受光带 + 沿边反光 + 底部内阴影；
-    - 主标记：Futura Bold 无衬线 "S"（不用衬线体），字面本身做鼓起光影——
-      左上穹面高光、上内缘裹光、下内缘形体阴影，配合向右下轻微挤出成 3D 层；
+    - 主标记：拟物化 s 形管道——圆管沿 S 中心线（两段相切圆弧，相切处平滑过渡）
+      扫掠而成，多层同轴描边模拟圆柱高光，两端剖开露出管壁与内腔（呼应"断面"），
+      靠近两端各有一道管箍；
     - 全流程超采样渲染（大画布绘制后平滑降采样），边缘无锯齿；
     - 画布内烘焙极淡投影；≤64px 收缩边距保证小尺寸识别度。
 
@@ -34,11 +35,9 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QBuffer, QRectF, Qt  # noqa: E402
+from PySide6.QtCore import QBuffer, QPointF, QRectF, Qt  # noqa: E402
 from PySide6.QtGui import (  # noqa: E402
     QColor,
-    QFont,
-    QFontDatabase,
     QImage,
     QLinearGradient,
     QPainter,
@@ -60,7 +59,6 @@ OUT_DIR = PROJECT_ROOT / "src" / "app" / "resources" / "logo"
 BUILD_DIR = PROJECT_ROOT / "build" / "logo"
 ICONSET_DIR = BUILD_DIR / "Section2.iconset"
 ORIGINAL_PNG = PROJECT_ROOT / "section" / "section-master" / "section" / "Resources" / "170530 S.png"
-FUTURA_TTC = Path("/System/Library/Fonts/Supplemental/Futura.ttc")
 
 #: 1.0 的身份色（Material Blue Grey 700）与其顶亮/底深衍生
 BG_TOP = QColor("#61798A")
@@ -71,38 +69,31 @@ CANVAS = 1024
 ARTWORK = 824  # 苹果图标网格：1024 画布、824 主体（四周留白 100）
 SQUIRCLE_N = 5  # superellipse 指数（对系统图标实测：对角切入点 6.9% ≈ 实测 7.0%）
 
-#: 主标记版式（S 单字母）
-S_HEIGHT_FRAC = 0.473   # S 高 / 画布，沿用 1.0 比例
-EXTRUDE_FRAC = 0.052    # 挤出深度（× S 高）
-EXTRUDE_DIR = (0.30, 1.0)  # 挤出方向：向右下（光从左上来）
-EXTRUDE_LAYERS = 18
-SIDE_NEAR = QColor("#4A5E68")  # 挤出侧面近前脸色
-SIDE_FAR = QColor("#1F2B33")   # 挤出侧面最深色
-FRONT_TOP, FRONT_BOTTOM = "#FFFFFF", "#DEE7EC"  # S 前面基础渐变
-#: 鼓起光影
-DOME_ALPHA = 105        # 左上穹面高光峰值
-RIMLIGHT_ALPHA = 120    # 上内缘裹光峰值
-INSHADOW_ALPHA = 120    # 下内缘形体阴影峰值
+#: s 形管道参数
+S_HEIGHT_FRAC = 0.473   # 管道整体高（含管径）/ 画布，沿用 1.0 比例
+TUBE_FRAC = 0.285       # 管外径 / 管道整体高
+SWEEP_DEG = 228         # 每段圆弧的扫掠角
+ARC_STEPS = 200         # 中心线每段圆弧的采样点数
+#: 圆柱光影：同轴描边带（宽度占管径比例，颜色由管缘深色到芯部）
+TUBE_EDGE = QColor("#26363F")
+TUBE_CORE = QColor("#D9E4E9")
+GLINT = QColor("#F7FBFC")
+BORE_RING_TOP = QColor("#E6EDF1")   # 剖切端面管壁亮部
+BORE_RING_BOT = QColor("#8B9DA7")   # 剖切端面管壁暗部
+BORE_HOLE_TOP = QColor("#18232A")   # 内腔深部
+BORE_HOLE_BOT = QColor("#51656F")   # 内腔远端
 #: 小尺寸收缩边距（苹果小尺寸图标主体占比更大）
 SMALL_MARGIN = {16: 0.039, 24: 0.047, 32: 0.055, 48: 0.066, 64: 0.075}
 #: 超采样倍率（边缘抗锯齿的关键：大画布绘制后平滑降采样）
-SS = {16: 6, 24: 6, 32: 5, 48: 4, 64: 4, 128: 3, 256: 3, 512: 2, 1024: 2}
+SS = {16: 8, 24: 8, 32: 6, 48: 5, 64: 4, 128: 4, 256: 3, 512: 3, 1024: 3}
 
 app = QApplication.instance() or QApplication(["make_logo"])
-_font_ready = False
-
-
-def _ensure_font() -> None:
-    global _font_ready
-    if not _font_ready:
-        QFontDatabase.addApplicationFont(str(FUTURA_TTC))
-        _font_ready = True
 
 
 def squircle_path(size: float, n: int = SQUIRCLE_N) -> QPainterPath:
     """superellipse |x/a|^n + |y/a|^n = 1 的闭合路径，边长 size、中心在原点。"""
     a = size / 2.0
-    steps = 1440
+    steps = 2160
     path = QPainterPath()
     for i in range(steps + 1):
         t = i / steps * 2 * math.pi
@@ -139,123 +130,138 @@ def blurred(image: QImage, radius: float) -> QImage:
     return out
 
 
-def make_glyph(text: str, px_height: float) -> QPainterPath:
-    """Futura Bold 无衬线字形，缩放到指定像素高、包围盒左上角在原点。"""
-    font = QFont("Futura")
-    font.setWeight(QFont.Weight.Bold)
-    raw = QPainterPath()
-    raw.addText(0, 0, font, text)
-    br = raw.boundingRect()
-    scale = px_height / br.height()
-    mapped = QTransform().scale(scale, scale).map(raw)
-    mapped.translate(-mapped.boundingRect().left(), -mapped.boundingRect().top())
-    return mapped
+def s_centerline(rc: float) -> tuple[QPainterPath, QPointF, QPointF, QPointF, QPointF]:
+    """S 形管道中心线：上下两段相切圆弧在原点相切（切向水平、C1 连续）。
+
+    返回 (路径, 上端点, 下端点, 上端切向, 下端切向)，坐标以中心线中点为原点（y 向下为正）。
+    """
+    path = QPainterPath()
+    pts: list[tuple[float, float]] = []
+
+    def emit(phi_deg: float, cy: float) -> tuple[float, float]:
+        phi = math.radians(phi_deg)
+        return (rc * math.cos(phi), cy + rc * math.sin(phi))
+
+    top0, top1 = 90 + SWEEP_DEG, 90          # 上圆弧：φ 递减
+    bot0, bot1 = 270, 270 + SWEEP_DEG        # 下圆弧：φ 递增
+    for i in range(ARC_STEPS + 1):
+        pts.append(emit(top0 + (top1 - top0) * i / ARC_STEPS, -rc))
+    for i in range(1, ARC_STEPS + 1):
+        pts.append(emit(bot0 + (bot1 - bot0) * i / ARC_STEPS, rc))
+    path.moveTo(pts[0][0], pts[0][1])
+    for x, y in pts[1:]:
+        path.lineTo(x, y)
+    # 端点行进切向：上端 φ 递减 → (sinφ, -cosφ)；下端 φ 递增 → (-sinφ, cosφ)
+    phi_top = math.radians(top0)
+    phi_bot = math.radians(bot1)
+    tan_top = QPointF(math.sin(phi_top), -math.cos(phi_top))
+    tan_bot = QPointF(-math.sin(phi_bot), math.cos(phi_bot))
+    return path, QPointF(*pts[0]), QPointF(*pts[-1]), tan_top, tan_bot
 
 
-def lerp_color(a: QColor, b: QColor, t: float) -> QColor:
-    return QColor(
-        round(a.red() + (b.red() - a.red()) * t),
-        round(a.green() + (b.green() - a.green()) * t),
-        round(a.blue() + (b.blue() - a.blue()) * t),
-    )
+def tube_stroke(p: QPainter, centerline: QPainterPath, dia: float,
+                *, offset: tuple[float, float] = (0.0, 0.0), t_from: float = 0.0) -> None:
+    """沿中心线画圆管：多层同轴描边从管缘深色过渡到芯部。
+
+    t_from 可只画较亮的芯部带（配合 offset 做偏心高光，避免重复压暗管缘）。
+    """
+    pen = QPen()
+    pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    bands = 14
+    for i in range(bands):
+        t = i / (bands - 1)          # 0=管缘 1=芯部
+        if t < t_from:
+            continue
+        w = dia * (1.0 - 0.92 * t)
+        shade = t ** 1.6             # 管身偏暗，亮部收在芯部
+        color = QColor(
+            round(TUBE_EDGE.red() + (TUBE_CORE.red() - TUBE_EDGE.red()) * shade),
+            round(TUBE_EDGE.green() + (TUBE_CORE.green() - TUBE_EDGE.green()) * shade),
+            round(TUBE_EDGE.blue() + (TUBE_CORE.blue() - TUBE_EDGE.blue()) * shade),
+        )
+        pen.setWidthF(max(1.0, w))
+        pen.setColor(color)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        if offset != (0.0, 0.0):
+            p.save()
+            p.translate(offset[0], offset[1])
+            p.drawPath(centerline)
+            p.restore()
+        else:
+            p.drawPath(centerline)
 
 
-def _inner_edge(mask: QImage, dx: float, dy: float) -> QImage:
-    """字形内缘条带：mask 减去平移 (dx, dy) 后的 mask，剩下的内缘月牙。"""
-    sliver = _qimage(mask.width(), mask.height())
-    p = QPainter(sliver)
-    p.drawImage(0, 0, mask)
-    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationOut)
-    p.drawImage(int(round(dx)), int(round(dy)), mask)
-    p.end()
-    return sliver
+def bore_face(p: QPainter, tip: QPointF, dia: float, tangent: QPointF) -> None:
+    """剖开的管端：平切口上的椭圆端面 = 金属管壁环 + 内腔。
+
+    端面长轴垂直于端点切线，中心沿切线略微内收，读作向内凹陷的管口。
+    """
+    tlen = math.hypot(tangent.x(), tangent.y()) or 1.0
+    tx, ty = tangent.x() / tlen, tangent.y() / tlen
+    major, minor = dia * 1.0, dia * 0.52
+    p.save()
+    p.translate(tip.x() - tx * dia * 0.02, tip.y() - ty * dia * 0.02)
+    p.rotate(math.degrees(math.atan2(ty, tx)) + 90)
+    p.setPen(Qt.PenStyle.NoPen)
+    ring = QLinearGradient(0, -minor / 2, 0, minor / 2)
+    ring.setColorAt(0.0, BORE_RING_TOP)
+    ring.setColorAt(1.0, BORE_RING_BOT)
+    p.setBrush(ring)
+    p.drawEllipse(QPointF(0, 0), major / 2, minor / 2)
+    hole = QLinearGradient(0, -minor / 2, 0, minor / 2)
+    hole.setColorAt(0.0, BORE_HOLE_TOP)
+    hole.setColorAt(1.0, BORE_HOLE_BOT)
+    p.setBrush(hole)
+    p.drawEllipse(QPointF(0, 0), major / 2 * 0.62, minor / 2 * 0.62)
+    p.restore()
 
 
 def draw_mark(p: QPainter, size: int, *, small: bool) -> None:
-    """在已铺好玻璃底的画布上绘制主标记（含挤出与鼓起光影）。"""
-    s_px = size * S_HEIGHT_FRAC
-    glyph = make_glyph("S", s_px)
-    gb = glyph.boundingRect()
-    ex_dx = s_px * EXTRUDE_FRAC * EXTRUDE_DIR[0]
-    ex_dy = s_px * EXTRUDE_FRAC * EXTRUDE_DIR[1]
-    # 前脸中心略向左上让出右下挤出体的量，整标视觉居中
-    glyph.translate(size / 2 - ex_dx / 2 - gb.center().x(),
-                    size / 2 - ex_dy / 2 - size * 0.004 - gb.center().y())
-    gb = glyph.boundingRect()
+    """在已铺好玻璃底的画布上绘制 s 形管道主标记。"""
+    full_h = size * S_HEIGHT_FRAC
+    dia = full_h * TUBE_FRAC
+    rc = (full_h - dia) / 4
+    centerline, tip_top, tip_bot, tan_top, tan_bot = s_centerline(rc)
+    # 居中：略向左上让出右下投影的量
+    dxy = QPointF(size / 2 - size * 0.006, size / 2 - size * 0.004)
+    centerline.translate(dxy.x(), dxy.y())
+    tip_top += dxy
+    tip_bot += dxy
 
-    # 悬浮投影：更柔、更远，避免暗晕贴住字形边缘
+    # 悬浮投影：更柔、更远，避免暗晕贴住管壁
     lift = _qimage(size, size)
     lp = QPainter(lift)
     lp.setRenderHint(QPainter.RenderHint.Antialiasing)
-    lp.setPen(Qt.PenStyle.NoPen)
-    lp.setBrush(QColor(16, 28, 34, 255))
-    lp.drawPath(glyph)
+    pen = QPen(QColor(16, 28, 34, 255), dia, Qt.PenStyle.SolidLine,
+               Qt.PenCapStyle.FlatCap, Qt.PenJoinStyle.RoundJoin)
+    lp.setPen(pen)
+    lp.drawPath(centerline)
     lp.end()
     lift_blur = blurred(lift, max(1.5, size * 0.020))
     p.setOpacity(0.26)
     p.drawImage(0, max(1, round(size * 0.013)), lift_blur)
     p.setOpacity(1.0)
 
-    # 挤出侧面：多层渐变模拟实体厚度
-    p.setPen(Qt.PenStyle.NoPen)
-    for i in range(EXTRUDE_LAYERS, 0, -1):
-        t = i / EXTRUDE_LAYERS
-        p.setBrush(lerp_color(SIDE_NEAR, SIDE_FAR, t))
-        p.save()
-        p.translate(ex_dx * t, ex_dy * t)
-        p.drawPath(glyph)
-        p.restore()
-
-    # 前面基础渐变
-    base = QLinearGradient(0, gb.top(), 0, gb.bottom())
-    base.setColorAt(0.0, QColor(FRONT_TOP))
-    base.setColorAt(1.0, QColor(FRONT_BOTTOM))
-    p.setBrush(base)
-    p.drawPath(glyph)
-
-    # 鼓起光影（全部裁剪在字面内）
+    # 管箍画在管体之上（套在管外的加粗环）
+    tube_stroke(p, centerline, dia)
+    tube_stroke(p, centerline, dia, offset=(-dia * 0.035, -dia * 0.09), t_from=0.45)
+    # 细高光棱线
+    pen = QPen()
+    pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    pen.setWidthF(max(1.0, dia * 0.055))
+    pen.setColor(GLINT)
+    p.setPen(pen)
     p.save()
-    p.setClipPath(glyph)
-
-    # 1) 左上穹面高光：字面像充气鼓起的弧面
-    dome = QRadialGradient(gb.left() + gb.width() * 0.34, gb.top() + gb.height() * 0.16,
-                           gb.height() * 0.85)
-    dome.setColorAt(0.0, QColor(255, 255, 255, DOME_ALPHA))
-    dome.setColorAt(0.45, QColor(255, 255, 255, DOME_ALPHA // 3))
-    dome.setColorAt(1.0, QColor(255, 255, 255, 0))
-    p.setBrush(dome)
-    p.drawRect(gb)
-
-    # 2) 上内缘裹光：光绕过肩部在内缘留下一线亮
-    mask = _qimage(size, size)
-    mp = QPainter(mask)
-    mp.setRenderHint(QPainter.RenderHint.Antialiasing)
-    mp.setPen(Qt.PenStyle.NoPen)
-    mp.setBrush(QColor(255, 255, 255, 255))
-    mp.drawPath(glyph)
-    mp.end()
-    d1 = max(2, round(s_px * 0.030))
-    rim_inner = blurred(_inner_edge(mask, d1, d1), d1 * 1.4)
-    p.setOpacity(RIMLIGHT_ALPHA / 255)
-    p.drawImage(0, 0, rim_inner)
-    p.setOpacity(1.0)
-
-    # 3) 下内缘形体阴影：内缘向下渐沉，强调体积
-    d2 = max(2, round(s_px * 0.052))
-    body_shadow = blurred(_inner_edge(mask, -d2, -d2), d2 * 1.2)
-    tinted = _qimage(size, size)
-    tp = QPainter(tinted)
-    tp.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-    sh = QLinearGradient(0, gb.top() + gb.height() * 0.45, 0, gb.bottom())
-    sh.setColorAt(0.0, QColor(46, 63, 74, 0))
-    sh.setColorAt(1.0, QColor(46, 63, 74, INSHADOW_ALPHA))
-    tp.fillRect(QRectF(0, 0, size, size), sh)
-    tp.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
-    tp.drawImage(0, 0, body_shadow)
-    tp.end()
-    p.drawImage(0, 0, tinted)
-
+    p.translate(-dia * 0.035, -dia * 0.10)
+    p.drawPath(centerline)
     p.restore()
+
+    # 两端剖开的管端面（长轴垂直于端点切线）
+    bore_face(p, tip_top, dia, tan_top)
+    bore_face(p, tip_bot, dia, tan_bot)
 
 
 def draw_logo(size: int, *, small: bool = False) -> QImage:
@@ -263,7 +269,7 @@ def draw_logo(size: int, *, small: bool = False) -> QImage:
 
     内部按 SS 倍超采样绘制后平滑降采样到目标尺寸，保证边缘光滑。
     """
-    ss = SS.get(size, 2)
+    ss = SS.get(size, 3)
     big = size * ss
     margin_frac = SMALL_MARGIN.get(size, 0.0977) if small else 0.0977
     art = big * (1 - 2 * margin_frac)
@@ -328,7 +334,7 @@ def draw_logo(size: int, *, small: bool = False) -> QImage:
     p.drawPath(shape)
     p.restore()
 
-    # 4) 主标记：挤出 + 白色前面 + 鼓起光影
+    # 4) 主标记：s 形管道
     draw_mark(p, big, small=small)
 
     p.end()
@@ -345,7 +351,6 @@ _render_cache: dict[tuple[int, bool], QImage] = {}
 def render_logo(size: int, *, small: bool = False) -> QImage:
     key = (size, small)
     if key not in _render_cache:
-        _ensure_font()
         _render_cache[key] = draw_logo(size, small=small)
     return _render_cache[key]
 
@@ -407,12 +412,17 @@ def build_ico() -> None:
     write_ico(entries, OUT_DIR / "section2.ico")
 
 
-def build_preview(master: QImage, original: QImage) -> None:
-    """新旧对比预览：亮/暗两种底色，各放 256/128/64/32/16 与 1.0 原版。"""
+def build_preview(original: QImage) -> None:
+    """新旧对比预览：亮/暗两种底色，各放 256/128/64/32/16 与 1.0 原版。
+
+    每个尺寸的图块直接用该尺寸的超采样渲染（绝不从母版缩小），避免预览图自身出锯齿。
+    """
     W, H = 1560, 880
     img = QImage(W, H, QImage.Format.Format_RGB32)
     p = QPainter(img)
     p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    original_128 = original.scaled(128, 128, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                   Qt.TransformationMode.SmoothTransformation)
 
     def tile(src: QImage, cx: float, cy: float, px: int, label: str, dark: bool) -> None:
         p.drawImage(QRectF(cx - px / 2, cy - px / 2, px, px), src)
@@ -431,12 +441,12 @@ def build_preview(master: QImage, original: QImage) -> None:
         f.setPixelSize(18)
         p.setFont(f)
         p.drawText(QRectF(x0, 22, W / 2, 30), Qt.AlignmentFlag.AlignCenter, "Section 2.0")
-        tile(master, cx, 240, 256, "256px", dark)
-        tile(master, cx - 190, 470, 128, "128px", dark)
-        tile(master, cx - 40, 470, 64, "64px", dark)
-        tile(master, cx + 70, 470, 32, "32px", dark)
-        tile(master, cx + 155, 470, 16, "16px", dark)
-        tile(original, cx, 730, 128, "1.0 原版", dark)
+        tile(render_logo(256), cx, 240, 256, "256px", dark)
+        tile(render_logo(128), cx - 190, 470, 128, "128px", dark)
+        tile(render_logo(64, small=True), cx - 40, 470, 64, "64px", dark)
+        tile(render_logo(32, small=True), cx + 70, 470, 32, "32px", dark)
+        tile(render_logo(16, small=True), cx + 155, 470, 16, "16px", dark)
+        tile(original_128, cx, 730, 128, "1.0 原版", dark)
 
     panel(0, False)
     panel(W / 2, True)
@@ -445,7 +455,6 @@ def build_preview(master: QImage, original: QImage) -> None:
 
 
 def main() -> None:
-    _ensure_font()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -456,8 +465,7 @@ def main() -> None:
     write_png(render_logo(512), OUT_DIR / "icon_512.png")
 
     if "--preview" in sys.argv:
-        original = QImage(str(ORIGINAL_PNG))
-        build_preview(master, original)
+        build_preview(QImage(str(ORIGINAL_PNG)))
     print("done ->", OUT_DIR)
 
 
