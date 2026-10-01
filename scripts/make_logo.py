@@ -4,10 +4,11 @@
     底色 Material Blue Grey 700 #455A64、白色居中主字形、正方形圆角构图。
 2.0 造型按苹果现代 macOS 图标设计语言重绘（Big Sur → Tahoe 同一形状体系）：
     - 1024 画布上 824 的 superellipse(n=5) squircle（对系统图标实测拟合）；
-    - 顶亮底深的纵向渐变 + 液态玻璃柔光/沿边反光/底部内阴影；
-    - 主标记：Futura Bold 无衬线 "S" + 右下角同风格小 "2"（S2 = Section 2.0），
-      整体向右下轻微挤出成 3D 层（前面白渐变、侧面深蓝灰），不再用衬线体；
-    - 画布内烘焙极淡投影；≤64px 只保留 S 保证小尺寸识别度。
+    - 明显的液态玻璃光感：左上柔光 + 顶部受光带 + 沿边反光 + 底部内阴影；
+    - 主标记：Futura Bold 无衬线 "S"（不用衬线体），字面本身做鼓起光影——
+      左上穹面高光、上内缘裹光、下内缘形体阴影，配合向右下轻微挤出成 3D 层；
+    - 全流程超采样渲染（大画布绘制后平滑降采样），边缘无锯齿；
+    - 画布内烘焙极淡投影；≤64px 收缩边距保证小尺寸识别度。
 
 用法（项目根目录）：
     .venv/bin/python scripts/make_logo.py            # 生成全套资源
@@ -62,36 +63,46 @@ ORIGINAL_PNG = PROJECT_ROOT / "section" / "section-master" / "section" / "Resour
 FUTURA_TTC = Path("/System/Library/Fonts/Supplemental/Futura.ttc")
 
 #: 1.0 的身份色（Material Blue Grey 700）与其顶亮/底深衍生
-BG_TOP = QColor("#5B7280")
+BG_TOP = QColor("#61798A")
 BG_MID = QColor("#455A64")
-BG_BOTTOM = QColor("#384A54")
+BG_BOTTOM = QColor("#344450")
 
 CANVAS = 1024
 ARTWORK = 824  # 苹果图标网格：1024 画布、824 主体（四周留白 100）
 SQUIRCLE_N = 5  # superellipse 指数（对系统图标实测：对角切入点 6.9% ≈ 实测 7.0%）
 
-#: 主标记版式
+#: 主标记版式（S 单字母）
 S_HEIGHT_FRAC = 0.473   # S 高 / 画布，沿用 1.0 比例
-TWO_FRAC = 0.55         # "2" 高 = S 高 × 0.55
-TWO_OVERLAP = 0.055     # "2" 与 S 的重叠量（× S 高）
-UNIT_MAX_W = 0.42       # S+2 组合最大宽（× 画布），超限整体等比缩小
-EXTRUDE_FRAC = 0.060    # 挤出深度（× S 高）
+EXTRUDE_FRAC = 0.052    # 挤出深度（× S 高）
 EXTRUDE_DIR = (0.30, 1.0)  # 挤出方向：向右下（光从左上来）
-EXTRUDE_LAYERS = 12
+EXTRUDE_LAYERS = 18
 SIDE_NEAR = QColor("#4A5E68")  # 挤出侧面近前脸色
 SIDE_FAR = QColor("#1F2B33")   # 挤出侧面最深色
-FRONT_TOP, FRONT_BOTTOM = "#FFFFFF", "#DFE8EC"      # S 前面
-TWO_TOP, TWO_BOTTOM = "#F4F8FA", "#D5E1E7"          # "2" 前面（略暗，让 S 为主）
+FRONT_TOP, FRONT_BOTTOM = "#FFFFFF", "#DEE7EC"  # S 前面基础渐变
+#: 鼓起光影
+DOME_ALPHA = 105        # 左上穹面高光峰值
+RIMLIGHT_ALPHA = 120    # 上内缘裹光峰值
+INSHADOW_ALPHA = 120    # 下内缘形体阴影峰值
 #: 小尺寸收缩边距（苹果小尺寸图标主体占比更大）
 SMALL_MARGIN = {16: 0.039, 24: 0.047, 32: 0.055, 48: 0.066, 64: 0.075}
+#: 超采样倍率（边缘抗锯齿的关键：大画布绘制后平滑降采样）
+SS = {16: 6, 24: 6, 32: 5, 48: 4, 64: 4, 128: 3, 256: 3, 512: 2, 1024: 2}
 
 app = QApplication.instance() or QApplication(["make_logo"])
+_font_ready = False
+
+
+def _ensure_font() -> None:
+    global _font_ready
+    if not _font_ready:
+        QFontDatabase.addApplicationFont(str(FUTURA_TTC))
+        _font_ready = True
 
 
 def squircle_path(size: float, n: int = SQUIRCLE_N) -> QPainterPath:
     """superellipse |x/a|^n + |y/a|^n = 1 的闭合路径，边长 size、中心在原点。"""
     a = size / 2.0
-    steps = 720
+    steps = 1440
     path = QPainterPath()
     for i in range(steps + 1):
         t = i / steps * 2 * math.pi
@@ -128,10 +139,10 @@ def blurred(image: QImage, radius: float) -> QImage:
     return out
 
 
-def make_glyph(text: str, px_height: float, weight: QFont.Weight = QFont.Weight.Bold) -> QPainterPath:
-    """Futura 无衬线字形，缩放到指定像素高、包围盒左上角在原点。"""
+def make_glyph(text: str, px_height: float) -> QPainterPath:
+    """Futura Bold 无衬线字形，缩放到指定像素高、包围盒左上角在原点。"""
     font = QFont("Futura")
-    font.setWeight(weight)
+    font.setWeight(QFont.Weight.Bold)
     raw = QPainterPath()
     raw.addText(0, 0, font, text)
     br = raw.boundingRect()
@@ -149,64 +160,132 @@ def lerp_color(a: QColor, b: QColor, t: float) -> QColor:
     )
 
 
-def mark_paths(size: int, *, small: bool) -> tuple[list[tuple[QPainterPath, str, str]], float, float]:
-    """布局主标记，返回 [(路径, 前面顶色, 前面底色), ...] 与挤出偏移 (dx, dy)。
+def _inner_edge(mask: QImage, dx: float, dy: float) -> QImage:
+    """字形内缘条带：mask 减去平移 (dx, dy) 后的 mask，剩下的内缘月牙。"""
+    sliver = _qimage(mask.width(), mask.height())
+    p = QPainter(sliver)
+    p.drawImage(0, 0, mask)
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationOut)
+    p.drawImage(int(round(dx)), int(round(dy)), mask)
+    p.end()
+    return sliver
 
-    small=True 时只保留 S（小尺寸下 "2" 会糊）。组合过宽时整体等比缩小。
-    """
+
+def draw_mark(p: QPainter, size: int, *, small: bool) -> None:
+    """在已铺好玻璃底的画布上绘制主标记（含挤出与鼓起光影）。"""
     s_px = size * S_HEIGHT_FRAC
-    s_path = make_glyph("S", s_px)
-    sb = s_path.boundingRect()
-    entries: list[tuple[QPainterPath, str, str]] = [(s_path, FRONT_TOP, FRONT_BOTTOM)]
-    if not small:
-        h2 = s_px * TWO_FRAC
-        two = make_glyph("2", h2)
-        tb = two.boundingRect()
-        two.translate(sb.right() - s_px * TWO_OVERLAP - tb.left(), sb.bottom() - tb.bottom())
-        entries.append((two, TWO_TOP, TWO_BOTTOM))
-    union = entries[0][0].boundingRect()
-    for path, _, _ in entries[1:]:
-        union = union.united(path.boundingRect())
-    max_w = size * UNIT_MAX_W
-    fit = min(1.0, max_w / union.width())
-
+    glyph = make_glyph("S", s_px)
+    gb = glyph.boundingRect()
     ex_dx = s_px * EXTRUDE_FRAC * EXTRUDE_DIR[0]
     ex_dy = s_px * EXTRUDE_FRAC * EXTRUDE_DIR[1]
-    transform = QTransform().scale(fit, fit)
-    scaled = [(transform.map(path), top, bottom) for path, top, bottom in entries]
-    union = scaled[0][0].boundingRect()
-    for path, _, _ in scaled[1:]:
-        union = union.united(path.boundingRect())
-    # 前脸组合中心略向左上让出右下挤出体的量，整标视觉居中
-    dx = size / 2 - ex_dx / 2 - union.center().x()
-    dy = size / 2 - ex_dy / 2 - size * 0.004 - union.center().y()
-    scaled = [(path.translated(dx, dy), top, bottom) for path, top, bottom in scaled]
-    return scaled, ex_dx * fit, ex_dy * fit
+    # 前脸中心略向左上让出右下挤出体的量，整标视觉居中
+    glyph.translate(size / 2 - ex_dx / 2 - gb.center().x(),
+                    size / 2 - ex_dy / 2 - size * 0.004 - gb.center().y())
+    gb = glyph.boundingRect()
+
+    # 悬浮投影：更柔、更远，避免暗晕贴住字形边缘
+    lift = _qimage(size, size)
+    lp = QPainter(lift)
+    lp.setRenderHint(QPainter.RenderHint.Antialiasing)
+    lp.setPen(Qt.PenStyle.NoPen)
+    lp.setBrush(QColor(16, 28, 34, 255))
+    lp.drawPath(glyph)
+    lp.end()
+    lift_blur = blurred(lift, max(1.5, size * 0.020))
+    p.setOpacity(0.26)
+    p.drawImage(0, max(1, round(size * 0.013)), lift_blur)
+    p.setOpacity(1.0)
+
+    # 挤出侧面：多层渐变模拟实体厚度
+    p.setPen(Qt.PenStyle.NoPen)
+    for i in range(EXTRUDE_LAYERS, 0, -1):
+        t = i / EXTRUDE_LAYERS
+        p.setBrush(lerp_color(SIDE_NEAR, SIDE_FAR, t))
+        p.save()
+        p.translate(ex_dx * t, ex_dy * t)
+        p.drawPath(glyph)
+        p.restore()
+
+    # 前面基础渐变
+    base = QLinearGradient(0, gb.top(), 0, gb.bottom())
+    base.setColorAt(0.0, QColor(FRONT_TOP))
+    base.setColorAt(1.0, QColor(FRONT_BOTTOM))
+    p.setBrush(base)
+    p.drawPath(glyph)
+
+    # 鼓起光影（全部裁剪在字面内）
+    p.save()
+    p.setClipPath(glyph)
+
+    # 1) 左上穹面高光：字面像充气鼓起的弧面
+    dome = QRadialGradient(gb.left() + gb.width() * 0.34, gb.top() + gb.height() * 0.16,
+                           gb.height() * 0.85)
+    dome.setColorAt(0.0, QColor(255, 255, 255, DOME_ALPHA))
+    dome.setColorAt(0.45, QColor(255, 255, 255, DOME_ALPHA // 3))
+    dome.setColorAt(1.0, QColor(255, 255, 255, 0))
+    p.setBrush(dome)
+    p.drawRect(gb)
+
+    # 2) 上内缘裹光：光绕过肩部在内缘留下一线亮
+    mask = _qimage(size, size)
+    mp = QPainter(mask)
+    mp.setRenderHint(QPainter.RenderHint.Antialiasing)
+    mp.setPen(Qt.PenStyle.NoPen)
+    mp.setBrush(QColor(255, 255, 255, 255))
+    mp.drawPath(glyph)
+    mp.end()
+    d1 = max(2, round(s_px * 0.030))
+    rim_inner = blurred(_inner_edge(mask, d1, d1), d1 * 1.4)
+    p.setOpacity(RIMLIGHT_ALPHA / 255)
+    p.drawImage(0, 0, rim_inner)
+    p.setOpacity(1.0)
+
+    # 3) 下内缘形体阴影：内缘向下渐沉，强调体积
+    d2 = max(2, round(s_px * 0.052))
+    body_shadow = blurred(_inner_edge(mask, -d2, -d2), d2 * 1.2)
+    tinted = _qimage(size, size)
+    tp = QPainter(tinted)
+    tp.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+    sh = QLinearGradient(0, gb.top() + gb.height() * 0.45, 0, gb.bottom())
+    sh.setColorAt(0.0, QColor(46, 63, 74, 0))
+    sh.setColorAt(1.0, QColor(46, 63, 74, INSHADOW_ALPHA))
+    tp.fillRect(QRectF(0, 0, size, size), sh)
+    tp.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+    tp.drawImage(0, 0, body_shadow)
+    tp.end()
+    p.drawImage(0, 0, tinted)
+
+    p.restore()
 
 
 def draw_logo(size: int, *, small: bool = False) -> QImage:
-    """绘制一枚 logo。small=True 时收缩边距并去掉 "2"（苹果小尺寸规则）。"""
-    margin_frac = SMALL_MARGIN.get(size, 0.0977) if small else 0.0977
-    art = size * (1 - 2 * margin_frac)
-    off = (size - art) / 2
+    """绘制一枚 logo。small=True 时收缩边距（苹果小尺寸规则）。
 
-    img = _qimage(size, size)
+    内部按 SS 倍超采样绘制后平滑降采样到目标尺寸，保证边缘光滑。
+    """
+    ss = SS.get(size, 2)
+    big = size * ss
+    margin_frac = SMALL_MARGIN.get(size, 0.0977) if small else 0.0977
+    art = big * (1 - 2 * margin_frac)
+    off = (big - art) / 2
+
+    img = _qimage(big, big)
     p = QPainter(img)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     shape = squircle_path(art)
     shape.translate(off + art / 2, off + art / 2)
 
     # 1) 烘焙投影（与系统图标一致：极淡、向下小偏移）
-    mask = _qimage(size, size)
+    mask = _qimage(big, big)
     mp = QPainter(mask)
     mp.setRenderHint(QPainter.RenderHint.Antialiasing)
     mp.setPen(Qt.PenStyle.NoPen)
     mp.setBrush(QColor(0, 0, 0, 255))
     mp.drawPath(shape)
     mp.end()
-    shadow = blurred(mask, max(2.0, size * 0.045))
+    shadow = blurred(mask, max(2.0, big * 0.045))
     p.setOpacity(0.22)
-    p.drawImage(0, max(1, round(size * 0.014)), shadow)
+    p.drawImage(0, max(1, round(big * 0.014)), shadow)
     p.setOpacity(1.0)
 
     # 2) squircle 底：顶亮底深纵向渐变，#455A64 为主
@@ -218,69 +297,57 @@ def draw_logo(size: int, *, small: bool = False) -> QImage:
     p.setBrush(grad)
     p.drawPath(shape)
 
-    # 3) 液态玻璃质感：左上柔光 + 底部内阴影 + 沿边反光
+    # 3) 液态玻璃质感：左上柔光 + 顶部受光带 + 底部内阴影 + 沿边反光
     p.save()
     p.setClipPath(shape)
-    sheen = QRadialGradient(off + art * 0.30, off + art * 0.06, art * 0.85)
-    sheen.setColorAt(0.0, QColor(255, 255, 255, 34))
-    sheen.setColorAt(0.55, QColor(255, 255, 255, 8))
+    sheen = QRadialGradient(off + art * 0.28, off + art * 0.05, art * 0.95)
+    sheen.setColorAt(0.0, QColor(255, 255, 255, 72))
+    sheen.setColorAt(0.5, QColor(255, 255, 255, 22))
     sheen.setColorAt(1.0, QColor(255, 255, 255, 0))
     p.setBrush(sheen)
     p.drawRect(QRectF(off, off, art, art))
-    bottom = QLinearGradient(0, off + art * 0.90, 0, off + art)
+    band = QLinearGradient(0, off, 0, off + art * 0.20)
+    band.setColorAt(0.0, QColor(255, 255, 255, 58))
+    band.setColorAt(1.0, QColor(255, 255, 255, 0))
+    p.setBrush(band)
+    p.drawRect(QRectF(off, off, art, art * 0.20))
+    bottom = QLinearGradient(0, off + art * 0.86, 0, off + art)
     bottom.setColorAt(0.0, QColor(0, 0, 0, 0))
-    bottom.setColorAt(1.0, QColor(0, 0, 0, 28))
+    bottom.setColorAt(1.0, QColor(8, 16, 20, 52))
     p.setBrush(bottom)
     p.drawRect(QRectF(off, off, art, art))
     rim = QLinearGradient(0, off, 0, off + art)
-    rim.setColorAt(0.0, QColor(255, 255, 255, 64))
-    rim.setColorAt(0.5, QColor(255, 255, 255, 6))
-    rim.setColorAt(1.0, QColor(255, 255, 255, 18))
+    rim.setColorAt(0.0, QColor(255, 255, 255, 125))
+    rim.setColorAt(0.5, QColor(255, 255, 255, 10))
+    rim.setColorAt(1.0, QColor(255, 255, 255, 34))
     pen = QPen()
-    pen.setWidthF(max(1.5, size * 0.003))
+    pen.setWidthF(max(1.5, big * 0.004))
     pen.setBrush(rim)
     p.setPen(pen)
     p.setBrush(Qt.BrushStyle.NoBrush)
     p.drawPath(shape)
     p.restore()
 
-    # 4) 主标记：立体挤出 + 白色前面 + 悬浮投影
-    marks, ex_dx, ex_dy = mark_paths(size, small=small)
-    union = marks[0][0].boundingRect()
-    for path, _, _ in marks[1:]:
-        union = union.united(path.boundingRect())
-
-    lift = _qimage(size, size)
-    lp = QPainter(lift)
-    lp.setRenderHint(QPainter.RenderHint.Antialiasing)
-    lp.setPen(Qt.PenStyle.NoPen)
-    lp.setBrush(QColor(16, 28, 34, 255))
-    for path, _, _ in marks:
-        lp.drawPath(path)
-    lp.end()
-    lift_blur = blurred(lift, max(1.5, size * 0.014))
-    p.setOpacity(0.32)
-    p.drawImage(0, max(1, round(size * 0.007)), lift_blur)
-    p.setOpacity(1.0)
-
-    p.setPen(Qt.PenStyle.NoPen)
-    for i in range(EXTRUDE_LAYERS, 0, -1):
-        t = i / EXTRUDE_LAYERS
-        p.setBrush(lerp_color(SIDE_NEAR, SIDE_FAR, t))
-        for path, _, _ in marks:
-            p.save()
-            p.translate(ex_dx * t, ex_dy * t)
-            p.drawPath(path)
-            p.restore()
-    for path, top, bottom in marks:
-        g = QLinearGradient(0, path.boundingRect().top(), 0, path.boundingRect().bottom())
-        g.setColorAt(0.0, QColor(top))
-        g.setColorAt(1.0, QColor(bottom))
-        p.setBrush(g)
-        p.drawPath(path)
+    # 4) 主标记：挤出 + 白色前面 + 鼓起光影
+    draw_mark(p, big, small=small)
 
     p.end()
+
+    if ss > 1:
+        return img.scaled(size, size, Qt.AspectRatioMode.IgnoreAspectRatio,
+                          Qt.TransformationMode.SmoothTransformation)
     return img
+
+
+_render_cache: dict[tuple[int, bool], QImage] = {}
+
+
+def render_logo(size: int, *, small: bool = False) -> QImage:
+    key = (size, small)
+    if key not in _render_cache:
+        _ensure_font()
+        _render_cache[key] = draw_logo(size, small=small)
+    return _render_cache[key]
 
 
 def write_png(img: QImage, path: Path) -> None:
@@ -321,22 +388,21 @@ def build_iconset(master: QImage) -> None:
     ]
     for name, px in specs:
         if px <= 64:
-            img = draw_logo(px, small=True)
+            img = render_logo(px, small=True)
+        elif px == 1024:
+            img = master
         else:
-            img = master.scaled(px, px, Qt.AspectRatioMode.IgnoreAspectRatio,
-                                Qt.TransformationMode.SmoothTransformation)
+            img = render_logo(px)
         write_png(img, ICONSET_DIR / name)
     subprocess.run(["iconutil", "-c", "icns", str(ICONSET_DIR), "-o", str(OUT_DIR / "Section2.icns")],
                    check=True)
 
 
-def build_ico(master: QImage) -> None:
+def build_ico() -> None:
     sizes = [16, 24, 32, 48, 64, 128, 256]
     entries = []
     for px in sizes:
-        img = (draw_logo(px, small=True) if px <= 32
-               else master.scaled(px, px, Qt.AspectRatioMode.IgnoreAspectRatio,
-                                  Qt.TransformationMode.SmoothTransformation))
+        img = render_logo(px, small=px <= 64)
         entries.append((px, px, png_bytes(img)))
     write_ico(entries, OUT_DIR / "section2.ico")
 
@@ -379,17 +445,15 @@ def build_preview(master: QImage, original: QImage) -> None:
 
 
 def main() -> None:
-    QFontDatabase.addApplicationFont(str(FUTURA_TTC))
+    _ensure_font()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
 
-    master = draw_logo(CANVAS)
+    master = render_logo(CANVAS)
     write_png(master, OUT_DIR / "logo_1024.png")
     build_iconset(master)
-    build_ico(master)
-    write_png(master.scaled(512, 512, Qt.AspectRatioMode.IgnoreAspectRatio,
-                            Qt.TransformationMode.SmoothTransformation),
-              OUT_DIR / "icon_512.png")
+    build_ico()
+    write_png(render_logo(512), OUT_DIR / "icon_512.png")
 
     if "--preview" in sys.argv:
         original = QImage(str(ORIGINAL_PNG))
