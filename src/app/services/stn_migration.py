@@ -22,12 +22,15 @@ from app.core.version import SCHEMA_VERSION
 from app.core.models import base as orm
 from app.core.models.models import (
     CATEGORY_NAMES,
+    MULTI_PE_TEXT,
+    MULTI_PF_TEXT,
     PRECIPITATION_COLUMNS,
     BasicInfo,
     Component,
     ComponentParam,
     Element,
     ElementParam,
+    ElementPrinciple,
     EnclosureCushion,
     EnclosureLevel,
     EnclosureWork,
@@ -151,6 +154,9 @@ class _LegacyElement:
     source: str = ""
     pipes: list[_LegacyPipe] = field(default_factory=list)
     params: list[tuple[str, str]] = field(default_factory=list)
+    #: 多原则引用（旧版 PEname / PFname 字典：原则名 → 比例系数）
+    pe_refs: list[tuple[str, float]] = field(default_factory=list)
+    pf_refs: list[tuple[str, float]] = field(default_factory=list)
 
 
 @dataclass
@@ -362,6 +368,19 @@ def _parse_element(node) -> _LegacyElement:
         )
     for param in node.findall("Param"):
         element.params.append((_text(param, "key", ""), _text(param, "value", "")))
+    for kind, target in (("PEname", "pe"), ("PFname", "pf")):
+        for ref_node in node.findall(kind):
+            name = _text(ref_node, "key", "")
+            if not name:
+                continue
+            try:
+                ratio = float(_text(ref_node, "value", "1") or 1)
+            except ValueError:
+                ratio = 1.0
+            if target == "pe":
+                element.pe_refs.append((name, ratio))
+            else:
+                element.pf_refs.append((name, ratio))
     return element
 
 
@@ -442,13 +461,21 @@ def _migrate_inner(source: Path, target: Path) -> MigrationReport:
             report.units += 1
             for element_index, legacy_element in enumerate(legacy_unit.elements):
                 category = _CATEGORY_BY_NAME.get(legacy_element.category, 0)
-                pe_name = legacy_element.pe_name or legacy_element.main_pe_name
-                if legacy_element.pe_name and legacy_element.pe_name not in _pe_names(legacy):
-                    report.warnings.append(
-                        f"构件“{legacy_element.name or '(未命名)'}”引用的围护原则“{legacy_element.pe_name}”"
-                        "在旧文件中不存在，已改为默认引用。"
-                    )
-                    pe_name = ""
+                display_name = legacy_element.name or '(未命名)'
+                # 多原则引用（旧版 PEname / PFname 字典）→ 引用行 + show 名
+                pe_name, pe_refs, pe_warnings = _migrate_principle_refs(
+                    "pe", legacy_element, _pe_names(legacy),
+                    legacy.enclosures and legacy.enclosures[0].name or "",
+                )
+                pf_name, pf_refs, pf_warnings = _migrate_principle_refs(
+                    "pf", legacy_element, _pf_names(legacy),
+                    legacy.foundations and legacy.foundations[0][0] or "",
+                )
+                for warning in pe_warnings + pf_warnings:
+                    report.warnings.append(f"构件“{display_name}”{warning}")
+                main_pe_name = legacy_element.main_pe_name
+                if len(pe_refs) > 1 and main_pe_name not in {name for name, _ratio in pe_refs}:
+                    main_pe_name = pe_refs[0][0]
                 element = Element(
                     unit_id=unit.id,
                     category=category,
@@ -456,17 +483,27 @@ def _migrate_inner(source: Path, target: Path) -> MigrationReport:
                     depth=legacy_element.depth or "0",
                     amount=legacy_element.amount or "0",
                     pe_name=pe_name,
-                    pf_name=legacy_element.pf_name if legacy_element.pf_name in _pf_names(legacy) else "",
+                    pf_name=pf_name,
+                    main_pe_name=main_pe_name,
                     source=legacy_element.source or "",
                     order_no=element_index,
                 )
-                if not pe_name and legacy.enclosures:
-                    element.pe_name = legacy.enclosures[0].name
-                    report.warnings.append(
-                        f"构件“{legacy_element.name or '(未命名)'}”未指定围护原则，已引用“{element.pe_name}”。"
-                    )
                 session.add(element)
                 session.flush()
+                for order, (ref_name, ratio) in enumerate(pe_refs):
+                    session.add(
+                        ElementPrinciple(
+                            element_id=element.id, kind="pe", name=ref_name,
+                            ratio=ratio, order_no=order,
+                        )
+                    )
+                for order, (ref_name, ratio) in enumerate(pf_refs):
+                    session.add(
+                        ElementPrinciple(
+                            element_id=element.id, kind="pf", name=ref_name,
+                            ratio=ratio, order_no=order,
+                        )
+                    )
                 report.elements += 1
                 for pipe_index, legacy_pipe in enumerate(legacy_element.pipes):
                     session.add(
@@ -513,6 +550,42 @@ def _pe_names(legacy: LegacyProject) -> set[str]:
 
 def _pf_names(legacy: LegacyProject) -> set[str]:
     return {name for name, _replacements, _component in legacy.foundations}
+
+
+def _migrate_principle_refs(
+    kind: str,
+    element: _LegacyElement,
+    known_names: set[str],
+    fallback: str,
+) -> tuple[str, list[tuple[str, float]], list[str]]:
+    """迁移一个构件的原则引用，返回 (show 名, 有效引用列表, 警告列表)。
+
+    多原则引用（旧版 PEname 字典）优先；没有引用行时按 show 名退化成
+    单原则（比例 1）。引用的原则在旧文件中不存在 → 跳过该条并记警告；
+    一条有效的都不剩 → 回落引用第一条原则（与旧版 GetData 一致）。
+    """
+    multi_text = MULTI_PE_TEXT if kind == "pe" else MULTI_PF_TEXT
+    label = "围护" if kind == "pe" else "地基"
+    warnings: list[str] = []
+    raw_refs = element.pe_refs if kind == "pe" else element.pf_refs
+    show = element.pe_name if kind == "pe" else element.pf_name
+    if not raw_refs and show and show != multi_text:
+        raw_refs = [(show, 1.0)]
+    refs: list[tuple[str, float]] = []
+    for name, ratio in raw_refs:
+        if name in known_names:
+            refs.append((name, ratio))
+        else:
+            warnings.append(f"引用的{label}原则“{name}”在旧文件中不存在，已跳过。")
+    if not refs:
+        if fallback:
+            refs = [(fallback, 1.0)]
+            warnings.append(f"未指定{label}原则，已引用“{fallback}”。")
+        else:
+            return "", [], warnings
+    if len(refs) > 1:
+        return multi_text, refs, warnings
+    return refs[0][0], refs, warnings
 
 
 def _seed_widths(session, enclosure: PcpEnclosure, table: dict[str, dict[int, float]], kind: str) -> None:

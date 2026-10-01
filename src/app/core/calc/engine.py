@@ -12,12 +12,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from app.core.evaluator import evaluate_or_default, format_number
+from app.core.evaluator import evaluate, evaluate_or_default, format_number
 from app.core.models.models import (
     CATEGORY_BURIED,
     CATEGORY_ENCASED,
     CATEGORY_BOX_CULVERT,
     CATEGORY_GALLERY,
+    CATEGORY_STRUCTURE,
+    MULTI_PE_TEXT,
+    MULTI_PF_TEXT,
     Element,
     PcpEnclosure,
     PcpFoundation,
@@ -26,6 +29,7 @@ from app.services import atlas as atlas_service
 from app.services.atlas import AtlasQuery, PipeSpec, resolve_atlas
 from app.core.calc import foundation, groove, precipitation
 from app.core.calc.tracer import QDict, fmt
+from app.core.evaluator import EvalError
 
 _CYCLE = "参数循环引用"
 
@@ -54,10 +58,22 @@ _DEFAULT_PARAMS: dict[int, dict[str, float]] = {
     },
 }
 
+#: 附属构筑物默认参数（旧版 mcE7 构造函数；值为文本，不能并入上面的数值表）
+STRUCTURE_DEFAULT_PARAMS: tuple[tuple[str, str], ...] = (
+    ("-名称", "自定义构筑物"),
+    ("-单位", "个"),
+)
+
 
 @dataclass
 class ElementInput:
-    """参与计算的构件快照（深度/数量已求值，参数已合并默认值）。"""
+    """参与计算的构件快照（深度/数量已求值，参数已合并默认值）。
+
+    ``pe_refs`` / ``pf_refs`` 为多原则引用（旧版 PEname / PFname 字典，
+    (原则, 比例) 列表）；为空时退化为单原则 ``pe`` × ``pf``（比例 1）。
+    沟槽断面 / 降水 / 围护 / 特殊地基按 pe×pf 组合逐对计算后乘比例求和；
+    回填材质命名、支撑、管道基础用主原则 ``pe``（旧版 mainPEname）。
+    """
 
     category: int
     name: str = ""
@@ -66,8 +82,12 @@ class ElementInput:
     pipes: list[PipeSpec] = field(default_factory=list)
     pipe_contents: list[float] = field(default_factory=list)
     params: dict[str, float] = field(default_factory=dict)
+    #: 构件参数原文（附属构筑物的工程量键值对用，含“-名称”等非数值参数）
+    raw_params: dict[str, str] = field(default_factory=dict)
     pe: PcpEnclosure | None = None
     pf: PcpFoundation | None = None
+    pe_refs: list[tuple[PcpEnclosure, float]] = field(default_factory=list)
+    pf_refs: list[tuple[PcpFoundation, float]] = field(default_factory=list)
 
     @property
     def size_b(self) -> float:
@@ -99,6 +119,8 @@ class ElementInput:
 
     def spec(self) -> str:
         """规格（旧版 Specification()，清单项目行用）。"""
+        if self.category == CATEGORY_STRUCTURE:
+            return self.raw_params.get("-名称", "")
         if self.category == 1:
             pipe = self.pipes[0] if self.pipes else None
             return f"{pipe.mat} Dn{format_number(pipe.dn)}" if pipe else ""
@@ -120,14 +142,24 @@ class ElementInput:
         return ""
 
 
-def build_element_input(element: Element, pe: PcpEnclosure | None, pf: PcpFoundation | None) -> ElementInput:
-    """从 ORM 构件构造计算输入（深度/数量求值，扩展参数合并默认值）。"""
+def build_element_input(
+    element: Element,
+    pe: PcpEnclosure | None,
+    pf: PcpFoundation | None,
+    pe_refs: list[tuple[PcpEnclosure, float]] | None = None,
+    pf_refs: list[tuple[PcpFoundation, float]] | None = None,
+) -> ElementInput:
+    """从 ORM 构件构造计算输入（深度/数量求值，扩展参数合并默认值）。
+
+    ``pe_refs`` / ``pf_refs`` 为 (原则, 比例) 多原则引用；None 时按单原则处理。
+    """
+    raw_params = {param.key: param.value for param in element.params}
     params = dict(_DEFAULT_PARAMS.get(element.category, {}))
-    for param in element.params:
+    for key, text in raw_params.items():
         try:
-            params[param.key] = float(evaluate_or_default(param.value))
+            params[key] = float(evaluate_or_default(text))
         except Exception:
-            params[param.key] = 0.0
+            params[key] = 0.0
     pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn) for pipe in element.pipes]
     contents = [evaluate_or_default(pipe.content) for pipe in element.pipes]
     return ElementInput(
@@ -138,8 +170,11 @@ def build_element_input(element: Element, pe: PcpEnclosure | None, pf: PcpFounda
         pipes=pipes,
         pipe_contents=contents,
         params=params,
+        raw_params=raw_params,
         pe=pe,
         pf=pf,
+        pe_refs=[] if pe_refs is None else list(pe_refs),
+        pf_refs=[] if pf_refs is None else list(pf_refs),
     )
 
 
@@ -263,46 +298,98 @@ def foundation_thickness(pf: PcpFoundation) -> float:
 
 
 def compute_element(info: ElementInput) -> QDict | None:
-    """计算一个构件条目的工程量；数量为 0 或原则缺失时返回 None。"""
-    pe = info.pe
-    pf = info.pf
-    if info.amount == 0 or pe is None or pf is None:
-        return None
+    """计算一个构件条目的工程量；数量为 0 或原则缺失时返回 None。
 
-    at = resolve_atlas(build_atlas_query(info, pe))
-    c1 = at.c1 if at.c1 != 0 else cushion_thickness(pe)
+    多原则（旧版 mscGroove.Cal）：沟槽断面 + 降水 + 围护(F) + 特殊地基按
+    pe×pf 组合逐对计算后乘 (pe 比例 × pf 比例) 求和；支撑(Z)、管道基础、
+    管材只用主原则（旧版 mainPEname）计算，不乘比例。
+    """
+    if info.category == CATEGORY_STRUCTURE:
+        return compute_structure(info)
+    main_pe = info.pe
+    pf_main = info.pf
+    if info.amount == 0 or main_pe is None or pf_main is None:
+        return None
+    pe_refs = info.pe_refs or [(main_pe, 1.0)]
+    pf_refs = info.pf_refs or [(pf_main, 1.0)]
+
+    at = resolve_atlas(build_atlas_query(info, main_pe))
+    c1 = at.c1 if at.c1 != 0 else cushion_thickness(main_pe)
     at_with_c1 = replace(at, c1=c1)
 
     per_meter = QDict()
-    groove_depth = info.depth + groove.mm2m(foundation_thickness(pf) + at.t + c1)
-    work = choice_work(pe, groove_depth)
-    if work is None:
-        return None
-    if not groove.cal_groove(pe, work, pf, at_with_c1, info.size_b, info.size_h, groove_depth, per_meter):
-        return None
-    precipitation.cal_precipitation(pe, work, pf, at_with_c1, info, groove_depth, per_meter)
-    works_quantities(work, groove_depth, info.amount, "F", at_with_c1, info, per_meter, "围护")
-    special = pf.components[0] if pf.components else None
-    if special is not None:
-        component_quantities(
-            special, groove_depth, groove.groove_width(at_with_c1, info.size_b), info.amount,
-            "F", per_meter, "特殊地基",
-        )
+    for pe, pe_ratio in pe_refs:
+        for pf, pf_ratio in pf_refs:
+            pair = QDict()
+            groove_depth = info.depth + groove.mm2m(foundation_thickness(pf) + at.t + c1)
+            work = choice_work(pe, groove_depth)
+            if work is None:
+                return None
+            if not groove.cal_groove(pe, work, pf, at_with_c1, info.size_b, info.size_h, groove_depth, pair):
+                return None
+            precipitation.cal_precipitation(pe, work, pf, at_with_c1, info, groove_depth, pair)
+            works_quantities(work, groove_depth, info.amount, "F", at_with_c1, info, pair, "围护")
+            special = pf.components[0] if pf.components else None
+            if special is not None:
+                component_quantities(
+                    special, groove_depth, groove.groove_width(at_with_c1, info.size_b), info.amount,
+                    "F", pair, "特殊地基",
+                )
+            pair.scale(pe_ratio * pf_ratio)
+            per_meter.extend(pair)
 
-    # 支撑（Z 类公式）：不考虑换填层厚度（旧版 Cal 末尾）
+    # 支撑（Z 类公式）：只用主原则、不考虑换填层厚度（旧版 Cal 末尾）
     support_depth = info.depth + groove.mm2m(at.t + c1)
-    support_work = choice_work(pe, support_depth)
+    support_work = choice_work(main_pe, support_depth)
     if support_work is not None:
         works_quantities(support_work, support_depth, info.amount, "Z", at_with_c1, info, per_meter, "支撑")
 
-    # 管道基础（扣弓形占土）+ 管材
-    foundation.cal_found(info, pe, at_with_c1, per_meter)
+    # 管道基础（扣弓形占土）+ 管材：主原则
+    foundation.cal_found(info, main_pe, at_with_c1, per_meter)
     if info.category == CATEGORY_ENCASED:
         foundation.encased_pipe_deduction(info, per_meter)
     foundation.cal_pipes(info, per_meter)
 
     per_meter.scale(info.amount)
     return per_meter
+
+
+def compute_structure(info: ElementInput) -> QDict | None:
+    """附属构筑物（旧版 mcE7.getDQ）：不参与沟槽计算。
+
+    * 非“-”开头的参数逐项输出为工程量（键本身即“类别|项目|单位”定额键，
+      如 构筑物|垫层|m3），值可以是算式；
+    * 同时存在“-井筒 个”与“-井筒 m3/m”时追加井筒方量：
+      个数 × max(埋深 − 井高, 0.4) × 每米方量；
+    * 全部 × 数量（个数）。
+    """
+    if info.amount == 0:
+        return None
+    out = QDict()
+    for key, text in info.raw_params.items():
+        if not key or key.startswith("-"):
+            continue
+        value = evaluate_or_default(text)
+        out.add(key, value, text or fmt(value), "构筑物")
+    cnt_text = info.raw_params.get("-井筒 个", "").strip()
+    rate_text = info.raw_params.get("-井筒 m3/m", "").strip()
+    if cnt_text and rate_text:
+        count = evaluate_or_default(cnt_text)
+        rate = evaluate_or_default(rate_text)
+        well_h = 0.4  # 旧版 mcE7：默认最小井筒高度
+        if "-井高 m" in info.raw_params:
+            try:
+                well_h = max(info.depth - evaluate(info.raw_params["-井高 m"]), 0.4)
+            except EvalError:
+                pass
+        out.add(
+            "构筑物|井筒|m3",
+            count * well_h * rate,
+            f"{fmt(count)}×{fmt(well_h)}×{fmt(rate)}",
+            "井筒",
+        )
+    out.scale(info.amount)
+    return out
 
 
 def works_quantities(work, depth: float, count: float, cat: str, at, info: ElementInput, out: QDict, note: str) -> None:
@@ -333,17 +420,40 @@ def replace(at, **changes):
 
 
 def compute_from_orm(element: Element, session) -> QDict | None:
-    """便利入口：从 ORM 构件取原则并计算。"""
-    pe = session.get(PcpEnclosure, _id_by_name(session, PcpEnclosure, element.pe_name)) if element.pe_name else None
-    pf = session.get(PcpFoundation, _id_by_name(session, PcpFoundation, element.pf_name)) if element.pf_name else None
-    info = build_element_input(element, pe, pf)
+    """便利入口：从 ORM 构件取原则并计算（含多原则引用与附属构筑物）。"""
+    pe, pf, pe_refs, pf_refs = resolve_element_principles(element, session)
+    info = build_element_input(element, pe, pf, pe_refs, pf_refs)
     return compute_element(info)
 
 
-def _id_by_name(session, model, name: str) -> int | None:
+def resolve_element_principles(element: Element, session):
+    """按构件的多原则引用解析出 (主 pe, 主 pf, [(pe, 比例)...], [(pf, 比例)...)])。
+
+    引用行缺失时退化为单原则（pe_name/pf_name，比例 1）；主原则取
+    main_pe_name（不在引用列表里时取第一条引用）。
+    """
     from sqlalchemy import select
 
-    return session.scalar(select(model.id).where(model.name == name))
+    def _by_name(model, name: str):
+        if not name:
+            return None
+        return session.get(model, session.scalar(select(model.id).where(model.name == name)))
+
+    def _refs(kind: str, model, fallback: str):
+        rows = element.pe_refs_sorted() if kind == "pe" else element.pf_refs_sorted()
+        refs = [(row.name, row.ratio) for row in rows]
+        if not refs:
+            refs = [(fallback, 1.0)] if fallback else []
+        resolved = [( _by_name(model, name), ratio) for name, ratio in refs]
+        return [(principle, ratio) for principle, ratio in resolved if principle is not None]
+
+    pe_refs = _refs("pe", PcpEnclosure, element.pe_name if element.pe_name != MULTI_PE_TEXT else "")
+    pf_refs = _refs("pf", PcpFoundation, element.pf_name if element.pf_name != MULTI_PF_TEXT else "")
+    main_pe = _by_name(PcpEnclosure, element.main_pe_name) if element.main_pe_name else None
+    if main_pe is None and pe_refs:
+        main_pe = pe_refs[0][0]
+    main_pf = pf_refs[0][0] if pf_refs else None
+    return main_pe, main_pf, pe_refs, pf_refs
 
 
 def unit_of(category: int) -> str:

@@ -16,7 +16,17 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from app.core.evaluator import EvalError, evaluate, format_number
 from app.core.event_bus import bus
 from app.core.models import base as orm
-from app.core.models.models import CATEGORY_BURIED, Element, ElementParam, Pipe, unit_of
+from app.core.models.models import (
+    CATEGORY_BURIED,
+    CATEGORY_STRUCTURE,
+    MULTI_PE_TEXT,
+    MULTI_PF_TEXT,
+    Element,
+    ElementParam,
+    ElementPrinciple,
+    Pipe,
+    unit_of,
+)
 from app.services import project_io
 
 _ELEMENT_FIELDS = {"category", "name", "depth", "amount", "pe_name", "pf_name", "source", "order_no"}
@@ -63,6 +73,17 @@ class ParamRow:
     id: int
     key: str
     value: str
+
+
+@dataclass
+class PrincipleRefRow:
+    """多原则引用行（旧版 dGVPE / dGVPF 的一行）。"""
+
+    id: int
+    name: str
+    ratio: float
+    order_no: int
+    is_main: bool = False
 
 
 def _evaluate_field(text: str) -> tuple[float, str]:
@@ -117,8 +138,13 @@ def compute_unit(unit_id: int):
 
     返回 ``(定额汇总 QDict, [(构件行, 该构件的 QDict)])``；构件计算失败
     （数量为 0 / 原则缺失 / 覆土不足）时其 QDict 为空字典并在行上带错误说明。
+    多原则引用（旧版 PEname 字典）按 pe×pf 组合与比例在引擎里合并。
     """
-    from app.core.calc.engine import build_element_input, compute_element
+    from app.core.calc.engine import (
+        build_element_input,
+        compute_element,
+        resolve_element_principles,
+    )
     from app.core.calc.tracer import QDict
     from app.core.models.models import PcpEnclosure, PcpFoundation
 
@@ -129,13 +155,15 @@ def compute_unit(unit_id: int):
     session = orm.session()
     for element in _elements_of(unit_id):
         row = _element_row(element)
-        pe = session.get(PcpEnclosure, _principle_id(PcpEnclosure, element.pe_name)) if element.pe_name else None
-        pf = session.get(PcpFoundation, _principle_id(PcpFoundation, element.pf_name)) if element.pf_name else None
-        info = build_element_input(element, pe, pf)
+        pe, pf, pe_refs, pf_refs = resolve_element_principles(element, session)
+        info = build_element_input(element, pe, pf, pe_refs, pf_refs)
         row.spec = info.spec()
         try:
             result = compute_element(info) or QDict()
-            row.error = "" if result else "覆土不足或缺少可用的围护/地基原则"
+            if element.category == CATEGORY_STRUCTURE and not result:
+                row.error = "数量为 0，未生成工程量。"
+            else:
+                row.error = "" if result else "覆土不足或缺少可用的围护/地基原则"
         except Exception as error:  # 单条失败不拖垮整表
             result = QDict()
             row.error = str(error)
@@ -147,6 +175,13 @@ def compute_unit(unit_id: int):
 def _element_row(element: Element) -> ElementRow:
     depth_value, depth_error = _evaluate_field(element.depth)
     amount_value, amount_error = _evaluate_field(element.amount)
+    unit = unit_of(element.category)
+    if element.category == CATEGORY_STRUCTURE:
+        # 旧版 mcElement.Unit getter：Param 里的“-单位”覆盖默认单位（座/个/套…）
+        for param in element.params:
+            if param.key == "-单位" and param.value.strip():
+                unit = param.value.strip()
+                break
     return ElementRow(
         id=element.id,
         category=element.category,
@@ -156,7 +191,7 @@ def _element_row(element: Element) -> ElementRow:
         pe_name=element.pe_name,
         pf_name=element.pf_name,
         order_no=element.order_no,
-        unit=unit_of(element.category),
+        unit=unit,
         depth_value=depth_value,
         amount_value=amount_value,
         depth_error=depth_error,
@@ -165,15 +200,15 @@ def _element_row(element: Element) -> ElementRow:
     )
 
 
-def _principle_id(model, name: str) -> int | None:
-    from sqlalchemy import select
-
-    return orm.session().scalar(select(model.id).where(model.name == name))
-
-
 # --------------------------------------------------------------------------- #
 # 数据操作（界面与 AI 工具共用）
 # --------------------------------------------------------------------------- #
+_STRUCTURE_DEFAULT_PARAMS = (
+    ("-名称", "自定义构筑物"),
+    ("-单位", "个"),
+)
+
+
 def create_element(
     unit_id: int,
     category: int = CATEGORY_BURIED,
@@ -186,25 +221,32 @@ def create_element(
     pipes: list[tuple[str, int, str]] | None = None,
     params: list[tuple[str, str]] | None = None,
     order_no: int | None = None,
+    pe_refs: list[tuple[str, float]] | None = None,
+    pf_refs: list[tuple[str, float]] | None = None,
+    main_pe_name: str = "",
 ) -> Element | None:
     """新增构件条目；未指定原则时取库中第一条（旧版 mcElement.GetData 的做法）。
 
     包封埋管 / 箱涵 / 管廊按旧版构造函数补默认扩展参数（包封宽、净宽、含钢量…）；
-    传入 pipes/params（构件库模板）时以传入值为准，缺省参数才用默认值。
+    构筑物（附属构筑物）补“-名称/-单位”两个默认参数且不带管材；
+    ``pe_refs`` / ``pf_refs`` 传入多原则引用（旧版 PEname / PFname 字典，
+    多于一条时 show 名自动记为“多围护原则”/“多地基原则”）。
     """
     if not project_io.is_open() or not _unit_exists(unit_id):
         return None
     session = orm.session()
     enclosure_names = project_io.enclosure_names()
     foundation_names = project_io.foundation_names()
+    category = int(category)
     element = Element(
         unit_id=unit_id,
-        category=int(category),
+        category=category,
         name=name,
         depth=str(depth),
         amount=str(amount),
         pe_name=pe_name if pe_name is not None else (enclosure_names[0] if enclosure_names else ""),
         pf_name=pf_name if pf_name is not None else (foundation_names[0] if foundation_names else ""),
+        main_pe_name=main_pe_name,
         source=source,
         order_no=order_no
         if order_no is not None
@@ -212,23 +254,60 @@ def create_element(
     )
     from app.core.calc.engine import _DEFAULT_PARAMS
 
-    if pipes:
+    if pipes and category != CATEGORY_STRUCTURE:
         for mat, dn, content in pipes:
             element.pipes.append(Pipe(mat=mat, dn=int(dn), content=str(content)))
     if params:
         for key, value in params:
             element.params.append(ElementParam(key=key, value=str(value)))
+    elif category == CATEGORY_STRUCTURE:
+        for key, value in _STRUCTURE_DEFAULT_PARAMS:
+            element.params.append(ElementParam(key=key, value=value))
     else:
-        for key, value in _DEFAULT_PARAMS.get(int(category), {}).items():
+        for key, value in _DEFAULT_PARAMS.get(category, {}).items():
             element.params.append(ElementParam(key=key, value=format_number(value)))
     session.add(element)
+    session.flush()
+    _seed_principle_refs(session, element, pe_refs, pf_refs)
     project_io.commit()
     bus().unit_changed.emit(unit_id)
     return element
 
 
+def _seed_principle_refs(
+    session,
+    element: Element,
+    pe_refs: list[tuple[str, float]] | None,
+    pf_refs: list[tuple[str, float]] | None,
+) -> None:
+    """写入多原则引用行并按旧版 setter 语义同步 show 名 / 主原则。"""
+    if pe_refs is None:
+        pe_refs = [(element.pe_name, 1.0)] if element.pe_name else []
+    if pf_refs is None:
+        pf_refs = [(element.pf_name, 1.0)] if element.pf_name else []
+    for order, (ref_name, ratio) in enumerate(pe_refs):
+        element.principle_refs.append(
+            ElementPrinciple(kind="pe", name=ref_name, ratio=float(ratio), order_no=order)
+        )
+    for order, (ref_name, ratio) in enumerate(pf_refs):
+        element.principle_refs.append(
+            ElementPrinciple(kind="pf", name=ref_name, ratio=float(ratio), order_no=order)
+        )
+    if len(pe_refs) > 1:
+        element.pe_name = MULTI_PE_TEXT
+        if not element.main_pe_name or element.main_pe_name == MULTI_PE_TEXT:
+            element.main_pe_name = pe_refs[0][0]
+    elif pe_refs:
+        element.pe_name = pe_refs[0][0]
+        element.main_pe_name = element.pe_name
+    if len(pf_refs) > 1:
+        element.pf_name = MULTI_PF_TEXT
+    elif pf_refs:
+        element.pf_name = pf_refs[0][0]
+
+
 def element_snapshot(element_id: int) -> dict | None:
-    """构件条目完整快照（复制/剪切/粘贴用，含管材与参数）。"""
+    """构件条目完整快照（复制/剪切/粘贴用，含管材、参数与多原则引用）。"""
     element = _element(element_id)
     if element is None:
         return None
@@ -239,9 +318,12 @@ def element_snapshot(element_id: int) -> dict | None:
         "amount": element.amount,
         "pe_name": element.pe_name,
         "pf_name": element.pf_name,
+        "main_pe_name": element.main_pe_name,
         "source": element.source,
         "pipes": [(pipe.mat, pipe.dn, pipe.content) for pipe in element.pipes],
         "params": [(param.key, param.value) for param in element.params],
+        "pe_refs": [(ref.name, ref.ratio) for ref in element.pe_refs_sorted()],
+        "pf_refs": [(ref.name, ref.ratio) for ref in element.pf_refs_sorted()],
     }
 
 
@@ -266,18 +348,27 @@ def insert_element_data(
             for item in _elements_of(unit_id):
                 if item.order_no >= order_no:
                     item.order_no += 1
+    pe_refs = data.get("pe_refs") or None
+    if pe_refs is None:
+        pe_name = data.get("pe_name")
+        pe_refs = [(pe_name, 1.0)] if pe_name and pe_name != MULTI_PE_TEXT else None
+    pf_refs = data.get("pf_refs") or None
+    if pf_refs is None:
+        pf_name = data.get("pf_name")
+        pf_refs = [(pf_name, 1.0)] if pf_name and pf_name != MULTI_PF_TEXT else None
     return create_element(
         unit_id,
         category=data.get("category", CATEGORY_BURIED),
         name=data.get("name", ""),
         depth=data.get("depth", "0"),
         amount=data.get("amount", "0"),
-        pe_name=data.get("pe_name"),
-        pf_name=data.get("pf_name"),
         source=data.get("source", ""),
         pipes=list(data.get("pipes") or []) or None,
         params=list(data.get("params") or []) or None,
         order_no=order_no,
+        pe_refs=pe_refs,
+        pf_refs=pf_refs,
+        main_pe_name=data.get("main_pe_name", "") or "",
     )
 
 
@@ -306,17 +397,65 @@ def insert_blank_element(unit_id: int, before_element_id: int | None = None) -> 
 
 
 def update_element(element_id: int, **fields) -> Element | None:
-    """修改构件字段（category / name / depth / amount / pe_name / pf_name）。"""
+    """修改构件字段（category / name / depth / amount / pe_name / pf_name）。
+
+    pe_name / pf_name 按旧版 showPEname / showPFname setter 语义处理：
+    选“多围护原则/多地基原则”只切换显示名、保留引用行；选具体原则则把
+    引用重置为该原则（比例 1）。类别改为构筑物时清空管材并重置默认参数。
+    """
     element = _element(element_id)
     if element is None:
         return None
+    category_changed = "category" in fields and int(fields["category"]) != element.category
     for key, value in fields.items():
         if key not in _ELEMENT_FIELDS:
             continue
+        if key == "pe_name":
+            _apply_show_name(element, "pe", str(value))
+            continue
+        if key == "pf_name":
+            _apply_show_name(element, "pf", str(value))
+            continue
         setattr(element, key, int(value) if key in ("category", "order_no") else str(value))
+    if category_changed and element.category == CATEGORY_STRUCTURE:
+        # 旧版 mcE7 构造：mList.Clear() + 默认参数（构筑物不带管材）
+        element.main_pe_name = element.main_pe_name or element.pe_name
+        for pipe in list(element.pipes):
+            element.pipes.remove(pipe)  # delete-orphan 级联删除
+        for param in list(element.params):
+            element.params.remove(param)
+        for key, value in _STRUCTURE_DEFAULT_PARAMS:
+            element.params.append(ElementParam(key=key, value=value))
     project_io.commit()
     bus().unit_changed.emit(element.unit_id)
     return element
+
+
+def _apply_show_name(element: Element, kind: str, value: str) -> None:
+    """旧版 showPEname / showPFname setter：具体原则重置引用为 1 条，多原则只改显示名。"""
+    multi_text = MULTI_PE_TEXT if kind == "pe" else MULTI_PF_TEXT
+    refs = element.pe_refs_sorted() if kind == "pe" else element.pf_refs_sorted()
+    if value == multi_text:
+        # 切到多原则：引用行原样保留；主原则失效时回落到第一条引用
+        if kind == "pe":
+            element.pe_name = value
+            ref_names = [ref.name for ref in refs]
+            if element.main_pe_name not in ref_names:
+                element.main_pe_name = ref_names[0] if ref_names else ""
+        else:
+            element.pf_name = value
+        return
+    # 切到具体原则：引用重置为该原则（旧版 PEname.Clear() + Add(name, 1)）
+    for ref in refs:
+        element.principle_refs.remove(ref)  # delete-orphan 级联删除
+    element.principle_refs.append(
+        ElementPrinciple(kind=kind, name=value, ratio=1.0, order_no=0)
+    )
+    if kind == "pe":
+        element.pe_name = value
+        element.main_pe_name = value
+    else:
+        element.pf_name = value
 
 
 def delete_element(element_id: int) -> None:
@@ -414,6 +553,101 @@ def delete_param(param_id: int) -> None:
     orm.session().delete(param)
     project_io.commit()
     bus().unit_changed.emit(unit_id)
+
+
+# --------------------------------------------------------------------------- #
+# 多原则引用（旧版 FormUnit 的 dGVPE / dGVPF 子表）
+# --------------------------------------------------------------------------- #
+def principle_ref_rows(element_id: int, kind: str) -> list[PrincipleRefRow]:
+    """读取某构件的多原则引用（kind = "pe" / "pf"）。"""
+    element = _element(element_id)
+    if element is None:
+        return []
+    refs = element.pe_refs_sorted() if kind == "pe" else element.pf_refs_sorted()
+    return [
+        PrincipleRefRow(
+            id=ref.id,
+            name=ref.name,
+            ratio=ref.ratio,
+            order_no=ref.order_no,
+            is_main=(kind == "pe" and ref.name == element.main_pe_name),
+        )
+        for ref in refs
+    ]
+
+
+def add_principle_ref(element_id: int, kind: str, name: str, ratio: float = 1.0) -> ElementPrinciple | None:
+    """新增一条引用（旧版 dGVPE 允许追加行）。重名时返回 None 由界面提示。"""
+    element = _element(element_id)
+    if element is None or not name:
+        return None
+    existing = element.pe_refs_sorted() if kind == "pe" else element.pf_refs_sorted()
+    if any(ref.name == name for ref in existing):
+        return None
+    ref = ElementPrinciple(
+        kind=kind,
+        name=name,
+        ratio=float(ratio),
+        order_no=(existing[-1].order_no + 1) if existing else 0,
+    )
+    element.principle_refs.append(ref)
+    project_io.commit()
+    bus().unit_changed.emit(element.unit_id)
+    return ref
+
+
+def update_principle_ref(ref_id: int, *, name: str | None = None, ratio: float | None = None) -> ElementPrinciple | None:
+    """修改引用的原则名 / 比例（旧版 dGVPE CellEndEdit）。"""
+    ref = orm.session().get(ElementPrinciple, ref_id) if project_io.is_open() else None
+    if ref is None:
+        return None
+    element = ref.element
+    if name is not None and name != ref.name:
+        siblings = element.pe_refs_sorted() if ref.kind == "pe" else element.pf_refs_sorted()
+        if any(other.name == name for other in siblings if other.id != ref.id):
+            return None  # 旧版 CellValidating：“原则已存在于列表中。”
+        ref.name = name
+        if ref.kind == "pe":
+            ref_names = [row.name for row in element.pe_refs_sorted()]
+            if element.main_pe_name not in ref_names:
+                element.main_pe_name = ref_names[0] if ref_names else ""
+    if ratio is not None:
+        ref.ratio = float(ratio)
+    project_io.commit()
+    bus().unit_changed.emit(element.unit_id)
+    return ref
+
+
+def remove_principle_ref(ref_id: int) -> str | None:
+    """删除引用（旧版 dGVPE_KeyUp Delete）；全部删光时返回提示文案。"""
+    ref = orm.session().get(ElementPrinciple, ref_id) if project_io.is_open() else None
+    if ref is None:
+        return None
+    element = ref.element
+    refs = element.pe_refs_sorted() if ref.kind == "pe" else element.pf_refs_sorted()
+    if len(refs) <= 1:
+        return "至少需要一种围护原则。" if ref.kind == "pe" else "至少需要一种地基处理原则。"
+    if ref.kind == "pe" and element.main_pe_name == ref.name:
+        remaining = [row.name for row in refs if row.id != ref.id]
+        element.main_pe_name = remaining[0] if remaining else ""
+    # 从集合移除（delete-orphan 级联成 DELETE），保证内存集合同步
+    element.principle_refs.remove(ref)
+    project_io.commit()
+    bus().unit_changed.emit(element.unit_id)
+    return None
+
+
+def set_main_pe(element_id: int, name: str) -> Element | None:
+    """设置多围护原则下的主要围护原则（旧版 cmbBoxMainPE_DropDownClosed）。"""
+    element = _element(element_id)
+    if element is None:
+        return None
+    ref_names = [ref.name for ref in element.pe_refs_sorted()]
+    if name and name in ref_names:
+        element.main_pe_name = name
+        project_io.commit()
+        bus().unit_changed.emit(element.unit_id)
+    return element
 
 
 # --------------------------------------------------------------------------- #

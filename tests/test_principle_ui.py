@@ -39,11 +39,24 @@ def project(tmp_path: Path) -> Path:
 def test_element_library_categories_and_templates() -> None:
     library = element_library()
     assert library.categories == (
-        "直埋混凝土管", "直埋塑料管", "直埋金属类管道", "混凝土结构", "非开挖管道",
+        "直埋混凝土管", "直埋塑料管", "直埋金属类管道", "混凝土结构", "非开挖管道", "附属构筑物",
     )
     templates = [tpl for units in library.units.values() for unit in units for tpl in unit.elements]
-    assert len(templates) == 380
+    assert len(templates) == 407
     assert all(tpl.label for tpl in templates)
+    # 附属构筑物（构筑物类）：24 座检查井 + 单篦/双篦雨水口 + 排放口 + 自定义构筑物
+    structures = library.units_of("附属构筑物")[0].elements
+    assert len(structures) == 3
+    well = structures[0]
+    assert well.category == 7
+    assert well.params[0] == ("-名称", well.label)
+    assert ("-井筒 个", "1") in well.params
+    assert ("-井筒 m3/m", "0.71") in well.params
+    assert any(key == "构筑物|垫层|m3" for key, _value in well.params)
+    assert not well.pipes
+    # 雨水口 / 排放口 / 自定义构筑物：Name 为空的模板靠“-名称”参数兜底显示
+    rain_inlets = library.units_of("附属构筑物")[4].elements
+    assert [tpl.label for tpl in rain_inlets] == ["单篦式雨水口", "双篦式雨水口"]
 
 
 def test_insert_template_attaches_first_principles(project) -> None:
@@ -137,7 +150,7 @@ def test_spcp_rejects_wrong_root(project, tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# schema 迁移 v1 → v2
+# schema 迁移 v1 → v3
 # --------------------------------------------------------------------------- #
 def test_v1_project_migrates_source_column(tmp_path: Path) -> None:
     import shutil
@@ -145,16 +158,24 @@ def test_v1_project_migrates_source_column(tmp_path: Path) -> None:
     from app.core.version import SCHEMA_VERSION
     from app.core.models import base as orm
 
-    assert SCHEMA_VERSION == 2
+    assert SCHEMA_VERSION == 3
     legacy_copy = tmp_path / "old.stn2"
-    # 借现成工程文件降版构造 v1 文件：删掉 source 列并把版本号改回 1
+    # 借现成工程文件降版构造 v1 文件：先插一条构件（带原则引用），
+    # 再删掉 source/main_pe_name 列、element_principle 表，把版本号改回 1
     project = tmp_path / "new.stn2"
     project_io.new_project(NewProjectSpec(path=project, unit_names=["雨水工程"]))
+    from app.viewmodels import unit_vm as _unit_vm
+
+    segment = project_io.segments()[0]
+    unit = project_io.units(segment.id)[0]
+    element = _unit_vm.create_element(unit.id, name="管子", depth="2.5", amount="100")
+    assert element is not None
     project_io.close_project()
     shutil.copy(project, legacy_copy)
     import sqlite3
 
     with sqlite3.connect(legacy_copy) as conn:
+        conn.execute("DROP TABLE element_principle")
         conn.execute("ALTER TABLE element RENAME TO element_old")
         conn.execute(
             "CREATE TABLE element (id INTEGER PRIMARY KEY, unit_id INTEGER, category INTEGER,"
@@ -170,5 +191,15 @@ def test_v1_project_migrates_source_column(tmp_path: Path) -> None:
         conn.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
         conn.commit()
     orm.open_database(legacy_copy)
-    assert orm.get_meta("schema_version") == "2"
+    assert orm.get_meta("schema_version") == "3"
+    # v1 单原则引用被补成 ratio=1 的引用行（v2→v3 迁移语义）
+    from sqlalchemy import select
+
+    from app.core.models.models import Element, ElementPrinciple
+
+    refs = list(orm.session().scalars(select(ElementPrinciple)))
+    assert len(refs) == 2, "迁移后 pe/pf 各应有一条 ratio=1 的引用行"
+    assert all(ref.ratio == 1.0 for ref in refs)
+    element_row = orm.session().scalars(select(Element)).first()
+    assert element_row.main_pe_name == element_row.pe_name != ""
     orm.close_database()

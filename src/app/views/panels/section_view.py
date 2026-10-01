@@ -31,6 +31,8 @@ from app.core.models.models import (
     CATEGORY_GALLERY,
     CATEGORY_JACKING,
     CATEGORY_PULLING,
+    CATEGORY_STRUCTURE,
+    MULTI_PE_TEXT,
     Element,
     PcpEnclosure,
     PcpFoundation,
@@ -219,9 +221,14 @@ def _build_scene(element_id: int | None, width: int, height: int) -> tuple[_Scen
     element = session.get(Element, element_id)
     if element is None:
         return None, "请选择构件条目"
+    if element.category == CATEGORY_STRUCTURE:
+        # 附属构筑物（旧版 mcPictureBox 无 mcE7 分支）：不画沟槽与本体
+        return None, "附属构筑物不参与沟槽计算，无断面图。"
+    # 多原则构件按主要原则绘制断面（旧版 PaintSection 用 mainPEname）
+    pe_draw_name = element.main_pe_name if element.pe_name == MULTI_PE_TEXT else element.pe_name
     pe = (
-        session.scalars(select(PcpEnclosure).where(PcpEnclosure.name == element.pe_name)).first()
-        if element.pe_name else None
+        session.scalars(select(PcpEnclosure).where(PcpEnclosure.name == pe_draw_name)).first()
+        if pe_draw_name else None
     )
     pf = (
         session.scalars(select(PcpFoundation).where(PcpFoundation.name == element.pf_name)).first()

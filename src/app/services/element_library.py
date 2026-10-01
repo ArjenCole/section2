@@ -88,10 +88,14 @@ def _template(element) -> ElementTemplate:
     )
     params = tuple(element.params)
     name = element.name.strip()
-    label = name or _specification(category, pipes, dict(params))
+    param_dict = dict(params)
+    label = name or _specification(category, pipes, param_dict)
     if not label and pipes:
         # 个别旧版模板 Category 为空（如非开挖管道两例），按首根管材兜底显示
         label = f"{pipes[0][0]} Dn{pipes[0][1]}"
+    if not label:
+        # 构件库个别构筑物模板 Name 为空（单篦/双篦雨水口等），按“-名称”参数兜底
+        label = param_dict.get("-名称", "")
     return ElementTemplate(
         category=category,
         name=name,

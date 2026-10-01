@@ -60,9 +60,54 @@ def _migrate_v1_add_element_source(engine: Engine) -> None:
         )
 
 
+def _migrate_v2_add_multi_principle(engine: Engine) -> None:
+    """v2 → v3：多原则引用 + 附属构筑物。
+
+    * element 表加 main_pe_name 列（旧版 mainPEname）；
+    * 建 element_principle 表，并把已有的 pe_name / pf_name 单原则引用
+      补成 ratio=1 的引用行（旧版 showPEname setter 的等价数据）。
+    """
+    from sqlalchemy import inspect as sqla_inspect
+
+    from app.core.models.models import ElementPrinciple
+
+    existing_columns = {column["name"] for column in sqla_inspect(engine).get_columns("element")}
+    if "main_pe_name" not in existing_columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE element ADD COLUMN main_pe_name VARCHAR(200) DEFAULT ''")
+            )
+    ElementPrinciple.__table__.create(engine, checkfirst=True)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO element_principle (element_id, kind, name, ratio, order_no) "
+                "SELECT id, 'pe', pe_name, 1, 0 FROM element "
+                "WHERE pe_name IS NOT NULL AND pe_name != '' "
+                "AND id NOT IN (SELECT element_id FROM element_principle WHERE kind = 'pe')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO element_principle (element_id, kind, name, ratio, order_no) "
+                "SELECT id, 'pf', pf_name, 1, 0 FROM element "
+                "WHERE pf_name IS NOT NULL AND pf_name != '' "
+                "AND id NOT IN (SELECT element_id FROM element_principle WHERE kind = 'pf')"
+            )
+        )
+        connection.execute(
+            text(
+                "UPDATE element SET main_pe_name = pe_name "
+                "WHERE (main_pe_name IS NULL OR main_pe_name = '') "
+                "AND pe_name IS NOT NULL AND pe_name != ''"
+            )
+        )
+
+
 #: 结构迁移入口（计划 §5）。键为源版本号，值为“从该版本迁到 +1 版本”的函数。
 _MIGRATIONS: dict[int, "callable"] = {
     1: _migrate_v1_add_element_source,
+    2: _migrate_v2_add_multi_principle,
 }
 
 

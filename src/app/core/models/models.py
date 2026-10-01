@@ -27,6 +27,7 @@ CATEGORY_BOX_CULVERT = 3  # 箱涵       mcE3
 CATEGORY_JACKING = 4  # 顶管       mcE4
 CATEGORY_PULLING = 5  # 牵引管     mcE5
 CATEGORY_GALLERY = 6  # 管廊       mcE6
+CATEGORY_STRUCTURE = 7  # 构筑物（附属构筑物）   mcE7
 
 CATEGORY_NAMES: dict[int, str] = {
     CATEGORY_NONE: "",
@@ -36,9 +37,10 @@ CATEGORY_NAMES: dict[int, str] = {
     CATEGORY_JACKING: "顶管",
     CATEGORY_PULLING: "牵引管",
     CATEGORY_GALLERY: "管廊",
+    CATEGORY_STRUCTURE: "构筑物",
 }
 
-#: 下拉框顺序（不含“空”类别）
+#: 下拉框顺序（不含“空”类别；构筑物对应旧版 typeDic 最后一项）
 CATEGORY_CHOICES: tuple[int, ...] = (
     CATEGORY_BURIED,
     CATEGORY_ENCASED,
@@ -46,9 +48,10 @@ CATEGORY_CHOICES: tuple[int, ...] = (
     CATEGORY_JACKING,
     CATEGORY_PULLING,
     CATEGORY_GALLERY,
+    CATEGORY_STRUCTURE,
 )
 
-#: 工程量单位：旧版 mcE1~mcE6 的 unit 字段都是 "m"
+#: 工程量单位：旧版 mcE1~mcE6 的 unit 字段都是 "m"，mcE7 为 "个"
 UNIT_BY_CATEGORY: dict[int, str] = {
     CATEGORY_NONE: "",
     CATEGORY_BURIED: "m",
@@ -57,6 +60,7 @@ UNIT_BY_CATEGORY: dict[int, str] = {
     CATEGORY_JACKING: "m",
     CATEGORY_PULLING: "m",
     CATEGORY_GALLERY: "m",
+    CATEGORY_STRUCTURE: "个",
 }
 
 
@@ -73,6 +77,15 @@ def category_from_name(name: str) -> int:
 
 def unit_of(category: int | None) -> str:
     return UNIT_BY_CATEGORY.get(int(category or 0), "")
+
+
+# --------------------------------------------------------------------------- #
+# 多原则引用（旧版 mcElement.PEname / PFname 字典 + showPEname 的“多围护原则”）
+# --------------------------------------------------------------------------- #
+#: 主表格“沟槽围护原则”列的多原则选项（旧版 mcPcpEnclosure.Multi_PETxt）
+MULTI_PE_TEXT = "多围护原则"
+#: 主表格“地基处理原则”列的多原则选项（旧版 mcPcpFoundation.Multi_PFTxt）
+MULTI_PF_TEXT = "多地基原则"
 
 
 # --------------------------------------------------------------------------- #
@@ -210,10 +223,14 @@ class Unit(Base):
 
 
 class Element(Base):
-    """构件条目（对应旧版 mcElement 及其子类 mcE1~mcE6）。
+    """构件条目（对应旧版 mcElement 及其子类 mcE1~mcE7）。
 
     ``pe_name`` / ``pf_name`` 是旧版的 showPEname / showPFname：按名字引用原则，
-    原则本体在 principle_enclosure / principle_foundation 表里。
+    原则本体在 principle_enclosure / principle_foundation 表里；当值为
+    “多围护原则”/“多地基原则”时，实际引用的是 element_principle 表里
+    按比例（ratio）引用的多条原则（旧版 PEname / PFname 字典）。
+    ``main_pe_name`` 是旧版 mainPEname：多围护原则下的主要围护原则
+    （沟槽回填材质命名、管道基础、支撑都用它计算）。
     """
 
     __tablename__ = "element"
@@ -228,6 +245,8 @@ class Element(Base):
     amount: Mapped[str] = mapped_column(String(100), default="0")
     pe_name: Mapped[str] = mapped_column(String(200), default="")
     pf_name: Mapped[str] = mapped_column(String(200), default="")
+    #: 主要围护原则（旧版 mainPEname，多围护原则时必填）
+    main_pe_name: Mapped[str] = mapped_column(String(200), default="")
     #: 来源（旧版主表格“来源”列，构件库插入时记录模板出处）
     source: Mapped[str] = mapped_column(String(200), default="")
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -245,6 +264,46 @@ class Element(Base):
         passive_deletes=True,
         order_by="ElementParam.id",
     )
+    #: 多原则引用（旧版 PEname / PFname 字典，kind 区分 pe/pf）
+    principle_refs: Mapped[list["ElementPrinciple"]] = relationship(
+        back_populates="element",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ElementPrinciple.order_no",
+    )
+
+    def pe_refs_sorted(self) -> list["ElementPrinciple"]:
+        return sorted(
+            (ref for ref in self.principle_refs if ref.kind == "pe"),
+            key=lambda ref: (ref.order_no, ref.id),
+        )
+
+    def pf_refs_sorted(self) -> list["ElementPrinciple"]:
+        return sorted(
+            (ref for ref in self.principle_refs if ref.kind == "pf"),
+            key=lambda ref: (ref.order_no, ref.id),
+        )
+
+
+class ElementPrinciple(Base):
+    """构件的多原则引用（对应旧版 mcElement.PEname / PFname 字典）。
+
+    ``kind`` 为 "pe" / "pf"；``name`` 引用原则名；``ratio`` 为占比系数
+    （旧版 value，计算时该原则的断面工程量 × ratio 后求和）。
+    """
+
+    __tablename__ = "element_principle"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    element_id: Mapped[int] = mapped_column(
+        ForeignKey("element.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(2), default="pe")
+    name: Mapped[str] = mapped_column(String(200), default="")
+    ratio: Mapped[float] = mapped_column(Float, default=1.0)
+    order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    element: Mapped[Element] = relationship(back_populates="principle_refs")
 
 
 class ElementParam(Base):

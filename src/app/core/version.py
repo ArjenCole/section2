@@ -13,7 +13,8 @@ APP_ORG_DOMAIN = "section.local"
 APP_VERSION = "2.0.0.0"
 
 #: .stn2 库结构版本。结构变更时 +1，并在 core/models/base.py 的 _MIGRATIONS 中登记迁移函数。
-SCHEMA_VERSION = 2
+#: v3：附属构筑物（mcE7，category=7）+ 多原则引用（element_principle 表、element.main_pe_name 列）
+SCHEMA_VERSION = 3
 
 #: 新版工程文件
 PROJECT_SUFFIX = ".stn2"

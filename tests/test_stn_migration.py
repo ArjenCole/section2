@@ -1,7 +1,8 @@
 """旧 .stn 迁移测试（计划 §5.1 / M6 验收）。
 
-用旧版 C# 软件自带的样例工程做批量导入：全部成功打开、
-标段/单位工程/构件/管道计数与源文件一致、原则引用全部落到实际表记录。
+用 tests/fixtures/legacy 的样例旧工程做批量导入：全部成功打开、
+标段/单位工程/构件/管道计数与源文件一致、原则引用全部落到实际表记录；
+“多原则与构筑物”样例覆盖多原则引用（PEname 字典）与构筑物（mcE7）迁移。
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from lxml import etree
 from app.services import project_io, stn_migration
 from app.viewmodels import unit_vm
 
-SAMPLE_DIR = Path(__file__).parent.parent / "section" / "section1.2.2.171220_beta" / "section" / "bin" / "Debug" / "Backup"
+SAMPLE_DIR = Path(__file__).parent / "fixtures" / "legacy"
 
 
 def _available_samples() -> list[Path]:
@@ -61,12 +62,29 @@ def test_migrate_sample(tmp_path: Path, source: Path) -> None:
         session = project_io.orm.session()
         from sqlalchemy import select
 
-        from app.core.models.models import Element
+        from app.core.models.models import MULTI_PE_TEXT, MULTI_PF_TEXT, Element, ElementPrinciple
 
-        referenced_pe = {name for name in session.scalars(select(Element.pe_name)) if name}
-        referenced_pf = {name for name in session.scalars(select(Element.pf_name)) if name}
+        referenced_pe = {
+            name for name in session.scalars(select(Element.pe_name)) if name
+        } - {MULTI_PE_TEXT}
+        referenced_pf = {
+            name for name in session.scalars(select(Element.pf_name)) if name
+        } - {MULTI_PF_TEXT}
         assert referenced_pe <= enclosure_names, f"悬空围护原则引用：{referenced_pe - enclosure_names}"
         assert referenced_pf <= foundation_names, f"悬空地基原则引用：{referenced_pf - foundation_names}"
+        # 多原则引用行必须落到真实原则（旧版 PEname 字典）
+        ref_pe_names = {
+            name for name in session.scalars(
+                select(ElementPrinciple.name).where(ElementPrinciple.kind == "pe")
+            ) if name
+        }
+        ref_pf_names = {
+            name for name in session.scalars(
+                select(ElementPrinciple.name).where(ElementPrinciple.kind == "pf")
+            ) if name
+        }
+        assert ref_pe_names <= enclosure_names, f"悬空多原则围护引用：{ref_pe_names - enclosure_names}"
+        assert ref_pf_names <= foundation_names, f"悬空多原则地基引用：{ref_pf_names - foundation_names}"
 
         # 原则做法/构件必须存在（能计算）
         assert enclosure_names == set(referenced_pe) | enclosure_names
@@ -115,6 +133,10 @@ def test_migrate_report_lists_warnings(tmp_path: Path) -> None:
     if element is None:
         pytest.skip("样例无构件")
     element.find("showPEname").text = "不存在的围护原则"
+    # 一并删掉 PEname/PFname 引用字典，构造“原则引用悬空”的一致场景
+    for tag in ("PEname", "PFname"):
+        for node in element.findall(tag):
+            element.remove(node)
     broken = tmp_path / "broken.stn"
     tree.write(str(broken), encoding="utf-8", xml_declaration=True)
 
