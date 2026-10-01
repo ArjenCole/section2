@@ -34,10 +34,10 @@
 |---|---|
 | Python | 3.12+（项目内 `.venv`） |
 | 界面 | PySide6 (Qt6)，MVVM + EventBus，无边框自绘标题栏 |
-| 架构 | `views/ → viewmodels/ → services/ → orm/` |
+| 架构 | `views/ → viewmodels/ → services/ → core/models/`（src 布局） |
 | 工程文件 | `.stn2` 单文件 SQLite（SQLAlchemy 2.0 ORM） |
 | 算式求值 | simpleeval（白名单运算符与 abs/round/sqrt/power/sin/cos，禁任意函数调用） |
-| 图集/构件库 | xlsx + openpyxl（只读，随程序分发于 `app/resources/`） |
+| 图集/构件库 | xlsx + openpyxl（只读，随程序分发于 `src/app/resources/`） |
 | Excel 导出 | openpyxl |
 | 旧档迁移 | lxml（只读解析旧 `.stn` XML） |
 | AI | httpx + OpenAI 兼容端点（SSE 流式），API key 存 keyring |
@@ -47,18 +47,19 @@
 ## 目录结构
 
 ```
-app/
+src/app/
 ├── main.py            入口：QApplication、主题、中文翻译、主窗体、启动参数
 ├── core/              版本、路径、配置、事件总线、算式求值
-├── orm/               .stn2 表结构（base.py 管连接与 meta，models.py 管表）
-├── services/          工程文件读写、图集与构件库、计算引擎、汇总导出、旧档迁移、AI
-│   ├── calc/          groove / foundation / precipitation / engine / tracer
+│   ├── models/        .stn2 表结构（base.py 管连接与 meta，models.py 管表）
+│   └── calc/          计算引擎：groove / foundation / precipitation / engine / tracer
+├── services/          工程文件读写、图集与构件库、汇总导出、旧档迁移
 │   └── ai/            ai_provider（SSE 流式）、ai_keychain（keyring）
 ├── viewmodels/        MVVM 视图模型
 ├── views/             主窗体（含无边框标题栏）、三栏面板、对话框、新建/导入向导
 ├── agent/             AI 工具调用（tool_registry / agent_loop / confirm_policy / tools）
 └── resources/         QSS 主题、图集 xlsx、构件库、价格库
 tests/                 单元测试（工程文件、算式、计算对拍、旧档迁移）
+docs/                  架构说明
 ```
 
 ## 运行方式
@@ -72,9 +73,9 @@ py -3.12 -m venv .venv
 # .venv/bin/python -m pip install -e ".[dev]"            # macOS / Linux
 
 # 3. 启动
-.venv/Scripts/python.exe app/main.py
+.venv/Scripts/python.exe src/app/main.py
 # 也可直接带工程文件启动
-.venv/Scripts/python.exe app/main.py "D:\工程\某项目.stn2"
+.venv/Scripts/python.exe src/app/main.py "D:\工程\某项目.stn2"
 
 # 4. 跑测试
 .venv/Scripts/python.exe -m pytest
@@ -113,8 +114,8 @@ py -3.12 -m venv .venv
 
 PySide6 的 `Qt6Core.dll` 依赖系统 `icuuc.dll`；如果 PATH 里有 Anaconda 的
 `Library\bin`（其中的 icuuc.dll 缺少 Qt 需要的无版本号符号），就会加载失败。
-`app/__init__.py` 里已经做了处理（导入 PySide6 前先按绝对路径加载系统 ICU），
-所以只要通过 `app/main.py` 或 pytest（`tests/conftest.py`）启动即可。
+`src/app/__init__.py` 里已经做了处理（导入 PySide6 前先按绝对路径加载系统 ICU），
+所以只要通过 `src/app/main.py` 或 pytest（`tests/conftest.py`）启动即可。
 自己写脚本时请先 `import app` 再 `import PySide6`。
 
 ## 开发计划

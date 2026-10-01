@@ -21,8 +21,8 @@ import pytest
 
 from app.core.evaluator import evaluate
 from app.services import project_io
-from app.services.calc.engine import build_element_input, compute_element
-from app.services.calc.tracer import QDict, sorted_items
+from app.core.calc.engine import build_element_input, compute_element
+from app.core.calc.tracer import QDict, sorted_items
 from app.services.project_io import NewProjectSpec
 from app.viewmodels import unit_vm
 
@@ -139,10 +139,10 @@ def _as_baseline(summary: QDict, detail) -> dict:
 
 
 def _elements(unit):
-    from app.orm.models import Element
+    from app.core.models.models import Element
     from sqlalchemy import select
 
-    from app.orm import base as orm
+    from app.core.models import base as orm
 
     return list(
         orm.session().scalars(select(Element).where(Element.unit_id == unit.id).order_by(Element.order_no))
@@ -163,10 +163,10 @@ def test_box_culvert_steel(project) -> None:
 
 
 def _input_of(element):
-    from app.orm.models import PcpEnclosure, PcpFoundation
+    from app.core.models.models import PcpEnclosure, PcpFoundation
     from sqlalchemy import select
 
-    from app.orm import base as orm
+    from app.core.models import base as orm
 
     session = orm.session()
     pe = session.scalar(select(PcpEnclosure).where(PcpEnclosure.name == element.pe_name))

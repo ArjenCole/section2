@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from app.orm import base as orm
+from app.core.models import base as orm
 from app.services import project_io
 from app.services.project_io import NewProjectSpec
 
@@ -61,7 +61,7 @@ def _make_view(qapp, element_id):
 
 def test_trench_scene_geometry(qapp, project_with_element) -> None:
     """沟槽场景：分层回填段、总深与槽顶宽都来自计算引擎的同一套函数。"""
-    from app.services.calc.engine import build_atlas_query, build_element_input, resolve_atlas
+    from app.core.calc.engine import build_atlas_query, build_element_input, resolve_atlas
     from app.views.panels.section_view import _build_scene
 
     scene, hint = _build_scene(project_with_element, 320, 420)

@@ -23,7 +23,7 @@ def _next_button(wizard) -> bool:
 
 
 def test_next_enabled_with_default_name(qapp):
-    from app.views.wizard.new_project_wizard import NewProjectWizard
+    from app.views.dialogs.new_project_wizard import NewProjectWizard
 
     wizard = NewProjectWizard()
     wizard.restart()
@@ -32,7 +32,7 @@ def test_next_enabled_with_default_name(qapp):
 
 
 def test_next_disabled_when_name_cleared(qapp):
-    from app.views.wizard.new_project_wizard import NewProjectWizard
+    from app.views.dialogs.new_project_wizard import NewProjectWizard
 
     wizard = NewProjectWizard()
     wizard.restart()
@@ -42,7 +42,7 @@ def test_next_disabled_when_name_cleared(qapp):
 
 
 def test_walk_through_all_pages(qapp):
-    from app.views.wizard.new_project_wizard import NewProjectWizard
+    from app.views.dialogs.new_project_wizard import NewProjectWizard
 
     wizard = NewProjectWizard()
     wizard.restart()

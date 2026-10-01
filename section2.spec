@@ -9,10 +9,10 @@
 """
 
 a = Analysis(
-    ["app\\main.py"],
-    pathex=["."],
+    ["src\\app\\main.py"],
+    pathex=["src"],
     binaries=[],
-    datas=[("app\\resources", "app\\resources")],
+    datas=[("src\\app\\resources", "app\\resources")],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

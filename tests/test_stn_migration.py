@@ -61,7 +61,7 @@ def test_migrate_sample(tmp_path: Path, source: Path) -> None:
         session = project_io.orm.session()
         from sqlalchemy import select
 
-        from app.orm.models import Element
+        from app.core.models.models import Element
 
         referenced_pe = {name for name in session.scalars(select(Element.pe_name)) if name}
         referenced_pf = {name for name in session.scalars(select(Element.pf_name)) if name}
@@ -125,8 +125,8 @@ def test_migrate_report_lists_warnings(tmp_path: Path) -> None:
 def _first_unit_with_elements():
     from sqlalchemy import select
 
-    from app.orm import base as orm
-    from app.orm.models import Unit
+    from app.core.models import base as orm
+    from app.core.models.models import Unit
 
     session = orm.session()
     for unit in session.scalars(select(Unit)):

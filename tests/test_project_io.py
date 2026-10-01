@@ -16,8 +16,8 @@ from pathlib import Path
 import pytest
 
 from app.core.version import SCHEMA_VERSION
-from app.orm import base as orm
-from app.orm.models import BasicInfo, Element, Pipe, Segment, Unit
+from app.core.models import base as orm
+from app.core.models.models import BasicInfo, Element, Pipe, Segment, Unit
 from app.services import project_io
 from app.services.project_io import (
     NewProjectSpec,

@@ -143,7 +143,7 @@ def test_v1_project_migrates_source_column(tmp_path: Path) -> None:
     import shutil
 
     from app.core.version import SCHEMA_VERSION
-    from app.orm import base as orm
+    from app.core.models import base as orm
 
     assert SCHEMA_VERSION == 2
     legacy_copy = tmp_path / "old.stn2"

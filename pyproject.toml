@@ -32,8 +32,8 @@ dev = [
 section2 = "app.main:main"
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+where = ["src"]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = ["src"]
 testpaths = ["tests"]
