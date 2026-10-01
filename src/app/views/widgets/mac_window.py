@@ -13,8 +13,6 @@ import sys
 
 #: 主窗体红绿灯（关闭/最小化/缩放三枚）占用的标题栏左侧宽度
 TRAFFIC_LIGHT_INSET_ALL = 88
-#: 对话框只有关闭一枚红绿灯时的左侧宽度
-TRAFFIC_LIGHT_INSET_CLOSE = 52
 
 
 def is_mac() -> bool:
@@ -22,12 +20,15 @@ def is_mac() -> bool:
     return sys.platform == "darwin"
 
 
-def apply_mac_window_chrome(widget, close_only: bool = False) -> bool:
-    """把顶层窗口变为 mac 无边框外观：透明标题栏 + 隐藏标题文字。
+def apply_mac_window_chrome(widget, close_only: bool = False, expand: bool = True) -> bool:
+    """调整 mac 顶层窗口的原生窗口装饰。
 
-    需在窗口显示前调用（内部会创建原生句柄）。close_only=True 只保留
-    关闭红绿灯（对话框习惯），False 保留关闭/最小化/缩放三枚（主窗体）。
-    非 macOS、非 cocoa 后端或调用失败时返回 False，调用方无需处理。
+    expand=True：透明标题栏 + 隐藏标题文字 + fullSizeContentView，内容延伸进
+    标题栏区域（主窗体用；Qt 会把标题栏高度作为安全区内边距压低布局）。
+    expand=False：不动标题栏（保留原生标题栏和标题文字，弹窗用），仅在
+    close_only 时隐藏最小化/缩放红绿灯，只留关闭。
+    需在窗口显示前调用（内部会创建原生句柄）。非 macOS、非 cocoa 后端或
+    调用失败时返回 False，调用方无需处理。
     """
     if not is_mac():
         return False
@@ -56,11 +57,12 @@ def apply_mac_window_chrome(widget, close_only: bool = False) -> bool:
         ns_window = ns_view.window()
         if ns_window is None:
             return False
-        ns_window.setStyleMask_(
-            ns_window.styleMask() | NSWindowStyleMaskFullSizeContentView
-        )
-        ns_window.setTitlebarAppearsTransparent_(True)
-        ns_window.setTitleVisibility_(title_hidden)
+        if expand:
+            ns_window.setStyleMask_(
+                ns_window.styleMask() | NSWindowStyleMaskFullSizeContentView
+            )
+            ns_window.setTitlebarAppearsTransparent_(True)
+            ns_window.setTitleVisibility_(title_hidden)
         if close_only:
             ns_window.standardWindowButton_(NSWindowZoomButton).setHidden_(True)
             ns_window.standardWindowButton_(NSWindowMiniaturizeButton).setHidden_(True)

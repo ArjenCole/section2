@@ -28,11 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.views.widgets.mac_window import (
-    TRAFFIC_LIGHT_INSET_CLOSE,
-    apply_mac_window_chrome,
-    is_mac,
-)
+from app.views.widgets.mac_window import apply_mac_window_chrome, is_mac
 
 # 消息框按钮文案映射（StandardButton → 中文）
 _BUTTON_TEXT = {
@@ -236,29 +232,19 @@ class DialogTitleBar(QFrame):
         self._drag_offset: QPoint | None = None
 
         layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 0, 0, 0)
         layout.setSpacing(8)
 
         self._title_label = QLabel(title)
         self._title_label.setProperty("role", "dialog-title")
         # 透传鼠标事件到标题栏，点标题文字也能拖拽
         self._title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        layout.addWidget(self._title_label, alignment=Qt.AlignmentFlag.AlignVCenter)
+        layout.addStretch(1)
 
-        if is_mac():
-            # Apple HIG：红绿灯由系统画在左上角，标题文字居中
-            layout.setContentsMargins(
-                TRAFFIC_LIGHT_INSET_CLOSE, 0, TRAFFIC_LIGHT_INSET_CLOSE, 0
-            )
-            layout.addStretch(1)
-            layout.addWidget(self._title_label, alignment=Qt.AlignmentFlag.AlignVCenter)
-            layout.addStretch(1)
-            self._btn_close = None
-        else:
-            layout.setContentsMargins(12, 0, 0, 0)
-            layout.addWidget(self._title_label, alignment=Qt.AlignmentFlag.AlignVCenter)
-            layout.addStretch(1)
-            self._btn_close = _DialogCloseButton(self)
-            layout.addWidget(self._btn_close)
-            self._btn_close.clicked.connect(self._on_close)
+        self._btn_close = _DialogCloseButton(self)
+        layout.addWidget(self._btn_close)
+        self._btn_close.clicked.connect(self._on_close)
 
         self._apply_theme()
 
@@ -269,8 +255,7 @@ class DialogTitleBar(QFrame):
         from app.resources.qss.theme import ThemeManager
 
         colors = ThemeManager.instance().current()
-        if self._btn_close is not None:  # mac 上关闭交给系统红绿灯，无自绘按钮
-            self._btn_close.set_colors(colors.text_primary, colors.text_inverse)
+        self._btn_close.set_colors(colors.text_primary, colors.text_inverse)
 
     def refresh_theme(self) -> None:
         self._apply_theme()
@@ -313,18 +298,20 @@ class FramelessDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None, title: str = "") -> None:
         super().__init__(parent)
-        if is_mac():
-            # mac：保留原生窗口（系统圆角/阴影/红绿灯），标题栏由 mac_window.py 藏进自绘界面
+        self._mac = is_mac()
+        if self._mac:
+            # mac：保留原生标题栏（红绿灯 + 标题文字同一行，Apple HIG），只留关闭红绿灯
             self.setWindowFlags(Qt.WindowType.Window)
         else:
             self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
 
-        self._title_bar = DialogTitleBar(title, self)
+        self._title_bar = None if self._mac else DialogTitleBar(title, self)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        outer.addWidget(self._title_bar)
+        if self._title_bar is not None:
+            outer.addWidget(self._title_bar)
 
         self._body = QWidget()
         self._body.setObjectName("FramelessDialogBody")
@@ -332,12 +319,12 @@ class FramelessDialog(QDialog):
         self._body_layout.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self._body, stretch=1)
 
-        if is_mac():
-            # 先创建原生句柄并预套 mac chrome；show 时 Qt 可能重置 NSWindow 样式掩码，
-            # 首次 showEvent 里会再补一次（见 showEvent），两处均幂等
+        if self._mac:
+            # 先创建原生句柄再隐藏多余红绿灯；标题文字由系统画在红绿灯同一行
             self.winId()
-            apply_mac_window_chrome(self, close_only=True)
+            apply_mac_window_chrome(self, close_only=True, expand=False)
             self._mac_chrome_reapplied = False
+        self.setWindowTitle(title)
 
     def bodyLayout(self) -> QVBoxLayout:
         return self._body_layout
@@ -347,13 +334,14 @@ class FramelessDialog(QDialog):
 
     def setWindowTitle(self, title: str) -> None:  # noqa: N802 - Qt 命名
         super().setWindowTitle(title)
-        self._title_bar.set_title(title)
+        if self._title_bar is not None:
+            self._title_bar.set_title(title)
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
-        if is_mac() and not getattr(self, "_mac_chrome_reapplied", True):
-            # show 时 Qt 会按窗口标志重置 NSWindow 样式掩码，这里补套 mac chrome
+        if self._mac and not getattr(self, "_mac_chrome_reapplied", True):
+            # show 时 Qt 会按窗口标志重置 NSWindow 装饰，这里补一次（幂等）
             self._mac_chrome_reapplied = True
-            apply_mac_window_chrome(self, close_only=True)
+            apply_mac_window_chrome(self, close_only=True, expand=False)
         super().showEvent(event)
         self._enable_win11_rounded_corners()
 
