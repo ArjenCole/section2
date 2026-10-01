@@ -1,12 +1,13 @@
 """Section 2.0 logo 生成器。
 
-继承 1.0 logo（section/section-master/section/Resources/170530 S.png）的造型与配色：
-    底色 Material Blue Grey 700 #455A64 + 白色 Didot Italic "S"（高占画布 47.3%）。
-按苹果现代 macOS 图标设计语言重绘（Big Sur → Tahoe 同一形状体系）：
+继承 1.0 logo（section/section-master/section/Resources/170530 S.png）的配色与版式基因：
+    底色 Material Blue Grey 700 #455A64、白色居中主字形、正方形圆角构图。
+2.0 造型按苹果现代 macOS 图标设计语言重绘（Big Sur → Tahoe 同一形状体系）：
     - 1024 画布上 824 的 superellipse(n=5) squircle（对系统图标实测拟合）；
     - 顶亮底深的纵向渐变 + 液态玻璃柔光/沿边反光/底部内阴影；
-    - 白 S 自带轻微纵向明暗与悬浮投影；
-    - 画布内烘焙极淡投影（与系统图标一致），≤64px 收缩边距、≤32px 加粗 S 保证识别度。
+    - 主标记：Futura Bold 无衬线 "S" + 右下角同风格小 "2"（S2 = Section 2.0），
+      整体向右下轻微挤出成 3D 层（前面白渐变、侧面深蓝灰），不再用衬线体；
+    - 画布内烘焙极淡投影；≤64px 只保留 S 保证小尺寸识别度。
 
 用法（项目根目录）：
     .venv/bin/python scripts/make_logo.py            # 生成全套资源
@@ -32,7 +33,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QBuffer, QPointF, QRectF, Qt  # noqa: E402
+from PySide6.QtCore import QBuffer, QRectF, Qt  # noqa: E402
 from PySide6.QtGui import (  # noqa: E402
     QColor,
     QFont,
@@ -58,7 +59,7 @@ OUT_DIR = PROJECT_ROOT / "src" / "app" / "resources" / "logo"
 BUILD_DIR = PROJECT_ROOT / "build" / "logo"
 ICONSET_DIR = BUILD_DIR / "Section2.iconset"
 ORIGINAL_PNG = PROJECT_ROOT / "section" / "section-master" / "section" / "Resources" / "170530 S.png"
-DIDOT_TTC = Path("/System/Library/Fonts/Supplemental/Didot.ttc")
+FUTURA_TTC = Path("/System/Library/Fonts/Supplemental/Futura.ttc")
 
 #: 1.0 的身份色（Material Blue Grey 700）与其顶亮/底深衍生
 BG_TOP = QColor("#5B7280")
@@ -68,7 +69,19 @@ BG_BOTTOM = QColor("#384A54")
 CANVAS = 1024
 ARTWORK = 824  # 苹果图标网格：1024 画布、824 主体（四周留白 100）
 SQUIRCLE_N = 5  # superellipse 指数（对系统图标实测：对角切入点 6.9% ≈ 实测 7.0%）
-S_HEIGHT_FRAC = 0.473  # S 高 / 画布，沿用 1.0 比例
+
+#: 主标记版式
+S_HEIGHT_FRAC = 0.473   # S 高 / 画布，沿用 1.0 比例
+TWO_FRAC = 0.55         # "2" 高 = S 高 × 0.55
+TWO_OVERLAP = 0.055     # "2" 与 S 的重叠量（× S 高）
+UNIT_MAX_W = 0.42       # S+2 组合最大宽（× 画布），超限整体等比缩小
+EXTRUDE_FRAC = 0.060    # 挤出深度（× S 高）
+EXTRUDE_DIR = (0.30, 1.0)  # 挤出方向：向右下（光从左上来）
+EXTRUDE_LAYERS = 12
+SIDE_NEAR = QColor("#4A5E68")  # 挤出侧面近前脸色
+SIDE_FAR = QColor("#1F2B33")   # 挤出侧面最深色
+FRONT_TOP, FRONT_BOTTOM = "#FFFFFF", "#DFE8EC"      # S 前面
+TWO_TOP, TWO_BOTTOM = "#F4F8FA", "#D5E1E7"          # "2" 前面（略暗，让 S 为主）
 #: 小尺寸收缩边距（苹果小尺寸图标主体占比更大）
 SMALL_MARGIN = {16: 0.039, 24: 0.047, 32: 0.055, 48: 0.066, 64: 0.075}
 
@@ -115,14 +128,12 @@ def blurred(image: QImage, radius: float) -> QImage:
     return out
 
 
-def glyph_path(px_height: float, bold: bool) -> QPainterPath:
-    """Didot Italic 的 "S"，缩放到指定像素高、包围盒左上角在原点。"""
-    font = QFont("Didot")
-    font.setStyle(QFont.Style.StyleItalic)
-    if bold:
-        font.setWeight(QFont.Weight.Bold)
+def make_glyph(text: str, px_height: float, weight: QFont.Weight = QFont.Weight.Bold) -> QPainterPath:
+    """Futura 无衬线字形，缩放到指定像素高、包围盒左上角在原点。"""
+    font = QFont("Futura")
+    font.setWeight(weight)
     raw = QPainterPath()
-    raw.addText(0, 0, font, "S")
+    raw.addText(0, 0, font, text)
     br = raw.boundingRect()
     scale = px_height / br.height()
     mapped = QTransform().scale(scale, scale).map(raw)
@@ -130,12 +141,54 @@ def glyph_path(px_height: float, bold: bool) -> QPainterPath:
     return mapped
 
 
-def draw_logo(size: int, *, small: bool = False, bold_s: bool = False) -> QImage:
-    """绘制一枚 logo。small=True 时收缩边距（苹果小尺寸规则）。"""
+def lerp_color(a: QColor, b: QColor, t: float) -> QColor:
+    return QColor(
+        round(a.red() + (b.red() - a.red()) * t),
+        round(a.green() + (b.green() - a.green()) * t),
+        round(a.blue() + (b.blue() - a.blue()) * t),
+    )
+
+
+def mark_paths(size: int, *, small: bool) -> tuple[list[tuple[QPainterPath, str, str]], float, float]:
+    """布局主标记，返回 [(路径, 前面顶色, 前面底色), ...] 与挤出偏移 (dx, dy)。
+
+    small=True 时只保留 S（小尺寸下 "2" 会糊）。组合过宽时整体等比缩小。
+    """
+    s_px = size * S_HEIGHT_FRAC
+    s_path = make_glyph("S", s_px)
+    sb = s_path.boundingRect()
+    entries: list[tuple[QPainterPath, str, str]] = [(s_path, FRONT_TOP, FRONT_BOTTOM)]
+    if not small:
+        h2 = s_px * TWO_FRAC
+        two = make_glyph("2", h2)
+        tb = two.boundingRect()
+        two.translate(sb.right() - s_px * TWO_OVERLAP - tb.left(), sb.bottom() - tb.bottom())
+        entries.append((two, TWO_TOP, TWO_BOTTOM))
+    union = entries[0][0].boundingRect()
+    for path, _, _ in entries[1:]:
+        union = union.united(path.boundingRect())
+    max_w = size * UNIT_MAX_W
+    fit = min(1.0, max_w / union.width())
+
+    ex_dx = s_px * EXTRUDE_FRAC * EXTRUDE_DIR[0]
+    ex_dy = s_px * EXTRUDE_FRAC * EXTRUDE_DIR[1]
+    transform = QTransform().scale(fit, fit)
+    scaled = [(transform.map(path), top, bottom) for path, top, bottom in entries]
+    union = scaled[0][0].boundingRect()
+    for path, _, _ in scaled[1:]:
+        union = union.united(path.boundingRect())
+    # 前脸组合中心略向左上让出右下挤出体的量，整标视觉居中
+    dx = size / 2 - ex_dx / 2 - union.center().x()
+    dy = size / 2 - ex_dy / 2 - size * 0.004 - union.center().y()
+    scaled = [(path.translated(dx, dy), top, bottom) for path, top, bottom in scaled]
+    return scaled, ex_dx * fit, ex_dy * fit
+
+
+def draw_logo(size: int, *, small: bool = False) -> QImage:
+    """绘制一枚 logo。small=True 时收缩边距并去掉 "2"（苹果小尺寸规则）。"""
     margin_frac = SMALL_MARGIN.get(size, 0.0977) if small else 0.0977
     art = size * (1 - 2 * margin_frac)
     off = (size - art) / 2
-    s_px = size * S_HEIGHT_FRAC
 
     img = _qimage(size, size)
     p = QPainter(img)
@@ -191,27 +244,40 @@ def draw_logo(size: int, *, small: bool = False, bold_s: bool = False) -> QImage
     p.drawPath(shape)
     p.restore()
 
-    # 4) 白 S：轻微纵向明暗 + 悬浮投影
-    glyph = glyph_path(s_px, bold=bold_s)
-    gb = glyph.boundingRect()
-    glyph.translate(size / 2 - gb.center().x(), size / 2 - gb.center().y() - size * 0.004)
-    gb = glyph.boundingRect()
+    # 4) 主标记：立体挤出 + 白色前面 + 悬浮投影
+    marks, ex_dx, ex_dy = mark_paths(size, small=small)
+    union = marks[0][0].boundingRect()
+    for path, _, _ in marks[1:]:
+        union = union.united(path.boundingRect())
+
     lift = _qimage(size, size)
     lp = QPainter(lift)
     lp.setRenderHint(QPainter.RenderHint.Antialiasing)
     lp.setPen(Qt.PenStyle.NoPen)
     lp.setBrush(QColor(16, 28, 34, 255))
-    lp.drawPath(glyph)
+    for path, _, _ in marks:
+        lp.drawPath(path)
     lp.end()
-    lift_blur = blurred(lift, max(1.5, size * 0.012))
-    p.setOpacity(0.30)
-    p.drawImage(0, max(1, round(size * 0.005)), lift_blur)
+    lift_blur = blurred(lift, max(1.5, size * 0.014))
+    p.setOpacity(0.32)
+    p.drawImage(0, max(1, round(size * 0.007)), lift_blur)
     p.setOpacity(1.0)
-    sgrad = QLinearGradient(0, gb.top(), 0, gb.bottom())
-    sgrad.setColorAt(0.0, QColor("#FFFFFF"))
-    sgrad.setColorAt(1.0, QColor("#E6EDF1"))
-    p.setBrush(sgrad)
-    p.drawPath(glyph)
+
+    p.setPen(Qt.PenStyle.NoPen)
+    for i in range(EXTRUDE_LAYERS, 0, -1):
+        t = i / EXTRUDE_LAYERS
+        p.setBrush(lerp_color(SIDE_NEAR, SIDE_FAR, t))
+        for path, _, _ in marks:
+            p.save()
+            p.translate(ex_dx * t, ex_dy * t)
+            p.drawPath(path)
+            p.restore()
+    for path, top, bottom in marks:
+        g = QLinearGradient(0, path.boundingRect().top(), 0, path.boundingRect().bottom())
+        g.setColorAt(0.0, QColor(top))
+        g.setColorAt(1.0, QColor(bottom))
+        p.setBrush(g)
+        p.drawPath(path)
 
     p.end()
     return img
@@ -255,7 +321,7 @@ def build_iconset(master: QImage) -> None:
     ]
     for name, px in specs:
         if px <= 64:
-            img = draw_logo(px, small=True, bold_s=px <= 32)
+            img = draw_logo(px, small=True)
         else:
             img = master.scaled(px, px, Qt.AspectRatioMode.IgnoreAspectRatio,
                                 Qt.TransformationMode.SmoothTransformation)
@@ -268,7 +334,7 @@ def build_ico(master: QImage) -> None:
     sizes = [16, 24, 32, 48, 64, 128, 256]
     entries = []
     for px in sizes:
-        img = (draw_logo(px, small=True, bold_s=True) if px <= 32
+        img = (draw_logo(px, small=True) if px <= 32
                else master.scaled(px, px, Qt.AspectRatioMode.IgnoreAspectRatio,
                                   Qt.TransformationMode.SmoothTransformation))
         entries.append((px, px, png_bytes(img)))
@@ -313,7 +379,7 @@ def build_preview(master: QImage, original: QImage) -> None:
 
 
 def main() -> None:
-    QFontDatabase.addApplicationFont(str(DIDOT_TTC))
+    QFontDatabase.addApplicationFont(str(FUTURA_TTC))
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
 
