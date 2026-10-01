@@ -1,0 +1,30 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<mcElement>
+  <Name></Name>
+  <Category>直埋管道</Category>
+  <Depth>3</Depth>
+  <Amount>100</Amount>
+  <showPEname>多围护原则</showPEname>
+  <showPFname>新地基原则</showPFname>
+  <mainPEname>边侧围护</mainPEname>
+  <SizeB>0.8</SizeB>
+  <SizeH>0.8</SizeH>
+  <Source></Source>
+  <PEname>
+    <key>边侧围护</key>
+    <value>0.5</value>
+  </PEname>
+  <PEname>
+    <key>中间侧</key>
+    <value>0.5</value>
+  </PEname>
+  <PFname>
+    <key>新地基原则</key>
+    <value>1</value>
+  </PFname>
+  <msPipe>
+    <Mat>Ⅰ级混凝土管</Mat>
+    <Dn>800</Dn>
+    <Content>1</Content>
+  </msPipe>
+</mcElement>

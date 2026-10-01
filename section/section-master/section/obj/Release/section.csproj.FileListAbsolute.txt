@@ -1,0 +1,16 @@
+F:\c\section\170306section\section\bin\Release\section.exe.config
+F:\c\section\170306section\section\bin\Release\section.exe
+F:\c\section\170306section\section\bin\Release\section.pdb
+F:\c\section\170306section\section\obj\Release\section.csprojResolveAssemblyReference.cache
+F:\c\section\170306section\section\obj\Release\section.FormBscIfo.resources
+F:\c\section\170306section\section\obj\Release\section.FormMain.resources
+F:\c\section\170306section\section\obj\Release\section.FormMdi.resources
+F:\c\section\170306section\section\obj\Release\section.FormNewGuide.resources
+F:\c\section\170306section\section\obj\Release\section.FormPF.resources
+F:\c\section\170306section\section\obj\Release\section.FormPS.resources
+F:\c\section\170306section\section\obj\Release\section.FormPSsEdit.resources
+F:\c\section\170306section\section\obj\Release\section.FormUnit.resources
+F:\c\section\170306section\section\obj\Release\section.Properties.Resources.resources
+F:\c\section\170306section\section\obj\Release\section.csproj.GenerateResource.Cache
+F:\c\section\170306section\section\obj\Release\section.exe
+F:\c\section\170306section\section\obj\Release\section.pdb

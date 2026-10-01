@@ -1,0 +1,28 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<COPYmcE>
+  <mcElement>
+    <Name></Name>
+    <Category>直埋管道</Category>
+    <Depth>5.25</Depth>
+    <Amount>124</Amount>
+    <showPEname>污水</showPEname>
+    <showPFname>新地基原则</showPFname>
+    <mainPEname>污水</mainPEname>
+    <SizeB>0.4</SizeB>
+    <SizeH>0.4</SizeH>
+    <Source></Source>
+    <PEname>
+      <key>污水</key>
+      <value>1</value>
+    </PEname>
+    <PFname>
+      <key>新地基原则</key>
+      <value>1</value>
+    </PFname>
+    <msPipe>
+      <Mat>球墨铸铁管 K9</Mat>
+      <Dn>400</Dn>
+      <Content>1</Content>
+    </msPipe>
+  </mcElement>
+</COPYmcE>
