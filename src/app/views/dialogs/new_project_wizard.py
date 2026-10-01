@@ -167,6 +167,17 @@ class NewProjectWizardCore(QWizard):
         super().__init__(parent)
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage, True)
+        # Apple HIG：取消在左下角，上一步/下一步（完成）在右下角
+        self.setButtonLayout(
+            (
+                QWizard.WizardButton.CancelButton,
+                QWizard.WizardButton.Stretch,
+                QWizard.WizardButton.BackButton,
+                QWizard.WizardButton.NextButton,
+                QWizard.WizardButton.CommitButton,
+                QWizard.WizardButton.FinishButton,
+            )
+        )
         self._basic_page = BasicInfoPage()
         self._principle_page = PrinciplePage()
         self._atlas_page = AtlasPage()

@@ -20,6 +20,8 @@ dependencies = [
     "pydantic>=2.6",
     # config.toml 写入（读取用标准库 tomllib）
     "tomli-w>=1.0",
+    # mac 无边框外观：透明标题栏 + 红绿灯按钮（见 app/views/widgets/mac_window.py）
+    "pyobjc-framework-Cocoa>=10 ; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]

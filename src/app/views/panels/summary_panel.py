@@ -71,6 +71,8 @@ class SummaryPanel(QWidget):
         from PySide6.QtWidgets import QTabWidget
 
         self._tabs = QTabWidget()
+        # documentMode：页签文字统一左对齐（macOS 原生样式默认把页签条整体居中）
+        self._tabs.setDocumentMode(True)
         self._quota_table = self._make_table()
         self._listing_table = self._make_table()
         self._tabs.addTab(self._quota_table, "定额工程量")

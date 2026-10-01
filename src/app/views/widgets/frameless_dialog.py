@@ -28,6 +28,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.views.widgets.mac_window import (
+    TRAFFIC_LIGHT_INSET_CLOSE,
+    apply_mac_window_chrome,
+    is_mac,
+)
+
 # 消息框按钮文案映射（StandardButton → 中文）
 _BUTTON_TEXT = {
     QMessageBox.StandardButton.Ok: "确定",
@@ -230,19 +236,29 @@ class DialogTitleBar(QFrame):
         self._drag_offset: QPoint | None = None
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 0, 0, 0)
         layout.setSpacing(8)
 
         self._title_label = QLabel(title)
         self._title_label.setProperty("role", "dialog-title")
         # 透传鼠标事件到标题栏，点标题文字也能拖拽
         self._title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        layout.addWidget(self._title_label, alignment=Qt.AlignmentFlag.AlignVCenter)
-        layout.addStretch(1)
 
-        self._btn_close = _DialogCloseButton(self)
-        layout.addWidget(self._btn_close)
-        self._btn_close.clicked.connect(self._on_close)
+        if is_mac():
+            # Apple HIG：红绿灯由系统画在左上角，标题文字居中
+            layout.setContentsMargins(
+                TRAFFIC_LIGHT_INSET_CLOSE, 0, TRAFFIC_LIGHT_INSET_CLOSE, 0
+            )
+            layout.addStretch(1)
+            layout.addWidget(self._title_label, alignment=Qt.AlignmentFlag.AlignVCenter)
+            layout.addStretch(1)
+            self._btn_close = None
+        else:
+            layout.setContentsMargins(12, 0, 0, 0)
+            layout.addWidget(self._title_label, alignment=Qt.AlignmentFlag.AlignVCenter)
+            layout.addStretch(1)
+            self._btn_close = _DialogCloseButton(self)
+            layout.addWidget(self._btn_close)
+            self._btn_close.clicked.connect(self._on_close)
 
         self._apply_theme()
 
@@ -253,7 +269,8 @@ class DialogTitleBar(QFrame):
         from app.resources.qss.theme import ThemeManager
 
         colors = ThemeManager.instance().current()
-        self._btn_close.set_colors(colors.text_primary, colors.text_inverse)
+        if self._btn_close is not None:  # mac 上关闭交给系统红绿灯，无自绘按钮
+            self._btn_close.set_colors(colors.text_primary, colors.text_inverse)
 
     def refresh_theme(self) -> None:
         self._apply_theme()
@@ -296,7 +313,11 @@ class FramelessDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None, title: str = "") -> None:
         super().__init__(parent)
-        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+        if is_mac():
+            # mac：保留原生窗口（系统圆角/阴影/红绿灯），标题栏由 mac_window.py 藏进自绘界面
+            self.setWindowFlags(Qt.WindowType.Window)
+        else:
+            self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
 
         self._title_bar = DialogTitleBar(title, self)
 
@@ -310,6 +331,11 @@ class FramelessDialog(QDialog):
         self._body_layout = QVBoxLayout(self._body)
         self._body_layout.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self._body, stretch=1)
+
+        if is_mac():
+            # 先创建原生句柄并在显示前套用 chrome，避免首帧闪现系统标题栏
+            self.winId()
+            apply_mac_window_chrome(self, close_only=True)
 
     def bodyLayout(self) -> QVBoxLayout:
         return self._body_layout
@@ -435,7 +461,9 @@ class FramelessMessageBox(FramelessDialog):
                 widget.deleteLater()
 
         has_default = default != QMessageBox.StandardButton.NoButton and (buttons & default)
-        for button_value in _ALL_BUTTONS:
+        # Apple HIG：默认（肯定）按钮放最右、取消等次要按钮在其左侧；
+        # _ALL_BUTTONS 按肯定→取消排序，这里倒序添加使肯定按钮位于最右。
+        for button_value in reversed(_ALL_BUTTONS):
             if not (buttons & button_value):
                 continue
             text = (button_texts or {}).get(
@@ -446,6 +474,7 @@ class FramelessMessageBox(FramelessDialog):
                 not has_default and button_value == QMessageBox.StandardButton.Ok
             ):
                 button.setProperty("primary", True)
+                button.setDefault(True)
             button.setMinimumWidth(72)
             button.clicked.connect(
                 lambda checked=False, value=button_value: self._on_button_clicked(value)
@@ -560,13 +589,15 @@ class FramelessInputDialog(FramelessDialog):
         layout.addWidget(self._edit)
         button_row = QHBoxLayout()
         button_row.addStretch(1)
-        ok = QPushButton("确定")
-        ok.setProperty("primary", True)
-        ok.clicked.connect(self.accept)
+        # Apple HIG：取消在左，默认（确定）按钮在右
         cancel = QPushButton("取消")
         cancel.clicked.connect(self.reject)
-        button_row.addWidget(ok)
+        ok = QPushButton("确定")
+        ok.setProperty("primary", True)
+        ok.setDefault(True)
+        ok.clicked.connect(self.accept)
         button_row.addWidget(cancel)
+        button_row.addWidget(ok)
         layout.addLayout(button_row)
 
     def textValue(self) -> str:

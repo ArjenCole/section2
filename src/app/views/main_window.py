@@ -52,6 +52,7 @@ from app.views.panels.principle_bar import PrincipleBar
 from app.views.panels.tree_panel import TreePanel
 from app.views.panels.unit_panel import UnitPanel
 from app.views.widgets.frameless_dialog import FramelessMessageBox
+from app.views.widgets.mac_window import TRAFFIC_LIGHT_INSET_ALL, apply_mac_window_chrome, is_mac
 from app.views.dialogs.new_project_wizard import (
     NewProjectWizard,
     suggested_dir,
@@ -143,8 +144,9 @@ class FramelessTitleBar(QFrame):
         self._press_pos = None
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 0, 0, 0)
         layout.setSpacing(8)
+        self._mac = is_mac()
+        layout.setContentsMargins(TRAFFIC_LIGHT_INSET_ALL if self._mac else 12, 0, 0, 0)
 
         self._icon_label = QLabel("§")
         self._icon_label.setObjectName("TitleBarIcon")
@@ -168,6 +170,10 @@ class FramelessTitleBar(QFrame):
         self._btn_min.clicked.connect(self._on_minimize)
         self._btn_max.clicked.connect(self._on_toggle_max)
         self._btn_close.clicked.connect(self._on_close)
+        if self._mac:
+            # Apple HIG：关闭/最小化/缩放用系统红绿灯（左上角），隐藏自绘控制按钮
+            for button in (self._btn_min, self._btn_max, self._btn_close):
+                button.setVisible(False)
 
     @property
     def menu_bar(self) -> QMenuBar:
@@ -294,7 +300,11 @@ class MainWindow(QMainWindow):
 
     def __init__(self, project_path: str | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+        if is_mac():
+            # mac：保留原生窗口（系统圆角/阴影/红绿灯），标题栏由 mac_window.py 藏进自绘界面
+            self.setWindowFlags(Qt.WindowType.Window)
+        else:
+            self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.resize(1440, 900)
         self._title_bar = FramelessTitleBar()
         self.setMenuWidget(self._title_bar)  # 标题栏替代原生菜单栏行
@@ -307,6 +317,10 @@ class MainWindow(QMainWindow):
         self._update_title()
         self._refresh_recent_menu()
         self._enable_win11_rounded_corners()
+        if is_mac():
+            # 先创建原生句柄并在显示前套用 chrome，避免首帧闪现系统标题栏
+            self.winId()
+            apply_mac_window_chrome(self)
         if project_path:
             QTimer.singleShot(0, lambda: self._open_path(project_path))
 
