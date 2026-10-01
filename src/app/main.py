@@ -26,10 +26,10 @@ _bootstrap_path()
 
 import app  # noqa: E402,F401  先导入本包：内含 Windows 系统 ICU 预加载，必须早于 PySide6
 from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator  # noqa: E402
-from PySide6.QtGui import QFontDatabase  # noqa: E402
+from PySide6.QtGui import QFontDatabase, QIcon  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from app.core.paths import fonts_dir, log_dir  # noqa: E402
+from app.core.paths import fonts_dir, log_dir, resources_dir  # noqa: E402
 from app.core.version import (  # noqa: E402
     APP_DISPLAY_NAME,
     APP_NAME,
@@ -101,6 +101,13 @@ def install_translations(app: QApplication) -> None:
     _logger.info("未找到 Qt 中文翻译，界面按钮使用英文")
 
 
+def _apply_window_icon(app: QApplication) -> None:
+    """用随程序分发的 logo 设置窗口/Dock 图标（app/resources/logo/icon_512.png）。"""
+    icon_file = resources_dir() / "logo" / "icon_512.png"
+    if icon_file.exists():
+        app.setWindowIcon(QIcon(str(icon_file)))
+
+
 def _project_from_args(argv: list[str]) -> str | None:
     for argument in argv[1:]:
         if argument.startswith("-"):
@@ -128,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     _load_fonts()
     install_translations(app)
     apply_initial_theme(app)
+    _apply_window_icon(app)
     _install_excepthook()
 
     window = MainWindow(project_path=_project_from_args(arguments))

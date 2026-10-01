@@ -38,6 +38,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon="src\\app\\resources\\logo\\section2.ico",
 )
 coll = COLLECT(
     exe,
