@@ -210,6 +210,10 @@ class NewProjectWizard(FramelessDialog):
         self._wizard.setWindowFlags(Qt.WindowType.Widget)
         self._wizard.setVisible(True)
         self.bodyLayout().addWidget(self._wizard)
+        # 内嵌 QWizard 点“完成”/“取消”时只隐藏自己，exec() 停在外层容器上；
+        # 把结果转发给容器，外层才会关闭并返回
+        self._wizard.accepted.connect(self.accept)
+        self._wizard.rejected.connect(self.reject)
 
     def values(self) -> dict:
         return self._wizard.values()
