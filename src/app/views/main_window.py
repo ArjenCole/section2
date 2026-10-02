@@ -700,6 +700,9 @@ class MainWindow(QMainWindow):
         self._refresh_action_icons()
         if self._title_bar is not None:  # mac 上没有自绘标题栏
             self._title_bar.refresh_theme(ThemeManager.instance().current())
+        elif is_mac():
+            # mac：重套 chrome 同步 NSWindow 外观，系统标题文字颜色跟随主题亮暗
+            apply_mac_window_chrome(self)
         self._unit_panel.refresh()
         self._ai_panel.refresh_theme()
 

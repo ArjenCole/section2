@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from app.core.evaluator import format_number
 from app.core.event_bus import bus
+from app.views.widgets.mac_window import is_mac
 from app.services import excel_export, project_io
 from app.services.atlas import default_price_table
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
@@ -71,8 +72,10 @@ class SummaryPanel(QWidget):
         from PySide6.QtWidgets import QTabWidget
 
         self._tabs = QTabWidget()
-        # documentMode：页签文字统一左对齐（macOS 原生样式默认把页签条整体居中）
-        self._tabs.setDocumentMode(True)
+        # Windows：documentMode 让页签文字左对齐；mac 上 documentMode 会触发
+        # QMacStyle 重置窗口样式（透明标题栏失效），对齐由 MacStyleTweaks 处理
+        if not is_mac():
+            self._tabs.setDocumentMode(True)
         self._tabs.tabBar().setDrawBase(False)
         self._quota_table = self._make_table()
         self._listing_table = self._make_table()

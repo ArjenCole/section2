@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 
 from app.core.evaluator import EvalError, evaluate, format_number
 from app.core.event_bus import bus
+from app.views.widgets.mac_window import is_mac
 from app.core.models.models import (
     CATEGORY_CHOICES,
     CATEGORY_NAMES,
@@ -215,10 +216,11 @@ class UnitPanel(QWidget):
 
         # 左：选中构件的明细
         detail = QTabWidget()
-        # documentMode：页签文字统一左对齐（macOS 原生样式默认把页签条整体居中）；
-        # 页签/窗格外观仍由全局 QSS 控制，Windows 观感不变
-        detail.setDocumentMode(True)
-        # documentMode 会在页签条下画原生底座（mac 上随系统暗色成深色条），关掉
+        # Windows：documentMode 让页签文字左对齐、外观交给全局 QSS；
+        # mac 不能开 documentMode——QMacStyle 会在页签首次显示时重置窗口
+        # 样式掩码，把透明标题栏打回系统样式（对齐由 MacStyleTweaks 处理）
+        if not is_mac():
+            detail.setDocumentMode(True)
         detail.tabBar().setDrawBase(False)
         self._pipe_table = self._make_table(_PIPE_HEADERS)
         self._param_table = self._make_table(_PARAM_HEADERS)
@@ -291,7 +293,8 @@ class UnitPanel(QWidget):
 
     def _build_quantity_area(self) -> QWidget:
         tabs = QTabWidget()
-        tabs.setDocumentMode(True)
+        if not is_mac():
+            tabs.setDocumentMode(True)
         tabs.tabBar().setDrawBase(False)
         self._quantity_tables: dict[str, QTableWidget] = {}
         for name in ("定额工程量", "清单工程量"):

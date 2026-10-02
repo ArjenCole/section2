@@ -131,6 +131,12 @@ def main(argv: list[str] | None = None) -> int:
     # 不设 Fusion：Fusion 对非可编辑组合框返回 SH_ComboBox_Popup=true，弹出层被按
     # 菜单渲染（位置带偏移、容器带框和阴影）；系统原生样式（windowsvista）下弹出层
     # 紧贴输入框、无框无影，与 Quotor / brackets2 的表现一致。外观差异由 QSS 统一。
+    if sys.platform == "darwin":
+        # mac 原生样式同样把组合框弹层按菜单渲染（层叠在按钮上、宽度收缩）、
+        # 页签条整体居中：用薄代理样式只纠正这两点，其余保持原生
+        from app.views.widgets.mac_window import MacStyleTweaks
+
+        app.setStyle(MacStyleTweaks())
 
     _load_fonts()
     install_translations(app)

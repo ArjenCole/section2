@@ -320,9 +320,10 @@ class FramelessDialog(QDialog):
         outer.addWidget(self._body, stretch=1)
 
         if self._mac:
-            # 先创建原生句柄再隐藏多余红绿灯；标题文字由系统画在红绿灯同一行
+            # 与主窗体同一套标题栏：透明标题栏 + 红绿灯 + 系统标题文字；
+            # 内容从标题栏下方开始（Qt 安全区内边距），先创建原生句柄并隐藏多余红绿灯
             self.winId()
-            apply_mac_window_chrome(self, close_only=True, expand=False)
+            apply_mac_window_chrome(self, close_only=True)
             self._mac_chrome_reapplied = False
         self.setWindowTitle(title)
 
@@ -341,7 +342,7 @@ class FramelessDialog(QDialog):
         if self._mac and not getattr(self, "_mac_chrome_reapplied", True):
             # show 时 Qt 会按窗口标志重置 NSWindow 装饰，这里补一次（幂等）
             self._mac_chrome_reapplied = True
-            apply_mac_window_chrome(self, close_only=True, expand=False)
+            apply_mac_window_chrome(self, close_only=True)
         super().showEvent(event)
         self._enable_win11_rounded_corners()
 
