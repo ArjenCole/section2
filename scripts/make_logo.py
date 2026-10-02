@@ -69,26 +69,30 @@ CANVAS = 1024
 ARTWORK = 824  # 苹果图标网格：1024 画布、824 主体（四周留白 100）
 SQUIRCLE_N = 5  # superellipse 指数（对系统图标实测：对角切入点 6.9% ≈ 实测 7.0%）
 
-#: s 形管道参数（工业管道：直管 + 弯头拼接的折线 S）
-S_HEIGHT_FRAC = 0.473   # 管道整体高（含管径）/ 画布，沿用 1.0 比例
-TUBE_FRAC = 0.217       # 管外径 / 管道整体高
-ELBOW_R_FRAC = 0.65     # 弯头弯曲半径 / 管外径
-OVERHANG_FRAC = 0.35    # 上下直管端部伸出立管 x 的长度 / 管外径
-WIDTH_FRAC = 1.03       # 管道整体宽 / 管道整体高
-ARC_STEPS = 48          # 每个弯头圆弧的采样点数
-#: 圆柱光影：同轴描边带（宽度占管径比例，颜色由管缘深色到芯部）
-TUBE_EDGE = QColor("#26363F")
-TUBE_CORE = QColor("#D9E4E9")
-GLINT = QColor("#F7FBFC")
-WELD_COLOR = QColor(30, 42, 50, 170)   # 直管与弯头的对接焊缝
-#: 剖切端面（三层椭圆：切口环 → 内壁 → 内腔，孔洞沿管轴外移形成透视）
-BORE_MINOR_FRAC = 0.44  # 端面椭圆短轴 / 管径（长轴 = 管径）
-BORE_RING_TOP = QColor("#DCE5EA")   # 切口环亮部（上缘）
-BORE_RING_BOT = QColor("#93A5AF")   # 切口环暗部（下缘）
-BORE_WALL_IN = QColor("#2C3B44")    # 内壁深侧
-BORE_WALL_OUT = QColor("#44565F")   # 内壁浅侧
-BORE_HOLE_DEEP = QColor("#131C22")  # 内腔最深
-BORE_HOLE_NEAR = QColor("#3F515A")  # 内腔近口部
+#: s 形管道参数（骨架参照粗黑体 S：上碗 + 斜脊线 + 下碗，直管 + 弯头拼接，扁平风）
+S_HEIGHT_FRAC = 0.52   # 管道整体高（含管径）/ 画布（折线 S 偏窄，放大保证存在感）
+TUBE_FRAC = 0.26        # 管外径 / 管道整体高（粗黑体感的粗管）
+BEND_R_FRAC = 0.55      # 弯头弯曲半径 / 管外径
+VERT_FRAC = 0.10        # 两侧立管直段长 / 管外径（短立管，弯头链更流畅）
+SPINE_ANGLE = 25        # 中间斜脊与水平的夹角（度）——越小说脊线越舒展
+TUCK_FRAC = 0.35        # 端部相对立管轴线的内收量 / 管外径（弯头是最左/最右点）
+ARC_STEPS = 48          # 每个 90° 弯头圆弧的采样点数
+#: 扁平化圆柱光影：少量同轴色带 + 一条柔和受光带，无镜面高光
+TUBE_BANDS = (
+    (1.00, "#33454E"),
+    (0.82, "#485D67"),
+    (0.60, "#647A85"),
+    (0.36, "#8CA1AB"),
+)
+TUBE_LIT_BAND = (0.30, "#9FB3BC")   # 偏左上的柔和受光带
+WELD_COLOR = QColor(30, 42, 50, 150)   # 直管与弯头的对接焊缝
+#: 剖切端面（扁平、有透视主次）：上端开口朝东正视（环 + 腔），下端开口朝西
+#: 背向视者，只看到接近侧切的窄椭圆——两端不再一样
+BORE_MINOR_FRAC = 0.34     # 正视端面短轴 / 管径
+BORE_EDGE_FRAC = 0.16      # 背向端面（侧切窄椭圆）短轴 / 管径
+BORE_RING = QColor("#9FB2BA")       # 端面（哑光金属，压暗以平衡右上视觉重量）
+BORE_HOLE = QColor("#2C3840")       # 内腔
+BORE_EDGE = QColor("#A7B8C0")       # 背向端窄椭圆（略提亮，补左下质量）
 #: 小尺寸收缩边距（苹果小尺寸图标主体占比更大）
 SMALL_MARGIN = {16: 0.039, 24: 0.047, 32: 0.055, 48: 0.066, 64: 0.075}
 #: 超采样倍率（边缘抗锯齿的关键：大画布绘制后平滑降采样）
@@ -137,128 +141,111 @@ def blurred(image: QImage, radius: float) -> QImage:
     return out
 
 
-def pipe_centerline(dia: float) -> tuple[QPainterPath, QPointF, QPointF, list[tuple[float, float, bool]]]:
-    """工业管道折线 S 中心线：5 段直管 + 4 个 90° 弯头，上下点对称。
+def pipe_centerline(dia: float) -> tuple[QPainterPath, QPointF, QPointF, list[tuple[float, float, float]]]:
+    """粗黑体 S 骨架的管道中心线（点对称）。
 
-    走向：上直管（东端开口，向西）→ 弯头 → 左立管（向下）→ 弯头 → 中直管（向东）
-    → 弯头 → 右立管（向下）→ 弯头 → 下直管（西端开口，向西）。
-    返回 (路径, 上端点, 下端点, 焊缝列表)；焊缝为 (x, y, 是否横缝)：
-    横缝表示管轴水平（焊缝竖直），否则管轴竖直（焊缝水平）。
+    走向：上横管（东端开口内收，向西）→ 90° 弯 → 左立管 → (90°−θ) 弯 → 斜脊
+    （与水平成 θ 角，穿中心）→ (90°−θ) 弯 → 右立管 → 90° 弯 → 下横管（西端
+    开口内收，向西）。左右弯头是全字的最左/最右点，开口端面不超出弯头。
+    返回 (路径, 上端点, 下端点, 焊缝列表)；焊缝为 (x, y, 缝线方向角°)。
     坐标以管道包围盒中心为原点（y 向下为正）。
     """
-    R = dia * ELBOW_R_FRAC
+    R = dia * BEND_R_FRAC
     full_h = dia / TUBE_FRAC
     yt = (full_h - dia) / 2
-    xt = (full_h * WIDTH_FRAC - dia) / 2
-    xv = xt - dia * OVERHANG_FRAC
+    th = math.radians(SPINE_ANGLE)
+    # 立管直段 VERT_FRAC·dia，脊线斜率 tanθ 定出立管位置 xv：
+    #   m = xv·tanθ + R(1−sinθ)/cosθ 且 m = yt − R − vert
+    xv = (yt - R - dia * VERT_FRAC - R * (1 - math.sin(th)) / math.cos(th)) / math.tan(th)
+    m = xv * math.tan(th) + R * (1 - math.sin(th)) / math.cos(th)
+    xt = xv - dia * TUCK_FRAC
 
-    pts: list[tuple[float, float]] = []
+    pts: list[tuple[float, float]] = [(xt, -yt), (-xv + R, -yt)]   # 上横管向西
 
     def arc(cx: float, cy: float, a0: float, a1: float) -> None:
         for i in range(1, ARC_STEPS + 1):
             a = math.radians(a0 + (a1 - a0) * i / ARC_STEPS)
             pts.append((cx + R * math.cos(a), cy + R * math.sin(a)))
 
-    pts.append((xt, -yt))                       # 上直管东端（开口向东）
-    pts.append((-xv + R, -yt))                  # 上直管向西
-    arc(-xv + R, -yt + R, -90, -180)            # 弯头1：西→南
-    pts.append((-xv, -R))                       # 左立管向南
-    arc(-xv + R, -R, 180, 90)                   # 弯头2：南→东
-    pts.append((xv - R, 0))                     # 中直管向东
-    arc(xv - R, R, -90, 0)                      # 弯头3：东→南
-    pts.append((xv, yt - R))                    # 右立管向南
-    arc(xv - R, yt - R, 0, 90)                  # 弯头4：南→西
-    pts.append((-xt, yt))                       # 下直管向西（开口向西）
+    arc(-xv + R, -yt + R, -90, -180)             # 90° 弯：西→南
+    pts.append((-xv, -m))                        # 左立管向南
+    arc(-xv + R, -m, 180, 90 + SPINE_ANGLE)      # (90°−θ) 弯：南→斜脊
+    pts.append((xv - R * (1 - math.sin(th)), m - R * math.cos(th)))  # 斜脊穿中心
+    arc(xv - R, m, SPINE_ANGLE - 90, 0)          # (90°−θ) 弯：斜脊→南
+    pts.append((xv, yt - R))                     # 右立管向南
+    arc(xv - R, yt - R, 0, 90)                   # 90° 弯：南→西
+    pts.append((-xt, yt))                        # 下横管向西（开口向西）
 
     path = QPainterPath()
     path.moveTo(pts[0][0], pts[0][1])
     for x, y in pts[1:]:
         path.lineTo(x, y)
 
-    # 焊缝位置：每个弯头与直管的 8 个对接点
+    weld_dir = 90 + SPINE_ANGLE                  # 斜脊焊缝：垂直于脊线
     welds = [
-        (-xv + R, -yt, True),      # 上直管 | 弯头1（管轴水平 → 竖缝）
-        (-xv, -yt + R, False),     # 弯头1 | 左立管（管轴竖直 → 横缝）
-        (-xv, -R, False),          # 左立管 | 弯头2
-        (-xv + R, 0, True),        # 弯头2 | 中直管
-        (xv - R, 0, True),         # 中直管 | 弯头3
-        (xv, R, False),            # 弯头3 | 右立管
-        (xv, yt - R, False),       # 右立管 | 弯头4
-        (xv - R, yt, True),        # 弯头4 | 下直管
+        (-xv + R, -yt, 90.0),                    # 上横管 | 90° 弯
+        (-xv, -yt + R, 0.0),                     # 90° 弯 | 左立管
+        (-xv, -m, 0.0),                          # 左立管 | θ 弯
+        (-xv + R * (1 - math.sin(th)), -m + R * math.cos(th), weld_dir),
+        (xv - R * (1 - math.sin(th)), m - R * math.cos(th), weld_dir),
+        (xv, m, 0.0),                            # θ 弯 | 右立管
+        (xv, yt - R, 0.0),                       # 右立管 | 90° 弯
+        (xv - R, yt, 90.0),                      # 90° 弯 | 下横管
     ]
     return path, QPointF(xt, -yt), QPointF(-xt, yt), welds
 
 
-def tube_stroke(p: QPainter, centerline: QPainterPath, dia: float,
-                *, offset: tuple[float, float] = (0.0, 0.0), t_from: float = 0.0) -> None:
-    """沿中心线画圆管：多层同轴描边从管缘深色过渡到芯部。
-
-    t_from 可只画较亮的芯部带（配合 offset 做偏心高光，避免重复压暗管缘）。
-    """
+def tube_stroke(p: QPainter, centerline: QPainterPath, dia: float) -> None:
+    """沿中心线画管体（扁平风）：少量同轴色带 + 一条柔和受光带，无镜面高光。"""
     pen = QPen()
     pen.setCapStyle(Qt.PenCapStyle.FlatCap)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    bands = 14
-    for i in range(bands):
-        t = i / (bands - 1)          # 0=管缘 1=芯部
-        if t < t_from:
-            continue
-        w = dia * (1.0 - 0.92 * t)
-        shade = t ** 1.6             # 管身偏暗，亮部收在芯部
-        color = QColor(
-            round(TUBE_EDGE.red() + (TUBE_CORE.red() - TUBE_EDGE.red()) * shade),
-            round(TUBE_EDGE.green() + (TUBE_CORE.green() - TUBE_EDGE.green()) * shade),
-            round(TUBE_EDGE.blue() + (TUBE_CORE.blue() - TUBE_EDGE.blue()) * shade),
-        )
-        pen.setWidthF(max(1.0, w))
-        pen.setColor(color)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    for w_frac, hex_color in TUBE_BANDS:
+        pen.setWidthF(max(1.0, dia * w_frac))
+        pen.setColor(QColor(hex_color))
         p.setPen(pen)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        if offset != (0.0, 0.0):
-            p.save()
-            p.translate(offset[0], offset[1])
-            p.drawPath(centerline)
-            p.restore()
-        else:
-            p.drawPath(centerline)
+        p.drawPath(centerline)
+    # 偏左上的柔和受光带（保留一点体积，不抢扁平感）
+    w_frac, hex_color = TUBE_LIT_BAND
+    pen.setWidthF(max(1.0, dia * w_frac))
+    pen.setColor(QColor(hex_color))
+    p.setPen(pen)
+    p.save()
+    p.setOpacity(0.55)
+    p.translate(-dia * 0.035, -dia * 0.09)
+    p.drawPath(centerline)
+    p.restore()
 
 
 def bore_face(p: QPainter, tip: QPointF, dia: float, outward_left: bool) -> None:
-    """剖开的管端面（管轴水平：上端开口向东、下端开口向西）。
+    """剖开的管端（管轴水平，上端开口朝东、下端开口朝西），扁平且有透视主次：
 
-    三层椭圆做透视：切口环（贴着切口）→ 内壁（向管内退）→ 内腔（孔洞沿管轴
-    向开口方向偏移），形成"斜着看进管口"的纵深。
+    - 上端开口朝东（朝向视者一侧）：能看到端面环 + 内腔，端面中心略向管内收，
+      内腔再向管内偏——读作"斜看进管口"；
+    - 下端开口朝西（背向视者）：只看到接近侧切的窄椭圆，无内腔——两个端口
+      不一样才符合透视。
     """
-    sign = -1.0 if outward_left else 1.0     # 开口方向：西端 -x，东端 +x
     major = dia                               # 长轴（竖直，⊥管轴）
-    minor = dia * BORE_MINOR_FRAC             # 短轴（沿管轴）
     p.setPen(Qt.PenStyle.NoPen)
-
-    # 1) 切口环：金属端面，上亮下暗（全局光从左上来，两端一致用屏幕竖直渐变）
-    ring = QLinearGradient(0, tip.y() - major / 2, 0, tip.y() + major / 2)
-    ring.setColorAt(0.0, BORE_RING_TOP)
-    ring.setColorAt(1.0, BORE_RING_BOT)
-    p.setBrush(ring)
-    p.drawEllipse(tip, minor / 2, major / 2)
-
-    # 2) 内壁：椭圆中心向管内（开口反向）退一点，露出外侧一圈切口环
-    wall_c = QPointF(tip.x() - sign * dia * 0.05, tip.y())
-    wall = QLinearGradient(wall_c.x() - minor / 2, 0, wall_c.x() + minor / 2, 0)
-    wall.setColorAt(0.0, BORE_WALL_IN if sign > 0 else BORE_WALL_OUT)
-    wall.setColorAt(1.0, BORE_WALL_OUT if sign > 0 else BORE_WALL_IN)
-    p.setBrush(wall)
-    p.drawEllipse(wall_c, minor / 2 * 0.86, major / 2 * 0.86)
-
-    # 3) 内腔：孔洞沿开口方向偏移——远侧内壁呈月牙，近口部略亮
-    hole_c = QPointF(tip.x() + sign * dia * 0.10, tip.y())
-    hole = QLinearGradient(hole_c.x() - minor / 2, 0, hole_c.x() + minor / 2, 0)
-    hole.setColorAt(0.0, BORE_HOLE_DEEP if sign > 0 else BORE_HOLE_NEAR)
-    hole.setColorAt(1.0, BORE_HOLE_NEAR if sign > 0 else BORE_HOLE_DEEP)
-    p.setBrush(hole)
-    p.drawEllipse(hole_c, minor / 2 * 0.60, major / 2 * 0.60)
+    if not outward_left:
+        # 正视端：端面椭圆完全收在管口轮廓内（中心内收短轴之半 -2%），
+        # 内腔再向管内偏 2%——读作"斜看进管口"，不外凸
+        minor = dia * BORE_MINOR_FRAC
+        face_c = QPointF(tip.x() - (minor / 2 - dia * 0.02), tip.y())
+        p.setBrush(BORE_RING)
+        p.drawEllipse(face_c, minor / 2, major / 2)
+        hole_c = QPointF(face_c.x() - dia * 0.02, face_c.y())
+        p.setBrush(BORE_HOLE)
+        p.drawEllipse(hole_c, minor / 2 * 0.52, major / 2 * 0.52)
+    else:
+        # 背向端：接近侧切的窄椭圆，无内腔
+        edge_c = QPointF(tip.x() + dia * 0.02, tip.y())
+        p.setBrush(BORE_EDGE)
+        p.drawEllipse(edge_c, dia * BORE_EDGE_FRAC / 2, major / 2)
 
 
-def weld_seams(p: QPainter, welds: list[tuple[float, float, bool]], dia: float,
+def weld_seams(p: QPainter, welds: list[tuple[float, float, float]], dia: float,
                dxy: QPointF) -> None:
     """直管与弯头的对接焊缝：垂直于管轴的细缝，表达"拼接"。"""
     half = dia * 0.47
@@ -267,13 +254,11 @@ def weld_seams(p: QPainter, welds: list[tuple[float, float, bool]], dia: float,
     pen.setColor(WELD_COLOR)
     pen.setCapStyle(Qt.PenCapStyle.FlatCap)
     p.setPen(pen)
-    for x, y, horizontal_tube in welds:
-        if horizontal_tube:   # 管轴水平 → 焊缝竖直
-            p.drawLine(QPointF(x + dxy.x(), y + dxy.y() - half),
-                       QPointF(x + dxy.x(), y + dxy.y() + half))
-        else:                 # 管轴竖直 → 焊缝水平
-            p.drawLine(QPointF(x + dxy.x() - half, y + dxy.y()),
-                       QPointF(x + dxy.x() + half, y + dxy.y()))
+    for x, y, angle in welds:
+        a = math.radians(angle)
+        dx, dy = math.cos(a) * half, math.sin(a) * half
+        p.drawLine(QPointF(x + dxy.x() - dx, y + dxy.y() - dy),
+                   QPointF(x + dxy.x() + dx, y + dxy.y() + dy))
 
 
 def draw_mark(p: QPainter, size: int, *, small: bool) -> None:
@@ -281,13 +266,20 @@ def draw_mark(p: QPainter, size: int, *, small: bool) -> None:
     full_h = size * S_HEIGHT_FRAC
     dia = full_h * TUBE_FRAC
     centerline, tip_top, tip_bot, welds = pipe_centerline(dia)
+    # 光学修正：右上端面明度偏高使字形看似顺时针倾倒，整体逆时针微旋回正
+    opt = QTransform().rotate(-2.0)
+    centerline = opt.map(centerline)
+    tip_top = opt.map(tip_top)
+    tip_bot = opt.map(tip_bot)
+    welds = [(opt.map(QPointF(x, y)).x(), opt.map(QPointF(x, y)).y(), a - 2.0)
+             for x, y, a in welds]
     # 居中：略向左上让出右下投影的量
-    dxy = QPointF(size / 2 - size * 0.006, size / 2 - size * 0.004)
+    dxy = QPointF(size / 2 - size * 0.014, size / 2 - size * 0.004)
     centerline.translate(dxy.x(), dxy.y())
     tip_top += dxy
     tip_bot += dxy
 
-    # 悬浮投影：更柔、更远，避免暗晕贴住管壁
+    # 悬浮投影：扁平化——更淡更近
     lift = _qimage(size, size)
     lp = QPainter(lift)
     lp.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -296,24 +288,13 @@ def draw_mark(p: QPainter, size: int, *, small: bool) -> None:
     lp.setPen(pen)
     lp.drawPath(centerline)
     lp.end()
-    lift_blur = blurred(lift, max(1.5, size * 0.020))
-    p.setOpacity(0.26)
-    p.drawImage(0, max(1, round(size * 0.013)), lift_blur)
+    lift_blur = blurred(lift, max(1.5, size * 0.016))
+    p.setOpacity(0.16)
+    p.drawImage(0, max(1, round(size * 0.010)), lift_blur)
     p.setOpacity(1.0)
 
-    # 管体圆柱光影 + 偏左上的芯部高光 + 细高光棱线
+    # 管体（扁平色带 + 柔和受光带）
     tube_stroke(p, centerline, dia)
-    tube_stroke(p, centerline, dia, offset=(-dia * 0.035, -dia * 0.09), t_from=0.45)
-    pen = QPen()
-    pen.setCapStyle(Qt.PenCapStyle.FlatCap)
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    pen.setWidthF(max(1.0, dia * 0.055))
-    pen.setColor(GLINT)
-    p.setPen(pen)
-    p.save()
-    p.translate(-dia * 0.035, -dia * 0.10)
-    p.drawPath(centerline)
-    p.restore()
 
     # 直管与弯头的对接焊缝（画在管体之上）
     weld_seams(p, welds, dia, dxy)
