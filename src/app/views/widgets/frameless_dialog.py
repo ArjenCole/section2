@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
@@ -339,12 +339,29 @@ class FramelessDialog(QDialog):
             self._title_bar.set_title(title)
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
-        if self._mac and not getattr(self, "_mac_chrome_reapplied", True):
-            # show 时 Qt 会按窗口标志重置 NSWindow 装饰，这里补一次（幂等）
-            self._mac_chrome_reapplied = True
-            apply_mac_window_chrome(self, close_only=True)
+        if self._mac:
+            if not getattr(self, "_mac_chrome_reapplied", True):
+                # show 时 Qt 会按窗口标志重置 NSWindow 装饰，这里补一次（幂等）
+                self._mac_chrome_reapplied = True
+                apply_mac_window_chrome(self, close_only=True)
+            self._mac_fit_safe_area()
+            # 安全区边距在本轮事件循环才更新到位，延迟再校一次
+            QTimer.singleShot(0, self._mac_fit_safe_area)
         super().showEvent(event)
         self._enable_win11_rounded_corners()
+
+    def _mac_fit_safe_area(self) -> None:
+        """fullSizeContentView 的安全区内边距（标题栏高度）会把布局压下 28pt，
+        但 sizeHint 不含它——不加高窗口，底部按钮就会被窗口边缘裁掉。"""
+        handle = self.windowHandle()
+        if handle is None:
+            return
+        extra = handle.safeAreaMargins().top()
+        if not extra:
+            return
+        needed = self.sizeHint().height() + extra
+        if self.height() < needed:
+            self.resize(self.width(), needed)
 
     def _enable_win11_rounded_corners(self) -> None:
         """Windows 11 原生圆角（Win10 自动忽略）。"""
