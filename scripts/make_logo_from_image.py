@@ -153,9 +153,11 @@ def extract_artwork(src: QImage) -> tuple[QImage, float]:
     painter = QPainter(art)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-    # 源图裁到包围盒后贴入（掩膜外为透明）
+    # 外扩绘制：源图贴黑底的 AA 过渡带被推到掩膜之外，
+    # 掩膜边缘取样到干净的内部颜色，圆角处不再有黑边
     painter.setClipPath(shape)
-    painter.drawImage(QRectF(0, 0, size, size), src,
+    pad = size * 0.012
+    painter.drawImage(QRectF(-pad, -pad, size + 2 * pad, size + 2 * pad), src,
                       QRectF(x0, y0, size, size))
     painter.end()
     return art, n
