@@ -270,7 +270,7 @@ class UnitPanel(QWidget):
         # 中：工程量表（定额工程量 / 清单工程量）
         bottom.addWidget(self._build_quantity_area())
 
-        # 右：断面示意图（旧版 FormUnit 右侧 spltCtnerR.Panel2）
+        # 右：断面示意图（旧版 FormUnit 右侧 spltCtnerR.Panel2 + PNLpicCtrler）
         section_page = QWidget()
         section_layout = QVBoxLayout(section_page)
         section_layout.setContentsMargins(6, 6, 6, 6)
@@ -278,9 +278,9 @@ class UnitPanel(QWidget):
         section_title = QLabel("断 面 示 意 图")
         section_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         section_layout.addWidget(section_title)
-        from app.views.panels.section_view import SectionView
+        from app.views.panels.section_view import SectionPanel
 
-        self._section_view = SectionView()
+        self._section_view = SectionPanel()
         section_layout.addWidget(self._section_view, 1)
         bottom.addWidget(section_page)
 
