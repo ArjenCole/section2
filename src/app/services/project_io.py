@@ -672,10 +672,18 @@ def rename_foundation(foundation_id: int, name: str) -> None:
 
 
 def _rename_principle_reference(session, field: str, old: str, new: str) -> None:
-    from app.core.models.models import Element
+    from app.core.models.models import Element, ElementPrinciple
 
     for element in session.scalars(select(Element).where(getattr(Element, field) == old)):
         setattr(element, field, new)
+    if field == "pe_name":
+        # 主原则与多原则引用行同步改名（旧版 mscCtrl.Set 会同步引用字典的键）
+        for element in session.scalars(select(Element).where(Element.main_pe_name == old)):
+            element.main_pe_name = new
+    kind = "pe" if field == "pe_name" else "pf"
+    for ref in session.scalars(select(ElementPrinciple).where(ElementPrinciple.kind == kind)):
+        if ref.name == old:
+            ref.name = new
 
 
 def merge_target_enclosure(name: str) -> str | None:

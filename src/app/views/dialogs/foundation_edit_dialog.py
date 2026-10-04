@@ -238,7 +238,11 @@ class FoundationEditDialog(FramelessDialog):
 
     # ------------------------------------------------------------------ 确认 / 取消
     def _confirm(self) -> None:
-        """BTNyes：名称写回（mscCtrl.Set 同步引用）。"""
+        """BTNyes：名称写回（mscCtrl.Set 同步引用）。
+
+        编辑过程中（换填层、特殊地基构件）不广播，点击确认修改后统一刷新
+        工程量与断面图；改名时再广播 tree_structure_changed 同步引用名。
+        """
         foundation = self._foundation()
         if foundation is None:
             self.accept()
@@ -251,6 +255,7 @@ class FoundationEditDialog(FramelessDialog):
             project_io.rename_foundation(foundation.id, name)
             bus().tree_structure_changed.emit()
         project_io.commit()
+        bus().principle_changed.emit()
         self.accept()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
