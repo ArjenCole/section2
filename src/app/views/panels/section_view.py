@@ -462,8 +462,8 @@ def _build_trench_scene(
     c1_display = c1_original if c1_original != 0 else cushion_thickness(pe)
     at_display = replace(at, c1=c1_display)
     depth = info.depth + groove.mm2m(foundation_thickness(pf) + at_display.t + c1_display)
-    work_left = choice_work(pe_left, depth) or (pe_left.works_sorted() or [None])[0]
-    work_right = choice_work(pe_right, depth) or (pe_right.works_sorted() or [None])[0]
+    work_left = choice_work(pe_left, depth)
+    work_right = choice_work(pe_right, depth)
     if work_left is None or work_right is None:
         return None, "该围护原则没有任何围护分级，无法绘制断面。"
 

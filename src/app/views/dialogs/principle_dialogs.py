@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QButtonGroup,
     QComboBox,
     QDialogButtonBox,
@@ -161,17 +162,17 @@ class EnclosureWorkDialog(PrincipleSubDialog):
         self._body.addWidget(form_box)
         box = QGroupBox("围护构件分级（自上而下；固定高度不勾选时与其余分级均分深度）")
         layout = QVBoxLayout(box)
-        self._level_table = QTableWidget(0, 5)
-        self._level_table.setHorizontalHeaderLabels(
-            ["固定高度", "级高 m", "平台宽度 m", "围护类型", "围护形式描述"]
+        self._level_table = _LevelTable()
+        self._level_table.insert_requested.connect(
+            lambda: self._insert_level(self._level_table.currentRow())
         )
-        self._level_table.horizontalHeader().setStretchLastSection(True)
+        self._level_table.delete_requested.connect(self._delete_levels)
         self._level_table.itemChanged.connect(self._on_level_changed)
         layout.addWidget(self._level_table, 1)
         level_bar = QHBoxLayout()
         for text, slot in (
             ("＋级", self._add_level),
-            ("✕级", self._delete_level),
+            ("✕级", self._delete_levels),
             ("编辑构件公式…", self._edit_level_component),
         ):
             button = QPushButton(text)
@@ -195,6 +196,7 @@ class EnclosureWorkDialog(PrincipleSubDialog):
         waterstop_form.addRow("止水类型", self._waterstop_picker)
         waterstop_form.addRow("", self._btn_waterstop)
         self._body.addWidget(waterstop_box)
+        self._ei_names = project_io.component_library().names("Ei")
 
     def _fill(self) -> None:
         self._loading = True
@@ -208,12 +210,20 @@ class EnclosureWorkDialog(PrincipleSubDialog):
                 check.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
                 check.setCheckState(Qt.CheckState.Checked if level.h >= 0 else Qt.CheckState.Unchecked)
                 self._level_table.setItem(row_index, 0, check)
-                self._level_table.setItem(row_index, 1, QTableWidgetItem("" if level.h < 0 else f"{level.h:g}"))
+                # 旧版 FlashdGVCpntRow：均分级显示“均分高度”且只读
+                h_item = QTableWidgetItem("均分高度" if level.h < 0 else f"{level.h:g}")
+                if level.h < 0:
+                    h_item.setFlags(h_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self._level_table.setItem(row_index, 1, h_item)
                 self._level_table.setItem(row_index, 2, QTableWidgetItem(f"{level.step_width:g}"))
                 component = level.components[0] if level.components else None
-                name_item = QTableWidgetItem(level.name)
-                name_item.setData(Qt.ItemDataRole.UserRole, level.id)
-                self._level_table.setItem(row_index, 3, name_item)
+                cat_combo = QComboBox()
+                cat_combo.addItems(self._ei_names)
+                cat_combo.setCurrentText(level.name)
+                cat_combo.currentTextChanged.connect(
+                    lambda text, lv=level: self._on_level_category(lv, text)
+                )
+                self._level_table.setCellWidget(row_index, 3, cat_combo)
                 self._level_table.setItem(row_index, 4, QTableWidgetItem(describe_component(component)))
             self._waterstop_picker.setCurrentText(
                 work.waterstops[0].name if work.waterstops else "无"
@@ -227,34 +237,51 @@ class EnclosureWorkDialog(PrincipleSubDialog):
         return list(self._work.levels)
 
     def _add_level(self) -> None:
+        # BTNadd（FormEcls）：新级加在最后
+        self._insert_level()
+
+    def _insert_level(self, position: int | None = None) -> None:
+        """InsertCpnt（FormEcls）：新增一级（默认加最后，Insert 键插到当前行前）。"""
         library = project_io.component_library()
         names = library.names("Ei")
-        level = EnclosureLevel(
-            work_id=self._work.id,
-            name=names[0] if names else "放坡",
-            h=-1.0,
-            step_width=1.0,
-            order_no=project_io.next_order_no(EnclosureLevel, work_id=self._work.id),
+        levels = self._levels()
+        if position is None or position < 0 or position > len(levels):
+            position = len(levels)
+        for item in levels:
+            if item.order_no >= position:
+                item.order_no += 1
+        session = orm.session()
+        session.add(
+            EnclosureLevel(
+                work_id=self._work.id,
+                name=names[0] if names else "放坡",
+                h=-1.0,
+                step_width=1.0,
+                order_no=position,
+            )
         )
-        orm.session().add(level)
-        orm.session().flush()
-        project_io.component_from_template(
-            orm.session(), library, "Ei", level.name, enclosure_level_id=level.id
-        )
-        self._work = orm.session().get(EnclosureWork, self._work.id)
+        session.flush()
+        session.expire(self._work)  # 让 levels 集合包含新行
         self._fill()
 
-    def _delete_level(self) -> None:
-        row = self._level_table.currentRow()
+    def _delete_levels(self) -> None:
+        """KeyUp Delete（FormEcls）：删除选中行，至少保留一级。"""
+        rows = sorted({index.row() for index in self._level_table.selectedIndexes()}, reverse=True)
+        if not rows:
+            row = self._level_table.currentRow()
+            rows = [row] if row >= 0 else []
+        if not rows:
+            return
         levels = self._levels()
-        if row < 0 or row >= len(levels):
+        if len(rows) >= len(levels):
+            FramelessMessageBox.information(self, "提示", "至少需要一级围护做法。")
             return
-        if len(levels) <= 1:
-            FramelessMessageBox.information(self, "提示", "至少需要一级围护。")
-            return
-        orm.session().delete(levels[row])
+        for row in rows:
+            orm.session().delete(levels[row])
         orm.session().flush()
-        self._work = orm.session().get(EnclosureWork, self._work.id)
+        orm.session().expire(self._work)
+        for index, level in enumerate(self._levels()):
+            level.order_no = index
         self._fill()
 
     def _on_level_changed(self, item: QTableWidgetItem) -> None:
@@ -276,16 +303,23 @@ class EnclosureWorkDialog(PrincipleSubDialog):
                 level.step_width = float(item.text() or 0)
             except ValueError:
                 pass
-        elif item.column() == 3:  # 围护类型：换库构件
-            library = project_io.component_library()
-            if library.template("Ei", item.text()) is not None and level.name != item.text():
-                level.name = item.text()
-                old = level.components[0] if level.components else None
-                if old is not None:
-                    orm.session().delete(old)
-                project_io.component_from_template(
-                    orm.session(), library, "Ei", level.name, enclosure_level_id=level.id
-                )
+        self._fill()
+
+    def _on_level_category(self, level: EnclosureLevel, text: str) -> None:
+        """ColEclsCat（FormEcls）：级构件按库模板重建（旧版 tmEC.Cpnt = Ecpnti[value]）。"""
+        if self._loading or level.name == text or not text:
+            return
+        library = project_io.component_library()
+        if library.template("Ei", text) is None:
+            return
+        level.name = text
+        old = level.components[0] if level.components else None
+        if old is not None:
+            orm.session().delete(old)
+        project_io.component_from_template(
+            orm.session(), library, "Ei", text, enclosure_level_id=level.id
+        )
+        orm.session().expire(level)  # 让 components 集合重载新构件
         self._fill()
 
     def _edit_level_component(self) -> None:
@@ -311,6 +345,7 @@ class EnclosureWorkDialog(PrincipleSubDialog):
         project_io.component_from_template(
             orm.session(), library, "WSi", text, enclosure_work_id=self._work.id
         )
+        orm.session().expire(self._work)  # expire_on_commit=False：让 waterstops 集合重载
         self._work = orm.session().get(EnclosureWork, self._work.id)
 
     def _edit_waterstop(self) -> None:
@@ -326,10 +361,36 @@ class EnclosureWorkDialog(PrincipleSubDialog):
             self._work.min_depth = float(self._min_depth.text() or 0)
         except ValueError:
             pass
-        works = self._work.enclosure.works_sorted() if self._work.enclosure else []
+        enclosure = orm.session().get(PcpEnclosure, self._work.enclosure_id)
+        works = enclosure.works_sorted() if enclosure else []
         if self._work in works:
             for index, item in enumerate(works):
                 item.order_no = index
+
+
+class _LevelTable(QTableWidget):
+    """做法分级表格：Insert 插入行 / Delete 删除选中行（原版 dGVCpnt_KeyUp）。"""
+
+    insert_requested = Signal()
+    delete_requested = Signal()
+
+    def __init__(self) -> None:
+        super().__init__(0, 5)
+        self.setHorizontalHeaderLabels(
+            ["固定高度", "级高 m", "平台宽度 m", "围护类型", "围护形式描述"]
+        )
+        self.horizontalHeader().setStretchLastSection(True)
+        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.verticalHeader().setDefaultSectionSize(32)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if event.key() == Qt.Key.Key_Insert:
+            self.insert_requested.emit()
+            return
+        if event.key() == Qt.Key.Key_Delete:
+            self.delete_requested.emit()
+            return
+        super().keyPressEvent(event)
 
 
 class ComponentEditDialog(PrincipleSubDialog):

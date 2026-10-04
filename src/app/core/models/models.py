@@ -86,6 +86,8 @@ def unit_of(category: int | None) -> str:
 MULTI_PE_TEXT = "多围护原则"
 #: 主表格“地基处理原则”列的多原则选项（旧版 mcPcpFoundation.Multi_PFTxt）
 MULTI_PF_TEXT = "多地基原则"
+#: 围护做法“围护类型”列的多级围护选项（旧版 mcEnclosure.MultiScpntTxt）
+MULTI_LEVEL_TEXT = "多级围护"
 
 
 # --------------------------------------------------------------------------- #
@@ -505,7 +507,6 @@ class Component(Base):
     params: Mapped[list["ComponentParam"]] = relationship(
         back_populates="component",
         cascade="all, delete-orphan",
-        passive_deletes=True,
         order_by="ComponentParam.id",
     )
 
@@ -557,7 +558,6 @@ class EnclosureWork(Base):
     #: 止水构件（旧版 WSCpnt，至多一个）
     waterstops: Mapped[list["Component"]] = relationship(
         cascade="all, delete-orphan",
-        passive_deletes=True,
         order_by="Component.order_no",
         primaryjoin="EnclosureWork.id == Component.enclosure_work_id",
     )
@@ -585,7 +585,6 @@ class EnclosureLevel(Base):
     #: 该级的围护构件（旧版 Cpnt）
     components: Mapped[list["Component"]] = relationship(
         cascade="all, delete-orphan",
-        passive_deletes=True,
         order_by="Component.order_no",
         primaryjoin="EnclosureLevel.id == Component.enclosure_level_id",
     )

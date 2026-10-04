@@ -32,6 +32,7 @@ from app.core.version import (
 )
 from app.core.models import base as orm
 from app.core.models.models import (
+    MULTI_LEVEL_TEXT,
     PRECIPITATION_DEFAULTS,
     BasicInfo,
     Component,
@@ -1029,6 +1030,39 @@ def new_enclosure_work(
     component_from_template(session, library, "Ei", level_name, enclosure_level_id=level.id)
     component_from_template(session, library, "WSi", waterstop_name, enclosure_work_id=work.id)
     return work
+
+
+def set_work_category(session, work: EnclosureWork, library, category: str) -> None:
+    """切换做法的围护类型（旧版 mcEnclosure.setECpnt，FormPE ColEclsCat）。
+
+    清空做法原有分级，按构件库模板重建一级（级高 -1 均分、平台宽 1）；
+    选“多级围护”时一级取库第一项（旧版 Ecpnti.First().Key，进入做法编辑再分级）。
+    级列表直接按 DB 查（会话 expire_on_commit=False，work.levels 集合可能陈旧），
+    结束时 expire(work) 让 levels 集合与重建结果一致。
+    """
+    level_name = category
+    if category == MULTI_LEVEL_TEXT or library.template("Ei", level_name) is None:
+        ei_names = library.names("Ei")
+        level_name = ei_names[0] if ei_names else "放坡"
+    for level in session.scalars(
+        select(EnclosureLevel).where(EnclosureLevel.work_id == work.id)
+    ):
+        session.delete(level)
+    session.flush()
+    work.cpnt_cat = category
+    session.add(
+        EnclosureLevel(work_id=work.id, name=level_name, h=-1.0, step_width=1.0, order_no=0)
+    )
+    session.flush()
+    component_from_template(session, library, "Ei", level_name, enclosure_level_id=_last_level_id(session, work.id))
+    session.expire(work)
+
+
+def _last_level_id(session, work_id: int) -> int:
+    """做法下最新一级的 id（重建后仅此一级）。"""
+    return session.scalar(
+        select(EnclosureLevel.id).where(EnclosureLevel.work_id == work_id).order_by(EnclosureLevel.id.desc())
+    )
 
 
 def seed_width_tables(session, enclosure: PcpEnclosure, work_widths: dict, groove_bs: dict) -> None:

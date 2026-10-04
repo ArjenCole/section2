@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 
 from app.core.event_bus import bus
 from app.core.models import base as orm
-from app.core.models.models import EnclosureWork, PcpEnclosure
+from app.core.models.models import MULTI_LEVEL_TEXT, EnclosureWork, PcpEnclosure
 from app.services import project_io
 from app.services.project_io import new_enclosure_work
 from app.views.dialogs.principle_dialogs import (
@@ -48,9 +48,6 @@ from app.views.dialogs.principle_dialogs import (
     precipitation_text,
 )
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
-
-#: 旧版 mcEnclosure.MultiScpntTxt
-MULTI_LEVEL_TEXT = "多级围护"
 
 _EXCVT_CHOICES = ("Ⅰ、Ⅱ类土", "Ⅲ类土", "Ⅳ类土", "松石", "次坚石", "普坚石", "特坚石")
 _DOCK_CHOICES = ("至管顶50cm", "至管顶标高", "至管中心标高", "至沟槽顶标高")
@@ -322,10 +319,10 @@ class EnclosureEditDialog(FramelessDialog):
                 self._fill()
 
     def _on_work_category(self, work: EnclosureWork, text: str) -> None:
-        """CellEndEdit ColEclsCat：切换围护类型。"""
+        """CellEndEdit ColEclsCat：切换围护类型（旧版 setECpnt，按模板重建级构件）。"""
         if self._loading or work.cpnt_cat == text or not text:
             return
-        work.cpnt_cat = text
+        project_io.set_work_category(orm.session(), work, project_io.component_library(), text)
         project_io.commit()
         self._fill()
 
@@ -342,6 +339,7 @@ class EnclosureEditDialog(FramelessDialog):
             orm.session(), project_io.component_library(), "WSi", text,
             enclosure_work_id=work.id,
         )
+        orm.session().expire(work)  # expire_on_commit=False：让 waterstops 集合重载
         project_io.commit()
         self._fill()
 

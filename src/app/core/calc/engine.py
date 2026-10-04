@@ -206,11 +206,17 @@ def _width_tables(pe: PcpEnclosure) -> tuple[dict[str, dict[int, float]], dict[s
 
 
 def choice_work(pe: PcpEnclosure, depth: float):
-    """按沟槽深度选围护做法（旧版 mcPcpEnclosure.ChoiceEcls：最后一个 min_depth ≤ 深度）。"""
+    """按沟槽深度选围护做法（旧版 mcPcpEnclosure.ChoiceEcls：最后一个 min_depth ≤ 深度）。
+
+    没有做法满足时退回第一条（旧版 idx 初值 0）；做法列表为空才返回 None。
+    """
+    works = pe.works_sorted()
     chosen = None
-    for work in pe.works_sorted():
+    for work in works:
         if work.min_depth <= depth:
             chosen = work
+    if chosen is None and works:
+        return works[0]
     return chosen
 
 
