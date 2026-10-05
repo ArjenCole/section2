@@ -425,7 +425,11 @@ class EnclosureEditDialog(FramelessDialog):
 
     # ------------------------------------------------------------------ 确认 / 取消
     def _confirm(self) -> None:
-        """BTNyes：GetDetailFormFm + mscCtrl.Set（确认修改才写回）。"""
+        """BTNyes：GetDetailFormFm + mscCtrl.Set（确认修改才写回）。
+
+        编辑过程中（做法表、子编辑器）不广播，点击确认修改后统一刷新
+        工程量与断面图；改名时再广播 tree_structure_changed 同步原则横条与引用名。
+        """
         enclosure = self._enclosure()
         if enclosure is None:
             self.accept()
@@ -434,7 +438,8 @@ class EnclosureEditDialog(FramelessDialog):
         if not name:
             FramelessMessageBox.warning(self, "提示", "原则名称不得为空。")
             return
-        if name != enclosure.name:
+        renamed = name != enclosure.name
+        if renamed:
             project_io.rename_enclosure(enclosure.id, name)
             enclosure = self._enclosure()
         enclosure.excvt = self._excvt.currentText()
@@ -472,7 +477,9 @@ class EnclosureEditDialog(FramelessDialog):
             except ValueError:
                 pass
         project_io.commit()
-        bus().tree_structure_changed.emit()
+        if renamed:
+            bus().tree_structure_changed.emit()
+        bus().principle_changed.emit()
         self.accept()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802

@@ -262,6 +262,7 @@ class EnclosureWorkDialog(PrincipleSubDialog):
         )
         session.flush()
         session.expire(self._work)  # 让 levels 集合包含新行
+        project_io.commit()
         self._fill()
 
     def _delete_levels(self) -> None:
@@ -282,6 +283,7 @@ class EnclosureWorkDialog(PrincipleSubDialog):
         orm.session().expire(self._work)
         for index, level in enumerate(self._levels()):
             level.order_no = index
+        project_io.commit()
         self._fill()
 
     def _on_level_changed(self, item: QTableWidgetItem) -> None:
@@ -303,6 +305,9 @@ class EnclosureWorkDialog(PrincipleSubDialog):
                 level.step_width = float(item.text() or 0)
             except ValueError:
                 pass
+        else:
+            return
+        project_io.commit()
         self._fill()
 
     def _on_level_category(self, level: EnclosureLevel, text: str) -> None:
@@ -320,6 +325,7 @@ class EnclosureWorkDialog(PrincipleSubDialog):
             orm.session(), library, "Ei", text, enclosure_level_id=level.id
         )
         orm.session().expire(level)  # 让 components 集合重载新构件
+        project_io.commit()
         self._fill()
 
     def _edit_level_component(self) -> None:
@@ -346,6 +352,7 @@ class EnclosureWorkDialog(PrincipleSubDialog):
             orm.session(), library, "WSi", text, enclosure_work_id=self._work.id
         )
         orm.session().expire(self._work)  # expire_on_commit=False：让 waterstops 集合重载
+        project_io.commit()
         self._work = orm.session().get(EnclosureWork, self._work.id)
 
     def _edit_waterstop(self) -> None:
@@ -532,6 +539,8 @@ class WorkWidthDialog(PrincipleSubDialog):
             session.delete(row)
         session.flush()
         project_io.seed_width_tables(session, self._enclosure, work, groove)
+        session.expire(self._enclosure)  # expire_on_commit=False：让 widths 集合重载
+        project_io.commit()
         self._enclosure = session.get(PcpEnclosure, self._enclosure.id)
         self._fill()
 
@@ -568,6 +577,7 @@ class WorkWidthDialog(PrincipleSubDialog):
                         )
                     else:
                         row.width = value
+        session.expire(self._enclosure)  # expire_on_commit=False：新增/改动的宽度行重载
 
 
 class PrecipitationDialog(PrincipleSubDialog):

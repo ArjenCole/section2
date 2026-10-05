@@ -420,12 +420,41 @@ class UnitPanel(QWidget):
         bus().node_selected.connect(self._on_node_selected)
         bus().project_closed.connect(lambda: self._show_unit(None))
         bus().project_opened.connect(lambda _path: self._show_unit(None))
+        # 原则窗体确认修改：工程量与断面图重算（编辑过程中不刷新）
+        bus().principle_changed.connect(self._on_principle_changed)
+        # 原则增删改名 / 标段单位变化：整表重载（原则下拉、工程量、断面全刷新）
+        bus().tree_structure_changed.connect(self._on_tree_structure_changed)
 
     # ------------------------------------------------------------------ 选中
     def _on_node_selected(self, node: TreeNode | None) -> None:
         if node is not None and node.is_unit:
             self._show_unit(node.id, node.name)
         # 选中其它节点时保留当前内容，切回来不用重新加载
+
+    def _on_principle_changed(self) -> None:
+        """原则窗体点击确认修改后：工程量与断面图按确认后的原则重算重绘。"""
+        if self._unit_id is None:
+            return
+        self._fill_quantities()
+        if self._multi_detail:
+            self._section_view.show_multi()
+        else:
+            self._section_view.refresh()
+
+    def _on_tree_structure_changed(self) -> None:
+        """原则增删改名 / 标段单位变化：重载当前单位工程（含原则下拉、工程量、断面）。
+
+        当前单位工程已被删除时退回占位页。
+        """
+        if self._unit_id is None:
+            return
+        from app.core.models import base as orm
+        from app.core.models.models import Unit
+
+        if orm.session().get(Unit, self._unit_id) is None:
+            self._show_unit(None)
+            return
+        self.refresh()
 
     def _show_unit(self, unit_id: int | None, name: str = "") -> None:
         self._unit_id = unit_id

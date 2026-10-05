@@ -211,3 +211,67 @@ def test_enclosure_work_dialog_level_operations(qapp, project, monkeypatch) -> N
         assert dialog.saved
     finally:
         dialog.close()
+
+
+# --------------------------------------------------------------------------- #
+# 联动：原则窗体点击「确认修改」后 → 明细面板工程量与断面示意图刷新（编辑中不刷新）
+# --------------------------------------------------------------------------- #
+def test_unit_panel_refreshes_on_principle_confirm(qapp, project) -> None:
+    from app.core.event_bus import bus
+    from app.services import project_io
+    from app.services.element_library import element_library
+    from app.views.dialogs.enclosure_edit_dialog import EnclosureEditDialog
+    from app.views.main_window import MainWindow
+
+    window = MainWindow()
+    try:
+        bus().project_opened.emit(str(project))
+        window._tree_panel.vm.load()
+        qapp.processEvents()
+        root = window._tree_panel._tree.topLevelItem(0)
+        window._tree_panel._tree.setCurrentItem(root.child(0).child(0))
+        qapp.processEvents()
+        template = element_library().units_of("直埋混凝土管")[0].elements[0]
+        window._insert_template(template)
+        qapp.processEvents()
+        panel = window._unit_panel
+        element_id = panel._current_element_id()
+        assert element_id is not None
+        # 模板不带埋深/数量，先补上让沟槽计算生效
+        panel._vm.set_element_field(element_id, "depth", "2.5")
+        panel._vm.set_element_field(element_id, "amount", "10")
+        qapp.processEvents()
+        digests = panel._quantity_tables["定额工程量"]
+
+        def _category_items() -> list[str]:
+            return [digests.item(row, 1).text() for row in range(digests.rowCount())]
+
+        # 初始放坡：无围护量；断面为放坡（顶宽 > 底宽）
+        assert "围护" not in _category_items()
+        scene = panel._section_view._canvas._scene
+        assert scene is not None and scene.top_width > scene.segments[0].bottom
+
+        # 原则窗体编辑过程中（切围护类型即改即存）不刷新主界面
+        dialog = EnclosureEditDialog(project_io.enclosures()[0].id)
+        dialog._on_work_category(dialog._enclosure().works_sorted()[0], "钢板桩")
+        qapp.processEvents()
+        assert "围护" not in _category_items()
+        scene = panel._section_view._canvas._scene
+        assert scene.top_width > scene.segments[0].bottom  # 仍是放坡断面
+
+        # 点击「确认修改」后统一刷新：出现围护量，断面变直壁
+        dialog._confirm()
+        qapp.processEvents()
+        assert "围护" in _category_items()
+        scene = panel._section_view._canvas._scene
+        assert scene.top_width == pytest.approx(scene.segments[0].bottom)
+
+        # 改名确认：tree_structure_changed 同步主表格原则下拉
+        dialog = EnclosureEditDialog(project_io.enclosures()[0].id)
+        dialog._name.setText("围护改名")
+        dialog._confirm()
+        qapp.processEvents()
+        pe_combo = panel._element_table.cellWidget(0, 6)
+        assert pe_combo.currentText() == "围护改名"
+    finally:
+        window.close()

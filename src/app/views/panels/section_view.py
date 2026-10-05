@@ -334,8 +334,19 @@ class SectionPanel(QWidget):
         self._canvas.show_multi()
 
     def refresh(self) -> None:
-        """构件数据变化后重算重绘。"""
+        """构件数据变化后重算重绘（多原则时保留当前左右围护/地基选择）。"""
+        left = self._pe_left_combo.currentText()
+        right = self._pe_right_combo.currentText()
+        pf = self._pf_combo.currentText()
         self.set_element(self._element_id)
+        if self._selector.isVisibleTo(self):
+            for combo, text in (
+                (self._pe_left_combo, left),
+                (self._pe_right_combo, right),
+                (self._pf_combo, pf),
+            ):
+                if text and combo.currentText() != text and combo.findText(text) >= 0:
+                    combo.setCurrentText(text)  # 触发联动重绘
 
     # ------------------------------------------------------------------ 内部
     def _multi_selections(self, element_id: int | None) -> tuple[list[str], list[str]] | None:

@@ -93,6 +93,7 @@ class SummaryPanel(QWidget):
         bus().project_closed.connect(lambda: self._reload_scope())
         bus().tree_structure_changed.connect(lambda: self._reload_scope())
         bus().unit_changed.connect(lambda _unit_id: self.refresh())
+        bus().principle_changed.connect(lambda: self._reload_scope())
         self._reload_scope()
 
     # ------------------------------------------------------------------ 界面
