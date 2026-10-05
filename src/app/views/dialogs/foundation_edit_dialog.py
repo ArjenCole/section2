@@ -33,6 +33,7 @@ from app.core.models import base as orm
 from app.core.models.models import FoundationReplacement, PcpFoundation
 from app.services import project_io
 from app.views.dialogs.principle_dialogs import ComponentEditDialog, describe_component
+from app.views.widgets.cell_fill_table import CellFillTable
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 
 _COL_MATERIAL, _COL_THICKNESS = 0, 1
@@ -262,7 +263,7 @@ class FoundationEditDialog(FramelessDialog):
         super().keyPressEvent(event)  # Esc = 取消（与原版一致）
 
 
-class _ReplaceTable(QTableWidget):
+class _ReplaceTable(CellFillTable):
     """换填层表：Insert 插入 / Delete 删除选中行（原版 dGVR_KeyUp）。"""
 
     insert_requested = Signal(int)

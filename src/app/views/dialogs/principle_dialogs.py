@@ -47,6 +47,7 @@ from app.core.models.models import (
     parse_precipitation,
 )
 from app.services import project_io
+from app.views.widgets.cell_fill_table import CellFillTable
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 
 _WIDTH_DNS = tuple(range(0, 3100, 100))
@@ -375,7 +376,7 @@ class EnclosureWorkDialog(PrincipleSubDialog):
                 item.order_no = index
 
 
-class _LevelTable(QTableWidget):
+class _LevelTable(CellFillTable):
     """做法分级表格：Insert 插入行 / Delete 删除选中行（原版 dGVCpnt_KeyUp）。"""
 
     insert_requested = Signal()

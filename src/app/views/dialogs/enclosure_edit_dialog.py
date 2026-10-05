@@ -47,6 +47,7 @@ from app.views.dialogs.principle_dialogs import (
     describe_component,
     precipitation_text,
 )
+from app.views.widgets.cell_fill_table import CellFillTable
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 
 _EXCVT_CHOICES = ("Ⅰ、Ⅱ类土", "Ⅲ类土", "Ⅳ类土", "松石", "次坚石", "普坚石", "特坚石")
@@ -489,7 +490,7 @@ class EnclosureEditDialog(FramelessDialog):
         super().keyPressEvent(event)
 
 
-class _WorkTable(QTableWidget):
+class _WorkTable(CellFillTable):
     """做法表格：Insert 插入行 / Delete 删除选中行（原版 dGVPE_KeyUp）。"""
 
     insert_requested = Signal()
