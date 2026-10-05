@@ -427,7 +427,7 @@ class ComponentEditDialog(PrincipleSubDialog):
         for key, label in self._GROUPS:
             box = QGroupBox(label)
             layout = QVBoxLayout(box)
-            table = QTableWidget(26, 3)
+            table = CellFillTable(26, 3)
             table.setHorizontalHeaderLabels(["键", "显示名", "表达式 / 数值"])
             table.setColumnWidth(0, 40)
             table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
@@ -504,7 +504,7 @@ class WorkWidthDialog(PrincipleSubDialog):
         for kind, title in (("work", "工作面宽度表（mm）"), ("groove_b", "沟槽宽度表（mm）")):
             box = QGroupBox(title)
             layout = QVBoxLayout(box)
-            table = QTableWidget(len(_WIDTH_CATEGORY_ORDER), len(_WIDTH_DNS) + 1)
+            table = CellFillTable(len(_WIDTH_CATEGORY_ORDER), len(_WIDTH_DNS) + 1)
             table.setHorizontalHeaderLabels(["类别"] + [f"DN{dn}" for dn in _WIDTH_DNS])
             table.verticalHeader().setVisible(False)
             for row_index, category in enumerate(_WIDTH_CATEGORY_ORDER):
@@ -595,7 +595,7 @@ class PrecipitationDialog(PrincipleSubDialog):
     def _build(self) -> None:
         box = QGroupBox("井型（深度阈值 m / 井距 m / 侧数）")
         layout = QVBoxLayout(box)
-        self._table = QTableWidget(len(self._ROWS), 4)
+        self._table = CellFillTable(len(self._ROWS), 4)
         self._table.setHorizontalHeaderLabels(["启用", "深度阈值 m", "井距 m", "侧数"])
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.verticalHeader().setDefaultSectionSize(28)
