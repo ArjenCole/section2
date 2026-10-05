@@ -72,16 +72,17 @@ class _MacAppGuard(QObject):
        Polish/Show 事件，凡套过 chrome 的窗口被波及，就延迟补套一次
        chrome（幂等、按窗口合并）。
     2. Qt 6.11 mac 下 QComboBox 弹层定位用了 combo 的窗口局部坐标（弹层
-       贴到窗口顶部而不是输入框下边线，纯净 Qt 即可复现）。监听弹层容器
-       （QComboBoxPrivateContainer）的 Show，显示后按 combo 的真实全局
-       位置重新定位到输入框正下方，宽度对齐输入框。
+       贴到窗口顶部而不是输入框下边线，纯净 Qt 即可复现）。在弹层容器的
+       Show 事件里先把弹层设为全透明，事件循环里再按 combo 的真实全局
+       位置纠位并恢复不透明——弹层上屏即是正确位置、不闪烁；纠位不在
+       事件投递过程中进行，避免与 QMacStyle 的样式查询互相重入。
     """
 
     def __init__(self, app: QApplication) -> None:
         super().__init__(app)
         self._watched: dict[QObject, bool] = {}  # 顶层窗口 → close_only
         self._pending: set[QObject] = set()
-        self._popup_pending: set[QObject] = set()
+        self._popup_pending: set[QObject] = set()  # 正在显示的弹层容器（防重入）
         app.installEventFilter(self)
 
     def watch(self, widget, close_only: bool) -> None:
@@ -97,51 +98,57 @@ class _MacAppGuard(QObject):
             if top in self._watched and top not in self._pending:
                 self._pending.add(top)
                 QTimer.singleShot(0, lambda w=top: self._reapply(w))
-        if et == QEvent.Type.Show and obj.metaObject().className() == "QComboBoxPrivateContainer":
-            if obj not in self._popup_pending:
-                self._popup_pending.add(obj)
-                QTimer.singleShot(0, lambda c=obj: self._fix_combo_popup(c))
+        if obj.metaObject().className() == "QComboBoxPrivateContainer":
+            if et == QEvent.Type.Show:
+                # Qt 6.11 mac 把弹层放到错误位置。这里不能同步 setGeometry：
+                # 事件投递中改几何会触发 QMacStyle 的 styleHint 查询并再次派发
+                # 事件，造成过滤器无限递归。改为先把弹层设为全透明（映射上屏
+                # 也不可见），定时器里纠位完成后再恢复不透明——无递归、无闪烁。
+                if obj not in self._popup_pending:
+                    self._popup_pending.add(obj)
+                    try:
+                        obj.setWindowOpacity(0.0)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    QTimer.singleShot(0, lambda c=obj: self._place_combo_popup(c))
+            elif et == QEvent.Type.Hide:
+                self._popup_pending.discard(obj)
+                try:
+                    obj.setWindowOpacity(1.0)
+                except Exception:  # noqa: BLE001
+                    pass
         return False
 
     def _reapply(self, widget) -> None:
         self._pending.discard(widget)
         apply_mac_window_chrome(widget, close_only=self._watched.get(widget, False))
 
-    def _fix_combo_popup(self, container) -> None:
-        self._popup_pending.discard(container)
+    def _place_combo_popup(self, container) -> None:
         try:
             from PySide6.QtWidgets import QComboBox
 
             combo = container.parentWidget()
-            if not isinstance(combo, QComboBox) or not combo.isVisible():
-                return
-
-            def place():
-                try:
-                    if not container.isVisible():
-                        return
-                    below = combo.mapToGlobal(combo.rect().bottomLeft())
-                    above = combo.mapToGlobal(combo.rect().topLeft())
-                    width = max(combo.width(), container.width())
-                    screen = combo.screen()
-                    y = below.y()
-                    if screen is not None:
-                        overflow = y + container.height() - screen.availableGeometry().bottom()
-                        if overflow > 0:
-                            y = max(
-                                screen.availableGeometry().top(),
-                                above.y() - container.height(),
-                            )
-                    container.setGeometry(below.x(), y, width, container.height())
-                except RuntimeError:  # noqa: BLE001 - 控件已销毁
-                    pass
-
-            # Qt 自身定位与本修复存在竞态（弹层偶发被移回错误位置），多轮重申
-            place()
-            for delay in (60, 150):
-                QTimer.singleShot(delay, place)
+            if isinstance(combo, QComboBox) and combo.isVisible():
+                below = combo.mapToGlobal(combo.rect().bottomLeft())
+                above = combo.mapToGlobal(combo.rect().topLeft())
+                width = max(combo.width(), container.width())
+                screen = combo.screen()
+                y = below.y()
+                if screen is not None:
+                    overflow = y + container.height() - screen.availableGeometry().bottom()
+                    if overflow > 0:
+                        y = max(
+                            screen.availableGeometry().top(),
+                            above.y() - container.height(),
+                        )
+                container.setGeometry(below.x(), y, width, container.height())
         except RuntimeError:  # noqa: BLE001 - 控件已销毁
             pass
+        finally:
+            try:
+                container.setWindowOpacity(1.0)
+            except RuntimeError:  # noqa: BLE001 - 控件已销毁
+                pass
 
 
 _GUARD: _MacAppGuard | None = None
