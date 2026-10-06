@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QTableWidget, QWidget
+import shiboken6
 
 from app.views.widgets.table_edit_delegate import TableEditDelegate
 
@@ -48,8 +49,11 @@ class CellFillTable(QTableWidget):
             rect = self.visualRect(index)
             if child.geometry() != rect:
                 self._fit_editor(child, rect)
-        # 编辑器打开路径里有的几何修正在事件循环才完成，延迟再校一次
-        QTimer.singleShot(0, self._fit_editors_once)
+        # 编辑器打开路径里有的几何修正在事件循环才完成，延迟再校一次。
+        # 必须绑定接收者上下文（singleShot(ms, receiver, callable)）：表格所属弹窗
+        # 关闭后 C++ 对象即被销毁，无上下文的挂起回调不会随之取消，会打到已删除
+        # 对象上触发 "libshiboken: Internal C++ object already deleted"（Windows 实测弹窗）。
+        QTimer.singleShot(0, self, self._fit_editors_once)
 
     def _fit_editor(self, editor: QWidget, rect) -> None:
         editor.setMinimumSize(0, 0)
@@ -60,6 +64,8 @@ class CellFillTable(QTableWidget):
         editor.setMaximumSize(rect.size())
 
     def _fit_editors_once(self) -> None:
+        if not shiboken6.isValid(self):
+            return  # 接收者已销毁时兜底（正常情况下挂起回调已随销毁取消）
         viewport = self.viewport()
         for child in viewport.children():
             if not isinstance(child, QWidget) or not child.isVisible():

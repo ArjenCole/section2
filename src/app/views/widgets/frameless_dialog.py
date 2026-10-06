@@ -345,8 +345,9 @@ class FramelessDialog(QDialog):
                 self._mac_chrome_reapplied = True
                 apply_mac_window_chrome(self, close_only=True)
             self._mac_fit_safe_area()
-            # 安全区边距在本轮事件循环才更新到位，延迟再校一次
-            QTimer.singleShot(0, self._mac_fit_safe_area)
+            # 安全区边距在本轮事件循环才更新到位，延迟再校一次（绑定接收者，
+            # 窗体销毁后挂起回调自动取消，避免打到已删除对象）
+            QTimer.singleShot(0, self, self._mac_fit_safe_area)
         super().showEvent(event)
         self._enable_win11_rounded_corners()
 
