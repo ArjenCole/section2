@@ -414,10 +414,6 @@ class TreePanel(QWidget):
         self._selected_key = (node.kind, node.id)
         self._vm.move(node, delta)
 
-    def move_selected(self, delta: int) -> None:
-        """外部入口：移动项目树当前选中节点。"""
-        self._move(delta)
-
     # ------------------------------------------------------------------ 辅助
     def _refresh_icons(self) -> None:
         """主题切换后按新主题色重绘节点与按钮图标。"""

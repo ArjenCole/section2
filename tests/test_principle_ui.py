@@ -6,31 +6,14 @@ v1→v2 结构迁移（element.source 列）、原则编辑对话框与原则横
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from app.services import project_io
 from app.services.project_io import NewProjectSpec
 from app.services.element_library import element_library
 from app.viewmodels import unit_vm
-
-
-@pytest.fixture(autouse=True)
-def _clean_state():
-    project_io.close_project()
-    yield
-    project_io.close_project()
-
-
-@pytest.fixture()
-def project(tmp_path: Path) -> Path:
-    path = tmp_path / "测试工程.stn2"
-    project_io.new_project(NewProjectSpec(path=path, unit_names=["雨水工程"]))
-    return path
 
 
 # --------------------------------------------------------------------------- #
@@ -67,13 +50,7 @@ def test_insert_template_attaches_first_principles(project) -> None:
     assert element.pe_name == project_io.enclosure_names()[0]
     assert element.pf_name == project_io.foundation_names()[0]
     assert element.pipes, "模板的管材应一并带入"
-    assert element_rows_spec(element) != ""
-
-
-def element_rows_spec(element) -> str:
-    from app.viewmodels.unit_vm import _element_spec
-
-    return _element_spec(element)
+    assert unit_vm.element_rows(unit.id)[0].spec == "Ⅰ级混凝土管 Dn150"
 
 
 def test_insert_template_before_selected_row(project) -> None:
@@ -88,13 +65,11 @@ def test_insert_template_before_selected_row(project) -> None:
 # --------------------------------------------------------------------------- #
 # 原则增删改（原版交互语义）
 # --------------------------------------------------------------------------- #
-def test_unique_principle_name_suffix() -> None:
+def test_unique_principle_name_suffix(project) -> None:
     assert project_io.unique_principle_name("钢板桩", ["默认围护原则"]) == "钢板桩"
     assert project_io.unique_principle_name("钢板桩", ["默认围护原则", "钢板桩"]) == "钢板桩1"
     assert project_io.unique_principle_name("钢板桩", ["钢板桩", "钢板桩1"]) == "钢板桩2"
-
-
-def test_create_enclosure_auto_suffix(project) -> None:
+    # create_enclosure 重名时按同一规则自动加后缀
     first = project_io.create_enclosure("钢板桩")
     second = project_io.create_enclosure("钢板桩")
     assert (first.name, second.name) == ("钢板桩", "钢板桩1")

@@ -1,4 +1,4 @@
-"""表达式记录器（计划 §6.3）。
+"""表达式记录器。
 
 每个工程量条目产出 ``{key, value, expression, details}``：
 
@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-
-from app.core.evaluator import EvalError, evaluate
 
 _SUPERSCRIPTS = {"0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹"}
 
@@ -136,14 +134,6 @@ class QDict:
     # ---------------------------------------------------------------- 汇总
     def total(self) -> float:
         return sum(self._items.values())
-
-
-def eval_quantity(expression: str) -> float:
-    """对拼好的算式求值（用于测试表达式与数值一致）。"""
-    try:
-        return evaluate(expression)
-    except EvalError:
-        return 0.0
 
 
 #: 定额键的类别排序（旧版 mscGroove.order）

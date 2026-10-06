@@ -1,7 +1,7 @@
 """config.toml 读写：界面主题、最近打开工程、AI profile、新建向导默认值。
 
 - 配置文件位置见 core.paths.config_file_path()，与工程文件严格分离；
-- API key 一律不进配置文件（只进 keyring，见 §8.1），此模块不提供保存 key 的接口；
+- API key 一律不进配置文件（只进系统钥匙串 keyring），此模块不提供保存 key 的接口；
 - 读取用标准库 tomllib（Python 3.11+），写入用 tomli_w。
 """
 
@@ -36,7 +36,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # M7 使用；providers 为 [[ai.providers]] 数组表，key 存 keyring 不在此处
     "ai": {
         "active_provider": "",
-        "temperature": 0.2,
         "require_confirmation": True,
         "providers": [],
     },
@@ -153,13 +152,6 @@ class _Proxy:
     def ai_require_confirmation(self) -> bool:
         """AI 写操作是否需要人工确认（AI 设置里即改即存）。"""
         return bool(self.ai.get("require_confirmation", True))
-
-    @property
-    def ai_temperature(self) -> float:
-        try:
-            return float(self.ai.get("temperature", 0.2))
-        except (TypeError, ValueError):
-            return 0.2
 
     def ai_provider(self, name: str) -> dict[str, Any] | None:
         for provider in self.ai_providers:

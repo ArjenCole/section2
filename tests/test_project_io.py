@@ -1,4 +1,4 @@
-"""工程文件读写测试（计划 §5、M2 验收标准）。
+"""工程文件读写测试（M2 验收标准）。
 
 覆盖：新建 → 录入 → 关闭 → 重开数据完整、双开被拒、锁文件、自动备份、结构版本校验。
 所有用例都在 tmp_path 下建工程，不碰用户目录里的任何真实文件。
@@ -27,14 +27,6 @@ from app.services.project_io import (
     lock_path,
 )
 from app.viewmodels import unit_vm
-
-
-@pytest.fixture(autouse=True)
-def _clean_state():
-    """每个用例前后都保证没有打开着的工程。"""
-    project_io.close_project()
-    yield
-    project_io.close_project()
 
 
 def _make_project(tmp_path: Path, name: str = "测试工程") -> Path:
@@ -209,7 +201,7 @@ def test_backup_on_first_change_and_on_save(tmp_path: Path) -> None:
     assert len(list(folder.glob("*.stn2"))) == 2
 
 
-def test_backup_keeps_only_20(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_backup_keeps_only_n(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(project_io, "BACKUP_KEEP", 3)
     path = _make_project(tmp_path)
     folder = backup_dir(path)

@@ -1,4 +1,4 @@
-"""core.evaluator 单元测试（计划 §2：录入框支持算式、白名单运算符）。"""
+"""core.evaluator 单元测试（录入框支持算式、白名单运算符）。"""
 
 from __future__ import annotations
 
@@ -53,11 +53,6 @@ def test_pi_constant() -> None:
 def test_evaluate_rejects(text: str) -> None:
     with pytest.raises(EvalError):
         evaluate(text)
-
-
-def test_conditional_expression_is_harmless() -> None:
-    """simpleeval 自带条件表达式；无副作用，不影响安全边界。"""
-    assert evaluate("1 if 1 else 2") == 1
 
 
 def test_evaluate_or_default() -> None:

@@ -1,4 +1,4 @@
-"""沟槽土方 / 回填计算（复刻旧版 mscGroove.cal_groove，计划 §6.1）。
+"""沟槽土方 / 回填计算（复刻旧版 mscGroove.cal_groove）。
 
 分层回填列表自底向上：换填（PF 换填层，倒序）→ 垫层 → 坞膀下半 → 坞膀上半 →
 管顶 50cm → 覆土；每层按当前围护级别的放坡系数算梯形断面
@@ -24,7 +24,7 @@ def trapezoid(bottom: float, height: float, slope: float) -> float:
 
 
 def trapezoid_expr(bottom: float, height: float, slope: float) -> str:
-    """梯形面积的数值代入算式（§6.3 示例的同款形式）。"""
+    """梯形面积的数值代入算式（数值 + 完整算式同源）。"""
     if slope == 0:
         return f"{fmt(bottom)}×{fmt(height)}"
     return f"({fmt(bottom)}+{fmt(bottom)}+2×{fmt(height)}×{fmt(slope)})×{fmt(height)}/2"
@@ -143,7 +143,7 @@ def cal_groove(pe, work, pf, at, size_b: float, size_h: float, depth: float, out
             if current - target >= -0.0001:
                 break
 
-    # 挖方 = 各层梯形之和；等坡且无平台的连续段合并成一条梯形算式（§6.2 的可读性简化）
+    # 挖方 = 各层梯形之和；等坡且无平台的连续段合并成一条梯形算式（可读性简化）
     dig = out.add(dig_key, 0.0)
     dig.terms.clear()
     dig.value = 0.0

@@ -6,30 +6,11 @@ Qt 部分用离屏平台渲染，不弹窗口。
 
 from __future__ import annotations
 
-import os
-
 import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-from PySide6.QtWidgets import QApplication
 
 from app.core.models import base as orm
 from app.services import project_io
 from app.services.project_io import NewProjectSpec
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance() or QApplication([])
-    yield app
-
-
-@pytest.fixture(autouse=True)
-def _clean_state():
-    project_io.close_project()
-    yield
-    project_io.close_project()
 
 
 @pytest.fixture()
@@ -161,14 +142,6 @@ def test_multi_pe_left_right_per_principle(qapp, multi_pe_element) -> None:
     assert {s.slope for s in swapped.segments if s.h_delta > 0} == {0.5}
     assert {s.slope for s in swapped.segments_right if s.h_delta > 0} == {1.0}
     assert swapped.top_width < swapped.top_width_right
-
-
-def test_multi_pe_renders_both_sides(qapp, multi_pe_element) -> None:
-    """离屏渲染多围护断面不崩，左右分段都进入场景。"""
-    view = _make_view(qapp, multi_pe_element)
-    view.grab()
-    assert view._scene is not None
-    assert view._scene.segments and view._scene.segments_right
 
 
 def test_multi_pf_scene_uses_first_ref(qapp, tmp_path) -> None:

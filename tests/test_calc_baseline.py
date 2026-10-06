@@ -1,9 +1,9 @@
-"""计算引擎对拍测试（计划 §6.4 / M4 验收）。
+"""计算引擎对拍测试（M4 验收）。
 
 基准构成：
 
 1. **闭合手算**——对典型断面按图集/原则参数手算出闭环公式，断言结果一致；
-2. **表达式一致性**——§6.3 要求“算式求值与表达式拼接共用同一套数值”，
+2. **表达式一致性**——“算式求值与表达式拼接共用同一套数值”，
    对每一条工程量的 expression 重新求值，与数值误差必须 < 0.5%；
 3. **基准文件回归**——tests/baselines/ 里存放整表结果（由本测试生成/更新，
    人工确认后冻结），任何算法改动引起数值变化都会被拦下。
@@ -44,7 +44,6 @@ def project(tmp_path: Path):
     )
     unit = project_io.units(project_io.segments()[0].id)[0]
     e1 = unit_vm.create_element(unit.id, category=1, name="混凝土管", depth="2.5+0.3", amount="100")
-    unit_vm.update_element(e1.id, depth="2.5+0.3", amount="100")
     unit_vm.create_pipe(e1.id, mat="Ⅱ级混凝土管", dn=600, content="1")
     e2 = unit_vm.create_element(unit.id, category=2, name="包封管", depth="3", amount="50")
     unit_vm.create_pipe(e2.id, mat="Ⅱ级混凝土管", dn=800, content="1")
@@ -55,7 +54,7 @@ def project(tmp_path: Path):
 
 def _results(unit) -> dict[int, QDict]:
     _summary, detail = unit_vm.compute_unit(unit.id)
-    return {row.id: dq for row, _dq in detail for dq in [_dq]}
+    return {row.id: dq for row, dq in detail}
 
 
 def test_closed_form_trapezoid(project) -> None:
@@ -79,7 +78,7 @@ def test_closed_form_trapezoid(project) -> None:
 
 
 def test_expression_matches_value(project) -> None:
-    """§6.3：每条工程量的算式重新求值必须等于数值（误差 < 0.5%）。"""
+    """每条工程量的算式重新求值必须等于数值（误差 < 0.5%）。"""
     unit = project
     for element in _elements(unit):
         for quantity in sorted_items(_results(unit)[element.id]):

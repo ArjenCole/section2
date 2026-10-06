@@ -1,4 +1,4 @@
-"""计算总入口（复刻旧版 mscGroove.Cal + mcElement.getDQ，计划 §6.1）。
+"""计算总入口（复刻旧版 mscGroove.Cal + mcElement.getDQ）。
 
 一个构件条目的工程量 = 沟槽断面（挖方/换填/垫层/回填） + 降水 + 围护 + 特殊地基
 + 支撑（Z 类公式） + 管道基础（扣占土） + 管材，全部按“每延米”计算后 ×数量。
@@ -57,12 +57,6 @@ _DEFAULT_PARAMS: dict[int, dict[str, float]] = {
         "含钢量 kg/m3": 160,
     },
 }
-
-#: 附属构筑物默认参数（旧版 mcE7 构造函数；值为文本，不能并入上面的数值表）
-STRUCTURE_DEFAULT_PARAMS: tuple[tuple[str, str], ...] = (
-    ("-名称", "自定义构筑物"),
-    ("-单位", "个"),
-)
 
 
 @dataclass
@@ -425,13 +419,6 @@ def replace(at, **changes):
     return _replace(at, **changes)
 
 
-def compute_from_orm(element: Element, session) -> QDict | None:
-    """便利入口：从 ORM 构件取原则并计算（含多原则引用与附属构筑物）。"""
-    pe, pf, pe_refs, pf_refs = resolve_element_principles(element, session)
-    info = build_element_input(element, pe, pf, pe_refs, pf_refs)
-    return compute_element(info)
-
-
 def resolve_element_principles(element: Element, session):
     """按构件的多原则引用解析出 (主 pe, 主 pf, [(pe, 比例)...], [(pf, 比例)...)])。
 
@@ -460,10 +447,6 @@ def resolve_element_principles(element: Element, session):
         main_pe = pe_refs[0][0]
     main_pf = pf_refs[0][0] if pf_refs else None
     return main_pe, main_pf, pe_refs, pf_refs
-
-
-def unit_of(category: int) -> str:
-    return "m" if category else ""
 
 
 def is_concrete_pipe(info: ElementInput) -> bool:

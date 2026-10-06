@@ -1,4 +1,4 @@
-"""地基处理原则编辑对话框（复刻旧版 FmPcp/FormPF，301×400）。
+"""地基处理原则编辑对话框（复刻旧版 FmPcp/FormPF，460×400）。
 
 布局与交互照抄 FormPF / FormPF.Designer：
 
@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,

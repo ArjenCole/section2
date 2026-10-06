@@ -1,4 +1,4 @@
-"""图集与构件库加载（计划 §3 `services/atlas.py`，M3）。
+"""图集与构件库加载（M3）。
 
 三块数据都来自随程序分发的 xlsx（只读，openpyxl）：
 
@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import lru_cache
-from pathlib import Path
 
 import openpyxl
 
@@ -39,18 +38,6 @@ ATLAS_TABLES: tuple[tuple[str, str], ...] = (
     ("金属管道.xlsx", "球墨铸铁管"),  # 8
     ("金属管道.xlsx", "钢管"),  # 9
 )
-
-#: 宽度表类别（GB 50268-2008）
-WIDTH_CATEGORIES: tuple[str, ...] = (
-    "混凝土管-刚性接口",
-    "混凝土管-柔性接口",
-    "金属类管道",
-    "化学建材管道",
-    "包封埋管",
-    "箱涵-管廊",
-)
-
-WIDTH_DNS: tuple[int, ...] = tuple(range(0, 3100, 100))
 
 
 @dataclass(frozen=True)
@@ -454,32 +441,3 @@ def default_width_tables() -> tuple[dict[str, dict[int, float]], dict[str, dict[
         finally:
             workbook.close()
     return work, groove
-
-
-def default_price_table() -> dict[str, float]:
-    """价格库（旧版 mscInventory.LoadPrice：Price.xlsx，key=类别|名称|单位）。"""
-    prices: dict[str, float] = {}
-    path = INVENTORY_DIR / "Price.xlsx"
-    if not path.exists():
-        return prices
-    workbook = openpyxl.load_workbook(path, data_only=True, read_only=True)
-    try:
-        worksheet = workbook[workbook.sheetnames[0]]
-        rows = list(worksheet.iter_rows(values_only=True))
-        if len(rows) < 2:
-            return prices
-        header = rows[0]
-        for line in rows[1:]:
-            if len(line) < 4:
-                continue
-            key = "|".join(str(line[column] or "") for column in range(3))
-            for column in range(3, len(header)):
-                value = _num(line[column]) if column < len(line) else 0.0
-                suffix = str(header[column] or "").strip()
-                if suffix:
-                    prices[f"{key}|{suffix}"] = value
-                else:
-                    prices[key] = value
-    finally:
-        workbook.close()
-    return prices

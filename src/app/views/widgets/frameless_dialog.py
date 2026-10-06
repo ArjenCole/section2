@@ -330,9 +330,6 @@ class FramelessDialog(QDialog):
     def bodyLayout(self) -> QVBoxLayout:
         return self._body_layout
 
-    def bodyWidget(self) -> QWidget:
-        return self._body
-
     def setWindowTitle(self, title: str) -> None:  # noqa: N802 - Qt 命名
         super().setWindowTitle(title)
         if self._title_bar is not None:

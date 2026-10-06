@@ -1,4 +1,4 @@
-"""单位工程面板视图模型（计划 §7.2）。
+"""单位工程面板视图模型。
 
 中部下半区：构件录入表（埋深 / 数量支持算式）+ 选中构件的明细（管材、构件参数）。
 埋深、数量在库里存字符串原文，展示时用 core.evaluator 求值，失败不写 0 而是标出错误。
@@ -146,7 +146,6 @@ def compute_unit(unit_id: int):
         resolve_element_principles,
     )
     from app.core.calc.tracer import QDict
-    from app.core.models.models import PcpEnclosure, PcpFoundation
 
     summary = QDict()
     detail: list[tuple[ElementRow, QDict]] = []

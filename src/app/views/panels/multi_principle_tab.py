@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QTableWidget,
     QTableWidgetItem,

@@ -1,4 +1,4 @@
-"""API key 的 keyring 存取（计划 §8.1）。
+"""API key 的 keyring 存取。
 
 key 只进系统钥匙串（Windows 凭据管理器 / macOS 钥匙串 / SecretService），
 条目名 ``section2/<provider>``；严禁写进配置文件或工程文件。
@@ -9,10 +9,6 @@ from __future__ import annotations
 import keyring
 
 _SERVICE = "section2"
-
-
-def service_name(provider: str) -> str:
-    return f"{_SERVICE}/{provider}"
 
 
 def set_api_key(provider: str, key: str) -> None:

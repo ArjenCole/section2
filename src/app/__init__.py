@@ -1,6 +1,6 @@
 """Section 2.0 —— 线性工程（市政管道）工程量计算软件。
 
-包结构（src 布局，见 开发计划.md §3）：
+包结构（src 布局）：
 
     src/app/core          版本、路径、配置、事件总线、算式求值
     src/app/core/models   .stn2 工程文件的 SQLAlchemy 表结构

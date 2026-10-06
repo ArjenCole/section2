@@ -1,4 +1,4 @@
-"""项目树视图模型（计划 §7.1）。
+"""项目树视图模型。
 
 数据来源：project_io 读库 → 组装 TreeNode 树 → 交给树面板渲染。
 增删改后统一 commit 落盘并广播 tree_structure_changed。
@@ -17,9 +17,7 @@ from app.services import project_io
 KIND_PROJECT = "project"
 KIND_SEGMENT = "segment"
 KIND_UNIT = "unit"
-KIND_ENCLOSURE_GROUP = "enclosure_group"
 KIND_ENCLOSURE = "enclosure"
-KIND_FOUNDATION_GROUP = "foundation_group"
 KIND_FOUNDATION = "foundation"
 
 
@@ -53,10 +51,6 @@ class TreeNode:
     @property
     def is_foundation(self) -> bool:
         return self.kind == KIND_FOUNDATION
-
-    @property
-    def is_group(self) -> bool:
-        return self.kind in (KIND_ENCLOSURE_GROUP, KIND_FOUNDATION_GROUP)
 
 
 def build_tree() -> TreeNode | None:
@@ -110,13 +104,6 @@ class ProjectViewModel(QObject):
     def select(self, node: TreeNode | None) -> None:
         self._current = node
         self.selection_changed.emit(node)
-
-    def reselect(self, kind: str, node_id: int | None) -> None:
-        """按 kind+id 在树里找回节点（重建树后保持选中）。"""
-        root = build_tree()
-        found = _find(root, kind, node_id)
-        self._current = found
-        self.selection_changed.emit(found)
 
     # --- 结构增删改 ---
     def add_segment(self, name: str = "新建标段") -> TreeNode | None:
@@ -240,15 +227,3 @@ class ProjectViewModel(QObject):
         if node.kind == KIND_UNIT:
             return project_io.orm.session().get(Unit, node.id)
         return None
-
-
-def _find(node: TreeNode | None, kind: str, node_id: int | None) -> TreeNode | None:
-    if node is None:
-        return None
-    if node.kind == kind and node.id == node_id:
-        return node
-    for child in node.children:
-        found = _find(child, kind, node_id)
-        if found is not None:
-            return found
-    return None

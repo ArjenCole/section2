@@ -1,4 +1,4 @@
-"""工具注册表（计划 §3 agent/tool_registry.py）。
+"""AI 工具注册表。
 
 一期只有构件增删改查 4 个工具（见 tools/element_crud.TOOL_SPECS）；
 扩展新工具时在 element_crud 里登记 spec 与 handler，本模块对外暴露统一入口。

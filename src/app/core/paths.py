@@ -1,7 +1,7 @@
 """路径解析：用户配置目录、日志目录、随程序分发的资源目录。
 
 配置文件（config.toml）与工程文件严格分离：配置文件放 platformdirs 的用户目录，
-工程文件由用户自己选路径（计划 §2、§5）。
+工程文件由用户自己选路径。
 """
 
 from pathlib import Path
@@ -52,13 +52,5 @@ def atlas_dir() -> Path:
     return resources_dir() / "atlas"
 
 
-def icons_dir() -> Path:
-    return resources_dir() / "icons"
-
-
 def fonts_dir() -> Path:
     return resources_dir() / "fonts"
-
-
-def qss_dir() -> Path:
-    return resources_dir() / "qss"

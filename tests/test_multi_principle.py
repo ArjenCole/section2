@@ -9,37 +9,6 @@
 * 多原则 Tab 控件的表格交互。
 """
 
-import os
-
-import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-from PySide6.QtWidgets import QApplication
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    yield QApplication.instance() or QApplication([])
-
-
-@pytest.fixture(autouse=True)
-def _closed_project():
-    from app.services import project_io
-
-    project_io.close_project()
-    yield
-    project_io.close_project()
-
-
-@pytest.fixture()
-def project(tmp_path):
-    from app.services import project_io
-    from app.services.project_io import NewProjectSpec
-
-    path = tmp_path / "multi.stn2"
-    project_io.new_project(NewProjectSpec(path=path, unit_names=["雨水工程"]))
-    return path
 
 
 def _first_unit_id() -> int:
@@ -116,7 +85,6 @@ def test_show_name_setter_semantics(project) -> None:
 def test_multi_principle_ratio_weighted_calculation(project) -> None:
     """断面量 = Σ(各 pe 组合量 × 比例)；支撑/管道基础/管材只按主原则、不乘比例。"""
     from app.core.calc.engine import build_element_input, compute_element, resolve_element_principles
-    from app.core.calc.tracer import fmt
     from app.core.models import base as orm
     from app.core.models.models import CATEGORY_BURIED, MULTI_PE_TEXT, PcpEnclosure
     from app.services import project_io
@@ -147,9 +115,9 @@ def test_multi_principle_ratio_weighted_calculation(project) -> None:
     unit_vm.update_element(element.id, pe_name=MULTI_PE_TEXT)
     unit_vm.set_main_pe(element.id, "默认围护原则")
 
-    element = orm.session().get(PcpEnclosure.__mro__[0].__base__ if False else type(element), element.id)
+    element = orm.session().get(type(element), element.id)
     pe, pf, pe_refs, pf_refs = resolve_element_principles(element, session)
-    assert [name for name, _ratio in [(r.name, r.ratio) for r in element.pe_refs_sorted()]] == [
+    assert [r.name for r in element.pe_refs_sorted()] == [
         "默认围护原则", "钢板桩",
     ]
     info = build_element_input(element, pe, pf, pe_refs, pf_refs)
@@ -248,7 +216,6 @@ def test_structure_category_switch_resets_params(project) -> None:
 def test_migrate_multi_principle_and_structure(tmp_path) -> None:
     from pathlib import Path
 
-    from app.core.calc.tracer import fmt
     from app.core.models import base as orm
     from app.core.models.models import CATEGORY_STRUCTURE, MULTI_PE_TEXT
     from app.services import project_io, stn_migration

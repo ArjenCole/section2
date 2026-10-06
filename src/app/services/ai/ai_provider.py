@@ -1,4 +1,4 @@
-"""OpenAI 兼容客户端：SSE 流式对话（计划 §8、§2）。
+"""OpenAI 兼容客户端：SSE 流式对话。
 
 支持任意 OpenAI 兼容端点（DeepSeek / OpenAI / Ollama / vLLM / 通义…），
 使用 httpx 直连 chat/completions，``stream=true`` 时逐块回调：
@@ -79,13 +79,6 @@ def stream_chat(
                 _dispatch(data, on_content, on_reasoning, on_tool_call)
     except httpx.HTTPError as error:
         raise AiProviderError(f"无法连接 AI 端点：{error}") from error
-
-
-def complete(config: ProviderConfig, api_key: str, messages: list[ChatMessage], **kwargs) -> str:
-    """非流式便捷调用（工具循环里需要完整结果时用）。"""
-    chunks: list[str] = []
-    stream_chat(config, api_key, messages, on_content=chunks.append, **kwargs)
-    return "".join(chunks)
 
 
 def _encode(message: ChatMessage) -> dict:

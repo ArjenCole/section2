@@ -1,4 +1,4 @@
-"""旧版工程导入向导（计划 §5.1，M6 T6.2）。
+"""旧版工程导入向导（M6）。
 
 流程：选择 .stn → 选择 .stn2 保存路径 → 解析摘要预览 → 确认写库并打开 →
 结束报告（成功计数 + 警告/跳过明细，支持复制文本）。
@@ -16,14 +16,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
-    QVBoxLayout,
     QWidget,
 )
 
 from app.core.config import update_config
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 from app.core.event_bus import bus
-from app.services import project_io, stn_migration
+from app.services import stn_migration
 from app.views.dialogs.new_project_wizard import suggested_dir
 
 

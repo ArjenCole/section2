@@ -1,4 +1,4 @@
-"""工程文件生命周期（计划 §5）。
+"""工程文件生命周期。
 
 新建 / 打开 / 保存 / 另存为 / 关闭、``.lock`` 文件锁防双开、Backup 自动备份、
 结构版本校验。业务代码不直接建连接，统一走这里。
@@ -413,17 +413,6 @@ def basic_info() -> BasicInfo | None:
     return orm.session().get(BasicInfo, 1)
 
 
-def set_basic_info(**fields: str) -> None:
-    """修改工程基本信息（项目名称/编号/编制人/图集）。"""
-    info = basic_info()
-    if info is None:
-        return
-    for key, value in fields.items():
-        if hasattr(info, key):
-            setattr(info, key, value)
-    commit()
-
-
 # --------------------------------------------------------------------------- #
 # 查询辅助（供树面板 / 下拉框使用）
 # --------------------------------------------------------------------------- #
@@ -505,50 +494,8 @@ def foundation_names() -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
-# 单价字典（M5 汇总页用；key = 类别|项目|单位）
+# 单价字典（key = 类别|项目|单位；旧版迁移会把旧工程单价写进 price 表）
 # --------------------------------------------------------------------------- #
-def prices() -> dict[str, float]:
-    if not orm.is_open():
-        return {}
-    from app.core.models.models import Price
-
-    return {row.key: row.value for row in orm.session().scalars(select(Price))}
-
-
-def get_price(key: str) -> float:
-    """单价；未填为 0（旧版 mscCtrl.getPrice）。"""
-    if not orm.is_open():
-        return 0.0
-    from app.core.models.models import Price
-
-    row = orm.session().scalars(select(Price).where(Price.key == key)).first()
-    return row.value if row is not None else 0.0
-
-
-def set_price(key: str, value: float) -> None:
-    """写入/更新单价（旧版 mscCtrl.setPrice）。"""
-    if not orm.is_open():
-        return
-    from app.core.models.models import Price
-
-    session = orm.session()
-    row = session.scalars(select(Price).where(Price.key == key)).first()
-    if row is None:
-        session.add(Price(key=key, value=float(value)))
-    else:
-        row.value = float(value)
-    commit()
-
-
-def clear_prices() -> None:
-    if not orm.is_open():
-        return
-    from app.core.models.models import Price
-
-    orm.session().query(Price).delete()
-    commit()
-
-
 def next_order_no(model, **filters) -> int:
     """取某张表在给定父行下的下一个 order_no。"""
     if not orm.is_open():
@@ -580,33 +527,6 @@ def foundations() -> list[PcpFoundation]:
             select(PcpFoundation).order_by(PcpFoundation.order_no, PcpFoundation.id)
         )
     )
-
-
-def enclosure_users(name: str) -> list[str]:
-    """引用某围护原则的构件条目名（删除确认框展示用）。"""
-    if not orm.is_open() or not name:
-        return []
-    from app.core.models.models import Element
-
-    return [
-        row
-        for row in orm.session().scalars(
-            select(Element.name).where(Element.pe_name == name).limit(20)
-        )
-    ]
-
-
-def foundation_users(name: str) -> list[str]:
-    if not orm.is_open() or not name:
-        return []
-    from app.core.models.models import Element
-
-    return [
-        row
-        for row in orm.session().scalars(
-            select(Element.name).where(Element.pf_name == name).limit(20)
-        )
-    ]
 
 
 def create_enclosure(name: str = "新围护原则") -> PcpEnclosure | None:
@@ -925,14 +845,6 @@ def _prune_backups(path: Path) -> None:
             stale.unlink()
         except OSError:
             pass
-
-
-def backups(path: str | Path) -> list[Path]:
-    """列出某工程的备份文件（新到旧）。"""
-    folder = backup_dir(path)
-    if not folder.exists():
-        return []
-    return sorted(folder.glob(f"{Path(path).stem}_*{Path(path).suffix}"), key=lambda i: i.name, reverse=True)
 
 
 # --------------------------------------------------------------------------- #

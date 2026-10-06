@@ -1,4 +1,4 @@
-"""中部工作区：单位工程（计划 §7.1、§7.2）。
+"""中部工作区：单位工程面板。
 
 上部：构件录入表（复刻旧版 dGVmain）。
 下部横向三栏（旧版 FormUnit 的 spltCtnerR 布局）：
@@ -20,9 +20,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QPushButton,
     QSplitter,
-    QStackedWidget,
     QStyle,
     QTabWidget,
     QTableWidget,

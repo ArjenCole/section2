@@ -1,11 +1,11 @@
-"""主窗体（计划 §7.1）：单窗体 + 三栏，不做 MDI、不做子窗体。
+"""主窗体：单窗体 + 三栏，不做 MDI、不做子窗体。
 
     ┌ 菜单栏 + 工具栏 ─────────────────────────────┐
-    │ 项目树 280px │ 中部工作区（Tab） │ AI 助手 360px │
+    │ 项目树 250px │ 中部工作区 │ AI 助手 360px │
     └ 状态栏 ────────────────────────────────────┘
 
-中部工作区只显示项目树里当前选中的节点：单位工程 → 单位工程 Tab，
-根/标段 → 汇总 Tab，原则节点（M3 起）→ 原则 Tab。
+中部工作区是 QStackedWidget，项目树选中的任何节点都显示对应
+单位工程的工程量工作台；原则编辑走顶部原则横条 + 模态对话框。
 """
 
 from __future__ import annotations
@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QStatusBar,
-    QTabWidget,
     QToolBar,
     QToolButton,
     QVBoxLayout,
@@ -39,7 +38,6 @@ from app.core.event_bus import bus
 from app.core.version import (
     APP_DISPLAY_NAME,
     APP_VERSION,
-    LEGACY_FILE_FILTER,
     PROJECT_FILE_FILTER,
 )
 from app.core.models.base import NotAProjectFileError, ProjectFileError, SchemaTooNewError
@@ -466,7 +464,7 @@ class MainWindow(QMainWindow):
 
         if initial:
             # 窗口还没显示过，splitter.sizes() 全是 0，直接用默认宽度
-            # （中间给 600，剩下的宽度由窗口分配，保证左右两栏拿到计划里的 280 / 360）
+            # （中间给 600，剩下的宽度由窗口分配，保证左右两栏拿到 250 / 360）
             sizes = [
                 _TREE_WIDTH,
                 600,
@@ -656,7 +654,6 @@ class MainWindow(QMainWindow):
         bus().project_saved.connect(lambda path: self._set_status(f"已保存：{path}"))
         bus().node_selected.connect(self._on_node_selected)
         bus().status_message.connect(self._set_status)
-        bus().ai_panel_toggle_requested.connect(self._apply_ai_visible)
         ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
         # 主题切换按钮文字与图标随当前主题变化：暗色 → 太阳「切换亮色…」、亮色 → 月亮「切换暗色…」
         self._act_theme.setText("切换亮色主题" if ThemeManager.instance().is_dark() else "切换暗色主题")
@@ -918,7 +915,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ 退出
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
-        """退出前检查未保存的临时工程，然后落盘并释放锁（计划 §11 风险 6）。"""
+        """退出前检查未保存的临时工程，然后落盘并释放锁。"""
         # 临时工程（尚未保存到文件）在退出前提示保存；用户取消则不关闭
         if not self._prompt_save_if_unsaved("关闭"):
             event.ignore()

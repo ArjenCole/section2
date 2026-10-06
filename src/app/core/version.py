@@ -1,7 +1,6 @@
 """应用版本与全局常量。
 
-对应计划 §3 `core/version.py`；工程文件扩展名、备份份数等常量集中在此，
-避免散落在各模块里。
+工程文件扩展名、结构版本、备份份数等常量集中在此，避免散落在各模块里。
 """
 
 APP_NAME = "Section2"  # platformdirs 目录名 / QApplication.applicationName
@@ -20,14 +19,10 @@ SCHEMA_VERSION = 3
 PROJECT_SUFFIX = ".stn2"
 PROJECT_FILE_FILTER = "Section 工程 (*.stn2)"
 
-#: 旧版工程文件（M6 迁移入口只读使用）
-LEGACY_SUFFIX = ".stn"
-LEGACY_FILE_FILTER = "旧版 Section 工程 (*.stn)"
-
 #: 锁文件 = 工程文件全路径 + LOCK_SUFFIX
 LOCK_SUFFIX = ".lock"
 
-#: 自动备份（计划 §5）
+#: 自动备份
 BACKUP_DIR_NAME = "Backup"
 BACKUP_KEEP = 20
 

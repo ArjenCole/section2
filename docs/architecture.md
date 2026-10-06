@@ -15,7 +15,7 @@ views/  ──►  viewmodels/  ──►  services/  ──►  core/models/
 |---|---|---|
 | `views/` | 只画界面、把用户操作转成 VM 调用、渲染 VM 发来的数据 | 不碰数据库、不写业务规则 |
 | `viewmodels/` | 持有当前选中状态，调用 services，用 Signal 广播结果 | 不引用 Qt 控件 |
-| `services/` | 工程文件读写、计算引擎、图集、导出、AI（纯 Python，不依赖 Qt） | 不管界面 |
+| `services/` | 工程文件读写、计算引擎、图集、旧档迁移、AI（纯 Python，不依赖 Qt） | 不管界面 |
 | `core/models/` | `.stn2` 表结构与连接生命周期 | 不含业务规则 |
 
 面板之间不互相持有引用：跨面板通知走 `core/event_bus.py` 的全局 Signal 总线
@@ -37,7 +37,7 @@ AI 工具（M8）走同一条 3~6，因此界面与 AI 改数据不会出现两�
 
 ## 工程文件
 
-`.stn2` = 单个 SQLite 库，表结构见 `core/models/models.py`，约定见 开发计划.md §4。
+`.stn2` = 单个 SQLite 库，表结构以 `core/models/models.py` 为权威定义。
 `core/models/base.py` 负责引擎/会话与 `meta` 表（`schema_version` / `app_version` / `created_at` / `updated_at`），
 `services/project_io.py` 负责新建/打开/保存/另存/关闭、`.lock` 防双开、Backup 备份与结构版本校验。
 

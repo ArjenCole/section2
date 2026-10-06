@@ -8,39 +8,9 @@
 上下文，会在对象死后触发并弹错误窗（修复：singleShot 绑定接收者 + 兜底守卫）。
 """
 
-import os
 import sys
 
-import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from PySide6.QtCore import QEvent
-from PySide6.QtWidgets import QApplication
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    yield QApplication.instance() or QApplication([])
-
-
-@pytest.fixture(autouse=True)
-def _closed_project():
-    from app.services import project_io
-
-    project_io.close_project()
-    yield
-    project_io.close_project()
-
-
-@pytest.fixture()
-def project(tmp_path):
-    from app.services import project_io
-    from app.services.project_io import NewProjectSpec
-
-    path = tmp_path / "cellfill.stn2"
-    project_io.new_project(NewProjectSpec(path=path, unit_names=["雨水工程"]))
-    return path
 
 
 def test_component_edit_dialog_close_no_dead_callback(qapp, project, monkeypatch) -> None:

@@ -1,4 +1,4 @@
-"""function calling 循环（计划 §3 agent/agent_loop.py，M8）。
+"""function calling 循环（M8）。
 
 在后台线程里跑 OpenAI 兼容的流式对话；模型请求工具调用时：
 写操作先经 ConfirmBridge 弹确认（界面线程），执行结果回填后继续下一轮，
@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import threading
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Signal
 
 from app.agent import tool_registry
 from app.agent.confirm_policy import ConfirmBridge

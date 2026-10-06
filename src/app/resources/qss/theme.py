@@ -1,4 +1,4 @@
-"""主题与全局样式表（计划 §7.4）。
+"""主题与全局样式表。
 
 思路照搬 Quotor：一套 ThemeColors 调色板 + 由调色板生成整份 QSS + ThemeManager 单例，
 切换主题时重新生成并 setStyleSheet，同时发出 theme_changed 供自绘控件重绘。
@@ -41,7 +41,6 @@ class ThemeColors:
     success: str
     warning: str
     danger: str
-    danger_hover: str
     table_alt_row: str
     table_grid: str
     table_selected_bg: str
@@ -78,7 +77,6 @@ LIGHT = ThemeColors(
     success="#10B981",
     warning="#F59E0B",
     danger="#EF4444",
-    danger_hover="#DC2626",
     table_alt_row="#F2F4F7",
     table_grid="#D1D5DB",
     table_selected_bg="#B4D6FF",
@@ -112,7 +110,6 @@ DARK = ThemeColors(
     success="#34D399",
     warning="#FBBF24",
     danger="#F87171",
-    danger_hover="#EF4444",
     table_alt_row="#383838",
     table_grid="#4A4A4A",
     table_selected_bg="#345E8C",

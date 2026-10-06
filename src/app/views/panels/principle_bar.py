@@ -179,14 +179,6 @@ class PrincipleBar(QWidget):
             if foundation is not None:
                 FoundationEditDialog(foundation.id, self).exec()
 
-    def show_editor(self, kind: str, name: str) -> None:
-        """外部入口（项目菜单/树）：打开原则编辑器。"""
-        if kind == _KIND_FOUNDATION:
-            self._radio_foundation.setChecked(True)
-        else:
-            self._radio_enclosure.setChecked(True)
-        self._open_editor(kind, name)
-
     def _show_context_menu(self, kind: str, name: str, global_pos) -> None:
         """PrincpleLab_MouseUp：右键菜单（编辑/导入/导出/删除/添加）。"""
         self._menu_name = name

@@ -1,4 +1,4 @@
-"""一期 AI 工具（计划 §8.3）：仅构件条目增删改查 4 个。
+"""一期 AI 工具：仅构件条目增删改查 4 个。
 
 工具函数都通过 viewmodels.unit_vm 的数据操作执行（与界面同一条代码路径），
 写操作由 confirm_policy 统一弹确认；执行后 EventBus 自动刷新工程量表。
@@ -10,7 +10,6 @@ import json
 from dataclasses import dataclass, field
 from typing import Callable
 
-from app.core.evaluator import evaluate_or_default
 from app.core.models.models import CATEGORY_NAMES, CATEGORY_CHOICES, category_from_name, category_name
 from app.services import project_io
 from app.viewmodels import unit_vm
@@ -166,7 +165,7 @@ def _find_element(context: ToolContext, kwargs: dict):
     return "请提供 element_id 或 name。"
 
 
-#: 工具的 OpenAI JSON Schema（与 §8.3 一致，仅这 4 个）
+#: 工具的 OpenAI JSON Schema（仅这 4 个）
 TOOL_SPECS: list[dict] = [
     {
         "type": "function",

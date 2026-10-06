@@ -5,28 +5,19 @@ Qt 6.9+ 把 registerField("x*") 的必填判定改成“当前值 ≠ 初始值�
 默认围护/地基原则与图集不再设页收集，values() 直接按配置默认带出。
 """
 
-import os
 from dataclasses import fields
 
-import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-from PySide6.QtWidgets import QApplication, QWizard
+from PySide6.QtWidgets import QWizard
 
 from app.services.project_io import NewProjectSpec
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    yield QApplication.instance() or QApplication([])
 
 
 def _finish_button(wizard) -> bool:
     return wizard.button(QWizard.WizardButton.FinishButton).isEnabled()
 
 
-def test_finish_enabled_with_default_name(qapp):
+def test_finish_enabled_only_with_nonempty_name(qapp):
+    """默认名下 Finish 可用；名称清空后禁用（isComplete 按非空判断）。"""
     from app.views.dialogs.new_project_wizard import NewProjectWizard
 
     wizard = NewProjectWizard()
@@ -36,12 +27,6 @@ def test_finish_enabled_with_default_name(qapp):
     assert wizard.currentPage() is wizard._basic_page
     assert _finish_button(wizard)
 
-
-def test_finish_disabled_when_name_cleared(qapp):
-    from app.views.dialogs.new_project_wizard import NewProjectWizard
-
-    wizard = NewProjectWizard()
-    wizard.restart()
     wizard._basic_page.project_name.clear()
     qapp.processEvents()
     assert not _finish_button(wizard)

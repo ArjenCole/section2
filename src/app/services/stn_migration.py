@@ -1,4 +1,4 @@
-"""旧 `.stn`(XML) → `.stn2` 一次性迁移（计划 §5.1，M6）。
+"""旧 `.stn`(XML) → `.stn2` 一次性迁移（M6）。
 
 定位：**单向只读迁移工具**——老工程的 `.stn` 文件任何情况下只读；
 不追求 100% 还原，追求“数据不丢、能继续算”。
@@ -18,7 +18,6 @@ from pathlib import Path
 
 from lxml import etree
 
-from app.core.version import SCHEMA_VERSION
 from app.core.models import base as orm
 from app.core.models.models import (
     CATEGORY_NAMES,
@@ -53,12 +52,6 @@ _PRECIP_DEFAULT_TEXT = {
     "big_well": "10|10|2",
     "deep_well": "15|20|1",
 }
-
-
-def _category_name_map():
-    from app.core.models.models import CATEGORY_NAMES
-
-    return [(value, name) for value, name in CATEGORY_NAMES.items()]
 
 
 @dataclass

@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller 打包配置（计划 M9 T9.2）。
+"""PyInstaller 打包配置。
 
 构建（在项目根目录、项目 .venv 里执行）：
 

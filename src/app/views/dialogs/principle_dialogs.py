@@ -35,6 +35,8 @@ from PySide6.QtWidgets import (
 
 from app.core.models import base as orm
 from app.core.models.models import (
+    GROOVE_WIDTH_B,
+    GROOVE_WIDTH_WORK,
     PRECIPITATION_COLUMNS,
     PRECIPITATION_LABELS,
     Component,
@@ -546,7 +548,7 @@ class WorkWidthDialog(PrincipleSubDialog):
         self._fill()
 
     def save(self) -> None:
-        self._enclosure.groove_width = "WorkWidth" if self._radio_work.isChecked() else "B"
+        self._enclosure.groove_width = GROOVE_WIDTH_WORK if self._radio_work.isChecked() else GROOVE_WIDTH_B
         session = orm.session()
         for kind, table in self._tables.items():
             for row_index, category in enumerate(_WIDTH_CATEGORY_ORDER):

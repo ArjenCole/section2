@@ -1,4 +1,4 @@
-"""管道基础与管材计算（复刻旧版 mcE1~mcE6 的 cal_found / cal_pipes，计划 §6.1）。
+"""管道基础与管材计算（复刻旧版 mcE1~mcE6 的 cal_found / cal_pipes）。
 
 * 直埋管道（mcE1）：砼基础体积扣弓形占位、模板、垫层扣减、坞膀/上半回填扣减；
 * 包封埋管（mcE2）：垫层 + 包封混凝土/模板 + 回填扣减 + 管材（包封混凝土扣管位）；
@@ -12,9 +12,7 @@ from __future__ import annotations
 
 import math
 
-from app.core.evaluator import format_number
 from app.core.models.models import CATEGORY_BURIED, CATEGORY_BOX_CULVERT, CATEGORY_ENCASED, CATEGORY_GALLERY
-from app.core.calc import groove
 from app.core.calc.tracer import QDict, fmt
 
 

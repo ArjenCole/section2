@@ -1,6 +1,6 @@
 """SQLAlchemy 基础：Base、引擎与会话生命周期、meta 表读写。
 
-工程文件 = 单个 SQLite 文件（计划 §5）。业务代码不自己建连接，
+工程文件 = 单个 SQLite 文件。业务代码不自己建连接，
 统一通过本模块拿会话；一次 `commit()` 就是一次落盘（自动保存）。
 
 会话只有一个、长驻、跑在界面线程上——桌面单用户场景下这样才能让
@@ -40,7 +40,7 @@ class NotAProjectFileError(ProjectFileError):
 
 
 class SchemaTooNewError(ProjectFileError):
-    """文件由更高版本的程序创建，拒绝打开（计划 §5）。"""
+    """文件由更高版本的程序创建，拒绝打开。"""
 
 
 class NoProjectOpenError(ProjectFileError):
@@ -104,7 +104,7 @@ def _migrate_v2_add_multi_principle(engine: Engine) -> None:
         )
 
 
-#: 结构迁移入口（计划 §5）。键为源版本号，值为“从该版本迁到 +1 版本”的函数。
+#: 结构迁移入口。键为源版本号，值为“从该版本迁到 +1 版本”的函数。
 _MIGRATIONS: dict[int, "callable"] = {
     1: _migrate_v1_add_element_source,
     2: _migrate_v2_add_multi_principle,
@@ -262,13 +262,6 @@ def session() -> Session:
     if _session is None:
         raise NoProjectOpenError("尚未打开工程。")
     return _session
-
-
-def new_session() -> Session:
-    """独立会话（测试、后台任务用），调用方负责关闭。"""
-    if _session_factory is None:
-        raise NoProjectOpenError("尚未打开工程。")
-    return _session_factory()
 
 
 def commit() -> None:

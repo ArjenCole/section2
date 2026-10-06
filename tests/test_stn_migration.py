@@ -1,4 +1,4 @@
-"""旧 .stn 迁移测试（计划 §5.1 / M6 验收）。
+"""旧 .stn 迁移测试（M6 验收）。
 
 用 tests/fixtures/legacy 的样例旧工程做批量导入：全部成功打开、
 标段/单位工程/构件/管道计数与源文件一致、原则引用全部落到实际表记录；
@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
@@ -85,25 +84,33 @@ def test_migrate_sample(tmp_path: Path, source: Path) -> None:
         }
         assert ref_pe_names <= enclosure_names, f"悬空多原则围护引用：{ref_pe_names - enclosure_names}"
         assert ref_pf_names <= foundation_names, f"悬空多原则地基引用：{ref_pf_names - foundation_names}"
-
-        # 原则做法/构件必须存在（能计算）
-        assert enclosure_names == set(referenced_pe) | enclosure_names
     finally:
         project_io.close_project()
 
 
 def test_migrate_preserves_expressions_and_params(tmp_path: Path) -> None:
+    """埋深/数量按原文逐字保留（可以是算式，如 “3+0.5”），不换算成数值。"""
     source = next((path for path in _available_samples() if _source_counts(path)["elements"] > 0), None)
     if source is None:
         pytest.skip("无含构件的样例")
+    tree = etree.parse(str(source))
+    originals = [
+        (node.findtext("Depth") or "", node.findtext("Amount") or "")
+        for node in tree.getroot().findall(".//mcSegment/mcUnit/mcElement")
+    ]
     target = tmp_path / "copy.stn2"
     stn_migration.migrate(source, target)
     project_io.open_project(target)
     try:
-        rows = unit_vm.element_rows(_first_unit_with_elements().id) if _first_unit_with_elements() else []
-        if rows:
-            # 埋深/数量仍是原文（可能是算式）
-            assert all(isinstance(row.depth, str) for row in rows)
+        from sqlalchemy import select
+
+        from app.core.models import base as orm
+        from app.core.models.models import Unit
+
+        units = list(orm.session().scalars(select(Unit).order_by(Unit.order_no, Unit.id)))
+        rows = [row for unit in units for row in unit_vm.element_rows(unit.id)]
+        assert [(row.depth, row.amount) for row in rows] == originals
+        assert any("+" in depth for depth, _ in originals)  # 样例里确实带算式
     finally:
         project_io.close_project()
 
@@ -143,15 +150,3 @@ def test_migrate_report_lists_warnings(tmp_path: Path) -> None:
     report = stn_migration.migrate(broken, tmp_path / "out.stn2")
     assert any("不存在的围护原则" in warning for warning in report.warnings)
 
-
-def _first_unit_with_elements():
-    from sqlalchemy import select
-
-    from app.core.models import base as orm
-    from app.core.models.models import Unit
-
-    session = orm.session()
-    for unit in session.scalars(select(Unit)):
-        if unit.elements:
-            return unit
-    return None
