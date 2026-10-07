@@ -13,6 +13,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QCheckBox,
     QFormLayout,
     QGridLayout,
@@ -66,6 +67,7 @@ class BasicInfoPage(QWizardPage):
         self.segment_count = QSpinBox()
         self.segment_count.setRange(1, 50)
         self.segment_count.setValue(1)
+        self.segment_count.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         structure.addWidget(QLabel("标段数量"), 0, 0)
         structure.addWidget(self.segment_count, 0, 1)
         structure.addWidget(QLabel("涵盖专业"), 1, 0)
