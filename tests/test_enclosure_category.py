@@ -149,6 +149,10 @@ def test_enclosure_work_dialog_level_operations(qapp, project, monkeypatch) -> N
         assert h_item.text() == "均分高度"
         assert not (h_item.flags() & Qt.ItemFlag.ItemIsEditable)  # 均分级高只读
 
+        # 新级自带模板构件（旧版 new mcEclsCpnt）：描述非空，双击可编辑
+        assert dialog._level_table.item(1, 4).text() != ""
+        assert dialog._levels()[1].components
+
         # 换级类型 → 构件按库模板重建（旧版 tmEC.Cpnt = Ecpnti[value]）
         dialog._on_level_category(dialog._levels()[0], "钢板桩")
         level = dialog._levels()[0]
@@ -172,10 +176,40 @@ def test_enclosure_work_dialog_level_operations(qapp, project, monkeypatch) -> N
         assert dialog._level_table.rowCount() == 2
         assert [item.order_no for item in dialog._levels()] == [0, 1]
 
-        # 确定保存（min_depth 写回 + order_no 归一）不再报错
-        dialog._min_depth.setText("1.5")
+        # 确定保存（order_no 归一）不再报错
         dialog._accept()
         assert dialog.saved
+    finally:
+        dialog.close()
+
+
+def test_enclosure_work_dialog_repairs_bare_level(qapp, project) -> None:
+    """历史遗留的无构件级：打开窗体时按级名补齐模板构件，描述可显示、双击可编辑。"""
+    from sqlalchemy import select
+
+    from app.core.models import base as orm
+    from app.core.models.models import Component, EnclosureLevel
+    from app.views.dialogs.principle_dialogs import EnclosureWorkDialog
+
+    work = _enclosure().works_sorted()[0]
+    session = orm.session()
+    bare = EnclosureLevel(work_id=work.id, name="放坡", h=2.0, step_width=1.0, order_no=1)
+    session.add(bare)
+    session.flush()
+
+    dialog = EnclosureWorkDialog(work)
+    try:
+        levels = session.scalars(
+            select(EnclosureLevel).where(EnclosureLevel.work_id == work.id).order_by(EnclosureLevel.order_no)
+        ).all()
+        assert len(levels) == 2
+        for level in levels:  # 旧行 + 补齐行都带模板构件
+            assert level.components
+            assert level.components[0].name == "放坡"
+        assert dialog._level_table.item(1, 4).text() != ""  # 描述不再为空
+        assert session.scalar(
+            select(Component.id).where(Component.enclosure_level_id == bare.id)
+        ) is not None
     finally:
         dialog.close()
 

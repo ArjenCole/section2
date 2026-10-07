@@ -3,8 +3,10 @@
 从 principle_panel 迁移而来，供原则编辑主对话框（EnclosureEditDialog /
 FoundationEditDialog，复刻 FormPE / FormPF）与横条等处复用：
 
-* :class:`EnclosureWorkDialog` —— 做法编辑（FormEcls：多级围护 + 止水构件）；
-* :class:`ComponentEditDialog` —— 构件公式编辑（FormCpntEdit：A~Z / FA~FZ / ZA~ZZ）；
+* :class:`EnclosureWorkDialog` —— 分级围护编辑（FormEcls：围护构件分级表 +
+  右侧确认/取消，做法埋深与止水构件在原则主窗体编辑）；
+* :class:`ComponentEditDialog` —— 构件编辑器（FormCpntEdit：左参数表、
+  右上围护公式、右下支撑公式，行头显示键名）；
 * :class:`WorkWidthDialog` —— 工作面宽度 / 沟槽宽度表（FormWorkWidth）；
 * :class:`PrecipitationDialog` —— 降水编辑（FormPrecipitation）。
 """
@@ -19,12 +21,11 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QDialogButtonBox,
-    QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QPushButton,
     QRadioButton,
     QTableWidget,
@@ -116,28 +117,33 @@ def precipitation_text(enclosure: PcpEnclosure) -> str:
 
 
 class PrincipleSubDialog(FramelessDialog):
-    """原则子编辑对话框的公共骨架：无边框（Quotor 风格）+ 确定 = 写库 / 取消 = 丢弃。"""
+    """原则子编辑对话框的公共骨架：无边框（Quotor 风格）+ 确定 = 写库 / 取消 = 丢弃。
 
-    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+    ``with_buttons=False`` 时不加底部按钮行，由子类自建（如分级围护编辑的
+    右侧竖排按钮，旧版 FormEcls 布局）。
+    """
+
+    def __init__(self, title: str, parent: QWidget | None = None, *, with_buttons: bool = True) -> None:
         super().__init__(parent, title)
         self.setMinimumWidth(560)
         self.saved = False
         self._loading = False
         self._body = QVBoxLayout()
         self._body.setSpacing(6)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("primary", "true")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
-        buttons.accepted.connect(self._accept)
-        buttons.rejected.connect(self.reject)
         outer = self.bodyLayout()
         outer.setContentsMargins(16, 14, 16, 12)
         outer.setSpacing(10)
         outer.addLayout(self._body)
-        outer.addWidget(buttons)
+        if with_buttons:
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+            )
+            buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
+            buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("primary", "true")
+            buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+            buttons.accepted.connect(self._accept)
+            buttons.rejected.connect(self.reject)
+            outer.addWidget(buttons)
 
     def _accept(self) -> None:
         self.save()
@@ -149,64 +155,64 @@ class PrincipleSubDialog(FramelessDialog):
 
 
 class EnclosureWorkDialog(PrincipleSubDialog):
-    """做法编辑（旧版 FormEcls）：多级围护构件 + 止水构件。"""
+    """分级围护编辑（旧版 FormEcls）：围护构件分级表 + 右侧竖排确认/取消。
+
+    布局与交互照抄 FormEcls：固定勾选 ↔ 级高 1 / -1（均分级高只读显示
+    “均分高度”）；围护类型下拉按库模板重建级构件；双击“围护形式描述”打开
+    构件编辑器（FormCpntEdit）；Insert 插入分级、Delete 删除选中分级
+    （至少保留一级）；“+” 加在最后。做法埋深与止水构件在原则主窗体
+    （FormPE）编辑，本窗体不再重复。
+    """
 
     def __init__(self, work: EnclosureWork, parent: QWidget | None = None) -> None:
-        super().__init__("编辑围护做法", parent)
+        super().__init__("分级围护编辑", parent, with_buttons=False)
+        self.resize(695, 460)
         self._work = work
+        self._repair_levels()
         self._build()
         self._fill()
 
     def _build(self) -> None:
-        form_box = QGroupBox("做法参数")
-        form = QFormLayout(form_box)
-        self._min_depth = QLineEdit()
-        form.addRow("最小适用埋深 m", self._min_depth)
-        self._body.addWidget(form_box)
-        box = QGroupBox("围护构件分级（自上而下；固定高度不勾选时与其余分级均分深度）")
-        layout = QVBoxLayout(box)
+        row = QHBoxLayout()
         self._level_table = _LevelTable()
         self._level_table.insert_requested.connect(
             lambda: self._insert_level(self._level_table.currentRow())
         )
         self._level_table.delete_requested.connect(self._delete_levels)
         self._level_table.itemChanged.connect(self._on_level_changed)
-        layout.addWidget(self._level_table, 1)
-        level_bar = QHBoxLayout()
-        for text, slot in (
-            ("＋级", self._add_level),
-            ("✕级", self._delete_levels),
-            ("编辑构件公式…", self._edit_level_component),
-        ):
-            button = QPushButton(text)
-            button.clicked.connect(slot)
-            level_bar.addWidget(button)
-        level_bar.addStretch(1)
-        layout.addLayout(level_bar)
-        self._describe = QLabel("")
-        self._describe.setProperty("role", "hint")
-        self._describe.setWordWrap(True)
-        layout.addWidget(self._describe)
-        self._body.addWidget(box, 1)
+        self._level_table.cellDoubleClicked.connect(self._on_level_double_clicked)
+        self._level_table.setToolTip(
+            "Insert 插入分级；Delete 删除选中分级；双击“围护形式描述”编辑构件公式"
+        )
+        row.addWidget(self._level_table, 1)
 
-        waterstop_box = QGroupBox("止水构件")
-        waterstop_form = QFormLayout(waterstop_box)
-        self._waterstop_picker = QComboBox()
-        self._waterstop_picker.addItems(project_io.component_library().names("WSi"))
-        self._waterstop_picker.currentTextChanged.connect(self._on_waterstop_pick)
-        self._btn_waterstop = QPushButton("编辑止水公式…")
-        self._btn_waterstop.clicked.connect(self._edit_waterstop)
-        waterstop_form.addRow("止水类型", self._waterstop_picker)
-        waterstop_form.addRow("", self._btn_waterstop)
-        self._body.addWidget(waterstop_box)
+        # 右侧竖排（原版 BTNadd / BTNyes / BTNcancel）
+        side = QVBoxLayout()
+        btn_add = QPushButton("+")
+        btn_add.setProperty("role", "icon-btn")
+        btn_add.setFixedSize(28, 34)
+        btn_add.setToolTip("添加分级（Insert）")
+        btn_add.clicked.connect(self._add_level)
+        btn_yes = QPushButton("确认\n修改")
+        btn_yes.setProperty("primary", "true")
+        btn_yes.setFixedSize(76, 52)
+        btn_yes.clicked.connect(self._accept)
+        btn_cancel = QPushButton("取消\n修改")
+        btn_cancel.setFixedSize(76, 52)
+        btn_cancel.clicked.connect(self.reject)
+        side.addWidget(btn_add)
+        side.addSpacing(6)
+        side.addWidget(btn_yes)
+        side.addWidget(btn_cancel)
+        side.addStretch(1)
+        row.addLayout(side)
+        self._body.addLayout(row, 1)
         self._ei_names = project_io.component_library().names("Ei")
 
     def _fill(self) -> None:
         self._loading = True
         try:
-            work = self._work
-            self._min_depth.setText(f"{work.min_depth:g}")
-            levels = list(work.levels)
+            levels = list(self._work.levels)
             self._level_table.setRowCount(len(levels))
             for row_index, level in enumerate(levels):
                 check = QTableWidgetItem()
@@ -227,12 +233,10 @@ class EnclosureWorkDialog(PrincipleSubDialog):
                     lambda text, lv=level: self._on_level_category(lv, text)
                 )
                 self._level_table.setCellWidget(row_index, 3, cat_combo)
-                self._level_table.setItem(row_index, 4, QTableWidgetItem(describe_component(component)))
-            self._waterstop_picker.setCurrentText(
-                work.waterstops[0].name if work.waterstops else "无"
-            )
-            component = work.levels[0].components[0] if work.levels and work.levels[0].components else None
-            self._describe.setText(describe_component(component))
+                describe_item = QTableWidgetItem(describe_component(component))
+                describe_item.setFlags(describe_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                describe_item.setToolTip("双击编辑围护形式")
+                self._level_table.setItem(row_index, 4, describe_item)
         finally:
             self._loading = False
 
@@ -243,8 +247,45 @@ class EnclosureWorkDialog(PrincipleSubDialog):
         # BTNadd（FormEcls）：新级加在最后
         self._insert_level()
 
+    def _repair_levels(self) -> None:
+        """补齐缺失级构件的历史行（旧版不变量：mcEclsCpnt 构造即带模板构件）。
+
+        早期版本新增分级只建了级行没挂构件，描述为空且双击无法编辑；打开
+        窗体时按级名从构件库补齐，级名不在库中时取库第一项。
+        """
+        from sqlalchemy import select
+
+        library = project_io.component_library()
+        names = library.names("Ei")
+        session = orm.session()
+        dirty = False
+        # 级列表直接按 DB 查（expire_on_commit=False，work.levels 集合可能陈旧）
+        levels = session.scalars(
+            select(EnclosureLevel)
+            .where(EnclosureLevel.work_id == self._work.id)
+            .order_by(EnclosureLevel.order_no)
+        ).all()
+        for level in levels:
+            if level.components:
+                continue
+            name = level.name if library.template("Ei", level.name) else (names[0] if names else "")
+            if not name:
+                continue
+            project_io.component_from_template(
+                session, library, "Ei", name, enclosure_level_id=level.id
+            )
+            orm.session().expire(level)  # expire_on_commit=False：让 components 集合重载
+            dirty = True
+        if dirty:
+            orm.session().expire(self._work)
+            project_io.commit()
+
     def _insert_level(self, position: int | None = None) -> None:
-        """InsertCpnt（FormEcls）：新增一级（默认加最后，Insert 键插到当前行前）。"""
+        """InsertCpnt（FormEcls）：新增一级（默认加最后，Insert 键插到当前行前）。
+
+        旧版 new mcEclsCpnt(Ecpnti.First().Key)：新级自带按模板复制的构件，
+        描述列随即有内容、双击即可编辑。
+        """
         library = project_io.component_library()
         names = library.names("Ei")
         levels = self._levels()
@@ -254,16 +295,19 @@ class EnclosureWorkDialog(PrincipleSubDialog):
             if item.order_no >= position:
                 item.order_no += 1
         session = orm.session()
-        session.add(
-            EnclosureLevel(
-                work_id=self._work.id,
-                name=names[0] if names else "放坡",
-                h=-1.0,
-                step_width=1.0,
-                order_no=position,
-            )
+        level = EnclosureLevel(
+            work_id=self._work.id,
+            name=names[0] if names else "放坡",
+            h=-1.0,
+            step_width=1.0,
+            order_no=position,
         )
+        session.add(level)
         session.flush()
+        if names and library.template("Ei", names[0]) is not None:
+            project_io.component_from_template(
+                session, library, "Ei", names[0], enclosure_level_id=level.id
+            )
         session.expire(self._work)  # 让 levels 集合包含新行
         project_io.commit()
         self._fill()
@@ -331,8 +375,10 @@ class EnclosureWorkDialog(PrincipleSubDialog):
         project_io.commit()
         self._fill()
 
-    def _edit_level_component(self) -> None:
-        row = self._level_table.currentRow()
+    def _on_level_double_clicked(self, row: int, column: int) -> None:
+        """CellDoubleClick（FormEcls）：双击“围护形式描述”打开构件编辑器。"""
+        if self._loading or column != 4:
+            return
         levels = self._levels()
         if row < 0 or row >= len(levels):
             return
@@ -344,33 +390,7 @@ class EnclosureWorkDialog(PrincipleSubDialog):
             project_io.commit()
             self._fill()
 
-    def _on_waterstop_pick(self, text: str) -> None:
-        library = project_io.component_library()
-        old = self._work.waterstops[0] if self._work.waterstops else None
-        if old is not None and old.name == text:
-            return
-        if old is not None:
-            orm.session().delete(old)
-        project_io.component_from_template(
-            orm.session(), library, "WSi", text, enclosure_work_id=self._work.id
-        )
-        orm.session().expire(self._work)  # expire_on_commit=False：让 waterstops 集合重载
-        project_io.commit()
-        self._work = orm.session().get(EnclosureWork, self._work.id)
-
-    def _edit_waterstop(self) -> None:
-        component = self._work.waterstops[0] if self._work.waterstops else None
-        if component is None:
-            return
-        dialog = ComponentEditDialog(component, self)
-        if dialog.exec() and dialog.saved:
-            project_io.commit()
-
     def save(self) -> None:
-        try:
-            self._work.min_depth = float(self._min_depth.text() or 0)
-        except ValueError:
-            pass
         enclosure = orm.session().get(PcpEnclosure, self._work.enclosure_id)
         works = enclosure.works_sorted() if enclosure else []
         if self._work in works:
@@ -386,9 +406,7 @@ class _LevelTable(CellFillTable):
 
     def __init__(self) -> None:
         super().__init__(0, 5)
-        self.setHorizontalHeaderLabels(
-            ["固定高度", "级高 m", "平台宽度 m", "围护类型", "围护形式描述"]
-        )
+        self.setHorizontalHeaderLabels(["固定", "高度m", "平台单侧宽", "围护类型", "围护形式描述"])
         self.horizontalHeader().setStretchLastSection(True)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.verticalHeader().setDefaultSectionSize(32)
@@ -404,80 +422,83 @@ class _LevelTable(CellFillTable):
 
 
 class ComponentEditDialog(PrincipleSubDialog):
-    """构件公式编辑（旧版 FormCpntEdit）：参数 A~Z / 工程量公式 FA~FZ / 支撑公式 ZA~ZZ。"""
+    """构件编辑器（旧版 FormCpntEdit）：左参数表（A~Z），右上围护公式（FA~FZ）、
+    右下支撑公式（ZA~ZZ），底部确认/取消修改。
+
+    行头显示参数键；表格只列构件已有的参数行（旧版不提供增删行，参数集
+    来自构件库模板）；描述公式为库数据，不在本窗体编辑。
+    """
 
     _GROUPS = (
-        ("", "参数（A~Z）"),
-        ("F", "工程量公式（FA~FZ，可用 height/width/count）"),
-        ("Z", "支撑公式（ZA~ZZ）"),
+        # (键前缀, 表头, 网格位置)
+        ("", "参数名称", "参数值", 0, 0),
+        ("F", "围护工程量", "计算公式", 0, 1),
+        ("Z", "支撑工程量", "计算公式", 1, 1),
     )
 
     def __init__(self, component: Component, parent: QWidget | None = None) -> None:
-        super().__init__("编辑构件公式", parent)
-        self.setMinimumWidth(720)
+        super().__init__("构件编辑器", parent)
+        self.resize(940, 480)
         self._component = component
         self._tables: dict[str, QTableWidget] = {}
         self._build()
         self._fill()
 
     def _build(self) -> None:
-        name_box = QGroupBox("构件")
-        form = QFormLayout(name_box)
-        self._formula = QLineEdit()
-        form.addRow("描述公式", self._formula)
-        self._body.addWidget(name_box)
-        for key, label in self._GROUPS:
-            box = QGroupBox(label)
-            layout = QVBoxLayout(box)
-            table = CellFillTable(26, 3)
-            table.setHorizontalHeaderLabels(["键", "显示名", "表达式 / 数值"])
-            table.setColumnWidth(0, 40)
-            table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-            table.verticalHeader().setVisible(False)
-            layout.addWidget(table)
-            self._body.addWidget(box, 1 if key == "" else 2)
-            self._tables[key] = table
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        for prefix, header_key, header_value, row, column in self._GROUPS:
+            table = CellFillTable(0, 2)
+            table.setHorizontalHeaderLabels([header_key, header_value])
+            table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+            table.verticalHeader().setDefaultSectionSize(28)
+            grid.addWidget(table, row, column)
+            self._tables[prefix] = table
+        grid.addWidget(self._tables[""], 0, 0, 2, 1)  # 参数表跨两行（左列上下满高）
+        grid.setColumnStretch(0, 2)
+        grid.setColumnStretch(1, 3)
+        grid.setRowStretch(0, 1)
+        grid.setRowStretch(1, 1)
+        self._body.addLayout(grid, 1)
 
     def _fill(self) -> None:
-        self._formula.setText(self._component.formula)
         from app.core.calc.engine import load_params
 
         params = load_params(self._component)
+        groups: dict[str, list[tuple[str, tuple[str, str]]]] = {"": [], "F": [], "Z": []}
+        for key, pair in params.items():
+            # 旧版 FlashdGV：F/Z 开头且键长为 2 的进公式表，其余进参数表
+            prefix = key[:1] if key[:1] in ("F", "Z") and len(key) == 2 else ""
+            groups[prefix].append((key, pair))
         for prefix, table in self._tables.items():
-            for index in range(26):
-                key = f"{prefix}{chr(ord('A') + index)}"
-                display, expression = params.get(key, ("", ""))
-                key_item = QTableWidgetItem(key)
-                key_item.setFlags(key_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                table.setItem(index, 0, key_item)
-                table.setItem(index, 1, QTableWidgetItem(display))
-                table.setItem(index, 2, QTableWidgetItem(expression))
+            rows = groups[prefix]
+            table.setRowCount(len(rows))
+            for index, (key, (display, expression)) in enumerate(rows):
+                table.setVerticalHeaderItem(index, QTableWidgetItem(key))
+                table.setItem(index, 0, QTableWidgetItem(display))
+                table.setItem(index, 1, QTableWidgetItem(expression))
 
     def save(self) -> None:
         component = self._component
-        component.formula = self._formula.text()
         existing = {param.key: param for param in component.params}
         for prefix, table in self._tables.items():
-            for index in range(26):
-                key = f"{prefix}{chr(ord('A') + index)}"
-                display_item = table.item(index, 1)
-                value_item = table.item(index, 2)
+            for index in range(table.rowCount()):
+                header = table.verticalHeaderItem(index)
+                key = header.text() if header else ""
+                if not key:
+                    continue
+                display_item = table.item(index, 0)
+                value_item = table.item(index, 1)
                 display = display_item.text().strip() if display_item else ""
                 value = value_item.text().strip() if value_item else ""
                 if display == "" and value == "":
                     if key in existing:
                         orm.session().delete(existing.pop(key))
                     continue
-                if display and value:
-                    combined = f"{display}|{value}"
-                elif display:
-                    combined = f"{display}|"
-                else:
-                    combined = f"|{value}"
                 if key in existing:
-                    existing[key].value = combined
+                    existing[key].value = f"{display}|{value}"
                 else:
-                    component.params.append(ComponentParam(key=key, value=combined))
+                    component.params.append(ComponentParam(key=key, value=f"{display}|{value}"))
 
 
 class WorkWidthDialog(PrincipleSubDialog):
