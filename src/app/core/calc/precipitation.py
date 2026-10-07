@@ -11,7 +11,7 @@ import math
 
 from app.core.models.models import parse_precipitation
 from app.core.calc import groove
-from app.core.calc.tracer import QDict, fmt
+from app.core.calc.tracer import Dim, QDict, dim, fmt, raw_dim, wrap
 
 
 def _enabled(text: str, key: str) -> tuple[bool, float, float, float]:
@@ -19,9 +19,10 @@ def _enabled(text: str, key: str) -> tuple[bool, float, float, float]:
     return elevation >= 0, elevation, gap, sides
 
 
-def cal_precipitation(pe, work, pf, at, info, groove_depth: float, out: QDict) -> None:
+def cal_precipitation(pe, work, pf, at, info, groove_depth: Dim, out: QDict) -> None:
     """降水工程量（每延米），结果写入 ``out``。"""
     amount = info.amount or 1.0
+    amount_dim = raw_dim(info.amount_text, amount)
     for key, name, unit in (
         ("deep_well", "深井", "座"),
         ("big_well", "大口径井点", "座"),
@@ -29,21 +30,21 @@ def cal_precipitation(pe, work, pf, at, info, groove_depth: float, out: QDict) -
         ("light_well", "轻型井点", "根"),
     ):
         enabled, elevation, gap, sides = _enabled(getattr(pe, key), key)
-        if enabled and groove_depth > elevation and gap > 0:
+        if enabled and groove_depth.v > elevation and gap > 0:
             wells = math.ceil(amount / gap) * sides
             out.add(
                 f"降水|{name}|{unit}",
                 wells / amount,
-                f"{fmt(math.ceil(amount / gap))}×{fmt(sides)}/{fmt(amount)}",
-                f"深度 {fmt(groove_depth)}m > {fmt(elevation)}m，采用{name}；"
+                f"{fmt(math.ceil(amount / gap))}×{fmt(sides)}/{wrap(amount_dim.e)}",
+                f"深度 {fmt(groove_depth.v)}m > {fmt(elevation)}m，采用{name}；"
                 f"井距 {fmt(gap)}m × {fmt(sides)} 侧",
             )
             return
 
     enabled, _elevation, _gap, _sides = _enabled(pe.wet_soil, "wet_soil")
-    if enabled and groove_depth > 1:
+    if enabled and groove_depth.v > 1:
         sub = QDict()
-        groove.cal_groove(pe, work, pf, at, info.size_b, info.size_h, groove_depth - 1, sub)
+        groove.cal_groove(pe, work, pf, at, info.size_b, info.size_h, groove_depth - dim(1.0), sub)
         dig = sub.get(f"开挖|{pe.excvt}|m3")
         if dig is not None:
             out.add(

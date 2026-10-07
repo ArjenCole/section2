@@ -5,6 +5,9 @@
 
 构件公式（旧版 mcComponent）求值也在这里：参数引用递归代入 →
 height/width/count 代入 → core.evaluator 求值，失败按 0 处理（同旧版 mscExp）。
+
+埋深 / 数量以 Dim（数值 + 算式）参与计算：用户在两列写的算式原文
+会出现在输出工程量的计算表达式里，纯数字录入的算式与旧版写法一致。
 """
 
 from __future__ import annotations
@@ -12,7 +15,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from app.core.evaluator import evaluate, evaluate_or_default, format_number
+from app.core.evaluator import EvalError, evaluate, evaluate_or_default, format_number
 from app.core.models.models import (
     CATEGORY_BURIED,
     CATEGORY_ENCASED,
@@ -28,8 +31,7 @@ from app.core.models.models import (
 from app.services import atlas as atlas_service
 from app.services.atlas import AtlasQuery, PipeSpec, resolve_atlas
 from app.core.calc import foundation, groove, precipitation
-from app.core.calc.tracer import QDict, fmt
-from app.core.evaluator import EvalError
+from app.core.calc.tracer import Dim, QDict, dim, fmt, raw_dim, wrap
 
 _CYCLE = "参数循环引用"
 
@@ -73,6 +75,9 @@ class ElementInput:
     name: str = ""
     depth: float = 0.0
     amount: float = 0.0
+    #: 埋深 / 数量的录入原文（可求值时以算式进输出表达式；纯数字写法同旧版）
+    depth_text: str = ""
+    amount_text: str = ""
     pipes: list[PipeSpec] = field(default_factory=list)
     pipe_contents: list[float] = field(default_factory=list)
     params: dict[str, float] = field(default_factory=dict)
@@ -136,6 +141,15 @@ class ElementInput:
         return ""
 
 
+def _usable_text(text: str) -> str:
+    """录入原文可求值才带回算式；求值失败的格子仍按 0 计算，算式退回纯数值。"""
+    try:
+        evaluate(text or "")
+    except EvalError:
+        return ""
+    return str(text or "").strip()
+
+
 def build_element_input(
     element: Element,
     pe: PcpEnclosure | None,
@@ -161,6 +175,8 @@ def build_element_input(
         name=element.name,
         depth=evaluate_or_default(element.depth),
         amount=evaluate_or_default(element.amount),
+        depth_text=_usable_text(element.depth),
+        amount_text=_usable_text(element.amount),
         pipes=pipes,
         pipe_contents=contents,
         params=params,
@@ -251,15 +267,15 @@ def key_exp(params: dict[str, tuple[str, str]], key: str) -> str:
     return text.replace(" ", "")
 
 
-def pre_sub(expression: str, height: float, width: float, count: float) -> str:
-    """把 height / width / count 代入公式，返回全数字算式（供求值与展示）。"""
+def pre_sub(expression: str, height: Dim, width: Dim, count: Dim) -> str:
+    """把 height / width / count 代入公式；埋深/数量为算式时原文随代入进算式。"""
     text = expression
     for name, value in (("height", height), ("width", width), ("count", count)):
-        text = re.sub(r"\b" + name + r"\b", fmt(value), text)
+        text = re.sub(r"\b" + name + r"\b", lambda _match, replacement=wrap(value.e): replacement, text)
     return text
 
 
-def component_quantities(component, height: float, width: float, count: float, cat: str, out: QDict, note: str = "") -> None:
+def component_quantities(component, height: Dim, width: Dim, count: Dim, cat: str, out: QDict, note: str = "") -> None:
     """构件公式求值（旧版 mcComponent.Q）：cat="F" 工程量公式，"Z" 支撑公式。"""
     if component is None:
         return
@@ -312,6 +328,8 @@ def compute_element(info: ElementInput) -> QDict | None:
         return None
     pe_refs = info.pe_refs or [(main_pe, 1.0)]
     pf_refs = info.pf_refs or [(pf_main, 1.0)]
+    depth_dim = raw_dim(info.depth_text, info.depth)
+    amount_dim = raw_dim(info.amount_text, info.amount)
 
     at = resolve_atlas(build_atlas_query(info, main_pe))
     c1 = at.c1 if at.c1 != 0 else cushion_thickness(main_pe)
@@ -321,28 +339,33 @@ def compute_element(info: ElementInput) -> QDict | None:
     for pe, pe_ratio in pe_refs:
         for pf, pf_ratio in pf_refs:
             pair = QDict()
-            groove_depth = info.depth + groove.mm2m(foundation_thickness(pf) + at.t + c1)
-            work = choice_work(pe, groove_depth)
+            groove_depth = depth_dim + dim(groove.mm2m(foundation_thickness(pf) + at.t + c1))
+            work = choice_work(pe, groove_depth.v)
             if work is None:
                 return None
             if not groove.cal_groove(pe, work, pf, at_with_c1, info.size_b, info.size_h, groove_depth, pair):
                 return None
             precipitation.cal_precipitation(pe, work, pf, at_with_c1, info, groove_depth, pair)
-            works_quantities(work, groove_depth, info.amount, "F", at_with_c1, info, pair, "围护")
+            works_quantities(work, groove_depth, amount_dim, "F", at_with_c1, info, pair, "围护")
             special = pf.components[0] if pf.components else None
             if special is not None:
                 component_quantities(
-                    special, groove_depth, groove.groove_width(at_with_c1, info.size_b), info.amount,
-                    "F", pair, "特殊地基",
+                    special,
+                    groove_depth,
+                    dim(groove.groove_width(at_with_c1, info.size_b)),
+                    amount_dim,
+                    "F",
+                    pair,
+                    "特殊地基",
                 )
             pair.scale(pe_ratio * pf_ratio)
             per_meter.extend(pair)
 
     # 支撑（Z 类公式）：只用主原则、不考虑换填层厚度（旧版 Cal 末尾）
-    support_depth = info.depth + groove.mm2m(at.t + c1)
-    support_work = choice_work(main_pe, support_depth)
+    support_depth = depth_dim + dim(groove.mm2m(at.t + c1))
+    support_work = choice_work(main_pe, support_depth.v)
     if support_work is not None:
-        works_quantities(support_work, support_depth, info.amount, "Z", at_with_c1, info, per_meter, "支撑")
+        works_quantities(support_work, support_depth, amount_dim, "Z", at_with_c1, info, per_meter, "支撑")
 
     # 管道基础（扣弓形占土）+ 管材：主原则
     foundation.cal_found(info, main_pe, at_with_c1, per_meter)
@@ -350,7 +373,7 @@ def compute_element(info: ElementInput) -> QDict | None:
         foundation.encased_pipe_deduction(info, per_meter)
     foundation.cal_pipes(info, per_meter)
 
-    per_meter.scale(info.amount)
+    per_meter.scale(info.amount, expr=amount_dim.e)
     return per_meter
 
 
@@ -365,6 +388,7 @@ def compute_structure(info: ElementInput) -> QDict | None:
     """
     if info.amount == 0:
         return None
+    amount_dim = raw_dim(info.amount_text, info.amount)
     out = QDict()
     for key, text in info.raw_params.items():
         if not key or key.startswith("-"):
@@ -376,33 +400,35 @@ def compute_structure(info: ElementInput) -> QDict | None:
     if cnt_text and rate_text:
         count = evaluate_or_default(cnt_text)
         rate = evaluate_or_default(rate_text)
-        well_h = 0.4  # 旧版 mcE7：默认最小井筒高度
+        well_h = dim(0.4)  # 旧版 mcE7：默认最小井筒高度
         if "-井高 m" in info.raw_params:
             try:
-                well_h = max(info.depth - evaluate(info.raw_params["-井高 m"]), 0.4)
+                jh = evaluate(info.raw_params["-井高 m"])
+                if info.depth - jh > 0.4:
+                    well_h = raw_dim(info.depth_text, info.depth) - dim(jh)
             except EvalError:
                 pass
         out.add(
             "构筑物|井筒|m3",
-            count * well_h * rate,
-            f"{fmt(count)}×{fmt(well_h)}×{fmt(rate)}",
+            count * well_h.v * rate,
+            f"{fmt(count)}×{wrap(well_h.e)}×{fmt(rate)}",
             "井筒",
         )
-    out.scale(info.amount)
+    out.scale(info.amount, expr=amount_dim.e)
     return out
 
 
-def works_quantities(work, depth: float, count: float, cat: str, at, info: ElementInput, out: QDict, note: str) -> None:
+def works_quantities(work, depth: Dim, count: Dim, cat: str, at, info: ElementInput, out: QDict, note: str) -> None:
     """围护做法各级构件 + 止水构件的公式量（旧版 cal_Ecpnts）。"""
     levels = list(work.levels)
     fixed_h = sum(max(level.h, 0.0) for level in levels)
     fixed_cnt = sum(1 for level in levels if level.h >= 0)
-    width = groove.mm2m(info.size_b + at.t * 2 + at.a * 2 + at.workwidth * 2)
+    width = dim(groove.mm2m(info.size_b + at.t * 2 + at.a * 2 + at.workwidth * 2))
     for level in levels:
         if level.h >= 0:
-            height = level.h
+            height = dim(level.h)
         elif len(levels) > fixed_cnt:
-            height = (depth - fixed_h) / (len(levels) - fixed_cnt)
+            height = (depth - dim(fixed_h)) / (len(levels) - fixed_cnt)
         else:
             height = depth
         component = level.components[0] if level.components else None

@@ -56,6 +56,7 @@ from app.core.calc.engine import (
     replace,
 )
 from app.core.calc.groove import level_slope
+from app.core.calc.tracer import dim
 from app.services.atlas import resolve_atlas
 
 _MARGIN = 10  # 画布左右留白 px（旧版 10*2）
@@ -479,7 +480,7 @@ def _build_trench_scene(
         return None, "该围护原则没有任何围护分级，无法绘制断面。"
 
     cushion_name = pe.cushions[0].name if pe.cushions else "中粗砂"
-    layers = groove.backfill_layers(pe, pf, at_display, info.size_h, depth, cushion_name)
+    layers = groove.backfill_layers(pe, pf, at_display, info.size_h, dim(depth), cushion_name)
     bottom = groove.groove_width(at_display, info.size_b)
     segments = _walk_layers(list(work_left.levels), layers, bottom, depth)
     segments_right = _walk_layers(list(work_right.levels), layers, bottom, depth)
@@ -515,14 +516,15 @@ def _build_trench_scene(
 
 def _walk_layers(levels: list, layers: list[tuple[str, float, str]], bottom: float, depth: float) -> list[_Segment]:
     """按旧版 PaintBackFilled 的递推把回填层切成随深度放坡的梯形段（单位 m）。"""
-    step_heights = groove.split_h_by_step(levels, depth)
+    step_heights = [step.v for step in groove.split_h_by_step(levels, dim(depth))]
     if not step_heights:
         return []
     step = len(levels) - 1
 
     segments: list[_Segment] = []
     current = 0.0
-    for key, layer_h, _note in layers:
+    for key, layer, _note in layers:
+        layer_h = layer.v
         target = current + layer_h
         while True:
             delta = min(target, step_heights[step]) - current

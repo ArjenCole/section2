@@ -89,6 +89,23 @@ def test_expression_matches_value(project) -> None:
             ), f"{quantity.key}: 算式 {quantity.expression} 重算 {replay} ≠ {quantity.value}"
 
 
+def test_user_expression_in_output(project) -> None:
+    """埋深 / 数量列写的算式要以算式形式进入工程量计算表达式。"""
+    unit = project
+    elements = {element.name: element for element in _elements(unit)}
+    dig = _results(unit)[elements["混凝土管"].id].get("开挖|Ⅲ类土|m3")
+    # 埋深 "2.5+0.3"：挖方层厚 = 埋深原文 + 垫层/板厚调整；数量 100 纯数字照旧
+    assert "(2.5+0.3+0.195)" in dig.expression
+    assert dig.expression.endswith("×100")
+
+    # 数量写算式：×数量 以算式原文进每条算式（展示层 * 统一转 ×）
+    e4 = unit_vm.create_element(unit.id, category=1, name="数量算式", depth="3", amount="50*2")
+    unit_vm.create_pipe(e4.id, mat="Ⅱ级混凝土管", dn=600, content="1")
+    dig4 = _results(unit)[e4.id].get("开挖|Ⅲ类土|m3")
+    assert "×(50×2)" in dig4.expression
+    assert evaluate(dig4.expression) == pytest.approx(dig4.value, rel=0.005)
+
+
 def test_baseline_file(project) -> None:
     """基准回归：结果与 tests/baselines/对拍工程.json 一致。"""
     unit = project
