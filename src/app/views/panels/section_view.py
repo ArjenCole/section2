@@ -43,6 +43,7 @@ from app.core.models.models import (
     Element,
     PcpEnclosure,
     PcpFoundation,
+    PcpWidth,
 )
 from app.core.calc import groove
 from app.core.calc.engine import (
@@ -429,8 +430,13 @@ def _build_scene(
     else:
         pe_left = pe_right = pe
 
-    info = build_element_input(element, pe, pf)
-    at = resolve_atlas(build_atlas_query(info, pe))
+    # 降水/面宽按元素引用解析（面宽决定图集宽度表；失效回退第一条，同计算引擎）
+    pw_name = element.pw_name
+    pw = session.scalars(select(PcpWidth).where(PcpWidth.name == pw_name)).first() if pw_name else None
+    if pw is None:
+        pw = _first_of(session, PcpWidth)
+    info = build_element_input(element, pe, pf, pw=pw)
+    at = resolve_atlas(build_atlas_query(info, pe, pw))
     c1_original = at.c1
     if info.category in (CATEGORY_JACKING, CATEGORY_PULLING):
         # 旧版 mcE4/mcE5：不画沟槽，只按管径 + 换填厚自适应缩放画管体
@@ -458,6 +464,13 @@ def _foundation_by_name(session, name: str | None) -> PcpFoundation | None:
     if not name:
         return None
     return session.scalars(select(PcpFoundation).where(PcpFoundation.name == name)).first()
+
+
+def _first_of(session, model):
+    """取某类原则的第一条（元素引用失效时的回退，与计算引擎一致）。"""
+    from sqlalchemy import select as _select
+
+    return session.scalars(_select(model).order_by(model.order_no, model.id)).first()
 
 
 def _build_trench_scene(

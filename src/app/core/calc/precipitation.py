@@ -19,8 +19,11 @@ def _enabled(text: str, key: str) -> tuple[bool, float, float, float]:
     return elevation >= 0, elevation, gap, sides
 
 
-def cal_precipitation(pe, work, pf, at, info, groove_depth: Dim, out: QDict) -> None:
-    """降水工程量（每延米），结果写入 ``out``。"""
+def cal_precipitation(pp, pe, work, pf, at, info, groove_depth: Dim, out: QDict) -> None:
+    """降水工程量（每延米），结果写入 ``out``；井型配置取降水原则 ``pp``。
+
+    湿土排水的沟槽断面（深度−1m）仍按围护原则 ``pe`` 的开挖/回填结构算。
+    """
     amount = info.amount or 1.0
     amount_dim = raw_dim(info.amount_text, amount)
     for key, name, unit in (
@@ -29,7 +32,7 @@ def cal_precipitation(pe, work, pf, at, info, groove_depth: Dim, out: QDict) -> 
         ("jet_well", "喷射井点", "根"),
         ("light_well", "轻型井点", "根"),
     ):
-        enabled, elevation, gap, sides = _enabled(getattr(pe, key), key)
+        enabled, elevation, gap, sides = _enabled(getattr(pp, key), key)
         if enabled and groove_depth.v > elevation and gap > 0:
             wells = math.ceil(amount / gap) * sides
             out.add(
@@ -41,7 +44,7 @@ def cal_precipitation(pe, work, pf, at, info, groove_depth: Dim, out: QDict) -> 
             )
             return
 
-    enabled, _elevation, _gap, _sides = _enabled(pe.wet_soil, "wet_soil")
+    enabled, _elevation, _gap, _sides = _enabled(pp.wet_soil, "wet_soil")
     if enabled and groove_depth.v > 1:
         sub = QDict()
         groove.cal_groove(pe, work, pf, at, info.size_b, info.size_h, groove_depth - dim(1.0), sub)

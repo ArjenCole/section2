@@ -227,7 +227,7 @@ def encased_pipe_deduction(info, out: QDict) -> None:
     for pipe, content in zip(info.pipes, info.pipe_contents):
         if content == 0:
             continue
-        query = build_atlas_query(info, info.pe)
+        query = build_atlas_query(info, info.pe, info.pw)
         query.category = 1  # 临时按直埋管道查该管的壁厚（同旧版构造临时 mcE1）
         query.pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn)]
         at = resolve_atlas(query)

@@ -247,6 +247,10 @@ class Element(Base):
     amount: Mapped[str] = mapped_column(String(100), default="0")
     pe_name: Mapped[str] = mapped_column(String(200), default="")
     pf_name: Mapped[str] = mapped_column(String(200), default="")
+    #: 降水原则 / 面宽原则（与 pe/pf 同级、按名字引用，本体在 principle_precipitation /
+    #: principle_width 表里；旧版这两项挂在围护原则下，v4 起独立）
+    pp_name: Mapped[str] = mapped_column(String(200), default="")
+    pw_name: Mapped[str] = mapped_column(String(200), default="")
     #: 主要围护原则（旧版 mainPEname，多围护原则时必填）
     main_pe_name: Mapped[str] = mapped_column(String(200), default="")
     #: 来源（旧版主表格“来源”列，构件库插入时记录模板出处）
@@ -342,7 +346,12 @@ class Pipe(Base):
 
 
 class PcpEnclosure(Base):
-    """围护原则 PE（对应旧版 mcPcpEnclosure）。"""
+    """围护原则 PE（对应旧版 mcPcpEnclosure）。
+
+    旧版挂在围护原则下的降水参数与工作面/沟槽宽度表，v4 起独立成
+    :class:`PcpPrecipitation` / :class:`PcpWidth` 原则，本表只留开挖、回填
+    材质、基础与垫层等沟槽结构参数。
+    """
 
     __tablename__ = "principle_enclosure"
 
@@ -361,14 +370,6 @@ class PcpEnclosure(Base):
     cover50: Mapped[str] = mapped_column(String(50), default="中粗砂")
     #: 覆土材料
     cover: Mapped[str] = mapped_column(String(50), default="素土")
-    #: 降水参数，列名即井型；值为 "elevation|gap|sides"（见 parse_precipitation）
-    wet_soil: Mapped[str] = mapped_column(String(50), default="0|0|0")
-    light_well: Mapped[str] = mapped_column(String(50), default="3.5|1.2|2")
-    jet_well: Mapped[str] = mapped_column(String(50), default="6|2.5|2")
-    big_well: Mapped[str] = mapped_column(String(50), default="10|10|2")
-    deep_well: Mapped[str] = mapped_column(String(50), default="15|20|1")
-    #: 沟槽宽度取值方式：WorkWidth 用工作面宽度表，B 用沟槽宽度表
-    groove_width: Mapped[str] = mapped_column(String(20), default=GROOVE_WIDTH_WORK)
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     cushions: Mapped[list["EnclosureCushion"]] = relationship(
@@ -376,12 +377,6 @@ class PcpEnclosure(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
         order_by="EnclosureCushion.order_no",
-    )
-    widths: Mapped[list["WorkWidth"]] = relationship(
-        back_populates="enclosure",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        order_by="WorkWidth.order_no",
     )
     works: Mapped[list["EnclosureWork"]] = relationship(
         cascade="all, delete-orphan",
@@ -414,14 +409,48 @@ class EnclosureCushion(Base):
     enclosure: Mapped[PcpEnclosure] = relationship(back_populates="cushions")
 
 
-class WorkWidth(Base):
-    """工作面宽度 / 沟槽宽度表（旧版按管材接口类型分组，管径 d0~d3000 每 100 一档）。"""
+class PcpPrecipitation(Base):
+    """降水原则（旧版降水参数在围护原则里，v4 起独立成原则，与 PE/PF 同级）。"""
 
-    __tablename__ = "work_width"
+    __tablename__ = "principle_precipitation"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    enclosure_id: Mapped[int] = mapped_column(
-        ForeignKey("principle_enclosure.id", ondelete="CASCADE"), index=True
+    name: Mapped[str] = mapped_column(String(200), default="新降水原则")
+    #: 降水参数，列名即井型；值为 "elevation|gap|sides"（见 parse_precipitation）
+    wet_soil: Mapped[str] = mapped_column(String(50), default="0|0|0")
+    light_well: Mapped[str] = mapped_column(String(50), default="3.5|1.2|2")
+    jet_well: Mapped[str] = mapped_column(String(50), default="6|2.5|2")
+    big_well: Mapped[str] = mapped_column(String(50), default="10|10|2")
+    deep_well: Mapped[str] = mapped_column(String(50), default="15|20|1")
+    order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class PcpWidth(Base):
+    """面宽原则（旧版工作面宽度/沟槽宽度表在围护原则里，v4 起独立成原则）。"""
+
+    __tablename__ = "principle_width"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(200), default="新面宽原则")
+    #: 沟槽宽度取值方式：WorkWidth 用工作面宽度表，B 用沟槽宽度表
+    groove_width: Mapped[str] = mapped_column(String(20), default=GROOVE_WIDTH_WORK)
+    order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    items: Mapped[list["WidthItem"]] = relationship(
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="WidthItem.order_no",
+    )
+
+
+class WidthItem(Base):
+    """工作面宽度 / 沟槽宽度表行（旧版按管材接口类型分组，管径 d0~d3000 每 100 一档）。"""
+
+    __tablename__ = "principle_width_item"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    width_id: Mapped[int] = mapped_column(
+        ForeignKey("principle_width.id", ondelete="CASCADE"), index=True
     )
     #: 管材接口类型名（图集表首列，如“承插式”“企口式”）
     pipe_type: Mapped[str] = mapped_column(String(100), default="")
@@ -432,8 +461,6 @@ class WorkWidth(Base):
     #: WIDTH_KIND_WORK / WIDTH_KIND_GROOVE_B
     kind: Mapped[str] = mapped_column(String(20), default=WIDTH_KIND_WORK)
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-
-    enclosure: Mapped[PcpEnclosure] = relationship(back_populates="widths")
 
 
 class PcpFoundation(Base):

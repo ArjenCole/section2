@@ -22,11 +22,14 @@ from app.core.models.models import (
     CATEGORY_BOX_CULVERT,
     CATEGORY_GALLERY,
     CATEGORY_STRUCTURE,
+    GROOVE_WIDTH_WORK,
     MULTI_PE_TEXT,
     MULTI_PF_TEXT,
     Element,
     PcpEnclosure,
     PcpFoundation,
+    PcpPrecipitation,
+    PcpWidth,
 )
 from app.services import atlas as atlas_service
 from app.services.atlas import AtlasQuery, PipeSpec, resolve_atlas
@@ -85,6 +88,9 @@ class ElementInput:
     raw_params: dict[str, str] = field(default_factory=dict)
     pe: PcpEnclosure | None = None
     pf: PcpFoundation | None = None
+    #: 降水 / 面宽原则（旧版挂在 PE 下，v4 起独立引用）
+    pp: PcpPrecipitation | None = None
+    pw: PcpWidth | None = None
     pe_refs: list[tuple[PcpEnclosure, float]] = field(default_factory=list)
     pf_refs: list[tuple[PcpFoundation, float]] = field(default_factory=list)
 
@@ -156,10 +162,13 @@ def build_element_input(
     pf: PcpFoundation | None,
     pe_refs: list[tuple[PcpEnclosure, float]] | None = None,
     pf_refs: list[tuple[PcpFoundation, float]] | None = None,
+    pp: PcpPrecipitation | None = None,
+    pw: PcpWidth | None = None,
 ) -> ElementInput:
     """从 ORM 构件构造计算输入（深度/数量求值，扩展参数合并默认值）。
 
     ``pe_refs`` / ``pf_refs`` 为 (原则, 比例) 多原则引用；None 时按单原则处理。
+    ``pp`` / ``pw`` 为降水 / 面宽原则（None 时不参与降水与图集宽度查询）。
     """
     raw_params = {param.key: param.value for param in element.params}
     params = dict(_DEFAULT_PARAMS.get(element.category, {}))
@@ -183,29 +192,32 @@ def build_element_input(
         raw_params=raw_params,
         pe=pe,
         pf=pf,
+        pp=pp,
+        pw=pw,
         pe_refs=[] if pe_refs is None else list(pe_refs),
         pf_refs=[] if pf_refs is None else list(pf_refs),
     )
 
 
-def build_atlas_query(info: ElementInput, pe: PcpEnclosure) -> AtlasQuery:
-    widths, groove_bs = _width_tables(pe)
+def build_atlas_query(info: ElementInput, pe: PcpEnclosure, pw: PcpWidth | None = None) -> AtlasQuery:
+    """图集查询：基础/角度取围护原则，宽度表与槽宽取值方式取面宽原则。"""
+    widths, groove_bs = _width_tables(pw)
     return AtlasQuery(
         category=info.category,
         pipes=list(info.pipes),
         con_found=bool(pe.con_found),
         found_angle=int(pe.found_angle),
-        groove_width=pe.groove_width,
+        groove_width=pw.groove_width if pw is not None else GROOVE_WIDTH_WORK,
         size_b=info.size_b,
         widths=widths,
         groove_bs=groove_bs,
     )
 
 
-def _width_tables(pe: PcpEnclosure) -> tuple[dict[str, dict[int, float]], dict[str, dict[int, float]]]:
+def _width_tables(pw: PcpWidth | None) -> tuple[dict[str, dict[int, float]], dict[str, dict[int, float]]]:
     widths: dict[str, dict[int, float]] = {}
     groove_bs: dict[str, dict[int, float]] = {}
-    for row in pe.widths:
+    for row in pw.items if pw is not None else ():
         table = widths if row.kind == "work" else groove_bs
         table.setdefault(row.pipe_type, {})[int(row.dn)] = row.width
     if not widths:
@@ -324,14 +336,14 @@ def compute_element(info: ElementInput) -> QDict | None:
         return compute_structure(info)
     main_pe = info.pe
     pf_main = info.pf
-    if info.amount == 0 or main_pe is None or pf_main is None:
+    if info.amount == 0 or main_pe is None or pf_main is None or info.pp is None or info.pw is None:
         return None
     pe_refs = info.pe_refs or [(main_pe, 1.0)]
     pf_refs = info.pf_refs or [(pf_main, 1.0)]
     depth_dim = raw_dim(info.depth_text, info.depth)
     amount_dim = raw_dim(info.amount_text, info.amount)
 
-    at = resolve_atlas(build_atlas_query(info, main_pe))
+    at = resolve_atlas(build_atlas_query(info, main_pe, info.pw))
     c1 = at.c1 if at.c1 != 0 else cushion_thickness(main_pe)
     at_with_c1 = replace(at, c1=c1)
 
@@ -345,7 +357,7 @@ def compute_element(info: ElementInput) -> QDict | None:
                 return None
             if not groove.cal_groove(pe, work, pf, at_with_c1, info.size_b, info.size_h, groove_depth, pair):
                 return None
-            precipitation.cal_precipitation(pe, work, pf, at_with_c1, info, groove_depth, pair)
+            precipitation.cal_precipitation(info.pp, pe, work, pf, at_with_c1, info, groove_depth, pair)
             works_quantities(work, groove_depth, amount_dim, "F", at_with_c1, info, pair, "围护")
             special = pf.components[0] if pf.components else None
             if special is not None:
@@ -446,10 +458,11 @@ def replace(at, **changes):
 
 
 def resolve_element_principles(element: Element, session):
-    """按构件的多原则引用解析出 (主 pe, 主 pf, [(pe, 比例)...], [(pf, 比例)...)])。
+    """按构件的引用解析出 (主 pe, 主 pf, pp, pw, [(pe, 比例)...], [(pf, 比例)...])。
 
     引用行缺失时退化为单原则（pe_name/pf_name，比例 1）；主原则取
-    main_pe_name（不在引用列表里时取第一条引用）。
+    main_pe_name（不在引用列表里时取第一条引用）。降水/面宽原则按名字
+    解析，名字失效（如多围护原则迁出的行）时取库中第一条。
     """
     from sqlalchemy import select
 
@@ -466,13 +479,18 @@ def resolve_element_principles(element: Element, session):
         resolved = [( _by_name(model, name), ratio) for name, ratio in refs]
         return [(principle, ratio) for principle, ratio in resolved if principle is not None]
 
+    def _first(model):
+        return session.scalar(select(model).order_by(model.order_no, model.id))
+
     pe_refs = _refs("pe", PcpEnclosure, element.pe_name if element.pe_name != MULTI_PE_TEXT else "")
     pf_refs = _refs("pf", PcpFoundation, element.pf_name if element.pf_name != MULTI_PF_TEXT else "")
     main_pe = _by_name(PcpEnclosure, element.main_pe_name) if element.main_pe_name else None
     if main_pe is None and pe_refs:
         main_pe = pe_refs[0][0]
     main_pf = pf_refs[0][0] if pf_refs else None
-    return main_pe, main_pf, pe_refs, pf_refs
+    pp = _by_name(PcpPrecipitation, element.pp_name) or _first(PcpPrecipitation)
+    pw = _by_name(PcpWidth, element.pw_name) or _first(PcpWidth)
+    return main_pe, main_pf, pp, pw, pe_refs, pf_refs
 
 
 def is_concrete_pipe(info: ElementInput) -> bool:

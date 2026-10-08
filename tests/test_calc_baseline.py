@@ -182,9 +182,11 @@ def _input_of(element):
     from app.core.models.models import PcpEnclosure, PcpFoundation
     from sqlalchemy import select
 
+    from app.core.calc.engine import resolve_element_principles
     from app.core.models import base as orm
 
     session = orm.session()
     pe = session.scalar(select(PcpEnclosure).where(PcpEnclosure.name == element.pe_name))
     pf = session.scalar(select(PcpFoundation).where(PcpFoundation.name == element.pf_name))
-    return build_element_input(element, pe, pf)
+    _pe, _pf, pp, pw, _pe_refs, _pf_refs = resolve_element_principles(element, session)
+    return build_element_input(element, pe, pf, pp=pp, pw=pw)

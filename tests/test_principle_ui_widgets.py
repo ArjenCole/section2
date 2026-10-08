@@ -7,17 +7,33 @@
 
 
 def test_principle_bar_labels_and_radio(qapp, project):
-    from app.views.panels.principle_bar import PrincipleBar
+    from app.views.panels.principle_bar import (
+        _KIND_ENCLOSURE,
+        _KIND_FOUNDATION,
+        _KIND_PRECIPITATION,
+        _KIND_WIDTH,
+        PrincipleBar,
+    )
 
     bar = PrincipleBar()
     bar.reload()
     assert bar.isVisibleTo(bar.parentWidget())
     # 标签布局 = 原则标签 + 常驻「+」按钮 + stretch
     assert bar._label_layout.count() - 2 == 1  # 默认 1 条围护原则
-    bar._radio_foundation.setChecked(True)
+    bar._radios[_KIND_FOUNDATION].setChecked(True)
     assert bar._label_layout.count() - 2 == 1  # 1 条地基原则
+    bar._radios[_KIND_PRECIPITATION].setChecked(True)
+    assert bar._label_layout.count() - 2 == 1  # 1 条降水原则
+    bar._radios[_KIND_WIDTH].setChecked(True)
+    assert bar._label_layout.count() - 2 == 1  # 1 条面宽原则
     bar.add_enclosure()
-    bar._radio_enclosure.setChecked(True)
+    bar._radios[_KIND_ENCLOSURE].setChecked(True)
+    assert bar._label_layout.count() - 2 == 2
+    bar.add_precipitation()
+    bar._radios[_KIND_PRECIPITATION].setChecked(True)
+    assert bar._label_layout.count() - 2 == 2
+    bar.add_width()
+    bar._radios[_KIND_WIDTH].setChecked(True)
     assert bar._label_layout.count() - 2 == 2
 
 
@@ -85,9 +101,9 @@ def test_main_window_replica_layout(qapp, project):
         qapp.processEvents()
         # 原则横条可见，选中单位工程后工作区直达单位工程面板（无页签）
         assert window._principle_bar.isVisibleTo(window._principle_bar.parentWidget())
-        # 主表格 9 列
+        # 主表格 11 列（含降水原则 / 工作面宽原则两列）
         table = window._unit_panel._element_table
-        assert table.columnCount() == 9
+        assert table.columnCount() == 11
         # 选中单位工程后从构件库双击插入
         root = window._tree_panel._tree.topLevelItem(0)
         window._tree_panel._tree.setCurrentItem(root.child(0).child(0))

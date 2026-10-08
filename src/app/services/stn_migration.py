@@ -35,11 +35,13 @@ from app.core.models.models import (
     EnclosureWork,
     PcpEnclosure,
     PcpFoundation,
+    PcpPrecipitation,
+    PcpWidth,
     Pipe,
     Price,
     Segment,
     Unit,
-    WorkWidth,
+    WidthItem,
 )
 
 _CATEGORY_BY_NAME = {name: value for value, name in CATEGORY_NAMES.items()}
@@ -469,6 +471,10 @@ def _migrate_inner(source: Path, target: Path) -> MigrationReport:
                 main_pe_name = legacy_element.main_pe_name
                 if len(pe_refs) > 1 and main_pe_name not in {name for name, _ratio in pe_refs}:
                     main_pe_name = pe_refs[0][0]
+                # 降水/面宽引用随围护名拆出（v4 独立原则）；多围护等对不上号的
+                # 落到第一条原则（旧版随各 PE 计算，独立后取默认一条）
+                enclosure_names = {item.name for item in legacy.enclosures}
+                default_pppw = legacy.enclosures[0].name if legacy.enclosures else ""
                 element = Element(
                     unit_id=unit.id,
                     category=category,
@@ -477,6 +483,8 @@ def _migrate_inner(source: Path, target: Path) -> MigrationReport:
                     amount=legacy_element.amount or "0",
                     pe_name=pe_name,
                     pf_name=pf_name,
+                    pp_name=pe_name if pe_name in enclosure_names else default_pppw,
+                    pw_name=pe_name if pe_name in enclosure_names else default_pppw,
                     main_pe_name=main_pe_name,
                     source=legacy_element.source or "",
                     order_no=element_index,
@@ -581,15 +589,15 @@ def _migrate_principle_refs(
     return refs[0][0], refs, warnings
 
 
-def _seed_widths(session, enclosure: PcpEnclosure, table: dict[str, dict[int, float]], kind: str) -> None:
+def _seed_widths(session, width: PcpWidth, table: dict[str, dict[int, float]], kind: str) -> None:
     for category_index, (category, values) in enumerate(table.items()):
-        for dn_index, (dn, width) in enumerate(sorted(values.items())):
+        for dn_index, (dn, value) in enumerate(sorted(values.items())):
             session.add(
-                WorkWidth(
-                    enclosure_id=enclosure.id,
+                WidthItem(
+                    width_id=width.id,
                     pipe_type=category,
                     dn=dn,
-                    width=width,
+                    width=value,
                     kind=kind,
                     order_no=category_index * 100 + dn_index,
                 )
@@ -600,7 +608,9 @@ def write_legacy_enclosure(session, legacy_pe: _LegacyEnclosure, library, report
                            order_no: int = 0) -> PcpEnclosure:
     """把旧版围护原则（mcPcpEnclosure 解析结果）写入当前会话并返回。
 
-    迁移与 *.spcp 单原则导入共用；原则本体、垫层、降水、宽度表、做法/级别/构件全套写入。
+    迁移与 *.spcp 单原则导入共用；原则本体、垫层、做法/级别/构件全套写入。
+    旧版挂在围护原则下的降水参数与宽度表，v4 起拆成与围护同名的独立
+    降水/面宽原则一并写入（旧 PE 名在其各自表内即原则名）。
     """
     from app.core.models.models import PRECIPITATION_COLUMNS
 
@@ -614,18 +624,30 @@ def write_legacy_enclosure(session, legacy_pe: _LegacyEnclosure, library, report
         dock_h=legacy_pe.dock_h,
         cover50=legacy_pe.cover50,
         cover=legacy_pe.cover,
-        groove_width=legacy_pe.groove_width,
         order_no=order_no,
     )
     enclosure.cushions.append(
         EnclosureCushion(name=legacy_pe.cushion[0], h=legacy_pe.cushion[1], order_no=0)
     )
-    for key in PRECIPITATION_COLUMNS:
-        setattr(enclosure, key, legacy_pe.precipitation.get(key, _PRECIP_DEFAULT_TEXT[key]))
     session.add(enclosure)
     session.flush()
-    _seed_widths(session, enclosure, legacy_pe.widths, "work")
-    _seed_widths(session, enclosure, legacy_pe.groove_bs, "groove_b")
+    precipitation = PcpPrecipitation(name=legacy_pe.name, order_no=order_no)
+    for key in PRECIPITATION_COLUMNS:
+        setattr(precipitation, key, legacy_pe.precipitation.get(key, _PRECIP_DEFAULT_TEXT[key]))
+    session.add(precipitation)
+    width = PcpWidth(name=legacy_pe.name, groove_width=legacy_pe.groove_width, order_no=order_no)
+    session.add(width)
+    session.flush()
+    if legacy_pe.widths or legacy_pe.groove_bs:
+        _seed_widths(session, width, legacy_pe.widths, "work")
+        _seed_widths(session, width, legacy_pe.groove_bs, "groove_b")
+    else:
+        # 新版围护导出已不含宽度数据（旧版 1.0 文件必有）：按新建面宽原则的
+        # 同一默认表补齐，保证原则开箱可用
+        from app.services.project_io import default_width_tables
+
+        _seed_widths(session, width, default_width_tables()[0], "work")
+        _seed_widths(session, width, default_width_tables()[1], "groove_b")
     works = legacy_pe.works or [
         _LegacyWork(min_depth=0.0, cpnt_cat=library.names("Ei")[0] if library.names("Ei") else "放坡")
     ]

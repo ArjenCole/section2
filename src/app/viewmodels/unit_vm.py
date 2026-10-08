@@ -29,7 +29,18 @@ from app.core.models.models import (
 )
 from app.services import project_io
 
-_ELEMENT_FIELDS = {"category", "name", "depth", "amount", "pe_name", "pf_name", "source", "order_no"}
+_ELEMENT_FIELDS = {
+    "category",
+    "name",
+    "depth",
+    "amount",
+    "pe_name",
+    "pf_name",
+    "pp_name",
+    "pw_name",
+    "source",
+    "order_no",
+}
 _PIPE_FIELDS = {"mat", "dn", "content"}
 _PARAM_FIELDS = {"key", "value"}
 
@@ -46,6 +57,8 @@ class ElementRow:
     amount: str
     pe_name: str
     pf_name: str
+    pp_name: str
+    pw_name: str
     order_no: int
     unit: str
     depth_value: float
@@ -154,8 +167,8 @@ def compute_unit(unit_id: int):
     session = orm.session()
     for element in _elements_of(unit_id):
         row = _element_row(element)
-        pe, pf, pe_refs, pf_refs = resolve_element_principles(element, session)
-        info = build_element_input(element, pe, pf, pe_refs, pf_refs)
+        pe, pf, pp, pw, pe_refs, pf_refs = resolve_element_principles(element, session)
+        info = build_element_input(element, pe, pf, pe_refs, pf_refs, pp, pw)
         row.spec = info.spec()
         try:
             result = compute_element(info) or QDict()
@@ -189,6 +202,8 @@ def _element_row(element: Element) -> ElementRow:
         amount=element.amount,
         pe_name=element.pe_name,
         pf_name=element.pf_name,
+        pp_name=element.pp_name,
+        pw_name=element.pw_name,
         order_no=element.order_no,
         unit=unit,
         depth_value=depth_value,
@@ -216,6 +231,8 @@ def create_element(
     amount: str = "0",
     pe_name: str | None = None,
     pf_name: str | None = None,
+    pp_name: str | None = None,
+    pw_name: str | None = None,
     source: str = "",
     pipes: list[tuple[str, int, str]] | None = None,
     params: list[tuple[str, str]] | None = None,
@@ -236,6 +253,8 @@ def create_element(
     session = orm.session()
     enclosure_names = project_io.enclosure_names()
     foundation_names = project_io.foundation_names()
+    precipitation_names = project_io.precipitation_names()
+    width_names = project_io.width_names()
     category = int(category)
     element = Element(
         unit_id=unit_id,
@@ -245,6 +264,8 @@ def create_element(
         amount=str(amount),
         pe_name=pe_name if pe_name is not None else (enclosure_names[0] if enclosure_names else ""),
         pf_name=pf_name if pf_name is not None else (foundation_names[0] if foundation_names else ""),
+        pp_name=pp_name if pp_name is not None else (precipitation_names[0] if precipitation_names else ""),
+        pw_name=pw_name if pw_name is not None else (width_names[0] if width_names else ""),
         main_pe_name=main_pe_name,
         source=source,
         order_no=order_no
@@ -317,6 +338,8 @@ def element_snapshot(element_id: int) -> dict | None:
         "amount": element.amount,
         "pe_name": element.pe_name,
         "pf_name": element.pf_name,
+        "pp_name": element.pp_name,
+        "pw_name": element.pw_name,
         "main_pe_name": element.main_pe_name,
         "source": element.source,
         "pipes": [(pipe.mat, pipe.dn, pipe.content) for pipe in element.pipes],
@@ -361,6 +384,10 @@ def insert_element_data(
         name=data.get("name", ""),
         depth=data.get("depth", "0"),
         amount=data.get("amount", "0"),
+        pe_name=data.get("pe_name"),
+        pf_name=data.get("pf_name"),
+        pp_name=data.get("pp_name"),
+        pw_name=data.get("pw_name"),
         source=data.get("source", ""),
         pipes=list(data.get("pipes") or []) or None,
         params=list(data.get("params") or []) or None,

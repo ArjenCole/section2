@@ -13,7 +13,9 @@ APP_VERSION = "2.0.0.0"
 
 #: .stn2 库结构版本。结构变更时 +1，并在 core/models/base.py 的 _MIGRATIONS 中登记迁移函数。
 #: v3：附属构筑物（mcE7，category=7）+ 多原则引用（element_principle 表、element.main_pe_name 列）
-SCHEMA_VERSION = 3
+#: v4：降水原则 / 面宽原则独立（principle_precipitation / principle_width /
+#:     principle_width_item 表、element.pp_name / pw_name 列；围护原则不再携带这两项）
+SCHEMA_VERSION = 4
 
 #: 新版工程文件
 PROJECT_SUFFIX = ".stn2"

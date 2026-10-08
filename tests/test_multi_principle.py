@@ -116,19 +116,19 @@ def test_multi_principle_ratio_weighted_calculation(project) -> None:
     unit_vm.set_main_pe(element.id, "默认围护原则")
 
     element = orm.session().get(type(element), element.id)
-    pe, pf, pe_refs, pf_refs = resolve_element_principles(element, session)
+    pe, pf, pp, pw, pe_refs, pf_refs = resolve_element_principles(element, session)
     assert [r.name for r in element.pe_refs_sorted()] == [
         "默认围护原则", "钢板桩",
     ]
-    info = build_element_input(element, pe, pf, pe_refs, pf_refs)
+    info = build_element_input(element, pe, pf, pe_refs, pf_refs, pp, pw)
     multi = compute_element(info)
     assert multi is not None
 
     # 单原则对照
     pe1 = session.query(PcpEnclosure).filter_by(name="默认围护原则").one()
     pe2 = session.query(PcpEnclosure).filter_by(name="钢板桩").one()
-    info1 = build_element_input(element, pe1, pf, [(pe1, 1.0)], pf_refs)
-    info2 = build_element_input(element, pe2, pf, [(pe2, 1.0)], pf_refs)
+    info1 = build_element_input(element, pe1, pf, [(pe1, 1.0)], pf_refs, pp, pw)
+    info2 = build_element_input(element, pe2, pf, [(pe2, 1.0)], pf_refs, pp, pw)
     single1 = compute_element(info1)
     single2 = compute_element(info2)
     assert single1 is not None and single2 is not None

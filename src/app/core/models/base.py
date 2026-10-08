@@ -104,10 +104,83 @@ def _migrate_v2_add_multi_principle(engine: Engine) -> None:
         )
 
 
+def _migrate_v3_split_precipitation_width(engine: Engine) -> None:
+    """v3 → v4：降水 / 面宽从围护原则独立成原则。
+
+    * element 表加 pp_name / pw_name 列（旧版降水、面宽随围护原则，v4 起单独引用）；
+    * 建 principle_precipitation / principle_width / principle_width_item 表，
+      把每条围护原则的降水参数与宽度表迁成同名独立原则；
+    * 元素引用：pp/pw 名与原围护名一致（多围护原则的行落到第一条降水/面宽原则）；
+    * 旧 work_width 表留在库里不再使用（SQLite 不便删表，模型已不映射）。
+    """
+    from sqlalchemy import inspect as sqla_inspect
+
+    from app.core.models.models import PcpPrecipitation, PcpWidth, WidthItem
+
+    inspection = sqla_inspect(engine)
+    element_columns = {column["name"] for column in inspection.get_columns("element")}
+    enclosure_columns = {column["name"] for column in inspection.get_columns("principle_enclosure")}
+    statements = []
+    if "pp_name" not in element_columns:
+        statements.append("ALTER TABLE element ADD COLUMN pp_name VARCHAR(200) DEFAULT ''")
+    if "pw_name" not in element_columns:
+        statements.append("ALTER TABLE element ADD COLUMN pw_name VARCHAR(200) DEFAULT ''")
+    PcpPrecipitation.__table__.create(engine, checkfirst=True)
+    PcpWidth.__table__.create(engine, checkfirst=True)
+    WidthItem.__table__.create(engine, checkfirst=True)
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+        # 正常 v3 库的 principle_enclosure 带降水/宽度列；按新结构降版构造的
+        # 测试文件可能没有，此时新表已由 create_all 建好，只补元素引用列
+        if "wet_soil" in enclosure_columns:
+            connection.execute(
+                text(
+                    "INSERT INTO principle_precipitation (name, wet_soil, light_well, jet_well, "
+                    "big_well, deep_well, order_no) "
+                    "SELECT name, wet_soil, light_well, jet_well, big_well, deep_well, order_no "
+                    "FROM principle_enclosure"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO principle_width (name, groove_width, order_no) "
+                    "SELECT name, groove_width, order_no FROM principle_enclosure"
+                )
+            )
+            if "work_width" in inspection.get_table_names():
+                # 旧 work_width 行按所属围护原则名挂到同名面宽原则
+                connection.execute(
+                    text(
+                        "INSERT INTO principle_width_item (width_id, pipe_type, dn, width, kind, order_no) "
+                        "SELECT pw.id, w.pipe_type, w.dn, w.width, w.kind, w.order_no "
+                        "FROM work_width w JOIN principle_enclosure pe ON pe.id = w.enclosure_id "
+                        "JOIN principle_width pw ON pw.name = pe.name"
+                    )
+                )
+        connection.execute(
+            text(
+                "UPDATE element SET pp_name = CASE "
+                "WHEN pe_name IN (SELECT name FROM principle_precipitation) THEN pe_name "
+                "ELSE COALESCE((SELECT name FROM principle_precipitation "
+                "ORDER BY order_no, id LIMIT 1), '') END"
+            )
+        )
+        connection.execute(
+            text(
+                "UPDATE element SET pw_name = CASE "
+                "WHEN pe_name IN (SELECT name FROM principle_width) THEN pe_name "
+                "ELSE COALESCE((SELECT name FROM principle_width "
+                "ORDER BY order_no, id LIMIT 1), '') END"
+            )
+        )
+
+
 #: 结构迁移入口。键为源版本号，值为“从该版本迁到 +1 版本”的函数。
 _MIGRATIONS: dict[int, "callable"] = {
     1: _migrate_v1_add_element_source,
     2: _migrate_v2_add_multi_principle,
+    3: _migrate_v3_split_precipitation_width,
 }
 
 

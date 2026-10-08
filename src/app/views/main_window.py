@@ -605,6 +605,8 @@ class MainWindow(QMainWindow):
         project_menu.addSeparator()
         project_menu.addAction("添加沟槽围护原则", lambda: self._principle_bar.add_enclosure())
         project_menu.addAction("添加地基处理原则", lambda: self._principle_bar.add_foundation())
+        project_menu.addAction("添加降水原则", lambda: self._principle_bar.add_precipitation())
+        project_menu.addAction("添加面宽原则", lambda: self._principle_bar.add_width())
         project_menu.addSeparator()
         project_menu.addAction(self._act_refresh)
 

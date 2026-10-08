@@ -7,8 +7,10 @@ FoundationEditDialog，复刻 FormPE / FormPF）与横条等处复用：
   右侧确认/取消，做法埋深与止水构件在原则主窗体编辑）；
 * :class:`ComponentEditDialog` —— 构件编辑器（FormCpntEdit：左参数表、
   右上围护公式、右下支撑公式，行头显示键名）；
-* :class:`WorkWidthDialog` —— 工作面宽度 / 沟槽宽度表（FormWorkWidth）；
-* :class:`PrecipitationDialog` —— 降水编辑（FormPrecipitation）。
+* :class:`WidthEditDialog` —— 面宽原则编辑（FormWorkWidth：按工作面宽度 /
+  按沟槽总宽度两个 tab，各自一张宽度表，当前 tab 即取值方式）；
+* :class:`PrecipitationEditDialog` —— 降水原则编辑（FormPrecipitation：
+  五种井型的启用 / 深度阈值 / 井距 / 侧数）。
 """
 
 from __future__ import annotations
@@ -18,7 +20,6 @@ import re
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QButtonGroup,
     QComboBox,
     QDialogButtonBox,
     QGridLayout,
@@ -26,14 +27,16 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QPushButton,
-    QRadioButton,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from app.core.event_bus import bus
 from app.core.models import base as orm
 from app.core.models.models import (
     GROOVE_WIDTH_B,
@@ -45,7 +48,12 @@ from app.core.models.models import (
     EnclosureLevel,
     EnclosureWork,
     PcpEnclosure,
-    WorkWidth,
+    PcpFoundation,
+    PcpPrecipitation,
+    PcpWidth,
+    WidthItem,
+    WIDTH_KIND_WORK,
+    WIDTH_KIND_GROOVE_B,
     format_precipitation,
     parse_precipitation,
 )
@@ -501,32 +509,48 @@ class ComponentEditDialog(PrincipleSubDialog):
                     component.params.append(ComponentParam(key=key, value=f"{display}|{value}"))
 
 
-class WorkWidthDialog(PrincipleSubDialog):
-    """工作面宽度 / 沟槽宽度表（旧版 FormWorkWidth）：类别 × DN0~DN3000。"""
+class WidthEditDialog(FramelessDialog):
+    """面宽原则编辑（旧版 FormWorkWidth，v4 起独立成原则）。
 
-    def __init__(self, enclosure: PcpEnclosure, parent: QWidget | None = None) -> None:
-        super().__init__("工作面宽度与沟槽宽度", parent)
-        self._enclosure = enclosure
-        self._tables: dict[str, QTableWidget] = {}
-        self._build()
+    「按工作面宽度计算 / 按沟槽总宽度计算」两种方式做成 tab 切换
+    （旧版沟槽宽度取值单选 WorkWidth / B），当前 tab 即取值方式，
+    表格只显示当前方式的明细。
+    """
+
+    _TABS = (
+        ("按工作面宽度计算", "work", "工作面宽度表（mm）", WIDTH_KIND_WORK),
+        ("按沟槽总宽度计算", "groove_b", "沟槽宽度表（mm）", WIDTH_KIND_GROOVE_B),
+    )
+
+    def __init__(self, width_id: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent, "面宽原则编辑")
+        self.resize(860, 460)
+        self._width_id = width_id
+        self._loading = False
+        self._tables: dict[str, CellFillTable] = {}
+        self._build_ui()
         self._fill()
 
-    def _build(self) -> None:
-        mode_box = QGroupBox("沟槽宽度取值")
-        mode_layout = QHBoxLayout(mode_box)
-        self._radio_work = QRadioButton("按工作面宽度表（断面推算）")
-        self._radio_b = QRadioButton("直接采用沟槽宽度表")
-        group = QButtonGroup(self)
-        group.addButton(self._radio_work)
-        group.addButton(self._radio_b)
-        mode_layout.addWidget(self._radio_work)
-        mode_layout.addWidget(self._radio_b)
-        mode_layout.addStretch(1)
-        self._body.addWidget(mode_box)
+    # ------------------------------------------------------------------ 界面
+    def _build_ui(self) -> None:
+        root = self.bodyLayout()
+        root.setContentsMargins(12, 10, 12, 10)
+        root.setSpacing(6)
 
-        for kind, title in (("work", "工作面宽度表（mm）"), ("groove_b", "沟槽宽度表（mm）")):
-            box = QGroupBox(title)
-            layout = QVBoxLayout(box)
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("原则名称:"))
+        self._name = QLineEdit()
+        name_row.addWidget(self._name, 1)
+        root.addLayout(name_row)
+
+        self._tabs = QTabWidget()
+        for title, key, table_title, kind in self._TABS:
+            page = QWidget()
+            layout = QVBoxLayout(page)
+            layout.setContentsMargins(4, 4, 4, 4)
+            label = QLabel(table_title)
+            label.setProperty("role", "hint")
+            layout.addWidget(label)
             table = CellFillTable(len(_WIDTH_CATEGORY_ORDER), len(_WIDTH_DNS) + 1)
             table.setHorizontalHeaderLabels(["类别"] + [f"DN{dn}" for dn in _WIDTH_DNS])
             table.verticalHeader().setVisible(False)
@@ -536,41 +560,87 @@ class WorkWidthDialog(PrincipleSubDialog):
                 table.setItem(row_index, 0, item)
             table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
             layout.addWidget(table)
-            self._body.addWidget(box, 1)
+            self._tabs.addTab(page, title)
             self._tables[kind] = table
+        # 取值方式跟随当前 tab（旧版 grooveWidth 单选）
+        self._tabs.currentChanged.connect(self._on_tab_changed)
+        root.addWidget(self._tabs, 1)
 
-        reset = QPushButton("恢复图集默认")
-        reset.clicked.connect(self._reset)
-        self._body.addWidget(reset)
+        button_row = QHBoxLayout()
+        btn_reset = QPushButton("恢复图集默认")
+        btn_reset.clicked.connect(self._reset_current)
+        button_row.addWidget(btn_reset)
+        button_row.addStretch(1)
+        btn_yes = QPushButton("确认修改")
+        btn_yes.setFixedWidth(76)
+        btn_yes.setProperty("primary", "true")
+        btn_yes.clicked.connect(self._confirm)
+        btn_cancel = QPushButton("取消修改")
+        btn_cancel.setFixedWidth(76)
+        btn_cancel.clicked.connect(self.reject)
+        button_row.addWidget(btn_yes)
+        button_row.addWidget(btn_cancel)
+        root.addLayout(button_row)
+
+    # ------------------------------------------------------------------ 数据
+    def _width(self) -> PcpWidth | None:
+        width = orm.session().get(PcpWidth, self._width_id)
+        if width is not None:
+            # 提交后已加载的 items 集合不会自动刷新，取用时强制重载
+            orm.session().expire(width)
+        return width
 
     def _fill(self) -> None:
-        self._radio_work.setChecked(self._enclosure.groove_width == "WorkWidth")
-        self._radio_b.setChecked(self._enclosure.groove_width != "WorkWidth")
-        for kind, table in self._tables.items():
-            data: dict[str, dict[int, float]] = {}
-            for row in self._enclosure.widths:
-                if row.kind == kind:
-                    data.setdefault(row.pipe_type, {})[int(row.dn)] = row.width
-            for row_index, category in enumerate(_WIDTH_CATEGORY_ORDER):
-                for column, dn in enumerate(_WIDTH_DNS, start=1):
-                    value = data.get(category, {}).get(dn)
-                    table.setItem(row_index, column, QTableWidgetItem("" if value is None else f"{value:g}"))
+        self._loading = True
+        try:
+            width = self._width()
+            if width is None:
+                return
+            self._name.setText(width.name)
+            index = 0 if width.groove_width != GROOVE_WIDTH_B else 1
+            self._tabs.setCurrentIndex(index)
+            data: dict[str, dict[str, dict[int, float]]] = {"work": {}, "groove_b": {}}
+            for row in width.items:
+                data.setdefault(row.kind, {}).setdefault(row.pipe_type, {})[int(row.dn)] = row.width
+            for kind, table in self._tables.items():
+                for row_index, category in enumerate(_WIDTH_CATEGORY_ORDER):
+                    for column, dn in enumerate(_WIDTH_DNS, start=1):
+                        value = data.get(kind, {}).get(category, {}).get(dn)
+                        table.setItem(row_index, column, QTableWidgetItem("" if value is None else f"{value:g}"))
+        finally:
+            self._loading = False
 
-    def _reset(self) -> None:
+    def _on_tab_changed(self, _index: int) -> None:
+        if self._loading or not orm.is_open():
+            return
+        width = self._width()
+        if width is None:
+            return
+        width.groove_width = GROOVE_WIDTH_WORK if self._tabs.currentIndex() == 0 else GROOVE_WIDTH_B
+        project_io.commit()
+
+    def _reset_current(self) -> None:
+        """把当前 tab 的表恢复为图集默认（另一种方式的表不动）。"""
+        kind = WIDTH_KIND_WORK if self._tabs.currentIndex() == 0 else WIDTH_KIND_GROOVE_B
         work, groove = project_io.default_width_tables()
+        table_data = work if kind == WIDTH_KIND_WORK else groove
+        table = self._tables[kind]
+        for row_index, category in enumerate(_WIDTH_CATEGORY_ORDER):
+            for column, dn in enumerate(_WIDTH_DNS, start=1):
+                value = table_data.get(category, {}).get(dn)
+                table.setItem(row_index, column, QTableWidgetItem("" if value is None else f"{value:g}"))
+        self._apply_tables()
+
+    def _apply_tables(self) -> None:
+        if self._loading:
+            return
+        width = self._width()
+        if width is None:
+            return
         session = orm.session()
-        for row in list(self._enclosure.widths):
+        for row in list(width.items):
             session.delete(row)
         session.flush()
-        project_io.seed_width_tables(session, self._enclosure, work, groove)
-        session.expire(self._enclosure)  # expire_on_commit=False：让 widths 集合重载
-        project_io.commit()
-        self._enclosure = session.get(PcpEnclosure, self._enclosure.id)
-        self._fill()
-
-    def save(self) -> None:
-        self._enclosure.groove_width = GROOVE_WIDTH_WORK if self._radio_work.isChecked() else GROOVE_WIDTH_B
-        session = orm.session()
         for kind, table in self._tables.items():
             for row_index, category in enumerate(_WIDTH_CATEGORY_ORDER):
                 for column, dn in enumerate(_WIDTH_DNS, start=1):
@@ -580,82 +650,123 @@ class WorkWidthDialog(PrincipleSubDialog):
                         value = float(text)
                     except ValueError:
                         continue
-                    row = next(
-                        (
-                            width
-                            for width in self._enclosure.widths
-                            if width.kind == kind and width.pipe_type == category and width.dn == dn
-                        ),
-                        None,
-                    )
-                    if row is None:
-                        session.add(
-                            WorkWidth(
-                                enclosure_id=self._enclosure.id,
-                                pipe_type=category,
-                                dn=dn,
-                                width=value,
-                                kind=kind,
-                                order_no=row_index * 100 + column,
-                            )
+                    session.add(
+                        WidthItem(
+                            width_id=width.id,
+                            pipe_type=category,
+                            dn=dn,
+                            width=value,
+                            kind=kind,
+                            order_no=row_index * 100 + column,
                         )
-                    else:
-                        row.width = value
-        session.expire(self._enclosure)  # expire_on_commit=False：新增/改动的宽度行重载
+                    )
+        session.expire(width)  # expire_on_commit=False：重载 items
+        project_io.commit()
+
+    def _confirm(self) -> None:
+        self._apply_tables()
+        width = self._width()
+        if width is not None:
+            name = self._name.text().strip()
+            if not name:
+                FramelessMessageBox.warning(self, "提示", "原则名称不得为空。")
+                return
+            if name != width.name:
+                project_io.rename_width(width.id, name)
+                bus().tree_structure_changed.emit()  # 同步原则横条与引用名
+        bus().principle_changed.emit()
+        self.accept()
 
 
-class PrecipitationDialog(PrincipleSubDialog):
-    """降水编辑（旧版 FormPrecipitation）：五种井型的启用 / 深度 / 井距 / 侧数。"""
+class PrecipitationEditDialog(FramelessDialog):
+    """降水原则编辑（旧版 FormPrecipitation，v4 起独立成原则）。
+
+    五种井型的启用 / 深度阈值 / 井距 / 侧数；下方实时给出降水描述
+    （旧版 DiscribePreciptitation 的等价文案）。
+    """
 
     _ROWS = tuple(reversed(PRECIPITATION_COLUMNS))  # 深井 → 湿土排水，与旧版行序一致
 
-    def __init__(self, enclosure: PcpEnclosure, parent: QWidget | None = None) -> None:
-        super().__init__("降水设置", parent)
-        self._enclosure = enclosure
-        self._build()
+    def __init__(self, precipitation_id: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent, "降水原则编辑")
+        self.resize(430, 460)
+        self._precipitation_id = precipitation_id
+        self._loading = False
+        self._build_ui()
         self._fill()
 
-    def _build(self) -> None:
+    def _build_ui(self) -> None:
+        root = self.bodyLayout()
+        root.setContentsMargins(12, 10, 12, 10)
+        root.setSpacing(6)
+
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("原则名称:"))
+        self._name = QLineEdit()
+        name_row.addWidget(self._name, 1)
+        root.addLayout(name_row)
+
         box = QGroupBox("井型（深度阈值 m / 井距 m / 侧数）")
         layout = QVBoxLayout(box)
         self._table = CellFillTable(len(self._ROWS), 4)
         self._table.setHorizontalHeaderLabels(["启用", "深度阈值 m", "井距 m", "侧数"])
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.verticalHeader().setDefaultSectionSize(28)
-        for row_index, key in enumerate(self._ROWS):
-            name_item = QTableWidgetItem(PRECIPITATION_LABELS[key])
-            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self._table.setVerticalHeaderItem(row_index, None)
-            self._table.setItem(row_index, 0, name_item)
         layout.addWidget(self._table)
         self._describe = QLabel("")
         self._describe.setProperty("role", "hint")
         self._describe.setWordWrap(True)
         layout.addWidget(self._describe)
         self._table.itemChanged.connect(self._describe_change)
-        self._body.addWidget(box)
+        root.addWidget(box, 1)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        btn_yes = QPushButton("确认修改")
+        btn_yes.setFixedWidth(76)
+        btn_yes.setProperty("primary", "true")
+        btn_yes.clicked.connect(self._confirm)
+        btn_cancel = QPushButton("取消修改")
+        btn_cancel.setFixedWidth(76)
+        btn_cancel.clicked.connect(self.reject)
+        button_row.addWidget(btn_yes)
+        button_row.addWidget(btn_cancel)
+        root.addLayout(button_row)
+
+    def _precipitation(self) -> PcpPrecipitation | None:
+        return orm.session().get(PcpPrecipitation, self._precipitation_id)
 
     def _fill(self) -> None:
+        precipitation = self._precipitation()
+        if precipitation is None:
+            return
         self._loading = True
-        for row_index, key in enumerate(self._ROWS):
-            enabled, elevation, gap, sides = precipitation_enabled(key, self._enclosure)
-            self._table.setVerticalHeaderItem(row_index, QTableWidgetItem(PRECIPITATION_LABELS[key]))
-            check = QTableWidgetItem()
-            check.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
-            check.setCheckState(Qt.CheckState.Checked if enabled else Qt.CheckState.Unchecked)
-            self._table.setItem(row_index, 0, check)
-            self._table.setItem(row_index, 1, QTableWidgetItem("" if not enabled else f"{elevation:g}"))
-            self._table.setItem(row_index, 2, QTableWidgetItem(f"{gap:g}"))
-            self._table.setItem(row_index, 3, QTableWidgetItem(f"{sides:g}"))
-        self._loading = False
+        try:
+            self._name.setText(precipitation.name)
+            for row_index, key in enumerate(self._ROWS):
+                enabled, elevation, gap, sides = precipitation_enabled(key, precipitation)
+                check = QTableWidgetItem()
+                check.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+                check.setCheckState(Qt.CheckState.Checked if enabled else Qt.CheckState.Unchecked)
+                self._table.setItem(row_index, 0, check)
+                self._table.setItem(row_index, 1, QTableWidgetItem("" if not enabled else f"{elevation:g}"))
+                self._table.setItem(row_index, 2, QTableWidgetItem(f"{gap:g}"))
+                self._table.setItem(row_index, 3, QTableWidgetItem(f"{sides:g}"))
+        finally:
+            self._loading = False
         self._describe_change()
 
     def _describe_change(self, *_args) -> None:
         self._apply_rows()
-        self._describe.setText(precipitation_text(self._enclosure))
+        precipitation = self._precipitation()
+        if precipitation is not None:
+            self._describe.setText(precipitation_text(precipitation))
 
     def _apply_rows(self) -> None:
-        if getattr(self, "_loading", True):
+        if self._loading:
+            return
+        precipitation = self._precipitation()
+        if precipitation is None:
             return
         for row_index, key in enumerate(self._ROWS):
             check = self._table.item(row_index, 0)
@@ -671,7 +782,19 @@ class PrecipitationDialog(PrincipleSubDialog):
             elevation = _num(1, -1.0) if enabled else -1.0
             gap = _num(2, 0.0)
             sides = _num(3, 0.0)
-            setattr(self._enclosure, key, format_precipitation(elevation, gap, sides))
-
-    def save(self) -> None:
+            setattr(precipitation, key, format_precipitation(elevation, gap, sides))
         project_io.commit()
+
+    def _confirm(self) -> None:
+        self._apply_rows()
+        precipitation = self._precipitation()
+        if precipitation is not None:
+            name = self._name.text().strip()
+            if not name:
+                FramelessMessageBox.warning(self, "提示", "原则名称不得为空。")
+                return
+            if name != precipitation.name:
+                project_io.rename_precipitation(precipitation.id, name)
+                bus().tree_structure_changed.emit()  # 同步原则横条与引用名
+        bus().principle_changed.emit()
+        self.accept()

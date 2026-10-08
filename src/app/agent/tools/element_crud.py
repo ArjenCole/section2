@@ -42,7 +42,7 @@ def _element_rows_text(context: ToolContext) -> str:
         lines.append(
             f"{index}. id={row.id} 名称={row.name or '（未命名）'} 类别={category_name(row.category)} "
             f"埋深={row.depth}（={row.depth_value:g}m） 数量={row.amount}（={row.amount_value:g}m） "
-            f"围护={row.pe_name or '—'} 地基={row.pf_name or '—'}"
+            f"围护={row.pe_name or '—'} 地基={row.pf_name or '—'} 降水={row.pp_name or '—'} 面宽={row.pw_name or '—'}"
         )
     return "\n".join(lines)
 
@@ -65,12 +65,20 @@ def tool_add_element(context: ToolContext, **kwargs) -> str:
     amount = str(kwargs.get("amount") or "0")
     pe_name = kwargs.get("pe_name") or None
     pf_name = kwargs.get("pf_name") or None
+    pp_name = kwargs.get("pp_name") or None
+    pw_name = kwargs.get("pw_name") or None
     enclosure_names = project_io.enclosure_names()
     foundation_names = project_io.foundation_names()
+    precipitation_names = project_io.precipitation_names()
+    width_names = project_io.width_names()
     if pe_name and pe_name not in enclosure_names:
         return f"围护原则“{pe_name}”不存在。可用：{'、'.join(enclosure_names)}"
     if pf_name and pf_name not in foundation_names:
         return f"地基原则“{pf_name}”不存在。可用：{'、'.join(foundation_names)}"
+    if pp_name and pp_name not in precipitation_names:
+        return f"降水原则“{pp_name}”不存在。可用：{'、'.join(precipitation_names)}"
+    if pw_name and pw_name not in width_names:
+        return f"面宽原则“{pw_name}”不存在。可用：{'、'.join(width_names)}"
 
     element = unit_vm.create_element(
         context.unit_id,
@@ -80,6 +88,8 @@ def tool_add_element(context: ToolContext, **kwargs) -> str:
         amount=amount,
         pe_name=pe_name,
         pf_name=pf_name,
+        pp_name=pp_name,
+        pw_name=pw_name,
     )
     if element is None:
         return "新增失败：单位工程不存在。"
@@ -107,6 +117,8 @@ def tool_update_element(context: ToolContext, **kwargs) -> str:
         "amount": str(kwargs["amount"]) if kwargs.get("amount") is not None else None,
         "pe_name": kwargs.get("pe_name"),
         "pf_name": kwargs.get("pf_name"),
+        "pp_name": kwargs.get("pp_name"),
+        "pw_name": kwargs.get("pw_name"),
     }
     category = _category_value(kwargs.get("category"))
     if category is not None:
@@ -115,13 +127,19 @@ def tool_update_element(context: ToolContext, **kwargs) -> str:
         if value is not None:
             fields[key] = value
     if not fields:
-        return "没有给出要修改的字段（可改：名称/类别/埋深/数量/围护原则/地基原则）。"
+        return "没有给出要修改的字段（可改：名称/类别/埋深/数量/围护/地基/降水/面宽原则）。"
     enclosure_names = project_io.enclosure_names()
     foundation_names = project_io.foundation_names()
+    precipitation_names = project_io.precipitation_names()
+    width_names = project_io.width_names()
     if fields.get("pe_name") and fields["pe_name"] not in enclosure_names:
         return f"围护原则“{fields['pe_name']}”不存在。可用：{'、'.join(enclosure_names)}"
     if fields.get("pf_name") and fields["pf_name"] not in foundation_names:
         return f"地基原则“{fields['pf_name']}”不存在。可用：{'、'.join(foundation_names)}"
+    if fields.get("pp_name") and fields["pp_name"] not in precipitation_names:
+        return f"降水原则“{fields['pp_name']}”不存在。可用：{'、'.join(precipitation_names)}"
+    if fields.get("pw_name") and fields["pw_name"] not in width_names:
+        return f"面宽原则“{fields['pw_name']}”不存在。可用：{'、'.join(width_names)}"
     updated = unit_vm.update_element(element.id, **fields)
     if updated is None:
         return "修改失败。"

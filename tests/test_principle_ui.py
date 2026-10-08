@@ -111,10 +111,34 @@ def test_spcp_roundtrip(project, tmp_path: Path) -> None:
     assert (kind, name) == ("foundation", "默认地基处理原则1")
     original, cloned = project_io.enclosures()[0], project_io.enclosures()[1]
     for field in ("con_found", "excvt", "found_angle", "dock_l", "dock_h",
-                  "cover50", "cover", "groove_width", "wet_soil", "deep_well"):
+                  "cover50", "cover"):
         assert getattr(original, field) == getattr(cloned, field), field
     assert len(original.works) == len(cloned.works)
-    assert len(original.widths) == len(cloned.widths)
+    # 旧版 mcPcpEnclosure 文件随围护导入拆出同名降水/面宽原则；
+    # 新版围护导出已不含降水/宽度数据 → 拆出的是旧版默认井型与默认宽度表
+    pp = next(p for p in project_io.precipitations() if p.name == "默认围护原则1")
+    pw = next(w for w in project_io.width_principles() if w.name == "默认围护原则1")
+    from app.core.models.models import GROOVE_WIDTH_WORK, PRECIPITATION_DEFAULTS, format_precipitation
+
+    for field, (elevation, gap, sides) in PRECIPITATION_DEFAULTS.items():
+        assert getattr(pp, field) == format_precipitation(elevation, gap, sides), field
+    assert pw.groove_width == GROOVE_WIDTH_WORK
+    assert len(pw.items) > 0
+
+    # 降水 / 面宽原则自身的导出导入回路
+    out_pp = tmp_path / "pp.spcp"
+    out_pw = tmp_path / "pw.spcp"
+    project_io.export_precipitation_spcp(pp.id, out_pp)
+    project_io.export_width_spcp(pw.id, out_pw)
+    kind, name = project_io.import_spcp(out_pp)
+    assert kind == "precipitation"
+    cloned_pp = next(p for p in project_io.precipitations() if p.name == name)
+    for field in ("wet_soil", "light_well", "jet_well", "big_well", "deep_well"):
+        assert getattr(pp, field) == getattr(cloned_pp, field), field
+    kind, name = project_io.import_spcp(out_pw)
+    assert kind == "width"
+    cloned_pw = next(w for w in project_io.width_principles() if w.name == name)
+    assert len(cloned_pw.items) == len(pw.items)
 
 
 def test_spcp_rejects_wrong_root(project, tmp_path: Path) -> None:
@@ -125,7 +149,7 @@ def test_spcp_rejects_wrong_root(project, tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# schema 迁移 v1 → v3
+# schema 迁移 v1 → 最新
 # --------------------------------------------------------------------------- #
 def test_v1_project_migrates_source_column(tmp_path: Path) -> None:
     import shutil
@@ -133,7 +157,7 @@ def test_v1_project_migrates_source_column(tmp_path: Path) -> None:
     from app.core.version import SCHEMA_VERSION
     from app.core.models import base as orm
 
-    assert SCHEMA_VERSION == 3
+    assert SCHEMA_VERSION == 4
     legacy_copy = tmp_path / "old.stn2"
     # 借现成工程文件降版构造 v1 文件：先插一条构件（带原则引用），
     # 再删掉 source/main_pe_name 列、element_principle 表，把版本号改回 1
@@ -151,6 +175,23 @@ def test_v1_project_migrates_source_column(tmp_path: Path) -> None:
 
     with sqlite3.connect(legacy_copy) as conn:
         conn.execute("DROP TABLE element_principle")
+        # principle_enclosure 也降回 v1 形态（带降水列），v3→v4 迁移才有数据可拆
+        conn.execute("ALTER TABLE principle_enclosure RENAME TO principle_enclosure_old")
+        conn.execute(
+            "CREATE TABLE principle_enclosure (id INTEGER PRIMARY KEY, name VARCHAR(200),"
+            " con_found BOOLEAN, excvt VARCHAR(50), found_angle INTEGER, dock_l VARCHAR(50),"
+            " dock_h VARCHAR(50), cover50 VARCHAR(50), cover VARCHAR(50), wet_soil VARCHAR(50),"
+            " light_well VARCHAR(50), jet_well VARCHAR(50), big_well VARCHAR(50),"
+            " deep_well VARCHAR(50), groove_width VARCHAR(20), order_no INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO principle_enclosure (id, name, con_found, excvt, found_angle, dock_l,"
+            " dock_h, cover50, cover, wet_soil, light_well, jet_well, big_well, deep_well,"
+            " groove_width, order_no) SELECT id, name, con_found, excvt, found_angle, dock_l,"
+            " dock_h, cover50, cover, '0|0|0', '3.5|1.2|2', '6|2.5|2', '10|10|2', '15|20|1',"
+            " 'WorkWidth', order_no FROM principle_enclosure_old"
+        )
+        conn.execute("DROP TABLE principle_enclosure_old")
         conn.execute("ALTER TABLE element RENAME TO element_old")
         conn.execute(
             "CREATE TABLE element (id INTEGER PRIMARY KEY, unit_id INTEGER, category INTEGER,"
@@ -166,7 +207,7 @@ def test_v1_project_migrates_source_column(tmp_path: Path) -> None:
         conn.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
         conn.commit()
     orm.open_database(legacy_copy)
-    assert orm.get_meta("schema_version") == "3"
+    assert orm.get_meta("schema_version") == "4"
     # v1 单原则引用被补成 ratio=1 的引用行（v2→v3 迁移语义）
     from sqlalchemy import select
 
@@ -177,4 +218,7 @@ def test_v1_project_migrates_source_column(tmp_path: Path) -> None:
     assert all(ref.ratio == 1.0 for ref in refs)
     element_row = orm.session().scalars(select(Element)).first()
     assert element_row.main_pe_name == element_row.pe_name != ""
+    # v3→v4：降水/面宽原则独立，元素引用随围护名落到同名原则
+    assert element_row.pp_name == element_row.pe_name
+    assert element_row.pw_name == element_row.pe_name
     orm.close_database()

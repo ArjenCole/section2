@@ -50,12 +50,12 @@ from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.views.widgets.table_edit_delegate import TableEditDelegate
 
 _ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
-_COL_NAME, _COL_CATEGORY, _COL_SPEC, _COL_DEPTH, _COL_UNIT, _COL_AMOUNT, _COL_PE, _COL_PF, _COL_SOURCE = range(9)
-_ELEMENT_HEADERS = ["名称", "类型", "规格", "埋深", "单位", "数量", "沟槽围护原则", "地基处理原则", "来源"]
+_COL_NAME, _COL_CATEGORY, _COL_SPEC, _COL_DEPTH, _COL_UNIT, _COL_AMOUNT, _COL_PE, _COL_PF, _COL_PP, _COL_PW, _COL_SOURCE = range(11)
+_ELEMENT_HEADERS = ["名称", "类型", "规格", "埋深", "单位", "数量", "沟槽围护原则", "地基处理原则", "降水原则", "工作面宽原则", "来源"]
 #: 复刻旧版 dGVmain 列结构（规格 / 来源列只读）
 #: 类型与沟槽围护原则列同宽；围护/地基原则两列等宽（下拉框完整显示 6 个字）；
 #: 规格列两倍宽；埋深=数量列宽；单位列容得下表头两字；埋深/单位/数量居中
-_ELEMENT_WIDTHS = [130, 110, 280, 70, 48, 70, 130, 130, 80]
+_ELEMENT_WIDTHS = [130, 110, 280, 70, 48, 70, 130, 130, 130, 130, 80]
 
 _QUANTITY_HEADERS = ["编号", "类别", "项目", "单位", "计算表达式", "工程量"]
 _QCOL_EXPRESSION = 4
@@ -488,8 +488,12 @@ class UnitPanel(QWidget):
             foundation_names = _combo_names(
                 project_io.foundation_names() + [MULTI_PF_TEXT], rows, "pf_name"
             )
+            precipitation_names = _combo_names(project_io.precipitation_names(), rows, "pp_name")
+            width_names = _combo_names(project_io.width_names(), rows, "pw_name")
             for index, row in enumerate(rows):
-                self._fill_element_row(index, row, enclosure_names, foundation_names)
+                self._fill_element_row(
+                    index, row, enclosure_names, foundation_names, precipitation_names, width_names
+                )
         finally:
             self._loading = False
         self._restore_current_element(keep_element, keep_column)
@@ -669,6 +673,8 @@ class UnitPanel(QWidget):
         row: ElementRow,
         enclosure_names: list[str],
         foundation_names: list[str],
+        precipitation_names: list[str],
+        width_names: list[str],
     ) -> None:
         name_item = QTableWidgetItem(row.name)
         name_item.setData(_ELEMENT_ROLE, row.id)
@@ -718,6 +724,22 @@ class UnitPanel(QWidget):
             lambda text, element_id=row.id: self._vm.set_element_field(element_id, "pf_name", text)
         )
         self._element_table.setCellWidget(index, _COL_PF, pf_combo)
+
+        pp_combo = QComboBox()
+        pp_combo.addItems(precipitation_names)
+        pp_combo.setCurrentText(row.pp_name)
+        pp_combo.currentTextChanged.connect(
+            lambda text, element_id=row.id: self._vm.set_element_field(element_id, "pp_name", text)
+        )
+        self._element_table.setCellWidget(index, _COL_PP, pp_combo)
+
+        pw_combo = QComboBox()
+        pw_combo.addItems(width_names)
+        pw_combo.setCurrentText(row.pw_name)
+        pw_combo.currentTextChanged.connect(
+            lambda text, element_id=row.id: self._vm.set_element_field(element_id, "pw_name", text)
+        )
+        self._element_table.setCellWidget(index, _COL_PW, pw_combo)
 
         source_item = QTableWidgetItem(row.source)
         source_item.setFlags(source_item.flags() & ~Qt.ItemFlag.ItemIsEditable)

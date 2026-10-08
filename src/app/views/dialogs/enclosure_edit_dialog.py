@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QFormLayout,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -41,10 +40,7 @@ from app.services.project_io import new_enclosure_work
 from app.views.dialogs.principle_dialogs import (
     ComponentEditDialog,
     EnclosureWorkDialog,
-    PrecipitationDialog,
-    WorkWidthDialog,
     describe_component,
-    precipitation_text,
 )
 from app.views.widgets.cell_fill_table import CellFillTable
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
@@ -139,19 +135,14 @@ class EnclosureEditDialog(FramelessDialog):
         return box
 
     def _build_precipitation_box(self) -> QGroupBox:
-        box = QGroupBox("降水措施")
-        layout = QGridLayout(box)
-        self._precipitation_label = QLabel("")
-        self._precipitation_label.setProperty("role", "hint")
-        self._precipitation_label.setWordWrap(True)
-        self._precipitation_label.setAlignment(Qt.AlignmentFlag.AlignTop)
-        layout.addWidget(self._precipitation_label, 0, 0, 1, 2)
-        btn_pre = QPushButton("编辑降水措施原则")
-        btn_pre.clicked.connect(self._edit_precipitation)
-        btn_width = QPushButton("编辑工作面宽度原则")
-        btn_width.clicked.connect(self._edit_widths)
-        layout.addWidget(btn_pre, 1, 0)
-        layout.addWidget(btn_width, 1, 1)
+        # v4 起降水/面宽独立成原则（各自的编辑窗体从原则横条进入），此处改为提示
+        box = QGroupBox("降水 / 面宽")
+        layout = QHBoxLayout(box)
+        label = QLabel("降水与工作面宽度已独立为原则，\n在主窗体横条中选择“降水原则 / 面宽原则”编辑。")
+        label.setProperty("role", "hint")
+        label.setWordWrap(True)
+        label.setAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(label)
         return box
 
     def _build_confirm_buttons(self) -> QWidget:
@@ -208,7 +199,6 @@ class EnclosureEditDialog(FramelessDialog):
         cushion = enclosure.cushions[0] if enclosure.cushions else None
         self._cushion_name.setText(cushion.name if cushion else "")
         self._cushion_h.setText(f"{cushion.h:g}" if cushion else "0")
-        self._precipitation_label.setText(precipitation_text(enclosure))
 
     def _fill(self) -> None:
         """FlashdGVPE：重建做法表格。"""
@@ -403,25 +393,6 @@ class EnclosureEditDialog(FramelessDialog):
             work.order_no = index
         project_io.commit()
         self._fill()
-
-    # ------------------------------------------------------------------ 子编辑器
-    def _edit_widths(self) -> None:
-        enclosure = self._enclosure()
-        if enclosure is None:
-            return
-        dialog = WorkWidthDialog(enclosure, self)
-        if dialog.exec() and dialog.saved:
-            project_io.commit()
-            self._reload()
-
-    def _edit_precipitation(self) -> None:
-        enclosure = self._enclosure()
-        if enclosure is None:
-            return
-        dialog = PrecipitationDialog(enclosure, self)
-        if dialog.exec() and dialog.saved:
-            project_io.commit()
-            self._reload()
 
     # ------------------------------------------------------------------ 确认 / 取消
     def _confirm(self) -> None:

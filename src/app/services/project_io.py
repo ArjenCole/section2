@@ -32,6 +32,7 @@ from app.core.version import (
 )
 from app.core.models import base as orm
 from app.core.models.models import (
+    GROOVE_WIDTH_WORK,
     MULTI_LEVEL_TEXT,
     PRECIPITATION_DEFAULTS,
     BasicInfo,
@@ -42,9 +43,11 @@ from app.core.models.models import (
     EnclosureWork,
     PcpEnclosure,
     PcpFoundation,
+    PcpPrecipitation,
+    PcpWidth,
     Segment,
     Unit,
-    WorkWidth,
+    WidthItem,
     format_precipitation,
 )
 
@@ -89,6 +92,9 @@ class NewProjectSpec:
     enclosure_con_found: bool = True
     #: 默认地基处理原则
     foundation_name: str = "默认地基处理原则"
+    #: 默认降水 / 面宽原则（v4 起与围护、地基同级）
+    precipitation_name: str = "默认降水原则"
+    width_name: str = "默认面宽原则"
 
 
 # 最近一次“首次修改备份”是否已做过：每打开一个工程重置一次
@@ -493,6 +499,28 @@ def foundation_names() -> list[str]:
     ]
 
 
+def precipitation_names() -> list[str]:
+    if not orm.is_open():
+        return []
+    return [
+        row
+        for row in orm.session().scalars(
+            select(PcpPrecipitation.name).order_by(PcpPrecipitation.order_no, PcpPrecipitation.id)
+        )
+    ]
+
+
+def width_names() -> list[str]:
+    if not orm.is_open():
+        return []
+    return [
+        row
+        for row in orm.session().scalars(
+            select(PcpWidth.name).order_by(PcpWidth.order_no, PcpWidth.id)
+        )
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # 单价字典（key = 类别|项目|单位；旧版迁移会把旧工程单价写进 price 表）
 # --------------------------------------------------------------------------- #
@@ -529,8 +557,28 @@ def foundations() -> list[PcpFoundation]:
     )
 
 
+def precipitations() -> list[PcpPrecipitation]:
+    if not orm.is_open():
+        return []
+    return list(
+        orm.session().scalars(
+            select(PcpPrecipitation).order_by(PcpPrecipitation.order_no, PcpPrecipitation.id)
+        )
+    )
+
+
+def width_principles() -> list[PcpWidth]:
+    if not orm.is_open():
+        return []
+    return list(
+        orm.session().scalars(
+            select(PcpWidth).order_by(PcpWidth.order_no, PcpWidth.id)
+        )
+    )
+
+
 def create_enclosure(name: str = "新围护原则") -> PcpEnclosure | None:
-    """新建围护原则：默认做法 + 默认宽度表（复刻旧版 mcPcpEnclosure 构造）。
+    """新建围护原则：默认做法（复刻旧版 mcPcpEnclosure 构造；降水/面宽已独立）。
 
     重名时自动追加数字后缀（原版 mscMslns.ReNameToAdd）。
     """
@@ -543,14 +591,43 @@ def create_enclosure(name: str = "新围护原则") -> PcpEnclosure | None:
         order_no=next_order_no(PcpEnclosure),
     )
     enclosure.cushions.append(EnclosureCushion(name="中粗砂", h=200.0, order_no=0))
-    for key, (elevation, gap, sides) in PRECIPITATION_DEFAULTS.items():
-        setattr(enclosure, key, format_precipitation(elevation, gap, sides))
     session.add(enclosure)
     orm.session().flush()
     new_enclosure_work(session, enclosure, library, order_no=0)
-    seed_width_tables(session, enclosure, *default_width_tables())
     commit()
     return enclosure
+
+
+def create_precipitation(name: str = "新降水原则") -> PcpPrecipitation | None:
+    """新建降水原则（井型取旧版构造函数默认值）。重名自动加后缀。"""
+    if not orm.is_open():
+        return None
+    session = orm.session()
+    precipitation = PcpPrecipitation(
+        name=unique_principle_name(name or "新降水原则", precipitation_names()),
+        order_no=next_order_no(PcpPrecipitation),
+    )
+    for key, (elevation, gap, sides) in PRECIPITATION_DEFAULTS.items():
+        setattr(precipitation, key, format_precipitation(elevation, gap, sides))
+    session.add(precipitation)
+    commit()
+    return precipitation
+
+
+def create_width(name: str = "新面宽原则") -> PcpWidth | None:
+    """新建面宽原则：默认宽度表（复刻旧版构造函数的 WorkWidth/GrooveB）。重名自动加后缀。"""
+    if not orm.is_open():
+        return None
+    session = orm.session()
+    width = PcpWidth(
+        name=unique_principle_name(name or "新面宽原则", width_names()),
+        order_no=next_order_no(PcpWidth),
+    )
+    session.add(width)
+    orm.session().flush()
+    seed_width_tables(session, width, *default_width_tables())
+    commit()
+    return width
 
 
 def create_foundation(name: str = "新地基原则") -> PcpFoundation | None:
@@ -591,6 +668,28 @@ def rename_foundation(foundation_id: int, name: str) -> None:
     commit()
 
 
+def rename_precipitation(precipitation_id: int, name: str) -> None:
+    precipitation = orm.session().get(PcpPrecipitation, precipitation_id)
+    if precipitation is None or not name.strip() or precipitation.name == name.strip():
+        return
+    old = precipitation.name
+    new = name.strip()
+    precipitation.name = new
+    _rename_principle_reference(orm.session(), "pp_name", old, new)
+    commit()
+
+
+def rename_width(width_id: int, name: str) -> None:
+    width = orm.session().get(PcpWidth, width_id)
+    if width is None or not name.strip() or width.name == name.strip():
+        return
+    old = width.name
+    new = name.strip()
+    width.name = new
+    _rename_principle_reference(orm.session(), "pw_name", old, new)
+    commit()
+
+
 def _rename_principle_reference(session, field: str, old: str, new: str) -> None:
     from app.core.models.models import Element, ElementPrinciple
 
@@ -600,7 +699,9 @@ def _rename_principle_reference(session, field: str, old: str, new: str) -> None
         # 主原则与多原则引用行同步改名（旧版 mscCtrl.Set 会同步引用字典的键）
         for element in session.scalars(select(Element).where(Element.main_pe_name == old)):
             element.main_pe_name = new
-    kind = "pe" if field == "pe_name" else "pf"
+    kind = {"pe_name": "pe", "pf_name": "pf"}.get(field)
+    if kind is None:
+        return  # 降水/面宽原则没有多原则引用行
     for ref in session.scalars(select(ElementPrinciple).where(ElementPrinciple.kind == kind)):
         if ref.name == old:
             ref.name = new
@@ -614,6 +715,16 @@ def merge_target_enclosure(name: str) -> str | None:
 
 def merge_target_foundation(name: str) -> str | None:
     names = [item.name for item in foundations() if item.name != name]
+    return names[-1] if names else None
+
+
+def merge_target_precipitation(name: str) -> str | None:
+    names = [item.name for item in precipitations() if item.name != name]
+    return names[-1] if names else None
+
+
+def merge_target_width(name: str) -> str | None:
+    names = [item.name for item in width_principles() if item.name != name]
     return names[-1] if names else None
 
 
@@ -667,11 +778,49 @@ def delete_foundation(foundation_id: int, replacement: str | None = None) -> str
     return None
 
 
+def delete_precipitation(precipitation_id: int, replacement: str | None = None) -> str | None:
+    """删除降水原则，引用并入另一条。"""
+    if not orm.is_open():
+        return "尚未打开工程。"
+    precipitation = orm.session().get(PcpPrecipitation, precipitation_id)
+    if precipitation is None:
+        return None
+    if len(precipitations()) <= 1:
+        return "至少需要一种降水原则。"
+    target = replacement or merge_target_precipitation(precipitation.name)
+    if not target or target == precipitation.name:
+        return "找不到可替代引用的降水原则。"
+    _rename_principle_reference(orm.session(), "pp_name", precipitation.name, target)
+    orm.session().delete(precipitation)
+    commit()
+    return None
+
+
+def delete_width(width_id: int, replacement: str | None = None) -> str | None:
+    """删除面宽原则，引用并入另一条。"""
+    if not orm.is_open():
+        return "尚未打开工程。"
+    width = orm.session().get(PcpWidth, width_id)
+    if width is None:
+        return None
+    if len(width_principles()) <= 1:
+        return "至少需要一种面宽原则。"
+    target = replacement or merge_target_width(width.name)
+    if not target or target == width.name:
+        return "找不到可替代引用的面宽原则。"
+    _rename_principle_reference(orm.session(), "pw_name", width.name, target)
+    orm.session().delete(width)
+    commit()
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # *.spcp 单原则导入/导出（复刻旧版 CMSpcp 菜单，XML 字段与旧版 toXML 一致）
 # --------------------------------------------------------------------------- #
 _SPCP_PE_ROOT = "mcPcpEnclosure"
 _SPCP_PF_ROOT = "mcPcpFoundation"
+_SPCP_PP_ROOT = "mcPcpPrecipitation"
+_SPCP_PW_ROOT = "mcPcpWidth"
 _PRECIPITATION_XML_KEYS = (
     ("wet_soil", "wetsoild"),
     ("light_well", "lightwell"),
@@ -682,7 +831,7 @@ _PRECIPITATION_XML_KEYS = (
 
 
 def export_enclosure_spcp(enclosure_id: int, path: str | Path) -> Path:
-    """导出围护原则为 *.spcp（旧版 mcPcpEnclosure.toXML 格式）。"""
+    """导出围护原则为 *.spcp（旧版 mcPcpEnclosure.toXML 格式；降水/面宽已独立）。"""
     enclosure = orm.session().get(PcpEnclosure, enclosure_id)
     if enclosure is None:
         raise ProjectIoError("围护原则不存在。")
@@ -702,20 +851,6 @@ def export_enclosure_spcp(enclosure_id: int, path: str | Path) -> Path:
     SubElement(root, "DockH").text = enclosure.dock_h
     SubElement(root, "Cover50").text = enclosure.cover50
     SubElement(root, "Cover").text = enclosure.cover
-    for field, tag in _PRECIPITATION_XML_KEYS:
-        SubElement(root, tag).text = getattr(enclosure, field)
-    SubElement(root, "grooveWidth").text = enclosure.groove_width
-    for kind, tag in (("work", "WorkWidth"), ("groove_b", "GrooveB")):
-        container = SubElement(root, tag)
-        tables: dict[str, dict[int, float]] = {}
-        for row in enclosure.widths:
-            if row.kind != kind:
-                continue
-            tables.setdefault(row.pipe_type, {})[row.dn] = row.width
-        for pipe_type in sorted(tables):
-            category_node = SubElement(container, pipe_type)
-            for dn in sorted(tables[pipe_type]):
-                SubElement(category_node, f"d{dn}").text = _number_text(tables[pipe_type][dn])
     for work in enclosure.works:
         work_node = SubElement(root, "mcEnclosure")
         SubElement(work_node, "MinDepth").text = _number_text(work.min_depth)
@@ -750,10 +885,45 @@ def export_foundation_spcp(foundation_id: int, path: str | Path) -> Path:
     return _write_spcp(root, path)
 
 
-def import_spcp(path: str | Path) -> tuple[str, str]:
-    """导入 *.spcp，返回 (kind, 新原则名)；kind 为 "enclosure" / "foundation"。
+def export_precipitation_spcp(precipitation_id: int, path: str | Path) -> Path:
+    """导出降水原则为 *.spcp（降水独立成原则后的 XML；井型字段沿用旧版拼写）。"""
+    precipitation = orm.session().get(PcpPrecipitation, precipitation_id)
+    if precipitation is None:
+        raise ProjectIoError("降水原则不存在。")
+    root = ET.Element(_SPCP_PP_ROOT)
+    SubElement(root, "Name").text = precipitation.name
+    for field, tag in _PRECIPITATION_XML_KEYS:
+        SubElement(root, tag).text = getattr(precipitation, field)
+    return _write_spcp(root, path)
 
-    XML 结构与旧版一致；原则名与现有原则重名时自动加后缀。
+
+def export_width_spcp(width_id: int, path: str | Path) -> Path:
+    """导出面宽原则为 *.spcp（面宽独立成原则后的 XML；表格字段沿用旧版拼写）。"""
+    width = orm.session().get(PcpWidth, width_id)
+    if width is None:
+        raise ProjectIoError("面宽原则不存在。")
+    root = ET.Element(_SPCP_PW_ROOT)
+    SubElement(root, "Name").text = width.name
+    SubElement(root, "grooveWidth").text = width.groove_width
+    for kind, tag in (("work", "WorkWidth"), ("groove_b", "GrooveB")):
+        container = SubElement(root, tag)
+        tables: dict[str, dict[int, float]] = {}
+        for row in width.items:
+            if row.kind != kind:
+                continue
+            tables.setdefault(row.pipe_type, {})[row.dn] = row.width
+        for pipe_type in sorted(tables):
+            category_node = SubElement(container, pipe_type)
+            for dn in sorted(tables[pipe_type]):
+                SubElement(category_node, f"d{dn}").text = _number_text(tables[pipe_type][dn])
+    return _write_spcp(root, path)
+
+
+def import_spcp(path: str | Path) -> tuple[str, str]:
+    """导入 *.spcp，返回 (kind, 新原则名)；kind 为 enclosure/foundation/precipitation/width。
+
+    旧版 mcPcpEnclosure 文件里的降水/宽度表随导入拆成同名降水/面宽原则；
+    原则名与现有原则重名时自动加后缀。
     """
     source = Path(path)
     try:
@@ -779,7 +949,53 @@ def import_spcp(path: str | Path) -> tuple[str, str]:
                                                            order_no=next_order_no(PcpFoundation))
         commit()
         return "foundation", foundation.name
-    raise ProjectIoError("不是有效的原则文件（缺少 mcPcpEnclosure / mcPcpFoundation 根元素）。")
+    if root.tag == _SPCP_PP_ROOT:
+        name = unique_principle_name(_text_of(root, "Name", "导入降水原则"), precipitation_names())
+        precipitation = PcpPrecipitation(name=name, order_no=next_order_no(PcpPrecipitation))
+        for field, tag in _PRECIPITATION_XML_KEYS:
+            setattr(precipitation, field, _text_of(root, tag, "0|0|0"))
+        session.add(precipitation)
+        commit()
+        return "precipitation", precipitation.name
+    if root.tag == _SPCP_PW_ROOT:
+        name = unique_principle_name(_text_of(root, "Name", "导入面宽原则"), width_names())
+        width = PcpWidth(
+            name=name,
+            groove_width=_text_of(root, "grooveWidth", GROOVE_WIDTH_WORK),
+            order_no=next_order_no(PcpWidth),
+        )
+        session.add(width)
+        session.flush()
+        for kind, tag in (("work", "WorkWidth"), ("groove_b", "GrooveB")):
+            container = root.find(tag)
+            if container is None:
+                continue
+            for category_node in container:
+                for dn_node in category_node:
+                    dn_text = dn_node.tag.lstrip("d")
+                    try:
+                        dn = int(dn_text)
+                        value = float(dn_node.text or 0)
+                    except ValueError:
+                        continue
+                    session.add(
+                        WidthItem(
+                            width_id=width.id,
+                            pipe_type=category_node.tag,
+                            dn=dn,
+                            width=value,
+                            kind=kind,
+                            order_no=0,
+                        )
+                    )
+        commit()
+        return "width", width.name
+    raise ProjectIoError("不是有效的原则文件（无法识别的根元素）。")
+
+
+def _text_of(node: ET.Element, tag: str, default: str = "") -> str:
+    child = node.find(tag)
+    return child.text.strip() if child is not None and child.text else default
 
 
 def _component_xml(component: Component) -> ET.Element:
@@ -859,7 +1075,10 @@ def _ensure_basic_info() -> None:
 
 
 def _seed_default_principles(session, spec: NewProjectSpec) -> None:
-    """新工程按向导选定的名称建默认围护/地基原则（复刻旧版构造函数的初始状态）。"""
+    """新工程按向导选定的名称建默认原则（复刻旧版构造函数的初始状态）。
+
+    降水 / 面宽 v4 起是独立原则：围护只带结构与垫层，宽度表挂在面宽原则下。
+    """
     library = component_library()
     work_widths, groove_bs = default_width_tables()
 
@@ -871,17 +1090,26 @@ def _seed_default_principles(session, spec: NewProjectSpec) -> None:
         order_no=0,
     )
     enclosure.cushions.append(EnclosureCushion(name="中粗砂", h=200.0, order_no=0))
-    for key, (elevation, gap, sides) in PRECIPITATION_DEFAULTS.items():
-        setattr(enclosure, key, format_precipitation(elevation, gap, sides))
     session.add(enclosure)
     session.flush()
     new_enclosure_work(session, enclosure, library, order_no=0)
-    seed_width_tables(session, enclosure, work_widths, groove_bs)
 
     foundation = PcpFoundation(name=spec.foundation_name or "默认地基处理原则", order_no=0)
     session.add(foundation)
     session.flush()
     attach_foundation_component(session, foundation, library)
+
+    precipitation = PcpPrecipitation(
+        name=spec.precipitation_name or "默认降水原则", order_no=0
+    )
+    for key, (elevation, gap, sides) in PRECIPITATION_DEFAULTS.items():
+        setattr(precipitation, key, format_precipitation(elevation, gap, sides))
+    session.add(precipitation)
+
+    width = PcpWidth(name=spec.width_name or "默认面宽原则", order_no=0)
+    session.add(width)
+    session.flush()
+    seed_width_tables(session, width, work_widths, groove_bs)
 
 
 # --------------------------------------------------------------------------- #
@@ -985,17 +1213,17 @@ def _last_level_id(session, work_id: int) -> int:
     )
 
 
-def seed_width_tables(session, enclosure: PcpEnclosure, work_widths: dict, groove_bs: dict) -> None:
-    """把工作面 / 沟槽宽度默认表写进围护原则（旧版 DeepClone(mscInventory.WorkWidth/GrooveB)）。"""
+def seed_width_tables(session, width: PcpWidth, work_widths: dict, groove_bs: dict) -> None:
+    """把工作面 / 沟槽宽度默认表写进面宽原则（旧版 DeepClone(mscInventory.WorkWidth/GrooveB)）。"""
     for kind, table in (("work", work_widths), ("groove_b", groove_bs)):
         for category_index, (category, values) in enumerate(table.items()):
-            for dn_index, dn in enumerate(sorted(values)):
+            for dn_index, (dn, value) in enumerate(sorted(values.items())):
                 session.add(
-                    WorkWidth(
-                        enclosure_id=enclosure.id,
+                    WidthItem(
+                        width_id=width.id,
                         pipe_type=category,
                         dn=dn,
-                        width=values[dn],
+                        width=value,
                         kind=kind,
                         order_no=category_index * 100 + dn_index,
                     )
