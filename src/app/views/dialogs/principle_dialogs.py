@@ -3,14 +3,14 @@
 从 principle_panel 迁移而来，供原则编辑主对话框（EnclosureEditDialog /
 FoundationEditDialog，复刻 FormPE / FormPF）与横条等处复用：
 
-* :class:`EnclosureWorkDialog` —— 分级围护编辑（FormEcls：围护构件分级表 +
+* :class:`EnclosureWorkDialog` —— 多级围护编辑窗体（FormEcls：围护构件分级表 +
   右侧确认/取消，做法埋深与止水构件在原则主窗体编辑）；
 * :class:`ComponentEditDialog` —— 构件编辑器（FormCpntEdit：左参数表、
   右上围护公式、右下支撑公式，行头显示键名）；
 * :class:`WidthEditDialog` —— 面宽原则编辑（FormWorkWidth：按工作面宽度 /
   按沟槽总宽度两个 tab，各自一张宽度表，当前 tab 即取值方式）；
 * :class:`PrecipitationEditDialog` —— 降水原则编辑（FormPrecipitation：
-  五种井型的启用 / 深度阈值 / 井距 / 侧数）。
+  措施名称 / 选用 / 埋深 / 范围 / 侧数 / 间隔，五种井型）。
 """
 
 from __future__ import annotations
@@ -127,7 +127,7 @@ def precipitation_text(enclosure: PcpEnclosure) -> str:
 class PrincipleSubDialog(FramelessDialog):
     """原则子编辑对话框的公共骨架：无边框（Quotor 风格）+ 确定 = 写库 / 取消 = 丢弃。
 
-    ``with_buttons=False`` 时不加底部按钮行，由子类自建（如分级围护编辑的
+    ``with_buttons=False`` 时不加底部按钮行，由子类自建（如多级围护编辑窗体的
     右侧竖排按钮，旧版 FormEcls 布局）。
     """
 
@@ -163,7 +163,7 @@ class PrincipleSubDialog(FramelessDialog):
 
 
 class EnclosureWorkDialog(PrincipleSubDialog):
-    """分级围护编辑（旧版 FormEcls）：围护构件分级表 + 右侧竖排确认/取消。
+    """多级围护编辑窗体（旧版 FormEcls）：围护构件分级表 + 右侧竖排确认/取消。
 
     布局与交互照抄 FormEcls：固定勾选 ↔ 级高 1 / -1（均分级高只读显示
     “均分高度”）；围护类型下拉按库模板重建级构件；双击“围护形式描述”打开
@@ -173,7 +173,7 @@ class EnclosureWorkDialog(PrincipleSubDialog):
     """
 
     def __init__(self, work: EnclosureWork, parent: QWidget | None = None) -> None:
-        super().__init__("分级围护编辑", parent, with_buttons=False)
+        super().__init__("多级围护编辑窗体", parent, with_buttons=False)
         self.resize(695, 460)
         self._work = work
         self._repair_levels()
@@ -571,15 +571,17 @@ class WidthEditDialog(FramelessDialog):
         btn_reset.clicked.connect(self._reset_current)
         button_row.addWidget(btn_reset)
         button_row.addStretch(1)
-        btn_yes = QPushButton("确认修改")
-        btn_yes.setFixedWidth(76)
-        btn_yes.setProperty("primary", "true")
-        btn_yes.clicked.connect(self._confirm)
-        btn_cancel = QPushButton("取消修改")
+        # Apple HIG：取消在左，确认（默认按钮）在右
+        btn_cancel = QPushButton("取消")
         btn_cancel.setFixedWidth(76)
         btn_cancel.clicked.connect(self.reject)
-        button_row.addWidget(btn_yes)
+        btn_yes = QPushButton("确认")
+        btn_yes.setFixedWidth(76)
+        btn_yes.setProperty("primary", "true")
+        btn_yes.setDefault(True)
+        btn_yes.clicked.connect(self._confirm)
         button_row.addWidget(btn_cancel)
+        button_row.addWidget(btn_yes)
         root.addLayout(button_row)
 
     # ------------------------------------------------------------------ 数据
@@ -681,15 +683,19 @@ class WidthEditDialog(FramelessDialog):
 class PrecipitationEditDialog(FramelessDialog):
     """降水原则编辑（旧版 FormPrecipitation，v4 起独立成原则）。
 
-    五种井型的启用 / 深度阈值 / 井距 / 侧数；下方实时给出降水描述
-    （旧版 DiscribePreciptitation 的等价文案）。
+    表格列沿用 1.0：措施名称 / 选用 / 埋深 / 范围 / 侧数 / 间隔（旧版“道数”
+    字段改用“侧数”表达）；未选用行埋深、范围显示“-”且只读，已选用行的
+    范围自最深已选用行向浅处推算（+∞ → 下一已选用行埋深，旧版 FlashFm）；
+    下方实时给出降水描述（旧版 DiscribePreciptitation 的等价文案）。
     """
 
     _ROWS = tuple(reversed(PRECIPITATION_COLUMNS))  # 深井 → 湿土排水，与旧版行序一致
 
+    _COL_NAME, _COL_ENABLED, _COL_DEPTH, _COL_RANGE, _COL_SIDES, _COL_GAP = range(6)
+
     def __init__(self, precipitation_id: int, parent: QWidget | None = None) -> None:
         super().__init__(parent, "降水原则编辑")
-        self.resize(430, 460)
+        self.resize(455, 460)
         self._precipitation_id = precipitation_id
         self._loading = False
         self._build_ui()
@@ -706,12 +712,19 @@ class PrecipitationEditDialog(FramelessDialog):
         name_row.addWidget(self._name, 1)
         root.addLayout(name_row)
 
-        box = QGroupBox("井型（深度阈值 m / 井距 m / 侧数）")
+        box = QGroupBox("井型（埋深 m / 侧数 / 间隔 m）")
         layout = QVBoxLayout(box)
-        self._table = CellFillTable(len(self._ROWS), 4)
-        self._table.setHorizontalHeaderLabels(["启用", "深度阈值 m", "井距 m", "侧数"])
+        self._table = CellFillTable(len(self._ROWS), 6)
+        self._table.setHorizontalHeaderLabels(
+            ["措施名称", "选用", "埋深", "范围", "侧数", "间隔"]
+        )
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.verticalHeader().setDefaultSectionSize(28)
+        self._table.verticalHeader().setVisible(False)  # 行标识已由“措施名称”列承担
+        # 固定窄列按内容自适应，剩余宽度全部让给末列“间隔”
+        header = self._table.horizontalHeader()
+        for column in range(5):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self._table)
         self._describe = QLabel("")
         self._describe.setProperty("role", "hint")
@@ -722,15 +735,17 @@ class PrecipitationEditDialog(FramelessDialog):
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
-        btn_yes = QPushButton("确认修改")
-        btn_yes.setFixedWidth(76)
-        btn_yes.setProperty("primary", "true")
-        btn_yes.clicked.connect(self._confirm)
-        btn_cancel = QPushButton("取消修改")
+        # Apple HIG：取消在左，确认（默认按钮）在右
+        btn_cancel = QPushButton("取消")
         btn_cancel.setFixedWidth(76)
         btn_cancel.clicked.connect(self.reject)
-        button_row.addWidget(btn_yes)
+        btn_yes = QPushButton("确认")
+        btn_yes.setFixedWidth(76)
+        btn_yes.setProperty("primary", "true")
+        btn_yes.setDefault(True)
+        btn_yes.clicked.connect(self._confirm)
         button_row.addWidget(btn_cancel)
+        button_row.addWidget(btn_yes)
         root.addLayout(button_row)
 
     def _precipitation(self) -> PcpPrecipitation | None:
@@ -745,18 +760,59 @@ class PrecipitationEditDialog(FramelessDialog):
             self._name.setText(precipitation.name)
             for row_index, key in enumerate(self._ROWS):
                 enabled, elevation, gap, sides = precipitation_enabled(key, precipitation)
+                name_item = QTableWidgetItem(PRECIPITATION_LABELS[key])
+                name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self._table.setItem(row_index, self._COL_NAME, name_item)
                 check = QTableWidgetItem()
                 check.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
                 check.setCheckState(Qt.CheckState.Checked if enabled else Qt.CheckState.Unchecked)
-                self._table.setItem(row_index, 0, check)
-                self._table.setItem(row_index, 1, QTableWidgetItem("" if not enabled else f"{elevation:g}"))
-                self._table.setItem(row_index, 2, QTableWidgetItem(f"{gap:g}"))
-                self._table.setItem(row_index, 3, QTableWidgetItem(f"{sides:g}"))
+                self._table.setItem(row_index, self._COL_ENABLED, check)
+                self._table.setItem(
+                    row_index, self._COL_DEPTH,
+                    QTableWidgetItem("" if not enabled else f"{elevation:g}"),
+                )
+                self._table.setItem(row_index, self._COL_RANGE, QTableWidgetItem(""))
+                self._table.setItem(row_index, self._COL_SIDES, QTableWidgetItem(f"{sides:g}"))
+                self._table.setItem(row_index, self._COL_GAP, QTableWidgetItem(f"{gap:g}"))
         finally:
             self._loading = False
         self._describe_change()
 
+    def _refresh_range(self) -> None:
+        """旧版 FlashFm：自最深行向浅处推算“范围”列并维护埋深列的可用态。
+
+        已选用行：范围 = 下一已选用行（更深处）的埋深，最深已选用行为“+∞”；
+        未选用行：埋深、范围显示“-”且只读，勾选时埋深“-”复位为“0”。
+        """
+        if self._loading:
+            return
+        self._loading = True
+        try:
+            current = "+∞"
+            for row in range(self._table.rowCount()):
+                depth_item = self._table.item(row, self._COL_DEPTH)
+                range_item = self._table.item(row, self._COL_RANGE)
+                check = self._table.item(row, self._COL_ENABLED)
+                enabled = check is not None and check.checkState() == Qt.CheckState.Checked
+                if enabled:
+                    if range_item is not None:
+                        range_item.setText(current)
+                    if depth_item is not None:
+                        depth_item.setFlags(depth_item.flags() | Qt.ItemFlag.ItemIsEditable)
+                        if depth_item.text().strip() in ("", "-"):
+                            depth_item.setText("0")
+                        current = depth_item.text()
+                else:
+                    if depth_item is not None:
+                        depth_item.setFlags(depth_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        depth_item.setText("-")
+                    if range_item is not None:
+                        range_item.setText("-")
+        finally:
+            self._loading = False
+
     def _describe_change(self, *_args) -> None:
+        self._refresh_range()
         self._apply_rows()
         precipitation = self._precipitation()
         if precipitation is not None:
@@ -769,7 +825,7 @@ class PrecipitationEditDialog(FramelessDialog):
         if precipitation is None:
             return
         for row_index, key in enumerate(self._ROWS):
-            check = self._table.item(row_index, 0)
+            check = self._table.item(row_index, self._COL_ENABLED)
             enabled = check is not None and check.checkState() == Qt.CheckState.Checked
 
             def _num(column: int, default: float) -> float:
@@ -779,9 +835,9 @@ class PrecipitationEditDialog(FramelessDialog):
                 except ValueError:
                     return default
 
-            elevation = _num(1, -1.0) if enabled else -1.0
-            gap = _num(2, 0.0)
-            sides = _num(3, 0.0)
+            elevation = _num(self._COL_DEPTH, -1.0) if enabled else -1.0
+            gap = _num(self._COL_GAP, 0.0)
+            sides = _num(self._COL_SIDES, 0.0)
             setattr(precipitation, key, format_precipitation(elevation, gap, sides))
         project_io.commit()
 

@@ -51,5 +51,5 @@ def test_values_align_with_spec_and_use_defaults(qapp):
     assert values["enclosure_excvt"] == "Ⅲ类土"
     assert values["enclosure_found_angle"] == 120
     assert values["enclosure_con_found"] is True
-    assert values["foundation_name"] == "默认地基处理原则"
+    assert values["foundation_name"] == "默认地基原则"
     assert values["atlas_name"] == spec.atlas_name

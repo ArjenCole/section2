@@ -1,6 +1,6 @@
 """原则横条（复刻旧版 FormMdi 的 panelPrincple，位于主表格上方）。
 
-布局：左侧竖排四个单选「沟槽围护 / 地基处理 / 降水原则 / 面宽原则」（原版
+布局：左侧竖排四个单选「沟槽围护 / 地基处理 / 降水措施 / 工作面宽」（原版
 RBmPE / RBmPF 上下排列，v4 起降水与面宽独立成原则）+ 原则名标签横排
 （围护底色 #448AFF、地基底色 #455A64、降水底色 #26A69A、面宽底色 #7E57C2、
 白字居中），「+」按钮紧贴最右侧原则块（原版 BTNaddPCP 与标签同处一个滚动区）。
@@ -55,8 +55,8 @@ _KIND_COLORS = {
 _KIND_RADIO_TEXT = {
     _KIND_ENCLOSURE: "沟槽围护",
     _KIND_FOUNDATION: "地基处理",
-    _KIND_PRECIPITATION: "降水原则",
-    _KIND_WIDTH: "面宽原则",
+    _KIND_PRECIPITATION: "降水措施",
+    _KIND_WIDTH: "工作面宽",
 }
 _KIND_ADD_MENU_TEXT = {
     _KIND_ENCLOSURE: "添加沟槽围护原则",

@@ -129,7 +129,7 @@ class NewProjectWizardCore(QWizard):
             "enclosure_excvt": _DEFAULT_EXCVT,
             "enclosure_found_angle": _DEFAULT_FOUND_ANGLE,
             "enclosure_con_found": _DEFAULT_CON_FOUND,
-            "foundation_name": str(defaults.get("foundation_name", "默认地基处理原则")),
+            "foundation_name": str(defaults.get("foundation_name", "默认地基原则")),
         }
 
 

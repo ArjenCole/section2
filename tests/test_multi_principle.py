@@ -72,8 +72,8 @@ def test_show_name_setter_semantics(project) -> None:
     element = orm.session().get(type(element), element.id)
     assert element.pf_name == MULTI_PF_TEXT
     pf_refs = unit_vm.principle_ref_rows(element.id, "pf")
-    assert len(pf_refs) == 1 and pf_refs[0].name == "默认地基处理原则"
-    assert unit_vm.add_principle_ref(element.id, "pf", "默认地基处理原则1") is not None
+    assert len(pf_refs) == 1 and pf_refs[0].name == "默认地基原则"
+    assert unit_vm.add_principle_ref(element.id, "pf", "默认地基原则1") is not None
     assert unit_vm.remove_principle_ref(
         unit_vm.principle_ref_rows(element.id, "pf")[0].id
     ) is None

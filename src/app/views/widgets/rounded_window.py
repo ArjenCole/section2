@@ -223,7 +223,9 @@ class RoundedWindowHelper(QObject):
         ThemeManager.instance().theme_changed.connect(self._ring.update)
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt 命名
-        if obj is not self._window:
+        # 析构中的宿主还可能派发残余事件，此刻 Python 侧属性已被 shiboken 清掉
+        window = getattr(self, "_window", None)
+        if obj is not window:
             return False
         etype = event.type()
         if etype in (QEvent.Type.Show, QEvent.Type.Resize, QEvent.Type.Move):

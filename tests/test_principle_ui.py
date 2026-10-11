@@ -108,7 +108,7 @@ def test_spcp_roundtrip(project, tmp_path: Path) -> None:
     kind, name = project_io.import_spcp(out_pe)
     assert (kind, name) == ("enclosure", "默认围护原则1")
     kind, name = project_io.import_spcp(out_pf)
-    assert (kind, name) == ("foundation", "默认地基处理原则1")
+    assert (kind, name) == ("foundation", "默认地基原则1")
     original, cloned = project_io.enclosures()[0], project_io.enclosures()[1]
     for field in ("con_found", "excvt", "found_angle", "dock_l", "dock_h",
                   "cover50", "cover"):
@@ -222,3 +222,138 @@ def test_v1_project_migrates_source_column(tmp_path: Path) -> None:
     assert element_row.pp_name == element_row.pe_name
     assert element_row.pw_name == element_row.pe_name
     orm.close_database()
+
+
+# --------------------------------------------------------------------------- #
+# 原则编辑窗体 UI 调整（2026-10）：标题、按钮文案与顺序、板块布局、1.0 列头
+# --------------------------------------------------------------------------- #
+def test_principle_dialog_titles(qapp, project) -> None:
+    """窗体标题：围护原则编辑 / 多级围护编辑窗体 / 地基原则编辑。"""
+    from app.views.dialogs.enclosure_edit_dialog import EnclosureEditDialog
+    from app.views.dialogs.foundation_edit_dialog import FoundationEditDialog
+    from app.views.dialogs.principle_dialogs import EnclosureWorkDialog
+
+    enclosure = EnclosureEditDialog(project_io.enclosures()[0].id)
+    work_dialog = EnclosureWorkDialog(project_io.enclosures()[0].works_sorted()[0])
+    foundation = FoundationEditDialog(project_io.foundations()[0].id)
+    try:
+        assert enclosure.windowTitle() == "围护原则编辑"
+        assert work_dialog.windowTitle() == "多级围护编辑窗体"
+        assert foundation.windowTitle() == "地基原则编辑"
+    finally:
+        enclosure.close()
+        work_dialog.close()
+        foundation.close()
+
+
+def test_enclosure_dialog_no_precipitation_box_and_button_position(qapp, project) -> None:
+    """围护原则编辑：降水/面宽板块取消，确认/取消按钮列紧跟管道基础板块。"""
+    from PySide6.QtWidgets import QGroupBox
+
+    from app.views.dialogs.enclosure_edit_dialog import EnclosureEditDialog
+
+    dialog = EnclosureEditDialog(project_io.enclosures()[0].id)
+    try:
+        boxes = [box.title() for box in dialog.findChildren(QGroupBox)]
+        assert boxes == ["挖填类型", "管道基础"]
+    finally:
+        dialog.close()
+
+
+def test_foundation_dialog_layout(qapp, project) -> None:
+    """地基原则编辑：换填层 3 行起滚动、加号对表头、构件类型行 2:1、
+    描述在框下方、底部 取消/确认（Apple HIG）。"""
+    from PySide6.QtWidgets import QPushButton, QVBoxLayout
+
+    from app.core.models import base as orm
+    from app.core.models.models import FoundationReplacement
+    from app.views.dialogs.foundation_edit_dialog import FoundationEditDialog
+
+    foundation = project_io.foundations()[0]
+    for order in range(1, 5):  # 5 行换填：默认窗口下只显示 3 行，其余滚动
+        orm.session().add(
+            FoundationReplacement(foundation_id=foundation.id, name="碎石", h=200.0, order_no=order)
+        )
+    project_io.commit()
+
+    dialog = FoundationEditDialog(foundation.id)
+    try:
+        dialog.show()
+        qapp.processEvents()
+        table = dialog._replace_table
+        # 板块高度 = 表头 + 3 行（4 行起出纵向滚动条）
+        expected = table.horizontalHeader().height() + 3 * 32
+        assert table.minimumHeight() == expected
+        assert table.maximumHeight() == expected
+        # 「+」按钮顶格在表格右侧：按钮顶边与表格（表头行）顶边对齐
+        origin = dialog.mapFromGlobal(dialog._btn_add.mapToGlobal(dialog.rect().topLeft()))
+        table_origin = dialog.mapFromGlobal(
+            dialog._replace_table.mapToGlobal(dialog._replace_table.rect().topLeft())
+        )
+        assert origin.y() == table_origin.y()
+        assert origin.x() > table_origin.x() + dialog._replace_table.width() - 60
+        # 构件类型行：下拉与编辑按钮同行，宽度 2:1
+        picker = dialog._component_picker
+        edit_button = picker.parentWidget().layout().itemAt(1).widget()
+        assert isinstance(edit_button, QPushButton) and edit_button.text() == "编辑"
+        picker_layout = picker.parentWidget().layout()
+        assert picker_layout.stretch(0) == 2 and picker_layout.stretch(1) == 1
+        # 描述 Label 在特殊地基框下方（不再属于其表单行）
+        assert dialog._describe.parentWidget() is not picker.parentWidget()
+        # 底部按钮：取消在左，确认在右（Apple HIG）
+        button_row = dialog._name.parentWidget()
+        buttons = [b for b in dialog.findChildren(QPushButton) if b.text() in ("取消", "确认")]
+        assert [b.text() for b in buttons] == ["取消", "确认"]
+    finally:
+        dialog.close()
+
+
+def test_precipitation_dialog_columns_per_1_0(qapp, project) -> None:
+    """降水原则编辑：列头按 1.0（道数→侧数），范围列自最深行向浅处推算。"""
+    from PySide6.QtCore import Qt
+
+    from app.views.dialogs.principle_dialogs import PrecipitationEditDialog
+
+    dialog = PrecipitationEditDialog(project_io.precipitations()[0].id)
+    table = dialog._table
+    try:
+        headers = [table.horizontalHeaderItem(c).text() for c in range(table.columnCount())]
+        assert headers == ["措施名称", "选用", "埋深", "范围", "侧数", "间隔"]
+        # 默认原则五井全启用（行序深井→湿土排水）：范围 = 下一已选用行埋深，最深 +∞
+        assert [table.item(r, 0).text() for r in range(5)] == [
+            "深井", "大口径井点", "喷射井点", "轻型井点", "湿土排水",
+        ]
+        assert [table.item(r, 3).text() for r in range(5)] == ["+∞", "15", "10", "6", "3.5"]
+        # 取消“轻型井点”：其埋深/范围变“-”且只读，湿土排水的范围改为喷射井点埋深
+        table.item(3, 1).setCheckState(Qt.CheckState.Unchecked)
+        assert table.item(3, 2).text() == "-" and table.item(3, 3).text() == "-"
+        assert not (table.item(3, 2).flags() & Qt.ItemFlag.ItemIsEditable)
+        assert table.item(4, 3).text() == "6"
+        assert dialog._precipitation().light_well == "-1|1.2|2"
+    finally:
+        dialog.close()
+
+
+def test_dialog_bottom_buttons_cancel_left_confirm_right(qapp, project) -> None:
+    """降水/面宽编辑：底部按钮 取消 在左、确认（primary）在右，文案不带“修改”。"""
+    from PySide6.QtWidgets import QPushButton
+
+    from app.views.dialogs.principle_dialogs import PrecipitationEditDialog, WidthEditDialog
+
+    precipitation = PrecipitationEditDialog(project_io.precipitations()[0].id)
+    width = WidthEditDialog(project_io.width_principles()[0].id)
+    try:
+        for dialog in (precipitation, width):
+            dialog.show()
+            qapp.processEvents()
+            buttons = [
+                button for button in dialog.findChildren(QPushButton)
+                if button.text() in ("取消", "确认")
+            ]
+            assert [button.text() for button in buttons] == ["取消", "确认"]
+            confirm = buttons[1]
+            assert confirm.property("primary") in (True, "true")
+            assert confirm.x() > buttons[0].x()
+    finally:
+        precipitation.close()
+        width.close()

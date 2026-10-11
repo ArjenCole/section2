@@ -1,10 +1,10 @@
-"""围护原则编辑对话框（复刻旧版 FmPcp/FormPE，816×581）。
+"""围护原则编辑对话框（复刻旧版 FmPcp/FormPE）。
 
 布局与交互照抄 FormPE / FormPE.Designer：
 
 * 顶部「原则名称」；GroupBox「挖填类型」（开挖类型 / 坞塝材质 / 坞塝回填 / 顶部回填）、
-  「管道基础」（混凝土基础 / 基础角度 / 垫层材质 / 厚度 mm）、「降水措施」（描述 +
-  编辑降水措施原则 / 编辑工作面宽度原则两个按钮）；右侧竖排「确认修改 / 取消修改」；
+  「管道基础」（混凝土基础 / 基础角度 / 垫层材质 / 厚度 mm）；右侧竖排
+  「确认修改 / 取消修改」（v4 起降水/面宽已独立成原则，原「降水措施」板块取消）；
 * 主表格 6 列：埋深 / 范围 / 围护类型 / 围护形式描述 / 止水类型 / 止水形式描述，
   首行埋深恒 0 且只读，Insert 插入做法（埋深取值规则与旧版一致），
   Delete 删除（全删时提示“至少需要一种围护做法。”）；
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -58,7 +59,7 @@ class EnclosureEditDialog(FramelessDialog):
 
     def __init__(self, enclosure_id: int, parent: QWidget | None = None) -> None:
         super().__init__(parent, "围护原则编辑")
-        self.resize(816, 581)
+        self.resize(660, 581)
         self._enclosure_id = enclosure_id
         self._loading = False
         self._build_ui()
@@ -80,7 +81,6 @@ class EnclosureEditDialog(FramelessDialog):
         detail_row = QHBoxLayout()
         detail_row.addWidget(self._build_excavation_box())
         detail_row.addWidget(self._build_foundation_box())
-        detail_row.addWidget(self._build_precipitation_box(), 1)
         detail_row.addWidget(self._build_confirm_buttons())
         root.addLayout(detail_row)
 
@@ -90,7 +90,6 @@ class EnclosureEditDialog(FramelessDialog):
         self._work_table.delete_requested.connect(self._delete_selected_works)
         self._work_table.cellChanged.connect(self._on_cell_changed)
         self._work_table.cellDoubleClicked.connect(self._on_cell_double_clicked)
-        self._work_table.horizontalHeader().setStretchLastSection(True)
         table_row.addWidget(self._work_table, 1)
         # 「+」紧贴表格右侧（原版 BTNadd 在 止水形式描述 列右边，与首行同高）
         add_column = QVBoxLayout()
@@ -132,17 +131,6 @@ class EnclosureEditDialog(FramelessDialog):
         form.addRow("基础角度", self._angle)
         form.addRow("垫层材质", self._cushion_name)
         form.addRow("厚度mm", self._cushion_h)
-        return box
-
-    def _build_precipitation_box(self) -> QGroupBox:
-        # v4 起降水/面宽独立成原则（各自的编辑窗体从原则横条进入），此处改为提示
-        box = QGroupBox("降水 / 面宽")
-        layout = QHBoxLayout(box)
-        label = QLabel("降水与工作面宽度已独立为原则，\n在主窗体横条中选择“降水原则 / 面宽原则”编辑。")
-        label.setProperty("role", "hint")
-        label.setWordWrap(True)
-        label.setAlignment(Qt.AlignmentFlag.AlignTop)
-        layout.addWidget(label)
         return box
 
     def _build_confirm_buttons(self) -> QWidget:
@@ -477,10 +465,12 @@ class _WorkTable(CellFillTable):
         self.verticalHeader().setVisible(False)
         # 行高与主表格一致（32px）；单元格内下拉框的纵向内边距已由 QSS 压小
         self.verticalHeader().setDefaultSectionSize(32)
-        self.setColumnWidth(0, 70)
-        self.setColumnWidth(1, 70)
-        self.setColumnWidth(2, 130)
-        self.setColumnWidth(4, 130)
+        # 列宽以“刚好显示全部单元格/表头文字”为准：埋深、范围、两个下拉列按内容
+        # 自适应，两个描述列平分剩余宽度
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(_COL_ECLS_DIS, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(_COL_WS_DIS, QHeaderView.ResizeMode.Stretch)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         if event.key() == Qt.Key.Key_Insert:

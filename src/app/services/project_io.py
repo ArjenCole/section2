@@ -90,8 +90,8 @@ class NewProjectSpec:
     enclosure_excvt: str = "Ⅲ类土"
     enclosure_found_angle: int = 120
     enclosure_con_found: bool = True
-    #: 默认地基处理原则
-    foundation_name: str = "默认地基处理原则"
+    #: 默认地基原则
+    foundation_name: str = "默认地基原则"
     #: 默认降水 / 面宽原则（v4 起与围护、地基同级）
     precipitation_name: str = "默认降水原则"
     width_name: str = "默认面宽原则"
@@ -1094,7 +1094,7 @@ def _seed_default_principles(session, spec: NewProjectSpec) -> None:
     session.flush()
     new_enclosure_work(session, enclosure, library, order_no=0)
 
-    foundation = PcpFoundation(name=spec.foundation_name or "默认地基处理原则", order_no=0)
+    foundation = PcpFoundation(name=spec.foundation_name or "默认地基原则", order_no=0)
     session.add(foundation)
     session.flush()
     attach_foundation_component(session, foundation, library)

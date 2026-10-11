@@ -2,16 +2,20 @@
 
 布局与交互照抄 FormPF / FormPF.Designer：
 
-* 顶部「原则名称」；换填层表（换填材质 / 厚度 mm）+「+」按钮，
-  Insert 插入默认换填行（碎石，200）、Delete 删除选中行（无最少条数限制）；
-* 底部「特殊地基」区：构件下拉（Fi 库）+「编辑」按钮 + 描述 Label
-  （双击同样打开构件公式编辑；描述文案与旧版 FlashCpnt 一致）；
-* 底部「确认修改 / 取消修改」，原则名称在确认时写回（重命名同步构件引用）。
+* 顶部「原则名称」；换填层表（换填材质 / 厚度 mm）+「+」按钮（与表头行顶对齐，
+  参照围护原则编辑窗体做法表的「+」位置关系），板块高度至少容得下 3 行，
+  4 行起出纵向滚动条；Insert 插入默认换填行（碎石，200）、Delete 删除选中行
+  （无最少条数限制）；
+* 底部「特殊地基」区：构件下拉 +「编辑」按钮（下拉与按钮宽度 2:1，同一行）；
+* 描述 Label 在特殊地基框下方，作为整个窗体当前选择的总体描述（双击同样打开
+  构件公式编辑；描述文案与旧版 FlashCpnt 一致）；
+* 底部「取消 / 确认」按钮（Apple HIG：取消在左、确认在右），原则名称在确认时
+  写回（重命名同步构件引用）。
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -37,17 +41,31 @@ from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessage
 
 _COL_MATERIAL, _COL_THICKNESS = 0, 1
 
+#: 换填层板块最少要完整显示的行数（4 行起出纵向滚动条）
+_MIN_VISIBLE_ROWS = 3
+_ROW_HEIGHT = 32
+
 
 class FoundationEditDialog(FramelessDialog):
     """地基处理原则编辑（FormPF，无边框自绘标题栏）。"""
 
     def __init__(self, foundation_id: int, parent: QWidget | None = None) -> None:
-        super().__init__(parent, "地基处理原则编辑")
-        self.resize(460, 400)
+        super().__init__(parent, "地基原则编辑")
+        self.resize(460, 390)
         self._foundation_id = foundation_id
         self._loading = False
         self._build_ui()
         self._fill()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().showEvent(event)
+        # 布局落定后再按真实表头高度定板块高度（首帧 header 高度未定）
+        QTimer.singleShot(0, self, self._fit_replace_height)
+
+    def _fit_replace_height(self) -> None:
+        """换填层板块恰好容得下表头 + 3 行（4 行起出纵向滚动条）。"""
+        table = self._replace_table
+        table.setFixedHeight(table.horizontalHeader().height() + _MIN_VISIBLE_ROWS * _ROW_HEIGHT)
 
     # ------------------------------------------------------------------ 界面
     def _build_ui(self) -> None:
@@ -70,11 +88,15 @@ class FoundationEditDialog(FramelessDialog):
         self._replace_table.cellChanged.connect(self._on_cell_changed)
         self._replace_table.horizontalHeader().setStretchLastSection(True)
         table_row.addWidget(self._replace_table, 1)
+        # 「+」紧贴表格右侧、与表头行顶对齐（同围护原则编辑窗体做法表的「+」）
+        add_column = QVBoxLayout()
         self._btn_add = QPushButton("+")
         self._btn_add.setProperty("role", "icon-btn")
-        self._btn_add.setFixedSize(28, 28)
+        self._btn_add.setFixedSize(28, 34)
         self._btn_add.clicked.connect(lambda: self._insert_replacement())
-        table_row.addWidget(self._btn_add)
+        add_column.addWidget(self._btn_add)
+        add_column.addStretch(1)
+        table_row.addLayout(add_column)
         replace_layout.addLayout(table_row)
         root.addWidget(replace_box, 1)
 
@@ -83,30 +105,39 @@ class FoundationEditDialog(FramelessDialog):
         self._component_picker = QComboBox()
         self._component_picker.addItems(project_io.component_library().names("Fi"))
         self._component_picker.currentTextChanged.connect(self._on_component_pick)
+        btn_edit = QPushButton("编辑")
+        btn_edit.clicked.connect(self._edit_component)
+        picker_row = QWidget()
+        picker_layout = QHBoxLayout(picker_row)
+        picker_layout.setContentsMargins(0, 0, 0, 0)
+        picker_layout.setSpacing(6)
+        picker_layout.addWidget(self._component_picker, 2)
+        picker_layout.addWidget(btn_edit, 1)
+        component_form.addRow(QLabel("构件类型"), picker_row)
+        root.addWidget(component_box)
+
+        # 描述在特殊地基框下方，作为整个窗体当前选择的总体描述；
+        # 双击 → 编辑构件（原版 LBLcpnt_DoubleClick）
         self._describe = QLabel("")
         self._describe.setProperty("role", "hint")
         self._describe.setWordWrap(True)
         self._describe.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        component_form.addRow(QLabel("构件类型"), self._component_picker)
-        component_form.addRow(QLabel("描述"), self._describe)
-        btn_edit = QPushButton("编辑")
-        btn_edit.clicked.connect(self._edit_component)
-        component_form.addRow("", btn_edit)
-        root.addWidget(component_box)
-        # 描述 Label 双击 → 编辑构件（原版 LBLcpnt_DoubleClick）
         self._describe.mouseDoubleClickEvent = lambda _event: self._edit_component()  # type: ignore[method-assign]
+        root.addWidget(self._describe)
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
-        btn_yes = QPushButton("确认修改")
-        btn_yes.setFixedWidth(76)
-        btn_yes.setProperty("primary", "true")
-        btn_yes.clicked.connect(self._confirm)
-        btn_cancel = QPushButton("取消修改")
+        # Apple HIG：取消在左，确认（默认按钮）在右
+        btn_cancel = QPushButton("取消")
         btn_cancel.setFixedWidth(76)
         btn_cancel.clicked.connect(self.reject)
-        button_row.addWidget(btn_yes)
+        btn_yes = QPushButton("确认")
+        btn_yes.setFixedWidth(76)
+        btn_yes.setProperty("primary", "true")
+        btn_yes.setDefault(True)
+        btn_yes.clicked.connect(self._confirm)
         button_row.addWidget(btn_cancel)
+        button_row.addWidget(btn_yes)
         root.addLayout(button_row)
 
     # ------------------------------------------------------------------ 数据
@@ -274,6 +305,7 @@ class _ReplaceTable(CellFillTable):
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.verticalHeader().setVisible(False)
+        self.verticalHeader().setDefaultSectionSize(_ROW_HEIGHT)
         self.setColumnWidth(0, 130)
         self.setColumnWidth(1, 120)
 

@@ -432,7 +432,11 @@ QTableWidget, QTableView {
     selection-background-color: $table_selected_bg;
     selection-color: $text_primary;
 }
-QTableWidget::item, QTableView::item { padding: 5px 8px; }
+/* ::indicator 有 QSS 规则而 item 无背景规则时，QStyleSheetStyle 画完 QSS 指示器
+   后再用 baseStyle 画单元格并裁掉指示器区（qstylesheetstyle.cpp CE_ItemViewItem）；
+   半透明窗体（自绘圆角）上 Win10 主题绘制回退经典几何，逃出裁剪区，原生勾选框
+   与 QSS 勾选框叠画。给 item 补透明背景让其走纯 QSS 绘制路径 */
+QTableWidget::item, QTableView::item { padding: 5px 8px; background-color: transparent; }
 QTableWidget::item:selected, QTableView::item:selected {
     background-color: $table_selected_bg;
     color: $text_primary;

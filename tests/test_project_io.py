@@ -38,7 +38,7 @@ def _make_project(tmp_path: Path, name: str = "测试工程") -> Path:
         segment_names=["第一标段", "第二标段"],
         unit_names=["雨水工程", "污水工程"],
         enclosure_name="默认围护原则",
-        foundation_name="默认地基处理原则",
+        foundation_name="默认地基原则",
     )
     return project_io.new_project(spec)
 
@@ -64,7 +64,7 @@ def test_new_project_structure(tmp_path: Path) -> None:
     assert [unit.name for unit in project_io.units(segments[0].id)] == ["雨水工程", "污水工程"]
 
     assert project_io.enclosure_names() == ["默认围护原则"]
-    assert project_io.foundation_names() == ["默认地基处理原则"]
+    assert project_io.foundation_names() == ["默认地基原则"]
 
     meta = orm.read_meta()
     assert meta["schema_version"] == str(SCHEMA_VERSION)
@@ -96,7 +96,7 @@ def test_reopen_keeps_everything(tmp_path: Path) -> None:
     assert row.amount_value == pytest.approx(100.0)
     assert row.unit == "m"
     assert row.pe_name == "默认围护原则"
-    assert row.pf_name == "默认地基处理原则"
+    assert row.pf_name == "默认地基原则"
 
     pipes = unit_vm.pipe_rows(element.id)
     assert [(pipe.mat, pipe.dn, pipe.content) for pipe in pipes] == [("HDPE", 600, "1")]

@@ -125,3 +125,18 @@ def test_shadow_gradient_faces_outward_on_all_sides(qapp, message_box):
     )
     for name, near, far in sides:
         assert near > far > 0, f"{name}侧阴影方向错误: near={near}, far={far}"
+
+
+def test_item_rule_has_transparent_background(qapp):
+    """回归防护：半透明窗体（自绘圆角）上，::indicator 有 QSS 规则而 item 无
+    背景规则时，QStyleSheetStyle 画完 QSS 指示器后用 baseStyle 补画单元格并
+    裁掉指示器区；Win10 分层窗口上主题绘制回退经典几何、逃出裁剪区，原生
+    勾选框与 QSS 勾选框叠画（实测）。item 规则必须带透明背景，让单元格走
+    纯 QSS 绘制路径（qstylesheetstyle.cpp CE_ItemViewItem 的 hasDrawable 分支）。"""
+    from app.resources.qss.theme import LIGHT, build_stylesheet
+
+    sheet = build_stylesheet(LIGHT)
+    assert (
+        "QTableWidget::item, QTableView::item"
+        " { padding: 5px 8px; background-color: transparent; }"
+    ) in sheet

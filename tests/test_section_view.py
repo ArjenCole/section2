@@ -164,7 +164,7 @@ def test_multi_pf_scene_uses_first_ref(qapp, tmp_path) -> None:
     unit_vm.update_element(element.id, pf_name=MULTI_PF_TEXT)
     assert unit_vm.add_principle_ref(element.id, "pf", "换填地基", 0.4) is not None
 
-    # 引用顺序 = [默认地基处理原则, 换填地基]，绘制取第一条（无换填层）
+    # 引用顺序 = [默认地基原则, 换填地基]，绘制取第一条（无换填层）
     scene, hint = _build_scene(element.id, 320, 420)
     assert hint == ""
     assert scene is not None
@@ -192,7 +192,7 @@ def test_section_panel_selector(qapp, multi_pe_element) -> None:
     ]
     assert panel._pe_left_combo.currentText() == "默认围护原则"
     assert panel._pe_right_combo.currentText() == "陡坡"
-    assert panel._pf_combo.currentText() == "默认地基处理原则"
+    assert panel._pf_combo.currentText() == "默认地基原则"
     assert panel._canvas._scene is not None
 
     # 切换下拉 → 画布按新组合重绘（左陡右缓）

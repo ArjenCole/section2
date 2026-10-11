@@ -31,7 +31,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "segment_name": "新建标段",
         "unit_name": "新建单位工程",
         "enclosure_name": "默认围护原则",
-        "foundation_name": "默认地基处理原则",
+        "foundation_name": "默认地基原则",
     },
     # M7 使用；providers 为 [[ai.providers]] 数组表，key 存 keyring 不在此处
     "ai": {
