@@ -141,6 +141,9 @@ def main(argv: list[str] | None = None) -> int:
     _load_fonts()
     install_translations(app)
     apply_initial_theme(app)
+    from app.views.widgets.rounded_window import install_menu_rounding
+
+    install_menu_rounding(app)
     _apply_window_icon(app)
     _install_excepthook()
 

@@ -55,6 +55,19 @@ def test_ring_follows_theme(message_box):
     assert ring.isVisible()
 
 
+def test_menu_rounding_applied(qapp):
+    """菜单圆角修整：透明背景 + 无边框 + 关系统阴影，QSS 圆角成为真实轮廓。"""
+    from PySide6.QtWidgets import QMenu
+
+    from app.views.widgets.rounded_window import apply_menu_rounding
+
+    menu = QMenu()
+    apply_menu_rounding(menu)
+    assert menu.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    assert bool(menu.windowFlags() & Qt.WindowType.FramelessWindowHint)
+    assert bool(menu.windowFlags() & Qt.WindowType.NoDropShadowWindowHint)
+
+
 def _shadow_of(message_box):
     """影子窗口是独立顶层窗口，经由助手访问。"""
     return message_box._rounded._shadow

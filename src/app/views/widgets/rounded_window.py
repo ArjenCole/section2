@@ -25,7 +25,7 @@ import sys
 
 from PySide6.QtCore import QEvent, QObject, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QMainWindow, QWidget
+from PySide6.QtWidgets import QMainWindow, QMenu, QWidget
 
 #: 圆角半径（逻辑像素），与 theme.py 里贴角子控件的 border-radius 一致
 _RADIUS = 8
@@ -161,6 +161,36 @@ class _ShadowWindow(QWidget):
             )
         painter.end()
         self._cache = pixmap
+
+
+class _MenuRounding(QObject):
+    """QMenu 圆角修整：Win10 的弹出菜单是不透明矩形窗口，QSS 画的圆角外面
+    会露出调色板底色的方角，左下角再叠上系统菜单阴影最扎眼。在菜单首次
+    polish（尚无原生窗口）时开透明背景 + 无边框，并关掉系统方角阴影，
+    让 QSS 的 border-radius 成为真实的窗口轮廓。"""
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt 命名
+        if (
+            isinstance(obj, QMenu)
+            and event.type() == QEvent.Type.Polish
+            and not obj.isVisible()
+        ):
+            apply_menu_rounding(obj)
+        return False
+
+
+def apply_menu_rounding(menu: QMenu) -> None:
+    menu.setWindowFlags(
+        menu.windowFlags()
+        | Qt.WindowType.FramelessWindowHint
+        | Qt.WindowType.NoDropShadowWindowHint
+    )
+    menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+
+def install_menu_rounding(app) -> None:
+    """给整个应用的所有 QMenu（菜单栏下拉、各级子菜单、右键菜单）套圆角修整。"""
+    app.installEventFilter(_MenuRounding(app))
 
 
 class RoundedWindowHelper(QObject):

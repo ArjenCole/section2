@@ -646,6 +646,9 @@ class MainWindow(QMainWindow):
 
     def _build_statusbar(self) -> None:
         statusbar = QStatusBar()
+        # 右下角的尺寸手柄是 16x16 方角贴片，会盖掉状态栏的 QSS 圆角；
+        # 边缘缩放由 nativeEvent 的 WM_NCHITTEST 处理，手柄冗余
+        statusbar.setSizeGripEnabled(False)
         self.setStatusBar(statusbar)
         self._status_path = QLabel("未打开工程")
         self._status_path.setProperty("role", "hint")

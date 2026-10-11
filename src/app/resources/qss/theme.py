@@ -202,6 +202,12 @@ QToolButton#WindowBtn {
 }
 QToolButton#WindowBtn:hover { background-color: $bg_hover; }
 QToolButton#WindowBtn:pressed { background-color: $bg_pressed; }
+/* 关闭按钮位于窗体右上角：悬停/按下的背景要随窗体轮廓裁圆，否则红色
+   悬停块会以方角探出圆角弧线 */
+QToolButton#WindowBtn[kind="close"] {
+    border: 1px solid transparent;
+    border-top-right-radius: 8px;
+}
 QToolButton#WindowBtn[kind="close"]:hover { background-color: $danger; }
 QMenuBar::item { padding: 5px 10px; background: transparent; border-radius: 6px; }
 QMenuBar::item:selected { background-color: $bg_hover; }
@@ -247,6 +253,7 @@ QToolButton[role="toggle-bar"]:hover { background-color: $primary_soft; }
 /* ===================== 状态栏 ===================== */
 QStatusBar {
     background-color: $bg_card;
+    border: 1px solid transparent;
     border-top: 1px solid $border;
     border-bottom-left-radius: 8px;
     border-bottom-right-radius: 8px;
@@ -498,9 +505,19 @@ QDialog QTableWidget, QDialog QTableView, QDialog QTreeWidget, QDialog QListView
 }
 QDialog QHeaderView::section { background-color: $bg_card; color: $text_secondary; }
 QDialog #FramelessTitleBar, QDialog #FramelessDialogBody { background-color: $bg_dialog; }
-QDialog #FramelessDialogBody { border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }
+/* Qt 的 QSS 背景只有在规则带 border 时才按圆角裁剪（走 border 盒子路径），
+   没有 border 的规则背景一律方角填充——这里和下面的圆角规则都要带透明 border */
+QDialog #FramelessDialogBody {
+    border: 1px solid transparent;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+}
 /* 向导内嵌页齐边充满 body，底部两角随窗体轮廓一起倒圆 */
-QWizard { border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }
+QWizard {
+    border: 1px solid transparent;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+}
 QLabel[role="dialog-title"] { font-size: 14px; font-weight: 600; color: $text_primary; }
 
 /* ===================== AI 面板 ===================== */
