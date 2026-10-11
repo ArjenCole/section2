@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -41,6 +41,7 @@ from app.core.version import (
     PROJECT_FILE_FILTER,
 )
 from app.core.models.base import NotAProjectFileError, ProjectFileError, SchemaTooNewError
+from app.core.paths import resources_dir
 from app.resources.qss.theme import ThemeManager
 from app.services import project_io
 from app.services.project_io import ProjectIoError, ProjectLockedError, NewProjectSpec
@@ -150,6 +151,15 @@ class FramelessTitleBar(QFrame):
         self._icon_label = QLabel("§")
         self._icon_label.setObjectName("TitleBarIcon")
         self._icon_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        # 左上角标识用软件 logo（app/resources/logo/icon_512.png），缺文件时退回 § 占位
+        logo_file = resources_dir() / "logo" / "icon_512.png"
+        if logo_file.exists():
+            self._icon_label.setPixmap(
+                QPixmap(str(logo_file)).scaled(
+                    22, 22, Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
 
         self._menu_bar = QMenuBar(self)
         self._menu_bar.setObjectName("TitleBarMenuBar")

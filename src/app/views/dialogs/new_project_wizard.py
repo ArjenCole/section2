@@ -45,8 +45,8 @@ class BasicInfoPage(QWizardPage):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setTitle("基本信息")
-        self.setSubTitle("工程名称与结构；标段、单位工程的名称稍后可在项目树中重命名。")
+        # 不设置 title/subTitle：QWizard 的页头横幅（含其底部分隔线）整体隐藏，
+        # 页面直接从内容开始（需求：删除页头两行文字与贯穿横线）
 
         defaults = get_config().new_project
         layout = QVBoxLayout(self)
@@ -152,6 +152,36 @@ class NewProjectWizard(FramelessDialog):
         # 把结果转发给容器，外层才会关闭并返回
         self._wizard.accepted.connect(self.accept)
         self._wizard.rejected.connect(self.reject)
+        self._remove_wizard_rule_lines()
+
+    def _remove_wizard_rule_lines(self) -> None:
+        """去掉按钮行上方的贯穿分隔线（页头那条已随 title/subTitle 删除而消失）。
+
+        分隔条是 QWizard 的私有类 QWizardRuler：固定 2px 高、Classic/Modern
+        样式必插入、布局重建时缓存复用同一实例。**它没有 Q_OBJECT 宏**，
+        metaObject().className() 是 "QWidget"（按类名过滤永远匹配不到，实测），
+        改按特征识别：向导子树里唯一“最大高度 ≤3px”的控件就是它。
+        处置为 setFixedHeight(0)：高度恒为 0 画不出线、布局行随之消失，且设置
+        持久于控件实例；手绘颜色取调色板 Mid/Base，一并改为 body 背景色兜底。
+        """
+        from PySide6.QtGui import QColor, QPalette
+
+        from app.resources.qss.theme import ThemeManager
+
+        bg = QColor(ThemeManager.instance().current().bg_dialog)
+        for child in self._wizard.findChildren(QWidget):
+            if child.maximumHeight() <= 3 and child.maximumHeight() == child.minimumHeight():
+                child.setFixedHeight(0)
+                child.hide()
+                palette = child.palette()
+                palette.setColor(QPalette.ColorRole.Mid, bg)
+                palette.setColor(QPalette.ColorRole.Base, bg)
+                child.setPalette(palette)
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().showEvent(event)
+        # 布局重建（recreateLayout）会重新 show 分隔条，显示时再压一次（幂等）
+        self._remove_wizard_rule_lines()
 
     def values(self) -> dict:
         return self._wizard.values()

@@ -394,6 +394,7 @@ AI 设置等），无需逐处接入。
 | 点击被模态禁用的主窗体，弹窗影子丢失 | 主窗体 z 序被抬到弹窗之下、影子之上，无主影子被盖住；弹窗激活态不变，收不到任何可触发 restack 的事件（多层弹窗时只有激活中那层能靠 ActivationChange 自愈，见 §4.5） | 影子窗口继承宿主的 `transientParent`（QWindow.setTransientParent，首次 sync 时先 `winId()` 建原生句柄再设），owned-above-owner 规则保证主窗体永远压不到影子 |
 | 主窗体最大化后弹窗圆角变直角 | 窗体级样式表沿 QObject 父子树作用于全部后代，压平片段的裸后代选择器命中子弹窗的标题栏/body（见 §3.5） | 压平片段只用 `QMainWindow >` 直接子选择器限定主窗体自己的贴角控件，删掉 `QDialog #FramelessDialogBody` / `QWizard` 等泄漏源 |
 | QDialog 上 isMaximized() 误报 | 作为最大化的 QMainWindow 的 owned 窗口，普通尺寸的 QDialog 偶发 `isMaximized()==True`（Win10 实测），据此藏影/压平会把正常弹窗的影子、圆角一并丢掉 | 最大化退化与藏影判定都加 `isinstance(host, QMainWindow)` 限定（§3.4 / §4.5） |
+| QWizard 自带的贯穿分隔线去不掉 | 按钮行上方的分隔条（QWizardRuler，Classic/Modern 必插入的固定 2px 手绘控件）hide() 后布局重建又被 QLayout 重新 show；且私有类没有 Q_OBJECT，`metaObject().className()` 是 "QWidget"，按类名过滤永远匹配不到（实测） | 按“最大高度 ≤3px”特征识别，`setFixedHeight(0)`（高度恒 0 画不出线，设置持久于复用的控件实例）+ 调色板 Mid/Base 改为背景色兜底；页头一条随页面 title/subTitle 删除整体隐藏 |
 | 点选单元格后选中列的列头文字变粗（视觉像字体变小） | QHeaderView 的 highlightSections 默认开：选中列的列头节走另一条渲染路径，文字字重跳变；QSS 列头规则没有 :selected 背景，高亮的唯一表现就是这个跳变 | 表格统一 `horizontalHeader().setHighlightSections(False)`（CellFillTable / 主窗体 _make_table / 多原则表），列头恒定 |
 
 ## 7. 验证方法论
