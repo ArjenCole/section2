@@ -91,6 +91,8 @@ class MultiPrincipleTab(QWidget):
 
         self._table = QTableWidget(0, 2)
         self._table.setHorizontalHeaderLabels(["原则名称", "比例"])
+        # 选中单元格时对应列的列头不再加粗重绘（同 CellFillTable，见其注释）
+        self._table.horizontalHeader().setHighlightSections(False)
         self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(32)
         self._table.horizontalHeader().setStretchLastSection(True)

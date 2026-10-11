@@ -222,3 +222,41 @@ def test_combo_popup_rounding_applied(qapp):
     assert bool(container.windowFlags() & Qt.WindowType.NoDropShadowWindowHint)
     # 容器自身透明化（类名选择器只命中容器，不影响内部列表的 QSS 背景）
     assert "QComboBoxPrivateContainer { background: transparent; }" in container.styleSheet()
+
+
+def test_tables_disable_highlight_sections(qapp, project):
+    """全项目表格关闭 highlightSections：选中单元格时列头保持恒定。
+
+    highlightSections（QHeaderView 默认开）会让选中列的列头节走另一条渲染
+    路径，文字变粗（视觉上字体忽粗忽细、像变小）；QSS 的列头规则没有
+    :selected 背景，高亮的唯一表现就是这个字重跳变，故统一关闭。"""
+    from PySide6.QtWidgets import QDialog, QVBoxLayout
+
+    from app.services import project_io
+    from app.views.dialogs.foundation_edit_dialog import FoundationEditDialog
+    from app.views.panels.multi_principle_tab import MultiPrincipleTab
+    from app.views.panels.unit_panel import UnitPanel
+    from app.views.widgets.cell_fill_table import CellFillTable
+
+    direct = CellFillTable(0, 2)
+    assert direct.horizontalHeader().highlightSections() is False
+
+    dialog = QDialog()
+    lay = QVBoxLayout(dialog)
+    panel = UnitPanel()
+    lay.addWidget(panel)
+    dialog.show()
+    try:
+        assert panel._element_table.horizontalHeader().highlightSections() is False
+        assert panel._pipe_table.horizontalHeader().highlightSections() is False
+        assert panel._param_table.horizontalHeader().highlightSections() is False
+    finally:
+        dialog.close()
+
+    foundation = FoundationEditDialog(project_io.foundations()[0].id)
+    multi = MultiPrincipleTab("pe")
+    try:
+        assert foundation._replace_table.horizontalHeader().highlightSections() is False
+        assert multi._table.horizontalHeader().highlightSections() is False
+    finally:
+        foundation.close()

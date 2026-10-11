@@ -21,6 +21,10 @@ from app.views.widgets.table_edit_delegate import TableEditDelegate
 class CellFillTable(QTableWidget):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+        # 选中单元格时对应列的列头不再加粗重绘：QSS 的列头规则没有 :selected
+        # 背景，highlightSections 的唯一表现是选中列的列头文字走另一条渲染
+        # 路径变粗，看起来像“字体忽大忽小”
+        self.horizontalHeader().setHighlightSections(False)
         # 编辑态与主表格一致：QLineEdit 编辑器无边框、无内边距、占满单元格
         self.setItemDelegate(TableEditDelegate(self))
 

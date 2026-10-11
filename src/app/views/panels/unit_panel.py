@@ -321,6 +321,9 @@ class UnitPanel(QWidget):
         table.setAlternatingRowColors(True)
         table.horizontalHeader().setStretchLastSection(True)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        # 选中单元格时对应列的列头不再加粗重绘（QSS 列头规则没有 :selected
+        # 背景，highlightSections 的唯一表现是选中列列头文字变粗，见 CellFillTable）
+        table.horizontalHeader().setHighlightSections(False)
         # 行高与 Quotor 计价主表一致（32px）：表格内嵌下拉框的纵向内边距
         # 已在 QSS 里压到 2px，32px 行高足以完整显示文字
         table.verticalHeader().setDefaultSectionSize(32)
