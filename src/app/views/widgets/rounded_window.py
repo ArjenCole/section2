@@ -37,9 +37,11 @@ _SHADOW_MARGIN = 20
 _SHADOW_ALPHA = 60
 
 #: 最大化时压平贴角子控件圆角的窗体级样式表片段（widget 级样式表优先于
-#: 全局 QSS，同选择器下直接覆盖）
+#: 全局 QSS，同选择器下直接覆盖）。选择器必须用 QMainWindow > 直接子选择器
+#: 限定：窗体级样式表会沿对象树作用于全部后代，裸的 QFrame#FramelessTitleBar
+#: 等会把主窗体最大化的压平规则泄漏到其子弹窗上（弹窗圆角变直角，实测）
 _SQUARE_CORNERS_SHEET = (
-    "QFrame#FramelessTitleBar, QDialog #FramelessDialogBody, QWizard, QStatusBar "
+    "QMainWindow > QFrame#FramelessTitleBar, QMainWindow > QStatusBar "
     "{ border-radius: 0px; }"
 )
 

@@ -187,3 +187,15 @@ def test_shadow_inherits_host_transient_parent(qapp):
     finally:
         host.close()
         owner.close()
+
+
+def test_square_corners_sheet_scoped_to_main_window(qapp):
+    """回归防护：最大化压平样式表设在主窗体上，会沿对象树作用于全部后代——
+    裸的后代选择器会把压平规则泄漏到子弹窗上（弹窗圆角变直角，实测）。
+    必须用 QMainWindow > 直接子选择器限定，且不包含弹窗/向导的后代选择器。"""
+    from app.views.widgets.rounded_window import _SQUARE_CORNERS_SHEET
+
+    assert "QMainWindow > QFrame#FramelessTitleBar" in _SQUARE_CORNERS_SHEET
+    assert "QMainWindow > QStatusBar" in _SQUARE_CORNERS_SHEET
+    assert "QDialog #FramelessDialogBody" not in _SQUARE_CORNERS_SHEET
+    assert "QWizard" not in _SQUARE_CORNERS_SHEET
