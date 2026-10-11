@@ -149,16 +149,20 @@ QSS 圆角边缘与阴影衔接处的细缝。它在宿主 Show/Resize 时 `rais
 
 与系统行为一致：最大化时直角、贴边。此时**不能**用 `setMask` 清空的老套路
 （mask 已移除），改为用窗体级样式表压平贴角子控件的圆角——widget 级样式表
-对同选择器规则优先于应用级，直接覆盖：
+对同选择器规则优先于应用级，直接覆盖。**选择器必须用 `QMainWindow >` 直接
+子选择器限定**（原因见 §3.5）：
 
 ```python
 _SQUARE_CORNERS_SHEET = (
-    "QFrame#FramelessTitleBar, QDialog #FramelessDialogBody, QWizard, QStatusBar "
+    "QMainWindow > QFrame#FramelessTitleBar, QMainWindow > QStatusBar "
     "{ border-radius: 0px; }"
 )
 
 def _apply(self) -> None:
-    squared = window.isMaximized()
+    # 最大化判定只对主窗体生效：QDialog 作为最大化的 QMainWindow 的 owned
+    # 窗口时 isMaximized() 会偶发误报 True（Win10 实测），弹窗不可最大化，
+    # 不参与退化（见 §4.5）
+    squared = window.isMaximized() and isinstance(window, QMainWindow)
     if squared != self._squared:                       # 状态变化才重设样式表
         self._squared = squared
         window.setStyleSheet(self._base_sheet + _SQUARE_CORNERS_SHEET
@@ -166,8 +170,24 @@ def _apply(self) -> None:
     ...
 ```
 
+主窗体的贴角控件——标题栏经 `setMenuWidget()` 挂载、状态栏经
+`setStatusBar()` 挂载——都是 QMainWindow 的直接子控件，`QMainWindow >`
+选择器恰好只匹配它们。
+
 `WindowStateChange` 事件必须监听：离屏平台/同尺寸最大化只发状态变化、不发
 Resize，漏掉会导致最大化后仍是圆角。
+
+### 3.5 最大化压平的样式表会沿对象树泄漏到子弹窗（弹窗圆角变直角）
+
+窗体级样式表不只作用于窗体本身，而是**沿 QObject 父子树作用于全部后代**。
+所有弹窗都以主窗体为父控件创建，所以 §3.4 的压平片段若用裸的后代选择器
+（`QDialog #FramelessDialogBody`、`QWizard`，以及 `QFrame#FramelessTitleBar`），
+主窗体一最大化，规则就会命中**子弹窗**的标题栏/body——弹窗四角全部变直角
+（实测：主窗体普通尺寸时弹窗圆角正常，最大化后左下/右上角立即变方）。
+
+修法：压平片段只用 `QMainWindow >` 直接子选择器（见 §3.4），并删掉
+`QDialog #FramelessDialogBody` / `QWizard` 这类对本窗体压平毫无作用、纯粹
+泄漏源的选项。弹窗自身永远不压平（弹窗不可最大化，见 §3.4 与 §4.5）。
 
 ## 4. 外阴影：影子窗口
 
@@ -229,10 +249,10 @@ alpha 60（≈24%）、1.5px 笔宽逐像素步进，视觉上与系统阴影接
 
 | 宿主事件 | 动作 |
 |---|---|
-| Show / Resize / Move | 影子 `setGeometry(host.frameGeometry().adjusted(-m, -m, m, m))`；Show 后把影子插回宿主正下方 |
-| WindowStateChange | 最大化/最小化 → 影子隐藏；还原 → 恢复 |
+| Show / Resize / Move | 影子 `setGeometry(host.frameGeometry().adjusted(-m, -m, m, m))`；Show 后把影子插回宿主正下方（首次显示时继承宿主 transientParent，见 §4.5） |
+| WindowStateChange | 最大化/最小化 → 影子隐藏（仅 QMainWindow 宿主，见 §3.4/§4.5）；还原 → 恢复 |
 | Hide / Close | 影子隐藏 |
-| ActivationChange / ZOrderChange | 影子重新插回宿主正下方（宿主被其他窗口抬起后影子不许浮到上面） |
+| ActivationChange / ZOrderChange | 影子重新插回宿主正下方（宿主被其他窗口抬起后影子不许浮到上面），并补一次 sync 自愈（§4.5） |
 
 z 序用 Win32 API 精确控制（Qt 的 `raise_/lower/stackUnder` 对跨顶层窗口不够用）：
 
@@ -251,6 +271,51 @@ ctypes.windll.user32.SetWindowPos(
 影子窗口矩形范围内的点击会落在宿主上（输入穿透挡不住"落在影子窗口自身"的
 点击，只能保证不抢焦点）。窗口边缘 20px 内若有需要点穿到其他程序的场景，
 需自行评估；本项目场景可接受。
+
+### 4.5 影子丢失：点击被模态禁用的主窗体（影子必须继承宿主的 Owner）
+
+现象（三层，全部实测）：
+
+1. 弹窗打开时，点击弹窗外、主窗体内任意位置 → **影子丢失**；
+2. 影子丢失后，点击主窗体外（如桌面，应用失活）→ 激活中的弹窗影子恢复；
+3. 两层弹窗（弹窗 A 上再开弹窗 B）时点击主窗体内 → 两层影子都丢；点桌面 →
+   只有最上层（激活中）的 B 恢复，中间层的 A 不恢复。
+
+根因：点击被模态禁用的主窗体，Windows 仍会**把主窗体 z 序抬升**——弹窗作为
+owned 窗口被系统强制保持在 owner 上方（所以弹窗没被盖住、激活态也没变），
+但**无主的影子窗口被压到主窗体下面**，被（最大化的）主窗体整个盖住。此刻
+弹窗收不到任何事件（无激活变化、无几何变化），§4.3 的 restack 没有触发机会。
+点桌面时应用失活：激活中的弹窗收到 `ActivationChange` → restack 自愈；中间层
+弹窗本就不处于激活态、无状态变化、收不到事件 → 影子保持丢失。
+
+修法（结构性，不依赖事件补救）：**影子窗口继承宿主的 transientParent
+（同 Owner）**。Windows 的 owned-above-owner 规则由系统强制执行——主窗体
+无论怎么被点击抬升都压不到影子；多层弹窗链式生效（B 的影子 owner=A，
+A 的影子 owner=主窗体）。注意首次 sync 时影子还没有原生句柄，
+`windowHandle()` 为 None，要先 `winId()` 建原生窗口才能设置：
+
+```python
+if not self.isVisible():
+    host_handle = host.windowHandle()
+    if host_handle is not None:
+        handle = self.windowHandle()
+        if handle is None:
+            self.winId()                      # 先建原生窗口才能设置 owner
+            handle = self.windowHandle()
+        if handle is not None and handle.transientParent() is not host_handle.transientParent():
+            handle.setTransientParent(host_handle.transientParent())
+    self.show()
+```
+
+配套两道保险：最大化藏影只对 QMainWindow 判定（弹窗不参与，见 §3.4 的
+isMaximized 误报）；宿主 `ActivationChange` 时 restack 之外补一次 `sync()`
+自愈，影子若曾被隐藏会被拉回。
+
+诊断手段（定位此坑的关键）：`EnumWindows` 枚举进程顶层窗口看 z 序变化、
+`GetWindowLongPtrW(hwnd, GWLP_HWNDPARENT)` 查影子 owner、
+`GetWindow(shadow, GW_HWNDPREV)` 验证"影子正上方是否恰好是宿主"。
+注意 `QWidget.isVisible()` 报告的是 Qt 侧状态，影子被其他窗口盖住时它仍是
+True，必须看 z 序或屏幕合成结果。
 
 ## 5. 菜单圆角
 
@@ -293,7 +358,9 @@ QSS 里 QMenu 本身就有 `border-radius` + `border`（本项目 8px + 1px 实�
 | QMainWindow 忽略布局边距 | `layout().setContentsMargins()` 不生效 | 它的内部布局自行排布 menuWidget/central/statusbar；别指望用它缩进内容 |
 | PySide6 6.12.0 QSpinBox 回归 | QSS 带 border/padding 时 spinbox 内嵌编辑区被压成 1px，数字不可见（6.8~6.11 正常） | 依赖钉 `PySide6>=6.6,<6.7`（本项目取 6.6 系列），等 Qt 修复再放开 |
 | 顶层不透明窗口的像素测量陷阱 | grab()/截屏判读圆角被窗口表面填充误导 | 测量必须在**透明窗体 + 子控件**的真实结构上做，或直接量屏幕合成结果（见 §7） |
-| 点击被模态禁用的主窗体，弹窗影子丢失 | 主窗体 z 序被抬到弹窗之下、影子之上，无主影子被盖住；弹窗激活态不变，收不到任何可触发 restack 的事件 | 影子窗口继承宿主的 `transientParent`（QWindow.setTransientParent，首次 sync 时先 `winId()` 建原生句柄再设），owned-above-owner 规则保证主窗体永远压不到影子 |
+| 点击被模态禁用的主窗体，弹窗影子丢失 | 主窗体 z 序被抬到弹窗之下、影子之上，无主影子被盖住；弹窗激活态不变，收不到任何可触发 restack 的事件（多层弹窗时只有激活中那层能靠 ActivationChange 自愈，见 §4.5） | 影子窗口继承宿主的 `transientParent`（QWindow.setTransientParent，首次 sync 时先 `winId()` 建原生句柄再设），owned-above-owner 规则保证主窗体永远压不到影子 |
+| 主窗体最大化后弹窗圆角变直角 | 窗体级样式表沿 QObject 父子树作用于全部后代，压平片段的裸后代选择器命中子弹窗的标题栏/body（见 §3.5） | 压平片段只用 `QMainWindow >` 直接子选择器限定主窗体自己的贴角控件，删掉 `QDialog #FramelessDialogBody` / `QWizard` 等泄漏源 |
+| QDialog 上 isMaximized() 误报 | 作为最大化的 QMainWindow 的 owned 窗口，普通尺寸的 QDialog 偶发 `isMaximized()==True`（Win10 实测），据此藏影/压平会把正常弹窗的影子、圆角一并丢掉 | 最大化退化与藏影判定都加 `isinstance(host, QMainWindow)` 限定（§3.4 / §4.5） |
 
 ## 7. 验证方法论
 
@@ -329,7 +396,7 @@ QSS 里 QMenu 本身就有 `border-radius` + `border`（本项目 8px + 1px 实�
 
 | 内容 | 位置 |
 |---|---|
-| 助手/描边圈/影子/菜单修整 | `src/app/views/widgets/rounded_window.py` |
+| 助手/描边圈/影子/菜单修整 | `src/app/views/widgets/rounded_window.py`（影子继承宿主 transientParent 在 `_ShadowWindow.sync`，压平片段 `_SQUARE_CORNERS_SHEET`，见 §3.5/§4.5） |
 | 接入点（弹窗基类） | `src/app/views/widgets/frameless_dialog.py`（`FramelessDialog.__init__` 非 mac 分支） |
 | 接入点（主窗体） | `src/app/views/main_window.py`（`MainWindow.__init__` 非 mac 分支） |
 | 贴角子控件 QSS | `src/app/resources/qss/theme.py`（搜 `FramelessTitleBar` / `FramelessDialogBody` / `QWizard` / `QStatusBar` / `WindowBtn`） |
