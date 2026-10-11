@@ -30,17 +30,18 @@ def test_dialog_gets_translucent_background_and_ring(message_box):
     assert "RoundedWindowRoot" in message_box.styleSheet()
 
 
-def test_dialog_mask_is_rounded_and_restores(message_box):
-    """show 后有圆角 mask；最大化清空 mask，还原后恢复。"""
-    message_box.show()
-    assert not message_box.mask().isEmpty()
-    assert message_box.mask().boundingRect().size() == message_box.size()
+def test_dialog_corners_squared_when_maximized(qapp, message_box):
+    """圆角由贴角子控件 QSS 自绘（不再用 1-bit mask）；最大化压平，还原恢复。"""
+    box = message_box
+    box.show()
+    assert box.mask().isEmpty()
+    assert "border-radius: 0px" not in box.styleSheet()
 
-    message_box.showMaximized()
-    assert message_box.mask().isEmpty()
+    box.showMaximized()
+    assert "border-radius: 0px" in box.styleSheet()
 
-    message_box.showNormal()
-    assert not message_box.mask().isEmpty()
+    box.showNormal()
+    assert "border-radius: 0px" not in box.styleSheet()
 
 
 def test_ring_follows_theme(message_box):

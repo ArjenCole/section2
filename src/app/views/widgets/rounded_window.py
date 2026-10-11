@@ -1,11 +1,13 @@
 """Windows 无边框窗体的自绘圆角与外阴影（不依赖 Win11 DWM，Win10/11 外观一致）。
 
-圆角：窗体开 ``WA_TranslucentBackground``，再用 ``setMask`` 把整窗裁成圆角
-区域，窗口系统级裁剪对标题栏、内容区等所有子控件生效——不要求每个子控件
-自己画圆角。mask 边缘是锯齿的，所以再放一个置顶、鼠标穿透的 overlay 子控
-件沿同一条圆角路径用抗锯齿画 1px 边框圈，盖住锯齿、同时充当窗体描边
-（对应 Win11 DWM 在系统圆角下附带的 1px 轮廓）。最大化时退化为直角并与
-系统行为一致，还原时自动恢复。
+圆角：窗体开 ``WA_TranslucentBackground`` 且自身不画背景，圆角轮廓由贴角的
+子控件用 QSS ``border-radius`` 自绘（见 theme.py：标题栏上两角、对话框 body
+与内嵌 QWizard 的下两角、主窗体状态栏下两角）。QSS 背景走 QPainter 抗锯齿
+填充，边缘平滑；四条直边与窗体矩形重合，天然无锯齿。曾经用过的 ``setMask``
+方案是 1-bit 系统级裁剪，边缘锯齿明显，已移除。置顶的 overlay 子控件沿同一
+条轮廓用抗锯齿画 1px 描边圈，充当窗体描边（对应 Win11 DWM 在系统圆角下附带
+的 1px 轮廓）。最大化时通过窗体级样式表把贴角子控件的圆角压平（与系统行为
+一致），还原时自动恢复。
 
 外阴影：一个透明的 Tool 影子窗口（:class:`_ShadowWindow`）贴在宿主窗体正
 后方，随宿主显示/移动/缩放同步，沿圆角路径画多圈渐隐的黑色描边模拟投影。
@@ -13,7 +15,7 @@
 隐藏。影子窗口开启输入穿透，不挡鼠标也不抢焦点。
 
 顶层窗体命中的全局 QSS 背景（``QWidget/QMainWindow/QDialog`` 规则）会把
-整个矩形填成实心、盖掉透明圆角，助手用窗体级样式表 + ID 选择器精确关掉。
+整个矩形填成实心、露出方角，助手用窗体级样式表 + ID 选择器精确关掉。
 macOS 走原生红绿灯窗口（见 mac_window.py），不要装这个助手。
 """
 
@@ -22,10 +24,10 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import QEvent, QObject, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QRegion
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QMainWindow, QWidget
 
-#: 圆角半径（逻辑像素），与 QSS 卡片的 border-radius: 8px 一致
+#: 圆角半径（逻辑像素），与 theme.py 里贴角子控件的 border-radius 一致
 _RADIUS = 8
 
 #: 阴影向外扩散的距离（逻辑像素）
@@ -33,6 +35,13 @@ _SHADOW_MARGIN = 20
 
 #: 阴影最深处（贴着窗体边缘）的不透明度
 _SHADOW_ALPHA = 60
+
+#: 最大化时压平贴角子控件圆角的窗体级样式表片段（widget 级样式表优先于
+#: 全局 QSS，同选择器下直接覆盖）
+_SQUARE_CORNERS_SHEET = (
+    "QFrame#FramelessTitleBar, QDialog #FramelessDialogBody, QWizard, QStatusBar "
+    "{ border-radius: 0px; }"
+)
 
 _SWP_NOSIZE = 0x0001
 _SWP_NOMOVE = 0x0002
@@ -168,12 +177,14 @@ class RoundedWindowHelper(QObject):
         self._shadow = _ShadowWindow(window)
         # 影子窗口是独立顶层窗口（不能设 widget 父对象），挂在助手销毁信号上随宿主清理
         self.destroyed.connect(self._shadow.deleteLater)
+        self._squared = False
 
         window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         if not window.objectName():
             window.setObjectName("RoundedWindowRoot")
         base = "QMainWindow" if isinstance(window, QMainWindow) else "QDialog"
-        window.setStyleSheet(f"{base}#{window.objectName()} {{ background: transparent; }}")
+        self._base_sheet = f"{base}#{window.objectName()} {{ background: transparent; }}"
+        window.setStyleSheet(self._base_sheet)
 
         window.installEventFilter(self)
         from app.resources.qss.theme import ThemeManager
@@ -204,13 +215,17 @@ class RoundedWindowHelper(QObject):
     def _apply(self) -> None:
         window = self._window
         ring = self._ring
-        if window.isMaximized():
-            window.clearMask()
+        squared = window.isMaximized()
+        if squared != self._squared:
+            # 最大化时压平贴角子控件的圆角（与系统行为一致），还原时恢复
+            self._squared = squared
+            window.setStyleSheet(
+                self._base_sheet + _SQUARE_CORNERS_SHEET if squared else self._base_sheet
+            )
+        if squared:
             ring.hide()
             return
         ring.setGeometry(window.rect())
         ring.show()
         ring.raise_()
-        window.setMask(QRegion(_rounded_path(QRectF(window.rect()), _RADIUS)
-                               .toFillPolygon().toPolygon()))
         ring.update()

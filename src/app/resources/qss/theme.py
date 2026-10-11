@@ -188,6 +188,10 @@ QMenuBar#TitleBarMenuBar::item:pressed { background-color: $bg_pressed; }
 QFrame#FramelessTitleBar {
     background-color: $bg_card;
     border-bottom: 1px solid $border;
+    /* 无边框窗体的自绘圆角（rounded_window._RADIUS），QSS 抗锯齿填充，
+       mask 已移除，贴角子控件自己画出圆角轮廓 */
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
 }
 QLabel#TitleBarIcon { color: $primary; font-weight: 700; font-size: 15px; background: transparent; padding: 0 2px 0 0; }
 QToolButton#WindowBtn {
@@ -244,6 +248,8 @@ QToolButton[role="toggle-bar"]:hover { background-color: $primary_soft; }
 QStatusBar {
     background-color: $bg_card;
     border-top: 1px solid $border;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
     color: $text_secondary;
 }
 QStatusBar::item { border: none; }
@@ -492,6 +498,9 @@ QDialog QTableWidget, QDialog QTableView, QDialog QTreeWidget, QDialog QListView
 }
 QDialog QHeaderView::section { background-color: $bg_card; color: $text_secondary; }
 QDialog #FramelessTitleBar, QDialog #FramelessDialogBody { background-color: $bg_dialog; }
+QDialog #FramelessDialogBody { border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }
+/* 向导内嵌页齐边充满 body，底部两角随窗体轮廓一起倒圆 */
+QWizard { border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }
 QLabel[role="dialog-title"] { font-size: 14px; font-weight: 600; color: $text_primary; }
 
 /* ===================== AI 面板 ===================== */
