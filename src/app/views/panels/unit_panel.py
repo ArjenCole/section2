@@ -34,8 +34,6 @@ from app.core.evaluator import EvalError, evaluate, format_number
 from app.core.event_bus import bus
 from app.views.widgets.mac_window import is_mac
 from app.core.models.models import (
-    CATEGORY_CHOICES,
-    CATEGORY_NAMES,
     CATEGORY_STRUCTURE,
     MULTI_PE_TEXT,
     MULTI_PF_TEXT,
@@ -52,7 +50,7 @@ from app.views.widgets.table_edit_delegate import TableEditDelegate
 _ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
 _COL_NAME, _COL_CATEGORY, _COL_SPEC, _COL_DEPTH, _COL_UNIT, _COL_AMOUNT, _COL_PE, _COL_PF, _COL_PP, _COL_PW, _COL_SOURCE = range(11)
 _ELEMENT_HEADERS = ["名称", "类型", "规格", "埋深", "单位", "数量", "沟槽围护原则", "地基处理原则", "降水原则", "工作面宽原则", "来源"]
-#: 复刻旧版 dGVmain 列结构（规格 / 来源列只读）
+#: 复刻旧版 dGVmain 列结构（类型 / 规格 / 来源列只读）
 #: 类型与沟槽围护原则列同宽；围护/地基原则两列等宽（下拉框完整显示 6 个字）；
 #: 规格列两倍宽；埋深=数量列宽；单位列容得下表头两字；埋深/单位/数量居中
 _ELEMENT_WIDTHS = [130, 110, 280, 70, 48, 70, 130, 130, 130, 130, 80]
@@ -159,6 +157,9 @@ class UnitPanel(QWidget):
         self._vm = UnitViewModel()
         self._unit_id: int | None = None
         self._loading = False
+        # 构件库插入后待选中的新条目 id：表格刷新经 unit_changed → QTimer 延后，
+        # 插入返回时还是旧行，由 _on_unit_loaded 在重载落地后按它选中新行
+        self._pending_select_id: int | None = None
         # 明细面板跟随主表格选中行：多选时左右中三块都显示占位/合计
         self._multi_detail = False
         self._current_detail_id: int | None = None
@@ -461,6 +462,7 @@ class UnitPanel(QWidget):
         self._unit_id = unit_id
         self._multi_detail = False
         self._current_detail_id = None
+        self._pending_select_id = None
         has_unit = unit_id is not None
         self._placeholder.setVisible(not has_unit)
         self._work_area.setVisible(has_unit)
@@ -481,6 +483,8 @@ class UnitPanel(QWidget):
             return
         keep_element = self._current_element_id()
         keep_column = self._element_table.currentColumn()
+        pending = self._pending_select_id
+        self._pending_select_id = None
         self._loading = True
         try:
             _clear_cell_widgets(self._element_table)  # 旧内嵌下拉框显式销毁，避免残留叠加
@@ -499,7 +503,9 @@ class UnitPanel(QWidget):
                 )
         finally:
             self._loading = False
-        self._restore_current_element(keep_element, keep_column)
+        self._restore_current_element(
+            pending if pending is not None else keep_element, keep_column
+        )
         self._fill_quantities()
         self._section_view.set_element(self._current_element_id())
 
@@ -683,13 +689,10 @@ class UnitPanel(QWidget):
         name_item.setData(_ELEMENT_ROLE, row.id)
         self._element_table.setItem(index, _COL_NAME, name_item)
 
-        category = QComboBox()
-        category.addItems([CATEGORY_NAMES[value] for value in CATEGORY_CHOICES])
-        category.setCurrentIndex(_category_index(row.category))
-        category.currentIndexChanged.connect(
-            lambda position, element_id=row.id: self._on_category_changed(element_id, position)
-        )
-        self._element_table.setCellWidget(index, _COL_CATEGORY, category)
+        category_item = QTableWidgetItem(category_name(row.category))
+        category_item.setFlags(category_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        category_item.setForeground(QBrush(_secondary_color()))
+        self._element_table.setItem(index, _COL_CATEGORY, category_item)
 
         spec_item = QTableWidgetItem(row.spec)
         spec_item.setFlags(spec_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -771,11 +774,6 @@ class UnitPanel(QWidget):
             bus().status_message.emit(f"{label}算式错误：{error}", 6000)
         else:
             bus().status_message.emit(f"{label} {text} = {format_number(value)}", 4000)
-
-    def _on_category_changed(self, element_id: int, position: int) -> None:
-        if self._loading or position < 0 or position >= len(CATEGORY_CHOICES):
-            return
-        self._vm.set_element_field(element_id, "category", CATEGORY_CHOICES[position])
 
     def _on_current_element_changed(self, row: int, _column: int, _previous_row: int, _previous_column: int) -> None:
         if self._loading:
@@ -866,6 +864,10 @@ class UnitPanel(QWidget):
     def _element_id_at(self, row: int) -> int | None:
         item = self._element_table.item(row, _COL_NAME) if row >= 0 else None
         return item.data(_ELEMENT_ROLE) if item is not None else None
+
+    def _next_element_id(self) -> int | None:
+        """当前选中行下一行的构件 id；当前已是末行（或未选中行）时为 None。"""
+        return self._element_id_at(self._element_table.currentRow() + 1)
 
     def _restore_current_element(self, element_id: int | None, column: int) -> None:
         """重建表格后恢复选中行；本来没有选中就选第一行，让明细区直接可用。"""
@@ -1024,13 +1026,18 @@ class UnitPanel(QWidget):
 
     # ------------------------------------------------------------------ 构件库插入（原版 FormMdi 构件库双击）
     def insert_template(self, template) -> None:
-        """把构件库模板插入当前单位工程主表格（选中行之前）。"""
+        """把构件库模板插入当前单位工程主表格（当前选中行的下一行），并选中新条目。"""
         if self._unit_id is None:
             bus().status_message.emit("请先选中单位工程，再从构件库插入。", 4000)
             return
         from app.viewmodels.unit_vm import insert_element_template
 
-        insert_element_template(self._unit_id, template, self._current_element_id())
+        # 插入语义是“锚点行之前”：锚点取下一行即插到当前行之后（末行时锚点为空 → 追加末尾）。
+        # 表格刷新经 unit_changed → QTimer.singleShot(0) 延后，此处只记下新 id，
+        # 由 _on_unit_loaded 在重载落地后选中新行
+        element = insert_element_template(self._unit_id, template, self._next_element_id())
+        if element is not None:
+            self._pending_select_id = element.id
 
     # ------------------------------------------------------------------ 明细
     def _on_detail_loaded(self, element_id: int, pipes: list[PipeRow], params: list[ParamRow]) -> None:
@@ -1144,13 +1151,6 @@ def _structure_locked_param_keys(element_id: int | None) -> set[str]:
     if element is None or element.category != CATEGORY_STRUCTURE:
         return set()
     return {"-名称", "-单位"}
-
-
-def _category_index(category: int) -> int:
-    try:
-        return CATEGORY_CHOICES.index(category)
-    except ValueError:
-        return 0
 
 
 def _combo_names(names: list[str], rows: list[ElementRow], field: str) -> list[str]:
