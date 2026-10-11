@@ -25,7 +25,7 @@ import sys
 
 from PySide6.QtCore import QEvent, QObject, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QMainWindow, QMenu, QWidget
+from PySide6.QtWidgets import QComboBox, QMainWindow, QMenu, QWidget
 
 #: 圆角半径（逻辑像素），与 theme.py 里贴角子控件的 border-radius 一致
 _RADIUS = 8
@@ -183,19 +183,21 @@ class _ShadowWindow(QWidget):
         self._cache = pixmap
 
 
-class _MenuRounding(QObject):
-    """QMenu 圆角修整：Win10 的弹出菜单是不透明矩形窗口，QSS 画的圆角外面
-    会露出调色板底色的方角，左下角再叠上系统菜单阴影最扎眼。在菜单首次
-    polish（尚无原生窗口）时开透明背景 + 无边框，并关掉系统方角阴影，
-    让 QSS 的 border-radius 成为真实的窗口轮廓。"""
+class _PopupRounding(QObject):
+    """弹出层圆角修整：Win10 的 QMenu 与 QComboBox 弹出列表都是不透明矩形
+    窗口，QSS 画的圆角外面会露出容器自身底色的方角（主窗体里是调色板底色、
+    QDialog 里 `QDialog QWidget { background: transparent }` 命中容器后直接
+    露出未初始化的黑底），左下角再叠上系统阴影最扎眼。在首次 polish（尚无
+    原生窗口）时开透明背景 + 无边框，并关掉系统方角阴影，让 QSS 的
+    border-radius 成为真实的窗口轮廓。"""
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt 命名
-        if (
-            isinstance(obj, QMenu)
-            and event.type() == QEvent.Type.Polish
-            and not obj.isVisible()
-        ):
+        if event.type() != QEvent.Type.Polish or obj.isVisible():
+            return False
+        if isinstance(obj, QMenu):
             apply_menu_rounding(obj)
+        elif isinstance(obj, QComboBox):
+            apply_combo_popup_rounding(obj)
         return False
 
 
@@ -208,9 +210,23 @@ def apply_menu_rounding(menu: QMenu) -> None:
     menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
 
+def apply_combo_popup_rounding(combo: QComboBox) -> None:
+    """下拉框弹出列表（QComboBoxPrivateContainer 容器）与菜单同款修整。
+
+    容器必须一并透明化：应用级 QSS 的 QWidget 背景规则会把它画成不透明底色，
+    圆角外的方角照样露出来；容器自身透明后，QListView 的圆角卡片
+    （QComboBox QAbstractItemView 规则）才是真实轮廓。选择器用类名只命中
+    容器，避免无选择器规则把内部列表也打透明。
+    """
+    container = combo.view().window()
+    apply_menu_rounding(container)
+    container.setStyleSheet("QComboBoxPrivateContainer { background: transparent; }")
+
+
 def install_menu_rounding(app) -> None:
-    """给整个应用的所有 QMenu（菜单栏下拉、各级子菜单、右键菜单）套圆角修整。"""
-    app.installEventFilter(_MenuRounding(app))
+    """给整个应用的弹出层（QMenu 菜单栏下拉、各级子菜单、右键菜单，以及
+    所有 QComboBox 的下拉列表）套圆角修整。"""
+    app.installEventFilter(_PopupRounding(app))
 
 
 class RoundedWindowHelper(QObject):

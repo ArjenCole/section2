@@ -1,7 +1,7 @@
 # 无边框窗体自绘圆角与外阴影实现指南（PySide6 / Windows）
 
-本文记录 Section 2.0 在 Windows 上为无边框窗体实现圆角、描边、外阴影、圆角菜单
-的完整方案，供其他项目参照开发。所有代码可直接复制；本项目落地位置见文末索引。
+本文记录 Section 2.0 在 Windows 上为无边框窗体实现圆角、描边、外阴影、圆角
+弹出层（菜单与下拉列表）的完整方案，供其他项目参照开发。所有代码可直接复制；本项目落地位置见文末索引。
 
 - **效果**：窗体（主窗体 + 一切弹窗）四角 8px 抗锯齿圆角、1px 描边、向外渐隐
   20px 的柔和投影；下拉/右键菜单四角真圆角；外观在 Win10 / Win11 完全一致，
@@ -20,7 +20,7 @@
 | 外阴影 | 影子窗口（贴在宿主正后方的透明 Tool 窗口） | 沿圆角路径由内向外多圈描边，透明度二次衰减 |
 | 影子不挡鼠标 | `WA_TransparentForMouseEvents` + 不接受焦点 | 纯视觉层 |
 | 最大化退化 | 窗体级样式表压平子控件圆角 + 隐藏影子 | 与系统行为一致，还原自动恢复 |
-| 圆角菜单 | 菜单首次 polish 时开透明 + 无边框 + 关系统阴影 | 让 QSS 圆角成为菜单的真实窗口轮廓 |
+| 圆角弹出层（菜单/下拉列表） | 首次 polish 时开透明 + 无边框 + 关系统阴影 | 让 QSS 圆角成为弹出层的真实窗口轮廓 |
 
 ## 2. 落选方案与踩坑结论（为什么是这套）
 
@@ -317,7 +317,9 @@ isMaximized 误报）；宿主 `ActivationChange` 时 restack 之外补一次 `s
 注意 `QWidget.isVisible()` 报告的是 Qt 侧状态，影子被其他窗口盖住时它仍是
 True，必须看 z 序或屏幕合成结果。
 
-## 5. 菜单圆角
+## 5. 弹出层圆角（菜单与下拉列表）
+
+### 5.1 菜单
 
 Win10 的 QMenu 弹出窗是**不透明矩形窗口**：QSS 画的 `border-radius` 外面露出
 调色板底色的方角落，左下角再叠上系统菜单阴影，非常扎眼。修法是在菜单首次
@@ -347,6 +349,37 @@ def install_menu_rounding(app) -> None:
 QSS 里 QMenu 本身就有 `border-radius` + `border`（本项目 8px + 1px 实色边），
 透明化之后圆角即真实轮廓。副作用：菜单失去系统原生阴影（它正是方角感的来源
 之一），如需要可另画轻量投影。
+
+### 5.2 下拉框的弹出列表
+
+QComboBox 的弹出列表（`QComboBoxPrivateContainer` 容器 + 内部 `QListView`）
+**不是 QMenu**，§5.1 的过滤器覆盖不到，问题表现还随上下文不同：
+
+* 主窗体里：容器按应用级 QSS 的 QWidget 背景规则画成不透明底色，圆角卡片
+  画在里面，四角露出方角（右下最明显）；
+* QDialog 里：`QDialog QWidget { background: transparent }` 命中弹出容器，
+  不透明窗口上画透明背景，圆角外直接露出**未初始化的黑底**。
+
+修法与菜单同款（过滤器在 Polish 时一并处理 QComboBox）：
+
+```python
+def apply_combo_popup_rounding(combo: QComboBox) -> None:
+    container = combo.view().window()
+    apply_menu_rounding(container)            # 透明 + 无边框 + 关系统阴影
+    container.setStyleSheet(
+        "QComboBoxPrivateContainer { background: transparent; }")
+```
+
+两个要点：
+
+1. **容器必须一并透明化**。它会被应用级 QSS 的 QWidget 背景规则画成不透明
+   底色，不透明则圆角外的方角照样露出来；透明后内部 QListView 的圆角卡片
+   （`QComboBox QAbstractItemView` 规则）才是真实轮廓。
+2. **容器样式表必须带类名选择器**。无选择器的规则等于容器内通用，会把内部
+   列表也打透明（列表没了底色）。
+
+同一过滤器覆盖全项目所有 QComboBox（主窗体各面板、表格单元格内嵌、各弹窗、
+AI 设置等），无需逐处接入。
 
 ## 6. 相关的平台坑速查
 
@@ -396,11 +429,11 @@ QSS 里 QMenu 本身就有 `border-radius` + `border`（本项目 8px + 1px 实�
 
 | 内容 | 位置 |
 |---|---|
-| 助手/描边圈/影子/菜单修整 | `src/app/views/widgets/rounded_window.py`（影子继承宿主 transientParent 在 `_ShadowWindow.sync`，压平片段 `_SQUARE_CORNERS_SHEET`，见 §3.5/§4.5） |
+| 助手/描边圈/影子/弹出层修整 | `src/app/views/widgets/rounded_window.py`（影子继承宿主 transientParent 在 `_ShadowWindow.sync`，压平片段 `_SQUARE_CORNERS_SHEET`，见 §3.5/§4.5） |
 | 接入点（弹窗基类） | `src/app/views/widgets/frameless_dialog.py`（`FramelessDialog.__init__` 非 mac 分支） |
 | 接入点（主窗体） | `src/app/views/main_window.py`（`MainWindow.__init__` 非 mac 分支） |
 | 贴角子控件 QSS | `src/app/resources/qss/theme.py`（搜 `FramelessTitleBar` / `FramelessDialogBody` / `QWizard` / `QStatusBar` / `WindowBtn`） |
-| 菜单修整安装 | `src/app/main.py`（`install_menu_rounding(app)`） |
+| 弹出层修整安装 | `src/app/main.py`（`install_menu_rounding(app)`） |
 | 边缘缩放（NCHITTEST） | `src/app/views/main_window.py`（`nativeEvent`） |
 | 回归测试 | `tests/test_rounded_window.py` |
 | 依赖钉版（QSpinBox 回归） | `pyproject.toml`（`PySide6>=6.6,<6.7`） |

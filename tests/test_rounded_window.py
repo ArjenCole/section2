@@ -199,3 +199,26 @@ def test_square_corners_sheet_scoped_to_main_window(qapp):
     assert "QMainWindow > QStatusBar" in _SQUARE_CORNERS_SHEET
     assert "QDialog #FramelessDialogBody" not in _SQUARE_CORNERS_SHEET
     assert "QWizard" not in _SQUARE_CORNERS_SHEET
+
+
+def test_combo_popup_rounding_applied(qapp):
+    """下拉框弹出列表与菜单同款修整：容器透明 + 无边框 + 关系统阴影。
+
+    弹出容器（QComboBoxPrivateContainer）是不透明矩形窗口：QListView 的圆角
+    卡片画在里面，圆角外露出容器底色（主窗体里是调色板底色，QDialog 里
+    `QDialog QWidget { background: transparent }` 命中容器后直接露黑底）。
+    修整后容器的圆角卡片成为真实窗口轮廓。"""
+    from PySide6.QtWidgets import QComboBox
+
+    from app.views.widgets.rounded_window import apply_combo_popup_rounding
+
+    combo = QComboBox()
+    combo.addItems(["甲", "乙"])
+    apply_combo_popup_rounding(combo)
+    container = combo.view().window()
+    assert container is not combo
+    assert container.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    assert bool(container.windowFlags() & Qt.WindowType.FramelessWindowHint)
+    assert bool(container.windowFlags() & Qt.WindowType.NoDropShadowWindowHint)
+    # 容器自身透明化（类名选择器只命中容器，不影响内部列表的 QSS 背景）
+    assert "QComboBoxPrivateContainer { background: transparent; }" in container.styleSheet()
