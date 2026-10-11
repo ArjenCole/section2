@@ -51,6 +51,7 @@ from app.views.panels.tree_panel import TreePanel
 from app.views.panels.unit_panel import UnitPanel
 from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.views.widgets.mac_window import apply_mac_window_chrome, is_mac
+from app.views.widgets.rounded_window import RoundedWindowHelper
 from app.views.dialogs.new_project_wizard import (
     NewProjectWizard,
     suggested_dir,
@@ -311,6 +312,8 @@ class MainWindow(QMainWindow):
         else:
             self._title_bar = FramelessTitleBar()
             self.setMenuWidget(self._title_bar)  # 标题栏替代原生菜单栏行
+            # Windows/Linux：自绘圆角（不依赖 Win11 DWM，Win10/11 外观一致）
+            self._rounded = RoundedWindowHelper.install(self)
         self._build_central()
         self._build_actions()
         self._build_menus()

@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.views.widgets.mac_window import apply_mac_window_chrome, is_mac
+from app.views.widgets.rounded_window import RoundedWindowHelper
 
 # 消息框按钮文案映射（StandardButton → 中文）
 _BUTTON_TEXT = {
@@ -304,6 +305,9 @@ class FramelessDialog(QDialog):
             self.setWindowFlags(Qt.WindowType.Window)
         else:
             self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+            # Windows/Linux：自绘圆角（WA_TranslucentBackground + mask + 描边圈），
+            # 不依赖 Win11 DWM，Win10/11 外观一致
+            self._rounded = RoundedWindowHelper.install(self)
 
         self._title_bar = None if self._mac else DialogTitleBar(title, self)
 
