@@ -34,6 +34,12 @@ from app.core.evaluator import EvalError, evaluate, format_number
 from app.core.event_bus import bus
 from app.views.widgets.mac_window import is_mac
 from app.core.models.models import (
+    CATEGORY_BOX_CULVERT,
+    CATEGORY_BURIED,
+    CATEGORY_ENCASED,
+    CATEGORY_GALLERY,
+    CATEGORY_JACKING,
+    CATEGORY_PULLING,
     CATEGORY_STRUCTURE,
     MULTI_PE_TEXT,
     MULTI_PF_TEXT,
@@ -54,6 +60,19 @@ _ELEMENT_HEADERS = ["名称", "类型", "规格", "埋深", "单位", "数量", 
 #: 类型与沟槽围护原则列同宽；围护/地基原则两列等宽（下拉框完整显示 6 个字）；
 #: 规格列两倍宽；埋深=数量列宽；单位列容得下表头两字；埋深/单位/数量居中
 _ELEMENT_WIDTHS = [130, 110, 280, 70, 48, 70, 130, 130, 130, 130, 80]
+
+#: 类型列简称（仅显示层，数据库 / 工程量 / 导出等仍用完整类别名）：
+#: 直埋管道→直；包封埋管/箱涵/管廊（构件库“混凝土结构”组）→箱；
+#: 顶管/牵引管（构件库“非开挖管道”组）→顶；构筑物（附属构筑物）→井
+_CATEGORY_ABBRS = {
+    CATEGORY_BURIED: "直",
+    CATEGORY_ENCASED: "箱",
+    CATEGORY_BOX_CULVERT: "箱",
+    CATEGORY_GALLERY: "箱",
+    CATEGORY_JACKING: "顶",
+    CATEGORY_PULLING: "顶",
+    CATEGORY_STRUCTURE: "井",
+}
 
 _QUANTITY_HEADERS = ["编号", "类别", "项目", "单位", "计算表达式", "工程量"]
 _QCOL_EXPRESSION = 4
@@ -689,9 +708,11 @@ class UnitPanel(QWidget):
         name_item.setData(_ELEMENT_ROLE, row.id)
         self._element_table.setItem(index, _COL_NAME, name_item)
 
-        category_item = QTableWidgetItem(category_name(row.category))
+        category_item = QTableWidgetItem(_category_abbr(row.category))
         category_item.setFlags(category_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        category_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         category_item.setForeground(QBrush(_secondary_color()))
+        category_item.setToolTip(category_name(row.category))
         self._element_table.setItem(index, _COL_CATEGORY, category_item)
 
         spec_item = QTableWidgetItem(row.spec)
@@ -1151,6 +1172,11 @@ def _structure_locked_param_keys(element_id: int | None) -> set[str]:
     if element is None or element.category != CATEGORY_STRUCTURE:
         return set()
     return {"-名称", "-单位"}
+
+
+def _category_abbr(category: int) -> str:
+    """类型列显示文本：类别简称（仅显示层）；不在简称表里的类别回退完整名。"""
+    return _CATEGORY_ABBRS.get(int(category or 0)) or category_name(category)
 
 
 def _combo_names(names: list[str], rows: list[ElementRow], field: str) -> list[str]:

@@ -2,7 +2,7 @@
 
 覆盖：原则横条标签与单选切换、FormPE 复刻对话框的做法 Insert/Delete 规则、
 坞塝回填双向映射、主表格 11 列结构与构件库插入（插到当前选中行的下一行）、
-类型列只读。
+类型列只读与简称显示。
 """
 
 
@@ -172,15 +172,40 @@ def test_insert_template_after_selected_row(qapp, project):
         window.close()
 
 
+def test_category_abbreviations():
+    """类型列简称映射（仅显示层）：直埋→直，包封/箱涵/管廊→箱，顶管/牵引管→顶，构筑物→井。"""
+    from app.core.models.models import (
+        CATEGORY_BOX_CULVERT,
+        CATEGORY_BURIED,
+        CATEGORY_ENCASED,
+        CATEGORY_GALLERY,
+        CATEGORY_JACKING,
+        CATEGORY_NONE,
+        CATEGORY_PULLING,
+        CATEGORY_STRUCTURE,
+    )
+    from app.views.panels.unit_panel import _category_abbr
+
+    assert _category_abbr(CATEGORY_BURIED) == "直"
+    assert _category_abbr(CATEGORY_ENCASED) == "箱"
+    assert _category_abbr(CATEGORY_BOX_CULVERT) == "箱"
+    assert _category_abbr(CATEGORY_GALLERY) == "箱"
+    assert _category_abbr(CATEGORY_JACKING) == "顶"
+    assert _category_abbr(CATEGORY_PULLING) == "顶"
+    assert _category_abbr(CATEGORY_STRUCTURE) == "井"
+    # 简称表之外的类别回退完整名（空类别显示空）
+    assert _category_abbr(CATEGORY_NONE) == ""
+
+
 def test_category_column_readonly(qapp, project):
-    """主表格“类型”列不再内嵌下拉框：只读文本单元格，显示类别名。"""
+    """主表格“类型”列不再内嵌下拉框：只读文本单元格，显示类别简称、tooltip 完整名。"""
     from PySide6.QtCore import Qt
 
     from app.core.event_bus import bus
     from app.core.models.models import category_name
     from app.services.element_library import element_library
     from app.views.main_window import MainWindow
-    from app.views.panels.unit_panel import _COL_CATEGORY
+    from app.views.panels.unit_panel import _COL_CATEGORY, _category_abbr
 
     window = MainWindow()
     try:
@@ -203,6 +228,7 @@ def test_category_column_readonly(qapp, project):
         from app.viewmodels.unit_vm import element_rows
 
         row = element_rows(window._tree_panel.current_node.id)[0]
-        assert cell.text() == category_name(row.category) != ""
+        assert cell.text() == _category_abbr(row.category) == "直"
+        assert cell.toolTip() == category_name(row.category) == "直埋管道"
     finally:
         window.close()
