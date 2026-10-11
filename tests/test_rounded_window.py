@@ -30,18 +30,51 @@ def test_dialog_gets_translucent_background_and_ring(message_box):
     assert "RoundedWindowRoot" in message_box.styleSheet()
 
 
-def test_dialog_corners_squared_when_maximized(qapp, message_box):
-    """圆角由贴角子控件 QSS 自绘（不再用 1-bit mask）；最大化压平，还原恢复。"""
+def test_dialog_not_squared_when_maximized(qapp, message_box):
+    """圆角由贴角子控件 QSS 自绘（不再用 1-bit mask）。
+
+    最大化压平只针对主窗体：QDialog 作为最大化的 QMainWindow 的 owned 窗口时
+    isMaximized() 会偶发误报 True（Win 实测），若按旧逻辑压平会把正常弹窗的
+    圆角/描边/影子一并丢掉，所以弹窗不再参与最大化退化。
+    """
     box = message_box
     box.show()
     assert box.mask().isEmpty()
     assert "border-radius: 0px" not in box.styleSheet()
 
     box.showMaximized()
-    assert "border-radius: 0px" in box.styleSheet()
+    qapp.processEvents()
+    assert "border-radius: 0px" not in box.styleSheet()
 
     box.showNormal()
     assert "border-radius: 0px" not in box.styleSheet()
+
+
+def test_shadow_hidden_when_maximized(qapp):
+    """影子窗口：主窗体最大化时隐藏；弹窗宿主即使被误报最大化也保持影子。"""
+    from PySide6.QtWidgets import QDialog, QMainWindow
+
+    from app.views.widgets.rounded_window import _ShadowWindow
+
+    main = QMainWindow()
+    main.showMaximized()
+    qapp.processEvents()
+    main_shadow = _ShadowWindow(main)
+    main_shadow.sync()
+    assert not main_shadow.isVisible()
+    main.close()
+
+    dialog = QDialog()
+    dialog.resize(300, 200)
+    dialog.show()
+    dialog_shadow = _ShadowWindow(dialog)
+    dialog_shadow.sync()
+    assert dialog_shadow.isVisible()
+    dialog.showMaximized()
+    qapp.processEvents()
+    dialog_shadow.sync()
+    assert dialog_shadow.isVisible(), "弹窗被误报最大化时不应隐藏影子"
+    dialog.close()
 
 
 def test_ring_follows_theme(message_box):
@@ -90,19 +123,6 @@ def test_shadow_follows_host(qapp, message_box):
     assert not shadow.isVisible()
 
 
-def test_shadow_hidden_when_maximized(qapp, message_box):
-    """宿主最大化时影子隐藏，还原后恢复。"""
-    shadow = _shadow_of(message_box)
-    message_box.show()
-    message_box.showMaximized()
-    qapp.processEvents()
-    assert not shadow.isVisible()
-
-    message_box.showNormal()
-    qapp.processEvents()
-    assert shadow.isVisible()
-
-
 def test_shadow_gradient_faces_outward_on_all_sides(qapp, message_box):
     """回归防护：画布 = 影子窗口本身；四边都是“贴边深、向外渐隐”。"""
     shadow = _shadow_of(message_box)
@@ -140,3 +160,30 @@ def test_item_rule_has_transparent_background(qapp):
         "QTableWidget::item, QTableView::item"
         " { padding: 5px 8px; background-color: transparent; }"
     ) in sheet
+
+
+def test_shadow_inherits_host_transient_parent(qapp):
+    """影子与宿主同 Owner：点击被模态禁用的主窗体时，Windows 会把主窗体 z 序
+    抬到弹窗之下、影子之上（弹窗作为 owned 窗口被强制保持在 owner 上方，无主
+    的影子却被压到主窗体下面盖住，表现为“阴影丢失”，且宿主无任何事件可触发
+    restack 自愈）。影子继承宿主的 transientParent 后，owned-above-owner 规则
+    保证主窗体永远压不到影子。"""
+    from PySide6.QtWidgets import QDialog, QWidget
+
+    from app.views.widgets.rounded_window import _ShadowWindow
+
+    owner = QWidget()
+    owner.show()
+    host = QDialog(owner)
+    host.show()
+    shadow = _ShadowWindow(host)
+    shadow.sync()
+    try:
+        assert shadow.windowHandle() is not None
+        assert (
+            shadow.windowHandle().transientParent()
+            is host.windowHandle().transientParent()
+        )
+    finally:
+        host.close()
+        owner.close()

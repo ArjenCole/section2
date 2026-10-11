@@ -293,6 +293,7 @@ QSS 里 QMenu 本身就有 `border-radius` + `border`（本项目 8px + 1px 实�
 | QMainWindow 忽略布局边距 | `layout().setContentsMargins()` 不生效 | 它的内部布局自行排布 menuWidget/central/statusbar；别指望用它缩进内容 |
 | PySide6 6.12.0 QSpinBox 回归 | QSS 带 border/padding 时 spinbox 内嵌编辑区被压成 1px，数字不可见（6.8~6.11 正常） | 依赖钉 `PySide6>=6.6,<6.7`（本项目取 6.6 系列），等 Qt 修复再放开 |
 | 顶层不透明窗口的像素测量陷阱 | grab()/截屏判读圆角被窗口表面填充误导 | 测量必须在**透明窗体 + 子控件**的真实结构上做，或直接量屏幕合成结果（见 §7） |
+| 点击被模态禁用的主窗体，弹窗影子丢失 | 主窗体 z 序被抬到弹窗之下、影子之上，无主影子被盖住；弹窗激活态不变，收不到任何可触发 restack 的事件 | 影子窗口继承宿主的 `transientParent`（QWindow.setTransientParent，首次 sync 时先 `winId()` 建原生句柄再设），owned-above-owner 规则保证主窗体永远压不到影子 |
 
 ## 7. 验证方法论
 

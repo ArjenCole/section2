@@ -235,6 +235,10 @@ class EnclosureEditDialog(FramelessDialog):
                 table.setCellWidget(row_index, _COL_WS_CAT, ws_combo)
         finally:
             self._loading = False
+        # 内嵌下拉框就位后重算内容列宽：setRowCount 触发的自动重算发生在控件
+        # 创建之前，会把下拉列压窄、表头文字整体移位，视觉上字体忽粗忽细
+        for column in (_COL_DEPTH, _COL_RANGE, _COL_ECLS_CAT, _COL_WS_CAT):
+            table.resizeColumnToContents(column)
 
     @staticmethod
     def _readonly_item(text: str) -> QTableWidgetItem:

@@ -101,7 +101,11 @@ class _ShadowWindow(QWidget):
     # ------------------------------------------------------------- 几何同步
     def sync(self) -> None:
         host = self._host
-        if not host.isVisible() or host.isMinimized() or host.isMaximized():
+        # 最大化压平/藏影只针对主窗体：QDialog 作为最大化的 QMainWindow 的
+        # owned 窗口时 isMaximized() 会偶发误报 True（实测），把弹窗的影子
+        # 错误藏掉且不再恢复；弹窗本就不可最大化，这里仅对 QMainWindow 判定
+        suppress_maximized = host.isMaximized() and isinstance(host, QMainWindow)
+        if not host.isVisible() or host.isMinimized() or suppress_maximized:
             if self.isVisible():
                 self.hide()
             return
@@ -110,6 +114,20 @@ class _ShadowWindow(QWidget):
         if self.geometry() != target:
             self.setGeometry(target)
         if not self.isVisible():
+            # 影子与宿主同 Owner（transientParent）：点击被模态禁用的主窗体时，
+            # Windows 会把主窗体 z 序抬到弹窗之下、影子之上（弹窗作为 owned 窗口
+            # 被 Windows 强制保持在 owner 上方，无主的影子却被压到主窗体下面
+            # 盖住，表现为“阴影丢失”且宿主无任何事件可触发 restack）。让影子
+            # 继承宿主的 transientParent 后，owned-above-owner 规则保证主窗体
+            # 永远压不到影子（见 docs/window_chrome.md §4）
+            host_handle = host.windowHandle()
+            if host_handle is not None:
+                handle = self.windowHandle()
+                if handle is None:
+                    self.winId()  # 先建原生窗口才能设置 owner
+                    handle = self.windowHandle()
+                if handle is not None and handle.transientParent() is not host_handle.transientParent():
+                    handle.setTransientParent(host_handle.transientParent())
             self.show()
 
     def restack(self) -> None:
@@ -240,14 +258,17 @@ class RoundedWindowHelper(QObject):
         elif etype in (QEvent.Type.Hide, QEvent.Type.Close):
             self._shadow.hide()
         elif etype in (QEvent.Type.ActivationChange, QEvent.Type.ZOrderChange):
-            # 宿主被抬起后，把影子重新插回宿主正下方
+            # 宿主被抬起后，把影子重新插回宿主正下方；顺带 sync 自愈——
+            # 若影子曾被误藏（见 _ShadowWindow.sync），激活变化时拉回来
+            self._shadow.sync()
             self._shadow.restack()
         return False
 
     def _apply(self) -> None:
         window = self._window
         ring = self._ring
-        squared = window.isMaximized()
+        # 最大化退化只针对主窗体（QDialog 上 isMaximized() 会误报，见 _ShadowWindow.sync）
+        squared = window.isMaximized() and isinstance(window, QMainWindow)
         if squared != self._squared:
             # 最大化时压平贴角子控件的圆角（与系统行为一致），还原时恢复
             self._squared = squared

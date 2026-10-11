@@ -116,13 +116,11 @@ class FoundationEditDialog(FramelessDialog):
         component_form.addRow(QLabel("构件类型"), picker_row)
         root.addWidget(component_box)
 
-        # 描述在特殊地基框下方，作为整个窗体当前选择的总体描述；
-        # 双击 → 编辑构件（原版 LBLcpnt_DoubleClick）
+        # 描述在特殊地基框下方，作为整个窗体当前选择的总体描述
         self._describe = QLabel("")
         self._describe.setProperty("role", "hint")
         self._describe.setWordWrap(True)
         self._describe.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self._describe.mouseDoubleClickEvent = lambda _event: self._edit_component()  # type: ignore[method-assign]
         root.addWidget(self._describe)
 
         button_row = QHBoxLayout()

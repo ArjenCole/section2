@@ -319,16 +319,18 @@ def test_precipitation_dialog_columns_per_1_0(qapp, project) -> None:
     try:
         headers = [table.horizontalHeaderItem(c).text() for c in range(table.columnCount())]
         assert headers == ["措施名称", "选用", "埋深", "范围", "侧数", "间隔"]
-        # 默认原则五井全启用（行序深井→湿土排水）：范围 = 下一已选用行埋深，最深 +∞
+        # 行序同 1.0（湿土排水 → 深井）；默认五井全启用：范围 = 下一已选用行埋深，最深 +∞
         assert [table.item(r, 0).text() for r in range(5)] == [
-            "深井", "大口径井点", "喷射井点", "轻型井点", "湿土排水",
+            "湿土排水", "轻型井点", "喷射井点", "大口径井点", "深井",
         ]
-        assert [table.item(r, 3).text() for r in range(5)] == ["+∞", "15", "10", "6", "3.5"]
+        assert [table.item(r, 3).text() for r in range(5)] == ["3.5", "6", "10", "15", "+∞"]
+        # 全表文字居中
+        assert table.item(0, 0).textAlignment() & 0x0004  # Qt.AlignHCenter
         # 取消“轻型井点”：其埋深/范围变“-”且只读，湿土排水的范围改为喷射井点埋深
-        table.item(3, 1).setCheckState(Qt.CheckState.Unchecked)
-        assert table.item(3, 2).text() == "-" and table.item(3, 3).text() == "-"
-        assert not (table.item(3, 2).flags() & Qt.ItemFlag.ItemIsEditable)
-        assert table.item(4, 3).text() == "6"
+        table.item(1, 1).setCheckState(Qt.CheckState.Unchecked)
+        assert table.item(1, 2).text() == "-" and table.item(1, 3).text() == "-"
+        assert not (table.item(1, 2).flags() & Qt.ItemFlag.ItemIsEditable)
+        assert table.item(0, 3).text() == "6"
         assert dialog._precipitation().light_well == "-1|1.2|2"
     finally:
         dialog.close()
@@ -357,3 +359,20 @@ def test_dialog_bottom_buttons_cancel_left_confirm_right(qapp, project) -> None:
     finally:
         precipitation.close()
         width.close()
+
+
+def test_enclosure_table_column_widths_stable_across_rebuilds(qapp, project) -> None:
+    """做法表重建（_fill）后内容列宽不变：setRowCount 触发的自动重算发生在
+    内嵌下拉框创建之前，会把下拉列压窄、表头文字移位（视觉上字体忽粗忽细）；
+    _fill 末尾按控件实尺寸重算一次后应保持稳定。"""
+    from app.views.dialogs.enclosure_edit_dialog import EnclosureEditDialog
+
+    dialog = EnclosureEditDialog(project_io.enclosures()[0].id)
+    header = dialog._work_table.horizontalHeader()
+    try:
+        widths = [header.sectionSize(c) for c in range(6)]
+        dialog._fill()
+        widths_after = [header.sectionSize(c) for c in range(6)]
+        assert widths_after == widths, f"{widths} != {widths_after}"
+    finally:
+        dialog.close()

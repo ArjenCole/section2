@@ -684,18 +684,19 @@ class PrecipitationEditDialog(FramelessDialog):
     """降水原则编辑（旧版 FormPrecipitation，v4 起独立成原则）。
 
     表格列沿用 1.0：措施名称 / 选用 / 埋深 / 范围 / 侧数 / 间隔（旧版“道数”
-    字段改用“侧数”表达）；未选用行埋深、范围显示“-”且只读，已选用行的
-    范围自最深已选用行向浅处推算（+∞ → 下一已选用行埋深，旧版 FlashFm）；
-    下方实时给出降水描述（旧版 DiscribePreciptitation 的等价文案）。
+    字段改用“侧数”表达），行序同 1.0（湿土排水 → 深井）；未选用行埋深、
+    范围显示“-”且只读，已选用行的范围自最深已选用行向浅处推算
+    （+∞ → 下一已选用行埋深，旧版 FlashFm）；下方实时给出降水描述
+    （旧版 DiscribePreciptitation 的等价文案）。
     """
 
-    _ROWS = tuple(reversed(PRECIPITATION_COLUMNS))  # 深井 → 湿土排水，与旧版行序一致
+    _ROWS = PRECIPITATION_COLUMNS  # 湿土排水 → 深井，与旧版行序一致
 
     _COL_NAME, _COL_ENABLED, _COL_DEPTH, _COL_RANGE, _COL_SIDES, _COL_GAP = range(6)
 
     def __init__(self, precipitation_id: int, parent: QWidget | None = None) -> None:
         super().__init__(parent, "降水原则编辑")
-        self.resize(455, 460)
+        self.resize(455, 505)
         self._precipitation_id = precipitation_id
         self._loading = False
         self._build_ui()
@@ -718,13 +719,16 @@ class PrecipitationEditDialog(FramelessDialog):
         self._table.setHorizontalHeaderLabels(
             ["措施名称", "选用", "埋深", "范围", "侧数", "间隔"]
         )
-        self._table.horizontalHeader().setStretchLastSection(True)
         self._table.verticalHeader().setDefaultSectionSize(28)
         self._table.verticalHeader().setVisible(False)  # 行标识已由“措施名称”列承担
-        # 固定窄列按内容自适应，剩余宽度全部让给末列“间隔”
         header = self._table.horizontalHeader()
-        for column in range(5):
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 列宽以“刚好显示全部单元格/表头文字”为准：选用/埋深/范围/侧数/间隔
+        # 按内容自适应（间隔列保持最窄），措施名称列吸收剩余宽度；
+        # 全部列内容放下即无横向滚动条，行数固定 5 行即无纵向滚动条
+        for column in range(1, 6):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(self._COL_NAME, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self._table)
         self._describe = QLabel("")
         self._describe.setProperty("role", "hint")
@@ -774,6 +778,11 @@ class PrecipitationEditDialog(FramelessDialog):
                 self._table.setItem(row_index, self._COL_RANGE, QTableWidgetItem(""))
                 self._table.setItem(row_index, self._COL_SIDES, QTableWidgetItem(f"{sides:g}"))
                 self._table.setItem(row_index, self._COL_GAP, QTableWidgetItem(f"{gap:g}"))
+                # 全表文字居中（含表头，见 _build_ui）
+                for column in (self._COL_NAME, self._COL_DEPTH, self._COL_RANGE,
+                               self._COL_SIDES, self._COL_GAP):
+                    item = self._table.item(row_index, column)
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         finally:
             self._loading = False
         self._describe_change()
@@ -789,7 +798,7 @@ class PrecipitationEditDialog(FramelessDialog):
         self._loading = True
         try:
             current = "+∞"
-            for row in range(self._table.rowCount()):
+            for row in reversed(range(self._table.rowCount())):
                 depth_item = self._table.item(row, self._COL_DEPTH)
                 range_item = self._table.item(row, self._COL_RANGE)
                 check = self._table.item(row, self._COL_ENABLED)
