@@ -1,0 +1,43 @@
+# 环境快照：本机 .venv，Python 3.12.4（Windows），版本全部锁定
+# 由 pip freeze 生成；已去除项目自身的可编辑安装行（section2）
+# pyobjc-framework-Cocoa 仅为 mac 依赖，见 pyproject.toml，Windows 环境不安装
+altgraph==0.17.5
+annotated-types==0.8.0
+anyio==4.15.1
+certifi==2026.7.22
+colorama==0.4.6
+et_xmlfile==2.0.0
+greenlet==3.5.6
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.20
+iniconfig==2.3.0
+jaraco.classes==3.4.0
+jaraco.context==6.1.2
+jaraco.functools==4.6.0
+keyring==25.7.0
+lxml==6.1.3
+more-itertools==11.1.0
+openpyxl==3.1.5
+packaging==26.3
+pefile==2024.8.26
+platformdirs==4.11.11
+pluggy==1.6.0
+pydantic==2.13.5
+pydantic_core==2.46.5
+Pygments==2.21.0
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.7
+PySide6==6.11.2
+PySide6_Addons==6.11.2
+PySide6_Essentials==6.11.2
+pytest==9.1.1
+pywin32-ctypes==0.2.3
+setuptools==84.0.0
+shiboken6==6.11.2
+simpleeval==1.0.8
+SQLAlchemy==2.0.54
+tomli_w==1.2.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
