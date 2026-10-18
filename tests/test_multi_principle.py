@@ -164,13 +164,15 @@ def test_structure_element_compute(project) -> None:
         unit_id, category=CATEGORY_STRUCTURE, name="圆形雨水检查井DN1000",
         depth="3.2", amount="4",
         params=[
-            ("-名称", "圆形雨水检查井DN1000"),
-            ("-单位", "座"),
-            ("构筑物|垫层|m3", "0.22698"),
-            ("构筑物|井壁|m3", "1.2943"),
-            ("-井筒 个", "1"),
-            ("-井筒 m3/m", "0.71"),
-            ("-井高 m", "1.8"),
+            ("名称", "", "圆形雨水检查井DN1000"),
+            ("单位", "", "座"),
+            ("井筒", "个", "1"),
+            ("井筒", "m3/m", "0.71"),
+            ("井高", "m", "1.8"),
+        ],
+        quantities=[
+            ("构筑物", "垫层", "m3", "0.22698"),
+            ("构筑物", "井壁", "m3", "1.2943"),
         ],
     )
     assert element is not None
@@ -202,10 +204,15 @@ def test_structure_category_switch_resets_params(project) -> None:
     unit_vm.update_element(element.id, category=CATEGORY_STRUCTURE)
     element = orm.session().get(type(element), element.id)
     assert list(element.pipes) == []
-    assert [(param.key, param.value) for param in element.params] == [
-        ("-名称", "自定义构筑物"),
-        ("-单位", "个"),
+    # 名称/单位行（单位列留空）+ 默认工程量行
+    assert [(param.key, param.unit, param.value) for param in element.params] == [
+        ("名称", "", "自定义构筑物"),
+        ("单位", "", "个"),
     ]
+    assert [
+        (quantity.category, quantity.item, quantity.unit, quantity.value)
+        for quantity in element.quantities
+    ] == [("构筑物", "自定义构筑物", "个", "1")]
     rows = unit_vm.element_rows(unit_id)
     assert rows[0].unit == "个"
 

@@ -15,7 +15,9 @@ APP_VERSION = "2.0.0.0"
 #: v3：附属构筑物（mcE7，category=7）+ 多原则引用（element_principle 表、element.main_pe_name 列）
 #: v4：降水原则 / 面宽原则独立（principle_precipitation / principle_width /
 #:     principle_width_item 表、element.pp_name / pw_name 列；围护原则不再携带这两项）
-SCHEMA_VERSION = 4
+#: v5：构件参数拆“参数名 / 单位”（element_param.unit 列、pipe.t 管道壁厚列）；
+#:     附属构筑物工程量独立成表（element_quantity，“类别|项目|单位”三段参数迁走）
+SCHEMA_VERSION = 5
 
 #: 新版工程文件
 PROJECT_SUFFIX = ".stn2"

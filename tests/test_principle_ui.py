@@ -157,7 +157,7 @@ def test_v1_project_migrates_source_column(tmp_path: Path) -> None:
     from app.core.version import SCHEMA_VERSION
     from app.core.models import base as orm
 
-    assert SCHEMA_VERSION == 4
+    assert SCHEMA_VERSION == 5
     legacy_copy = tmp_path / "old.stn2"
     # 借现成工程文件降版构造 v1 文件：先插一条构件（带原则引用），
     # 再删掉 source/main_pe_name 列、element_principle 表，把版本号改回 1
@@ -207,7 +207,7 @@ def test_v1_project_migrates_source_column(tmp_path: Path) -> None:
         conn.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
         conn.commit()
     orm.open_database(legacy_copy)
-    assert orm.get_meta("schema_version") == "4"
+    assert orm.get_meta("schema_version") == "5"
     # v1 单原则引用被补成 ratio=1 的引用行（v2→v3 迁移语义）
     from sqlalchemy import select
 

@@ -101,7 +101,13 @@ def test_reopen_keeps_everything(tmp_path: Path) -> None:
     pipes = unit_vm.pipe_rows(element.id)
     assert [(pipe.mat, pipe.dn, pipe.content) for pipe in pipes] == [("HDPE", 600, "1")]
     params = unit_vm.param_rows(element.id)
-    assert [(param.key, param.value) for param in params] == [("含钢量", "35")]
+    # 直埋构件 v5 起带三行空值图集参数（工作面加宽/垫层厚/基础厚，空 = 自动）
+    assert [(param.key, param.unit, param.value) for param in params] == [
+        ("工作面加宽", "mm", ""),
+        ("垫层厚", "mm", ""),
+        ("基础厚", "mm", ""),
+        ("含钢量", "", "35"),
+    ]
 
 
 def test_commit_is_autosave(tmp_path: Path) -> None:

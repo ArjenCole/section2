@@ -147,12 +147,12 @@ def _found_encased(info, pe, at, out: QDict) -> None:
 def _found_box(info, pe, at, out: QDict, *, prefix: str, wall_key: str) -> None:
     """箱涵 / 管廊（旧版 mcE3 / mcE6.cal_found）。"""
     params = info.params
-    bt = params.get("底板厚 mm", 400) / 1000.0
-    tt = params.get("顶板厚 mm", 300) / 1000.0
-    ot = params.get("外壁厚 mm", 350) / 1000.0
-    it = params.get("内壁厚 mm", 250) / 1000.0
-    ic = params.get("内壁 道", 0)
-    steel_rate = params.get("含钢量 kg/m3", 150) / 1000.0
+    bt = params.get("底板厚", 400) / 1000.0
+    tt = params.get("顶板厚", 300) / 1000.0
+    ot = params.get("外壁厚", 350) / 1000.0
+    it = params.get("内壁厚", 250) / 1000.0
+    ic = params.get("内壁", 0)
+    steel_rate = params.get("含钢量", 150) / 1000.0
 
     cushion_name = pe.cushions[0].name if pe.cushions else "中粗砂"
     remain = info.depth + (at.t + at.c1) / 1000.0
@@ -196,7 +196,7 @@ def _found_box(info, pe, at, out: QDict, *, prefix: str, wall_key: str) -> None:
     out.add(
         f"{prefix}|钢筋|t",
         steel_rate * concrete,
-        f"{fmt(params.get('含钢量 kg/m3', 150))}/1000×({fmt(concrete)})",
+        f"{fmt(params.get('含钢量', 150))}/1000×({fmt(concrete)})",
         "钢筋 = 含钢量 × 混凝土合计",
     )
 
@@ -220,7 +220,11 @@ def cal_pipes(info, out: QDict, cat: str = "管材") -> None:
 
 
 def encased_pipe_deduction(info, out: QDict) -> None:
-    """包封混凝土扣管位（旧版 mcE2.cal_pipes 的负项：按每根管查图集取壁厚）。"""
+    """包封混凝土扣管位（旧版 mcE2.cal_pipes 的负项：按每根管查图集取壁厚）。
+
+    每根管带详情面板的用户壁厚（PipeSpec.t，空 = 按图集自动），
+    临时按直埋管道类别查该管的壁厚（同旧版构造临时 mcE1）。
+    """
     from app.services.atlas import PipeSpec, resolve_atlas
     from app.core.calc.engine import build_atlas_query
 
@@ -228,8 +232,8 @@ def encased_pipe_deduction(info, out: QDict) -> None:
         if content == 0:
             continue
         query = build_atlas_query(info, info.pe, info.pw)
-        query.category = 1  # 临时按直埋管道查该管的壁厚（同旧版构造临时 mcE1）
-        query.pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn)]
+        query.category = 1  # 直埋管道图集
+        query.pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn, t=pipe.t)]
         at = resolve_atlas(query)
         radius = (pipe.dn / 2.0 + at.t) / 1000.0
         out.add(

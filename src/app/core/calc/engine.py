@@ -31,6 +31,7 @@ from app.core.models.models import (
     PcpPrecipitation,
     PcpWidth,
 )
+from app.core.param_naming import PARAM_A_NAME, PARAM_C1_NAME, PARAM_C2_NAME
 from app.services import atlas as atlas_service
 from app.services.atlas import AtlasQuery, PipeSpec, resolve_atlas
 from app.core.calc import foundation, groove, precipitation
@@ -38,28 +39,31 @@ from app.core.calc.tracer import Dim, QDict, dim, fmt, raw_dim, wrap
 
 _CYCLE = "参数循环引用"
 
-#: 各类别构件的默认扩展参数（旧版 mcE2/mcE3/mcE6 构造函数）
+#: 图集覆盖参数（工作面加宽 / 垫层厚 / 基础厚）：空值 = 自动按图集，显式数字 = 用户值
+_ATLAS_OVERRIDE_NAMES = frozenset((PARAM_A_NAME, PARAM_C1_NAME, PARAM_C2_NAME))
+
+#: 各类别构件的默认扩展参数（旧版 mcE2/mcE3/mcE6 构造函数；键不带单位，v5 起拆列）
 _DEFAULT_PARAMS: dict[int, dict[str, float]] = {
-    CATEGORY_ENCASED: {"包封宽 m": 1.5, "包封高 m": 1.0},
+    CATEGORY_ENCASED: {"包封宽": 1.5, "包封高": 1.0},
     CATEGORY_BOX_CULVERT: {
-        "净宽 m(含内壁厚度)": 3.5,
-        "净高 m": 2.0,
-        "底板厚 mm": 400,
-        "顶板厚 mm": 300,
-        "外壁厚 mm": 350,
-        "内壁 道": 0,
-        "内壁厚 mm": 250,
-        "含钢量 kg/m3": 150,
+        "净宽(含内壁厚度)": 3.5,
+        "净高": 2.0,
+        "底板厚": 400,
+        "顶板厚": 300,
+        "外壁厚": 350,
+        "内壁": 0,
+        "内壁厚": 250,
+        "含钢量": 150,
     },
     CATEGORY_GALLERY: {
-        "外包宽 m": 6.8,
-        "外包高 m": 3.2,
-        "底板厚 mm": 400,
-        "顶板厚 mm": 300,
-        "外壁厚 mm": 350,
-        "内壁 道": 0,
-        "内壁厚 mm": 250,
-        "含钢量 kg/m3": 160,
+        "外包宽": 6.8,
+        "外包高": 3.2,
+        "底板厚": 400,
+        "顶板厚": 300,
+        "外壁厚": 350,
+        "内壁": 0,
+        "内壁厚": 250,
+        "含钢量": 160,
     },
 }
 
@@ -84,8 +88,11 @@ class ElementInput:
     pipes: list[PipeSpec] = field(default_factory=list)
     pipe_contents: list[float] = field(default_factory=list)
     params: dict[str, float] = field(default_factory=dict)
-    #: 构件参数原文（附属构筑物的工程量键值对用，含“-名称”等非数值参数）
-    raw_params: dict[str, str] = field(default_factory=dict)
+    #: 构件参数 (参数名, 单位) → 原文：构筑物“名称/单位”行、井筒参数等
+    #: 非数值内容按原文查询（旧版“-名称”等键已拆成名称+单位两列）
+    named_params: dict[tuple[str, str], str] = field(default_factory=dict)
+    #: 附属构筑物工程量行 (类别, 项目, 单位, 值原文)，值可写算式
+    struct_quantities: list[tuple[str, str, str, str]] = field(default_factory=list)
     pe: PcpEnclosure | None = None
     pf: PcpFoundation | None = None
     #: 降水 / 面宽原则（旧版挂在 PE 下，v4 起独立引用）
@@ -101,11 +108,11 @@ class ElementInput:
         if self.category in (CATEGORY_BURIED, 4, 5):
             return (self.pipes[0].dn / 1000.0) if self.pipes else 0.0
         if self.category == CATEGORY_ENCASED:
-            return params.get("包封宽 m", 1.5)
+            return params.get("包封宽", 1.5)
         if self.category == CATEGORY_BOX_CULVERT:
-            return params.get("净宽 m(含内壁厚度)", 3.5) + params.get("外壁厚 mm", 350) * 2 / 1000.0
+            return params.get("净宽(含内壁厚度)", 3.5) + params.get("外壁厚", 350) * 2 / 1000.0
         if self.category == CATEGORY_GALLERY:
-            return params.get("外包宽 m", 6.8)
+            return params.get("外包宽", 6.8)
         return 0.0
 
     @property
@@ -115,17 +122,17 @@ class ElementInput:
         if self.category in (CATEGORY_BURIED, 4, 5):
             return (self.pipes[0].dn / 1000.0) if self.pipes else 0.0
         if self.category == CATEGORY_ENCASED:
-            return params.get("包封高 m", 1.0)
+            return params.get("包封高", 1.0)
         if self.category == CATEGORY_BOX_CULVERT:
-            return params.get("净高 m", 2.0) + (params.get("底板厚 mm", 400) + params.get("顶板厚 mm", 300)) / 1000.0
+            return params.get("净高", 2.0) + (params.get("底板厚", 400) + params.get("顶板厚", 300)) / 1000.0
         if self.category == CATEGORY_GALLERY:
-            return params.get("外包高 m", 3.2)
+            return params.get("外包高", 3.2)
         return 0.0
 
     def spec(self) -> str:
         """规格（旧版 Specification()，清单项目行用）。"""
         if self.category == CATEGORY_STRUCTURE:
-            return self.raw_params.get("-名称", "")
+            return self.named_params.get(("名称", ""), "")
         if self.category == 1:
             pipe = self.pipes[0] if self.pipes else None
             return f"{pipe.mat} Dn{format_number(pipe.dn)}" if pipe else ""
@@ -141,9 +148,9 @@ class ElementInput:
             tail = {2: " 包封", 4: " 顶管", 5: " 牵引管"}[self.category]
             return "+".join(parts) + tail if parts else ""
         if self.category == 3:
-            return f"{format_number(self.params.get('净宽 m(含内壁厚度)', 3.5))}×{format_number(self.params.get('净高 m', 2.0))}箱涵"
+            return f"{format_number(self.params.get('净宽(含内壁厚度)', 3.5))}×{format_number(self.params.get('净高', 2.0))}箱涵"
         if self.category == 6:
-            return f"{format_number(self.params.get('外包宽 m', 6.8))}×{format_number(self.params.get('外包高 m', 3.2))}管廊断面"
+            return f"{format_number(self.params.get('外包宽', 6.8))}×{format_number(self.params.get('外包高', 3.2))}管廊断面"
         return ""
 
 
@@ -170,15 +177,22 @@ def build_element_input(
     ``pe_refs`` / ``pf_refs`` 为 (原则, 比例) 多原则引用；None 时按单原则处理。
     ``pp`` / ``pw`` 为降水 / 面宽原则（None 时不参与降水与图集宽度查询）。
     """
-    raw_params = {param.key: param.value for param in element.params}
+    named_params = {(param.key, param.unit or ""): param.value for param in element.params}
     params = dict(_DEFAULT_PARAMS.get(element.category, {}))
-    for key, text in raw_params.items():
+    for (key, _unit), text in named_params.items():
+        stripped = (text or "").strip()
+        if key in _ATLAS_OVERRIDE_NAMES and not stripped:
+            continue  # 工作面加宽 / 垫层厚 / 基础厚等空值 = 自动按图集
         try:
             params[key] = float(evaluate_or_default(text))
         except Exception:
             params[key] = 0.0
-    pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn) for pipe in element.pipes]
+    pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn, t=pipe.t) for pipe in element.pipes]
     contents = [evaluate_or_default(pipe.content) for pipe in element.pipes]
+    quantities = [
+        (quantity.category, quantity.item, quantity.unit, quantity.value)
+        for quantity in element.quantities
+    ]
     return ElementInput(
         category=element.category,
         name=element.name,
@@ -189,7 +203,8 @@ def build_element_input(
         pipes=pipes,
         pipe_contents=contents,
         params=params,
-        raw_params=raw_params,
+        named_params=named_params,
+        struct_quantities=quantities,
         pe=pe,
         pf=pf,
         pp=pp,
@@ -200,8 +215,18 @@ def build_element_input(
 
 
 def build_atlas_query(info: ElementInput, pe: PcpEnclosure, pw: PcpWidth | None = None) -> AtlasQuery:
-    """图集查询：基础/角度取围护原则，宽度表与槽宽取值方式取面宽原则。"""
+    """图集查询：基础/角度取围护原则，宽度表与槽宽取值方式取面宽原则。
+
+    详情面板的参数行（工作面加宽 / 垫层厚 / 基础厚，param_naming 常量）为
+    空值时不设覆盖（自动按图集），写了数字时按用户值覆盖图集行。
+    """
     widths, groove_bs = _width_tables(pw)
+    params = info.params
+
+    def _override(key: str) -> float | None:
+        value = params.get(key)
+        return value if value is not None else None
+
     return AtlasQuery(
         category=info.category,
         pipes=list(info.pipes),
@@ -211,6 +236,9 @@ def build_atlas_query(info: ElementInput, pe: PcpEnclosure, pw: PcpWidth | None 
         size_b=info.size_b,
         widths=widths,
         groove_bs=groove_bs,
+        a=_override(PARAM_A_NAME),
+        c1=_override(PARAM_C1_NAME),
+        c2=_override(PARAM_C2_NAME),
     )
 
 
@@ -392,9 +420,10 @@ def compute_element(info: ElementInput) -> QDict | None:
 def compute_structure(info: ElementInput) -> QDict | None:
     """附属构筑物（旧版 mcE7.getDQ）：不参与沟槽计算。
 
-    * 非“-”开头的参数逐项输出为工程量（键本身即“类别|项目|单位”定额键，
-      如 构筑物|垫层|m3），值可以是算式；
-    * 同时存在“-井筒 个”与“-井筒 m3/m”时追加井筒方量：
+    * 工程量行（详情面板“工程量”页，旧版“类别|项目|单位”三段参数）逐行输出，
+      值可以是算式；
+    * 名称 / 单位 / 井筒等为参数行，只参与规格与井筒增量计算，不单独输出；
+    * 同时存在 (井筒, 个) 与 (井筒, m3/m) 参数时追加井筒方量：
       个数 × max(埋深 − 井高, 0.4) × 每米方量；
     * 全部 × 数量（个数）。
     """
@@ -402,20 +431,22 @@ def compute_structure(info: ElementInput) -> QDict | None:
         return None
     amount_dim = raw_dim(info.amount_text, info.amount)
     out = QDict()
-    for key, text in info.raw_params.items():
-        if not key or key.startswith("-"):
+    for category, item, unit, text in info.struct_quantities:
+        key = "|".join((category, item, unit))
+        if not item and not unit:
             continue
         value = evaluate_or_default(text)
         out.add(key, value, text or fmt(value), "构筑物")
-    cnt_text = info.raw_params.get("-井筒 个", "").strip()
-    rate_text = info.raw_params.get("-井筒 m3/m", "").strip()
+    cnt_text = info.named_params.get(("井筒", "个"), "").strip()
+    rate_text = info.named_params.get(("井筒", "m3/m"), "").strip()
     if cnt_text and rate_text:
         count = evaluate_or_default(cnt_text)
         rate = evaluate_or_default(rate_text)
         well_h = dim(0.4)  # 旧版 mcE7：默认最小井筒高度
-        if "-井高 m" in info.raw_params:
+        jh_text = info.named_params.get(("井高", "m"), "").strip()
+        if jh_text:
             try:
-                jh = evaluate(info.raw_params["-井高 m"])
+                jh = evaluate(jh_text)
                 if info.depth - jh > 0.4:
                     well_h = raw_dim(info.depth_text, info.depth) - dim(jh)
             except EvalError:

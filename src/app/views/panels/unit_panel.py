@@ -2,7 +2,7 @@
 
 上部：构件录入表（复刻旧版 dGVmain）。
 下部横向三栏（旧版 FormUnit 的 spltCtnerR 布局）：
-  左  选中构件的明细（管材 / 构件参数）；
+  左  选中构件的明细（管材 / 构件参数 / 工程量 / 多原则）；
   中  工程量表（定额工程量 / 清单工程量）——“计算表达式”列在“工程量”列之前；
   右  断面示意图（旧版 mcPictureBox，随选中构件联动重绘）。
 
@@ -48,7 +48,13 @@ from app.core.models.models import (
 from app.resources.qss.theme import ThemeManager
 from app.services import project_io
 from app.viewmodels.project_vm import TreeNode
-from app.viewmodels.unit_vm import ElementRow, ParamRow, PipeRow, UnitViewModel
+from app.viewmodels.unit_vm import (
+    ElementRow,
+    ParamRow,
+    PipeRow,
+    QuantityRow,
+    UnitViewModel,
+)
 from app.views.panels.multi_principle_tab import MultiPrincipleTab
 from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.views.widgets.table_edit_delegate import TableEditDelegate
@@ -81,9 +87,15 @@ _QCOL_AMOUNT = 5
 _QUANTITY_WIDTHS = [77, 66, 193, 48, 434, 135]
 
 _PIPE_ROLE = Qt.ItemDataRole.UserRole + 1
-_PIPE_HEADERS = ["管材", "管径(mm)", "含量"]
+#: 管道壁厚列：空 = 自动按图集（灰字显示图集值），可手填覆盖
+_PIPE_HEADERS = ["管材", "管径(mm)", "管道壁厚(mm)", "含量"]
 _PARAM_ROLE = Qt.ItemDataRole.UserRole + 1
-_PARAM_HEADERS = ["参数名", "参数值"]
+#: 参数名 / 单位 / 参数值三列；锁定行（工作面加宽、垫层厚、基础厚与构筑物名称 /
+#: 单位行）参数名 / 单位只读，名称行的单位列固定为空
+_PARAM_HEADERS = ["参数名", "单位", "参数值"]
+_QTY_ROLE = Qt.ItemDataRole.UserRole + 1
+#: 附属构筑物的工程量行（类别|项目|单位 三段合一 + 值算式）
+_QTY_HEADERS = ["类别", "项目", "单位", "值"]
 
 #: 共享单元格焦点的归属标记（挂在 QTableWidget 实例属性上，Quotor _GLOBAL_LATEST 同款）
 _FOCUS_OWNER_ATTR = "_unit_panel_focus_owner"
@@ -229,7 +241,7 @@ class UnitPanel(QWidget):
         return self._element_table
 
     def _build_bottom_area(self) -> QWidget:
-        """横向三栏：构件明细（管材/构件参数/多原则）｜工程量表（定额/清单）｜断面示意图。"""
+        """横向三栏：构件明细（管材/构件参数/工程量/多原则）｜工程量表（定额/清单）｜断面示意图。"""
         bottom = QSplitter(Qt.Orientation.Horizontal)
 
         # 左：选中构件的明细
@@ -242,6 +254,16 @@ class UnitPanel(QWidget):
         detail.tabBar().setDrawBase(False)
         self._pipe_table = self._make_table(_PIPE_HEADERS)
         self._param_table = self._make_table(_PARAM_HEADERS)
+        # 手设列宽：末列仍自动拉伸，前三列保持可读（管径/壁厚列常有四位数字）
+        self._pipe_table.setColumnWidth(0, 110)
+        self._pipe_table.setColumnWidth(1, 72)
+        self._pipe_table.setColumnWidth(2, 96)
+        self._param_table.setColumnWidth(0, 150)
+        self._param_table.setColumnWidth(1, 56)
+        self._qty_table = self._make_table(_QTY_HEADERS)
+        self._qty_table.setColumnWidth(0, 110)
+        self._qty_table.setColumnWidth(1, 140)
+        self._qty_table.setColumnWidth(2, 56)
 
         pipe_page = QWidget()
         pipe_layout = QVBoxLayout(pipe_page)
@@ -265,8 +287,22 @@ class UnitPanel(QWidget):
         param_layout.addLayout(param_bar)
         param_layout.addWidget(self._param_table, 1)
 
+        # 附属构筑物的工程量行（类别 / 项目 / 单位 三段合一的编辑界面）；
+        # 其它类别显示占位说明，仅构筑物可录入
+        qty_page = QWidget()
+        qty_layout = QVBoxLayout(qty_page)
+        qty_layout.setContentsMargins(6, 6, 6, 6)
+        qty_layout.setSpacing(4)
+        qty_bar = QHBoxLayout()
+        qty_bar.addWidget(self._make_button("＋工程量", "为选中构筑物新增一行工程量", self._add_quantity))
+        qty_bar.addWidget(self._make_button("✕", "删除选中工程量行", self._delete_quantity))
+        qty_bar.addStretch(1)
+        qty_layout.addLayout(qty_bar)
+        qty_layout.addWidget(self._qty_table, 1)
+
         detail.addTab(pipe_page, "管材")
         detail.addTab(param_page, "构件参数")
+        detail.addTab(qty_page, "工程量")
 
         # 多原则引用子表（旧版 FormUnit 左下角 PNLPE / PNLPF → 新版独立 Tab）
         self._multi_pe_tab = MultiPrincipleTab("pe")
@@ -279,8 +315,8 @@ class UnitPanel(QWidget):
         )
         detail.addTab(self._multi_pe_tab, MULTI_PE_TEXT)
         detail.addTab(self._multi_pf_tab, MULTI_PF_TEXT)
-        # 四个页签（管材/构件参数/多围护原则/多地基原则）在窄面板下会被省略并出
-        # 现滚动箭头：按页签条完整宽度设最小宽度，保证全部页签可见
+        # 五个页签（管材/构件参数/工程量/多围护原则/多地基原则）在窄面板下会被
+        # 省略并出现滚动箭头：按页签条完整宽度设最小宽度，保证全部页签可见
         detail.setMinimumWidth(detail.tabBar().sizeHint().width() + 16)
         self._detail_tabs = detail
         bottom.addWidget(detail)
@@ -305,8 +341,8 @@ class UnitPanel(QWidget):
         bottom.setStretchFactor(0, 2)
         bottom.setStretchFactor(1, 3)
         bottom.setStretchFactor(2, 2)
-        # 管材/构件参数｜定额/清单｜断面图 默认宽度：左栏加宽以容下四个明细页签
-        bottom.setSizes([440, 910, 286])
+        # 管材/构件参数｜定额/清单｜断面图 默认宽度：左栏加宽以容下五个明细页签
+        bottom.setSizes([500, 880, 286])
         return bottom
 
     def _build_quantity_area(self) -> QWidget:
@@ -353,19 +389,21 @@ class UnitPanel(QWidget):
         return table
 
     def _focus_tables(self) -> list[QTableWidget]:
-        """共享单元格焦点的五张表：主表格 + 管材/构件参数/定额/清单。"""
+        """共享单元格焦点的六张表：主表格 + 管材/构件参数/工程量/定额/清单。"""
         return [
             self._element_table,
             self._pipe_table,
             self._param_table,
+            self._qty_table,
             *self._quantity_tables.values(),
         ]
 
     def _detail_tables(self) -> list[QTableWidget]:
-        """明细面板四张表（多选边框 / 选区互斥的作用范围）。"""
+        """明细面板五张表（多选边框 / 选区互斥的作用范围）。"""
         return [
             self._pipe_table,
             self._param_table,
+            self._qty_table,
             *self._quantity_tables.values(),
         ]
 
@@ -397,8 +435,10 @@ class UnitPanel(QWidget):
             self._syncing_detail_selection = False
 
     def _on_detail_tab_changed(self, *_args) -> None:
-        """切走 tab 时清空该 tab 下表格的多选（管材↔构件参数、定额↔清单）。"""
-        self._clear_detail_selections(self._pipe_table, self._param_table)
+        """切走 tab 时清空该 tab 下表格的多选（管材↔构件参数↔工程量、定额↔清单）。"""
+        self._clear_detail_selections(
+            self._pipe_table, self._param_table, self._qty_table
+        )
         self._clear_detail_selections(*self._quantity_tables.values())
 
     def _clear_detail_selections(self, *tables: QTableWidget) -> None:
@@ -421,6 +461,7 @@ class UnitPanel(QWidget):
         self._element_table.itemSelectionChanged.connect(self._on_element_selection_changed)
         self._pipe_table.itemChanged.connect(self._on_pipe_item_changed)
         self._param_table.itemChanged.connect(self._on_param_item_changed)
+        self._qty_table.itemChanged.connect(self._on_qty_item_changed)
         # 共享单元格焦点：任一表被点选/键盘导航即成为焦点归属表
         for table in self._focus_tables():
             table.cellClicked.connect(lambda _row, _col, t=table: self._mark_focus_table(t))
@@ -492,6 +533,7 @@ class UnitPanel(QWidget):
             self._element_table.setRowCount(0)
             self._pipe_table.setRowCount(0)
             self._param_table.setRowCount(0)
+            self._qty_table.setRowCount(0)
             self._section_view.set_element(None)
             return
         self._vm.load_unit(unit_id)
@@ -865,10 +907,11 @@ class UnitPanel(QWidget):
         self._fill_quantities()
 
     def _fill_multi_placeholders(self) -> None:
-        """管材 / 构件参数两张表显示居中的“*多种…”占位行。"""
+        """管材 / 构件参数 / 工程量三张表显示居中的“*多种…”占位行。"""
         for table, text in (
             (self._pipe_table, "*多种管材"),
             (self._param_table, "*多种参数"),
+            (self._qty_table, "*多种工程量"),
         ):
             table.clearSpans()
             table.setRowCount(1)
@@ -1061,34 +1104,96 @@ class UnitPanel(QWidget):
             self._pending_select_id = element.id
 
     # ------------------------------------------------------------------ 明细
-    def _on_detail_loaded(self, element_id: int, pipes: list[PipeRow], params: list[ParamRow]) -> None:
+    def _on_detail_loaded(
+        self,
+        element_id: int,
+        pipes: list[PipeRow],
+        params: list[ParamRow],
+        quantities: list[QuantityRow],
+    ) -> None:
         if self._multi_detail:
             return  # 多选模式显示占位行，不显示具体条目
+        from app.viewmodels.unit_vm import _element, auto_atlas_params, auto_pipe_thicknesses
+
         self._loading = True
         try:
+            element = _element(element_id)
+            # 管材表：管道壁厚列空 = 自动按图集（灰字显示图集值）
             self._pipe_table.clearSpans()
             self._pipe_table.setRowCount(len(pipes))
+            auto_ts = auto_pipe_thicknesses(element) if (element is not None and pipes) else {}
             for index, pipe in enumerate(pipes):
                 mat_item = QTableWidgetItem(pipe.mat)
                 mat_item.setData(_PIPE_ROLE, pipe.id)
                 self._pipe_table.setItem(index, 0, mat_item)
                 self._pipe_table.setItem(index, 1, QTableWidgetItem(str(pipe.dn)))
-                self._pipe_table.setItem(index, 2, QTableWidgetItem(pipe.content))
+                auto_t = auto_ts.get(pipe.id)
+                if pipe.t is None:
+                    t_item = QTableWidgetItem("" if auto_t is None else format_number(auto_t))
+                    t_item.setForeground(QBrush(_secondary_color()))
+                    t_item.setToolTip(
+                        "管道壁厚：空 = 自动按图集。"
+                        if auto_t is None
+                        else f"管道壁厚：空 = 自动按图集（图集值 {format_number(auto_t)}mm）。"
+                    )
+                else:
+                    t_item = QTableWidgetItem(format_number(pipe.t))
+                    t_item.setToolTip(f"管道壁厚（手填覆盖）：{format_number(pipe.t)}mm。")
+                self._pipe_table.setItem(index, 2, t_item)
+                self._pipe_table.setItem(index, 3, QTableWidgetItem(pipe.content))
 
+            # 参数表：锁定行（工作面加宽/垫层厚/基础厚、构筑物名称/单位）的
+            # 参数名/单位列只读；a/C1/C2 空值 = 自动按图集，灰字显示图集值
             self._param_table.clearSpans()
             self._param_table.setRowCount(len(params))
-            locked_keys = _structure_locked_param_keys(element_id)
+            auto_params = auto_atlas_params(element) if element is not None else {}
             for index, param in enumerate(params):
                 key_item = QTableWidgetItem(param.key)
                 key_item.setData(_PARAM_ROLE, param.id)
-                if param.key in locked_keys:
-                    # 附属构筑物的 -名称/-单位 参数键锁定（旧版 dGVdetail 前 1/2 行键只读）
+                unit_item = QTableWidgetItem(param.unit)
+                value_item = QTableWidgetItem(param.value)
+                if (
+                    param.lock_name
+                    and not param.value.strip()
+                    and param.unit == "mm"
+                    and param.key in auto_params
+                ):
+                    auto_value = auto_params[param.key]
+                    value_item = QTableWidgetItem(format_number(auto_value))
+                    value_item.setForeground(QBrush(_secondary_color()))
+                    value_item.setToolTip(
+                        f"参数值：空 = 自动按图集（图集值 {format_number(auto_value)}）。"
+                    )
+                if param.lock_name:
                     key_item.setFlags(key_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    unit_item.setFlags(unit_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self._param_table.setItem(index, 0, key_item)
-                self._param_table.setItem(index, 1, QTableWidgetItem(param.value))
+                self._param_table.setItem(index, 1, unit_item)
+                self._param_table.setItem(index, 2, value_item)
+
+            # 工程量表：仅附属构筑物可录入；其它类别显示占位说明
+            self._qty_table.clearSpans()
+            is_structure = element is not None and element.category == CATEGORY_STRUCTURE
+            if is_structure:
+                self._qty_table.setRowCount(len(quantities))
+                for index, quantity in enumerate(quantities):
+                    category_item = QTableWidgetItem(quantity.category)
+                    category_item.setData(_QTY_ROLE, quantity.id)
+                    self._qty_table.setItem(index, 0, category_item)
+                    self._qty_table.setItem(index, 1, QTableWidgetItem(quantity.item))
+                    self._qty_table.setItem(index, 2, QTableWidgetItem(quantity.unit))
+                    self._qty_table.setItem(index, 3, QTableWidgetItem(quantity.value))
+            else:
+                self._qty_table.setRowCount(1)
+                hint = QTableWidgetItem("仅附属构筑物可录入工程量行（类别｜项目｜单位｜值算式）。")
+                hint.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                hint.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                hint.setForeground(QBrush(_secondary_color()))
+                self._qty_table.setItem(0, 0, hint)
+                self._qty_table.setSpan(0, 0, 1, self._qty_table.columnCount())
         finally:
             self._loading = False
-        # 管径/参数（包封宽高、壁厚、内壁道数…）都影响断面几何，明细变化后重绘
+        # 管径/壁厚/参数/工程量都影响断面几何与工程量结果，明细变化后重绘
         if element_id:
             self._section_view.set_element(element_id)
         else:
@@ -1100,8 +1205,26 @@ class UnitPanel(QWidget):
         pipe_id = self._pipe_id_at(item.row())
         if pipe_id is None:
             return
-        field = {0: "mat", 1: "dn", 2: "content"}.get(item.column())
+        field = {0: "mat", 1: "dn", 2: "t", 3: "content"}.get(item.column())
         if field is None:
+            return
+        if field == "t":
+            text = item.text().strip()
+            if not text:  # 清空 = 回到自动按图集
+                self._vm.set_pipe_field(pipe_id, field, "")
+                return
+            try:
+                value = float(text)
+            except ValueError:
+                bus().status_message.emit("管道壁厚需为数字（mm），留空自动按图集。", 5000)
+                value_item = QTableWidgetItem("")
+                self._loading = True
+                try:
+                    self._pipe_table.setItem(item.row(), item.column(), value_item)
+                finally:
+                    self._loading = False
+                return
+            self._vm.set_pipe_field(pipe_id, field, value)
             return
         if field == "dn":
             try:
@@ -1119,9 +1242,19 @@ class UnitPanel(QWidget):
         param_id = self._param_id_at(item.row())
         if param_id is None:
             return
-        field = {0: "key", 1: "value"}.get(item.column())
+        field = {0: "key", 1: "unit", 2: "value"}.get(item.column())
         if field is not None:
             self._vm.set_param_field(param_id, field, item.text())
+
+    def _on_qty_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._loading:
+            return
+        quantity_id = self._qty_id_at(item.row())
+        if quantity_id is None:
+            return
+        field = {0: "category", 1: "item", 2: "unit", 3: "value"}.get(item.column())
+        if field is not None:
+            self._vm.set_quantity_field(quantity_id, field, item.text())
 
     def _pipe_id_at(self, row: int) -> int | None:
         item = self._pipe_table.item(row, 0) if row >= 0 else None
@@ -1130,6 +1263,10 @@ class UnitPanel(QWidget):
     def _param_id_at(self, row: int) -> int | None:
         item = self._param_table.item(row, 0) if row >= 0 else None
         return item.data(_PARAM_ROLE) if item is not None else None
+
+    def _qty_id_at(self, row: int) -> int | None:
+        item = self._qty_table.item(row, 0) if row >= 0 else None
+        return item.data(_QTY_ROLE) if item is not None else None
 
     def _add_pipe(self) -> None:
         self._vm.add_pipe()
@@ -1147,6 +1284,14 @@ class UnitPanel(QWidget):
         if param_id is not None:
             self._vm.remove_param(param_id)
 
+    def _add_quantity(self) -> None:
+        self._vm.add_quantity()
+
+    def _delete_quantity(self) -> None:
+        quantity_id = self._qty_id_at(self._qty_table.currentRow())
+        if quantity_id is not None:
+            self._vm.remove_quantity(quantity_id)
+
 
 # --------------------------------------------------------------------------- #
 # 辅助
@@ -1160,18 +1305,6 @@ def _clear_cell_widgets(table: QTableWidget) -> None:
             if old is not None:
                 table.removeCellWidget(row, column)
                 old.deleteLater()
-
-
-def _structure_locked_param_keys(element_id: int | None) -> set[str]:
-    """附属构筑物锁定参数键的集合（-名称 / -单位，旧版 dGVdetail 前 1/2 行键只读）。"""
-    if element_id is None:
-        return set()
-    from app.viewmodels.unit_vm import _element
-
-    element = _element(element_id)
-    if element is None or element.category != CATEGORY_STRUCTURE:
-        return set()
-    return {"-名称", "-单位"}
 
 
 def _category_abbr(category: int) -> str:

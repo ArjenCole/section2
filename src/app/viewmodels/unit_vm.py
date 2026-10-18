@@ -18,14 +18,28 @@ from app.core.event_bus import bus
 from app.core.models import base as orm
 from app.core.models.models import (
     CATEGORY_BURIED,
+    CATEGORY_BOX_CULVERT,
+    CATEGORY_ENCASED,
+    CATEGORY_GALLERY,
     CATEGORY_STRUCTURE,
     MULTI_PE_TEXT,
     MULTI_PF_TEXT,
     Element,
     ElementParam,
     ElementPrinciple,
+    ElementQuantity,
     Pipe,
     unit_of,
+)
+from app.core.param_naming import (
+    ATLAS_PARAM_NAMES,
+    DEFAULT_PARAM_UNITS,
+    PARAM_A_NAME,
+    PARAM_C1_NAME,
+    PARAM_C2_NAME,
+    STRUCTURE_NAME_PARAM,
+    STRUCTURE_UNIT_PARAM,
+    split_param_key,
 )
 from app.services import project_io
 
@@ -41,8 +55,9 @@ _ELEMENT_FIELDS = {
     "source",
     "order_no",
 }
-_PIPE_FIELDS = {"mat", "dn", "content"}
-_PARAM_FIELDS = {"key", "value"}
+_PIPE_FIELDS = {"mat", "dn", "content", "t"}
+_PARAM_FIELDS = {"key", "unit", "value"}
+_QUANTITY_FIELDS = {"category", "item", "unit", "value"}
 
 
 # --------------------------------------------------------------------------- #
@@ -79,12 +94,28 @@ class PipeRow:
     mat: str
     dn: int
     content: str
+    #: 管道壁厚 mm 用户值；None = 自动按图集（界面灰色显示默认值）
+    t: float | None = None
 
 
 @dataclass
 class ParamRow:
     id: int
     key: str
+    unit: str
+    value: str
+    #: 参数名/单位锁定（图集行、构筑物的名称/单位行），只允许改值
+    lock_name: bool = False
+
+
+@dataclass
+class QuantityRow:
+    """附属构筑物工程量行（详情面板“工程量”页，可增删）。"""
+
+    id: int
+    category: str
+    item: str
+    unit: str
     value: str
 
 
@@ -133,16 +164,44 @@ def pipe_rows(element_id: int) -> list[PipeRow]:
     element = _element(element_id)
     if element is None:
         return []
-    return [PipeRow(id=pipe.id, mat=pipe.mat, dn=pipe.dn, content=pipe.content) for pipe in element.pipes]
+    return [
+        PipeRow(id=pipe.id, mat=pipe.mat, dn=pipe.dn, content=pipe.content, t=pipe.t)
+        for pipe in element.pipes
+    ]
 
 
 def param_rows(element_id: int) -> list[ParamRow]:
     element = _element(element_id)
     if element is None:
         return []
+    rows = []
+    for param in element.params:
+        if element.category == CATEGORY_STRUCTURE:
+            lock_name = (param.key, param.unit) == (STRUCTURE_NAME_PARAM, "") or (
+                param.key, param.unit
+            ) == (STRUCTURE_UNIT_PARAM, "")
+        else:
+            lock_name = any(
+                param.key == name and param.unit == unit for name, unit in ATLAS_PARAM_NAMES
+            )
+        rows.append(ParamRow(id=param.id, key=param.key, unit=param.unit, value=param.value, lock_name=lock_name))
+    return rows
+
+
+def quantity_rows(element_id: int) -> list[QuantityRow]:
+    """附属构筑物的工程量行（详情面板“工程量”页只对构筑物启用）。"""
+    element = _element(element_id)
+    if element is None or element.category != CATEGORY_STRUCTURE:
+        return []
     return [
-        ParamRow(id=param.id, key=param.key, value=param.value)
-        for param in element.params
+        QuantityRow(
+            id=quantity.id,
+            category=quantity.category,
+            item=quantity.item,
+            unit=quantity.unit,
+            value=quantity.value,
+        )
+        for quantity in element.quantities
     ]
 
 
@@ -189,9 +248,9 @@ def _element_row(element: Element) -> ElementRow:
     amount_value, amount_error = _evaluate_field(element.amount)
     unit = unit_of(element.category)
     if element.category == CATEGORY_STRUCTURE:
-        # 旧版 mcElement.Unit getter：Param 里的“-单位”覆盖默认单位（座/个/套…）
+        # 旧版 mcElement.Unit getter：参数里的“单位”行覆盖默认单位（座/个/套…）
         for param in element.params:
-            if param.key == "-单位" and param.value.strip():
+            if (param.key, param.unit) == (STRUCTURE_UNIT_PARAM, "") and param.value.strip():
                 unit = param.value.strip()
                 break
     return ElementRow(
@@ -217,10 +276,131 @@ def _element_row(element: Element) -> ElementRow:
 # --------------------------------------------------------------------------- #
 # 数据操作（界面与 AI 工具共用）
 # --------------------------------------------------------------------------- #
+#: 附属构筑物默认参数：名称 / 单位行（锁定参数名、单位列留空，值列影响主表格）
 _STRUCTURE_DEFAULT_PARAMS = (
-    ("-名称", "自定义构筑物"),
-    ("-单位", "个"),
+    (STRUCTURE_NAME_PARAM, "", "自定义构筑物"),
+    (STRUCTURE_UNIT_PARAM, "", "个"),
 )
+
+
+def _structure_default_quantity() -> ElementQuantity:
+    """附属构筑物默认工程量行：构筑物 / 自定义构筑物 / 个 / 1。"""
+    return ElementQuantity(category="构筑物", item="自定义构筑物", unit="个", value="1", order_no=0)
+
+
+def _append_atlas_rows(element: Element) -> None:
+    """补三行图集覆盖参数行（工作面加宽 / 垫层厚 / 基础厚，空 = 自动按图集）。"""
+    existing = {param.key for param in element.params}
+    for name, unit in ATLAS_PARAM_NAMES:
+        if name not in existing:
+            element.params.append(ElementParam(key=name, unit=unit, value=""))
+
+
+def _expire_element(element: Element) -> None:
+    """让已完成 commit 的构件整体失效，下次读取按最新数据。
+
+    共享会话 expire_on_commit=False：管材/参数/工程量行以独立对象入会话
+    （element.pipes.append 的方式），commit 后父构件的子集合仍是旧数据，
+    明细面板 / 工程量重算会漏示新增行——这里手动 expire 弥补。
+    """
+    try:
+        orm.session().expire(element)
+    except Exception:
+        pass
+
+
+def auto_atlas_params(element: Element) -> dict[str, float]:
+    """工作面加宽 / 垫层厚 / 基础厚的自动值（空参数行灰字显示用）。
+
+    按构件当前原则查图集；包封 / 箱涵 / 管廊返回软件约定值
+    （t=0、a=100、C1=100、C2=0），垫层厚为 0 时按围护原则垫层回填（同引擎）。
+    """
+    from app.core.calc.engine import (
+        build_atlas_query,
+        build_element_input,
+        cushion_thickness,
+        resolve_element_principles,
+    )
+    from app.services.atlas import resolve_atlas
+
+    pe, _pf, _pp, pw, _pe_refs, _pf_refs = resolve_element_principles(element, orm.session())
+    if pe is None:
+        return {}
+    info = build_element_input(element, pe, None)
+    at = resolve_atlas(build_atlas_query(info, pe, pw))
+    return {
+        PARAM_A_NAME: at.a,
+        PARAM_C1_NAME: at.c1 if at.c1 != 0 else cushion_thickness(pe),
+        PARAM_C2_NAME: at.c2,
+    }
+
+
+def auto_pipe_thicknesses(element: Element) -> dict[int, float]:
+    """每根管道的图集自动壁厚（mm，供界面空值行灰字显示）。
+
+    同引擎语义：直埋 / 顶管 / 牵引按各自图集类别查；包封管道按临时
+    直埋类别查（同扣管位逻辑）；箱涵 / 管廊不带管道表壁厚按 0。
+    """
+    from app.core.calc.engine import build_atlas_query, build_element_input, resolve_element_principles
+    from app.services.atlas import PipeSpec, resolve_atlas
+
+    if element.category in (CATEGORY_BOX_CULVERT, CATEGORY_GALLERY):
+        return {pipe.id: 0.0 for pipe in element.pipes}
+    pe, _pf, _pp, pw, _pe_refs, _pf_refs = resolve_element_principles(element, orm.session())
+    if pe is None:
+        return {}
+    info = build_element_input(element, pe, None)
+    result: dict[int, float] = {}
+    for pipe in element.pipes:
+        probe = build_atlas_query(info, pe, pw)
+        probe.pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn)]
+        if element.category == CATEGORY_ENCASED:
+            probe.category = CATEGORY_BURIED  # 同引擎包封扣管位的临时直埋查询
+        result[pipe.id] = resolve_atlas(probe).t
+    return result
+
+
+def _seed_atlas_defaults(element: Element) -> None:
+    """写入图集 / 软件约定默认值（构件库插入条目的预填，需求 1）。
+
+    a / C1 / C2 与每根管道壁厚按当前图集行写入参数行 / 管材列；
+    已有值（用户先填了之类的情况）不覆盖。
+    """
+    values = auto_atlas_params(element)
+    existing = {(param.key, param.unit) for param in element.params}
+    for name, value in values.items():
+        if (name, "mm") not in existing:
+            element.params.append(
+                ElementParam(key=name, unit="mm", value=format_number(float(value)))
+            )
+    for pipe_id, t in auto_pipe_thicknesses(element).items():
+        target = next((row for row in element.pipes if row.id == pipe_id), None)
+        if target is not None and target.t is None:
+            target.t = t
+
+
+def _convert_legacy_params(
+    category: int,
+    legacy_params: list[tuple[str, str]],
+) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str, str]]]:
+    """旧 (key, value) 参数 → 新 (key, unit, value) 参数 + 工程量行。
+
+    旧版“类别|项目|单位”三段键变成构筑物工程量行；“-”前缀的构筑物键去前缀；
+    其余按 :func:`app.core.param_naming.split_param_key` 拆名称与单位。
+    """
+    params: list[tuple[str, str, str]] = []
+    quantities: list[tuple[str, str, str, str]] = []
+    for key, value in legacy_params:
+        key = str(key).strip()
+        value = str(value).strip()
+        if "|" in key:
+            category_name, item, unit = key.split("|", 2)
+            quantities.append((category_name, item, unit, value))
+            continue
+        name = key.lstrip("-") if category == CATEGORY_STRUCTURE else key
+        name, unit = split_param_key(name)
+        params.append((name, unit, value))
+    return params, quantities
 
 
 def create_element(
@@ -234,19 +414,23 @@ def create_element(
     pp_name: str | None = None,
     pw_name: str | None = None,
     source: str = "",
-    pipes: list[tuple[str, int, str]] | None = None,
-    params: list[tuple[str, str]] | None = None,
+    pipes: list[tuple] | None = None,
+    params: list[tuple[str, str, str]] | None = None,
+    quantities: list[tuple[str, str, str, str]] | None = None,
     order_no: int | None = None,
     pe_refs: list[tuple[str, float]] | None = None,
     pf_refs: list[tuple[str, float]] | None = None,
     main_pe_name: str = "",
+    seed_atlas_defaults: bool = False,
 ) -> Element | None:
     """新增构件条目；未指定原则时取库中第一条（旧版 mcElement.GetData 的做法）。
 
-    包封埋管 / 箱涵 / 管廊按旧版构造函数补默认扩展参数（包封宽、净宽、含钢量…）；
-    构筑物（附属构筑物）补“-名称/-单位”两个默认参数且不带管材；
-    ``pe_refs`` / ``pf_refs`` 传入多原则引用（旧版 PEname / PFname 字典，
-    多于一条时 show 名自动记为“多围护原则”/“多地基原则”）。
+    包封埋管 / 箱涵 / 管廊按旧版构造函数补默认扩展参数（包封宽、净宽、含钢量…），
+    其余构件补空值图集行（工作面加宽 / 垫层厚 / 基础厚，空 = 自动按图集）；
+    构筑物（附属构筑物）补名称 / 单位参数与默认工程量行且不带管材。
+    构件库插入传 ``seed_atlas_defaults=True``：图集约定值预填（需求 1）。
+    ``params`` 为 (参数名, 单位, 值) 列表；``quantities`` 为
+    (类别, 项目, 单位, 值) 列表；``pipes`` 为 (材质, 管径, 含量[, 壁厚]) 列表。
     """
     if not project_io.is_open() or not _unit_exists(unit_id):
         return None
@@ -275,20 +459,40 @@ def create_element(
     from app.core.calc.engine import _DEFAULT_PARAMS
 
     if pipes and category != CATEGORY_STRUCTURE:
-        for mat, dn, content in pipes:
-            element.pipes.append(Pipe(mat=mat, dn=int(dn), content=str(content)))
+        for pipe_data in pipes:
+            mat, dn, content = pipe_data[0], pipe_data[1], pipe_data[2]
+            t = pipe_data[3] if len(pipe_data) > 3 else None
+            element.pipes.append(Pipe(mat=mat, dn=int(dn), content=str(content), t=t))
     if params:
-        for key, value in params:
-            element.params.append(ElementParam(key=key, value=str(value)))
+        for key, unit, value in params:
+            element.params.append(ElementParam(key=key, unit=unit, value=str(value)))
     elif category == CATEGORY_STRUCTURE:
-        for key, value in _STRUCTURE_DEFAULT_PARAMS:
-            element.params.append(ElementParam(key=key, value=value))
+        for key, unit, value in _STRUCTURE_DEFAULT_PARAMS:
+            element.params.append(ElementParam(key=key, unit=unit, value=value))
     else:
         for key, value in _DEFAULT_PARAMS.get(category, {}).items():
-            element.params.append(ElementParam(key=key, value=format_number(value)))
+            element.params.append(
+                ElementParam(key=key, unit=DEFAULT_PARAM_UNITS.get(key, ""), value=format_number(value))
+            )
+        _append_atlas_rows(element)
+    if quantities:
+        for order, (quantity_category, item, unit, value) in enumerate(quantities):
+            element.quantities.append(
+                ElementQuantity(
+                    category=quantity_category,
+                    item=item,
+                    unit=unit,
+                    value=str(value),
+                    order_no=order,
+                )
+            )
+    elif category == CATEGORY_STRUCTURE:
+        element.quantities.append(_structure_default_quantity())
     session.add(element)
     session.flush()
     _seed_principle_refs(session, element, pe_refs, pf_refs)
+    if seed_atlas_defaults and category != CATEGORY_STRUCTURE:
+        _seed_atlas_defaults(element)
     project_io.commit()
     bus().unit_changed.emit(unit_id)
     return element
@@ -327,7 +531,7 @@ def _seed_principle_refs(
 
 
 def element_snapshot(element_id: int) -> dict | None:
-    """构件条目完整快照（复制/剪切/粘贴用，含管材、参数与多原则引用）。"""
+    """构件条目完整快照（复制/剪切/粘贴用，含管材、参数、工程量与多原则引用）。"""
     element = _element(element_id)
     if element is None:
         return None
@@ -342,8 +546,12 @@ def element_snapshot(element_id: int) -> dict | None:
         "pw_name": element.pw_name,
         "main_pe_name": element.main_pe_name,
         "source": element.source,
-        "pipes": [(pipe.mat, pipe.dn, pipe.content) for pipe in element.pipes],
-        "params": [(param.key, param.value) for param in element.params],
+        "pipes": [(pipe.mat, pipe.dn, pipe.content, pipe.t) for pipe in element.pipes],
+        "params": [(param.key, param.unit, param.value) for param in element.params],
+        "quantities": [
+            (quantity.category, quantity.item, quantity.unit, quantity.value)
+            for quantity in element.quantities
+        ],
         "pe_refs": [(ref.name, ref.ratio) for ref in element.pe_refs_sorted()],
         "pf_refs": [(ref.name, ref.ratio) for ref in element.pf_refs_sorted()],
     }
@@ -391,15 +599,23 @@ def insert_element_data(
         source=data.get("source", ""),
         pipes=list(data.get("pipes") or []) or None,
         params=list(data.get("params") or []) or None,
+        quantities=list(data.get("quantities") or []) or None,
         order_no=order_no,
         pe_refs=pe_refs,
         pf_refs=pf_refs,
         main_pe_name=data.get("main_pe_name", "") or "",
+        seed_atlas_defaults=bool(data.get("seed_atlas_defaults", False)),
     )
 
 
 def insert_element_template(unit_id: int, template, before_element_id: int | None = None) -> Element | None:
-    """把构件库模板插入主表格（原版 FormMdi 构件库双击 + FormUnit.Insert）。"""
+    """把构件库模板插入主表格（原版 FormMdi 构件库双击 + FormUnit.Insert）。
+
+    模板参数仍是旧版单键格式，先拆成 (参数名, 单位) + 工程量行；
+    图集约定值（t / a / C1 / C2）按需求预填。
+    """
+    params, quantities = _convert_legacy_params(template.category, list(template.params))
+    legacy_quantities = quantities if template.category == CATEGORY_STRUCTURE else []
     return insert_element_data(
         unit_id,
         {
@@ -409,7 +625,9 @@ def insert_element_template(unit_id: int, template, before_element_id: int | Non
             "amount": template.amount,
             "source": template.source,
             "pipes": [list(pipe) for pipe in template.pipes],
-            "params": [list(param) for param in template.params],
+            "params": [list(param) for param in params],
+            "quantities": [list(quantity) for quantity in legacy_quantities],
+            "seed_atlas_defaults": True,
         },
         before_element_id,
     )
@@ -427,12 +645,16 @@ def update_element(element_id: int, **fields) -> Element | None:
 
     pe_name / pf_name 按旧版 showPEname / showPFname setter 语义处理：
     选“多围护原则/多地基原则”只切换显示名、保留引用行；选具体原则则把
-    引用重置为该原则（比例 1）。类别改为构筑物时清空管材并重置默认参数。
+    引用重置为该原则（比例 1）。类别改为构筑物时清空管材并重置默认
+    参数与工程量行；从构筑物切回其它类别时同样重置。
     """
     element = _element(element_id)
     if element is None:
         return None
+    from app.core.calc.engine import _DEFAULT_PARAMS
+
     category_changed = "category" in fields and int(fields["category"]) != element.category
+    old_category = element.category
     for key, value in fields.items():
         if key not in _ELEMENT_FIELDS:
             continue
@@ -444,14 +666,28 @@ def update_element(element_id: int, **fields) -> Element | None:
             continue
         setattr(element, key, int(value) if key in ("category", "order_no") else str(value))
     if category_changed and element.category == CATEGORY_STRUCTURE:
-        # 旧版 mcE7 构造：mList.Clear() + 默认参数（构筑物不带管材）
+        # 旧版 mcE7 构造：mList.Clear() + 名称/单位参数 + 默认工程量行（构筑物不带管材）
         element.main_pe_name = element.main_pe_name or element.pe_name
         for pipe in list(element.pipes):
             element.pipes.remove(pipe)  # delete-orphan 级联删除
         for param in list(element.params):
             element.params.remove(param)
-        for key, value in _STRUCTURE_DEFAULT_PARAMS:
-            element.params.append(ElementParam(key=key, value=value))
+        for key, unit, value in _STRUCTURE_DEFAULT_PARAMS:
+            element.params.append(ElementParam(key=key, unit=unit, value=value))
+        for quantity in list(element.quantities):
+            element.quantities.remove(quantity)
+        element.quantities.append(_structure_default_quantity())
+    elif category_changed and old_category == CATEGORY_STRUCTURE:
+        # 从构筑物切回其它类别：按新类别重置扩展参数（含空值图集行）
+        for param in list(element.params):
+            element.params.remove(param)
+        for quantity in list(element.quantities):
+            element.quantities.remove(quantity)
+        for key, value in _DEFAULT_PARAMS.get(element.category, {}).items():
+            element.params.append(
+                ElementParam(key=key, unit=DEFAULT_PARAM_UNITS.get(key, ""), value=format_number(value))
+            )
+        _append_atlas_rows(element)
     project_io.commit()
     bus().unit_changed.emit(element.unit_id)
     return element
@@ -514,13 +750,20 @@ def move_element(element_id: int, delta: int) -> None:
     bus().unit_changed.emit(element.unit_id)
 
 
-def create_pipe(element_id: int, mat: str = "Ⅱ级混凝土管", dn: int = 600, content: str = "1") -> Pipe | None:
+def create_pipe(
+    element_id: int,
+    mat: str = "Ⅱ级混凝土管",
+    dn: int = 600,
+    content: str = "1",
+    t: float | None = None,
+) -> Pipe | None:
     element = _element(element_id)
     if element is None:
         return None
-    pipe = Pipe(element_id=element_id, mat=mat, dn=int(dn), content=str(content))
+    pipe = Pipe(element_id=element_id, mat=mat, dn=int(dn), content=str(content), t=t)
     orm.session().add(pipe)
     project_io.commit()
+    _expire_element(element)
     bus().unit_changed.emit(element.unit_id)
     return pipe
 
@@ -532,7 +775,14 @@ def update_pipe(pipe_id: int, **fields) -> Pipe | None:
     for key, value in fields.items():
         if key not in _PIPE_FIELDS:
             continue
-        setattr(pipe, key, int(value) if key == "dn" else str(value))
+        if key == "dn":
+            setattr(pipe, key, int(value))
+        elif key == "t":
+            # 壁厚空 = 自动按图集（None）；数字按用户值存
+            text = str(value).strip()
+            setattr(pipe, key, float(text) if text else None)
+        else:
+            setattr(pipe, key, str(value))
     project_io.commit()
     bus().unit_changed.emit(pipe.element.unit_id)
     return pipe
@@ -542,19 +792,22 @@ def delete_pipe(pipe_id: int) -> None:
     pipe = _pipe(pipe_id)
     if pipe is None:
         return
-    unit_id = pipe.element.unit_id
+    element = pipe.element
+    unit_id = element.unit_id
     orm.session().delete(pipe)
     project_io.commit()
+    _expire_element(element)
     bus().unit_changed.emit(unit_id)
 
 
-def create_param(element_id: int, key: str = "", value: str = "") -> ElementParam | None:
+def create_param(element_id: int, key: str = "", unit: str = "", value: str = "") -> ElementParam | None:
     element = _element(element_id)
     if element is None:
         return None
-    param = ElementParam(element_id=element_id, key=key, value=value)
+    param = ElementParam(element_id=element_id, key=key, unit=unit, value=value)
     orm.session().add(param)
     project_io.commit()
+    _expire_element(element)
     bus().unit_changed.emit(element.unit_id)
     return param
 
@@ -567,17 +820,85 @@ def update_param(param_id: int, **fields) -> ElementParam | None:
         if key in _PARAM_FIELDS:
             setattr(param, key, str(value))
     project_io.commit()
+    _expire_element(param.element)
     bus().unit_changed.emit(param.element.unit_id)
     return param
 
 
-def delete_param(param_id: int) -> None:
+def delete_param(param_id: int) -> str | None:
+    """删参数行；图集行（工作面加宽/垫层厚/基础厚）与构筑物名称/单位行锁定。
+
+    返回提示文案；None 表示已删除。
+    """
     param = orm.session().get(ElementParam, param_id) if project_io.is_open() else None
     if param is None:
-        return
-    unit_id = param.element.unit_id
+        return None
+    element = param.element
+    if element.category == CATEGORY_STRUCTURE:
+        if (param.key, param.unit) in ((STRUCTURE_NAME_PARAM, ""), (STRUCTURE_UNIT_PARAM, "")):
+            return "名称/单位参数行不可删除。"
+    elif any(param.key == name and param.unit == unit for name, unit in ATLAS_PARAM_NAMES):
+        return "工作面加宽 / 垫层厚 / 基础厚为图集参数行，不可删除（清空值即自动）。"
+    unit_id = element.unit_id
     orm.session().delete(param)
     project_io.commit()
+    _expire_element(element)
+    bus().unit_changed.emit(unit_id)
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# 构筑物工程量行（详情面板“工程量”页）
+# --------------------------------------------------------------------------- #
+def create_quantity(
+    element_id: int,
+    category: str = "构筑物",
+    item: str = "",
+    unit: str = "",
+    value: str = "0",
+) -> ElementQuantity | None:
+    """新增工程量行（值可为算式，随构件数量放大）。"""
+    element = _element(element_id)
+    if element is None:
+        return None
+    order_no = max((existing.order_no for existing in element.quantities), default=-1) + 1
+    quantity = ElementQuantity(
+        element_id=element_id,
+        category=category,
+        item=item,
+        unit=unit,
+        value=str(value),
+        order_no=order_no,
+    )
+    orm.session().add(quantity)
+    project_io.commit()
+    _expire_element(element)
+    bus().unit_changed.emit(element.unit_id)
+    return quantity
+
+
+def update_quantity(quantity_id: int, **fields) -> ElementQuantity | None:
+    """修改工程量行（类别 / 项目 / 单位 / 值）。"""
+    quantity = orm.session().get(ElementQuantity, quantity_id) if project_io.is_open() else None
+    if quantity is None:
+        return None
+    for key, value in fields.items():
+        if key in _QUANTITY_FIELDS:
+            setattr(quantity, key, str(value))
+    project_io.commit()
+    bus().unit_changed.emit(quantity.element.unit_id)
+    return quantity
+
+
+def delete_quantity(quantity_id: int) -> None:
+    quantity = orm.session().get(ElementQuantity, quantity_id) if project_io.is_open() else None
+    if quantity is None:
+        return
+    element = quantity.element
+    unit_id = element.unit_id
+    orm.session().delete(quantity)
+    project_io.commit()
+    _expire_element(element)
     bus().unit_changed.emit(unit_id)
 
 
@@ -681,7 +1002,8 @@ def set_main_pe(element_id: int, name: str) -> Element | None:
 # --------------------------------------------------------------------------- #
 class UnitViewModel(QObject):
     unit_loaded = Signal(int, object)  # unit_id, list[ElementRow]
-    detail_loaded = Signal(int, object, object)  # element_id, list[PipeRow], list[ParamRow]
+    # element_id, list[PipeRow], list[ParamRow], list[QuantityRow]
+    detail_loaded = Signal(int, object, object, object)
     error_occurred = Signal(str)
 
     def __init__(self) -> None:
@@ -704,16 +1026,18 @@ class UnitViewModel(QObject):
         self._unit_id = unit_id
         if unit_id is None:
             self.unit_loaded.emit(0, [])
-            self.detail_loaded.emit(0, [], [])
+            self.detail_loaded.emit(0, [], [], [])
             return
         self.unit_loaded.emit(unit_id, element_rows(unit_id))
 
     def load_detail(self, element_id: int | None) -> None:
         self._element_id = element_id
         if element_id is None:
-            self.detail_loaded.emit(0, [], [])
+            self.detail_loaded.emit(0, [], [], [])
             return
-        self.detail_loaded.emit(element_id, pipe_rows(element_id), param_rows(element_id))
+        self.detail_loaded.emit(
+            element_id, pipe_rows(element_id), param_rows(element_id), quantity_rows(element_id)
+        )
 
     def _on_unit_changed(self, unit_id: int) -> None:
         """任何来源（界面 / AI 工具）改了构件都重新加载当前单位工程。
@@ -731,7 +1055,10 @@ class UnitViewModel(QObject):
         self.unit_loaded.emit(self._unit_id, element_rows(self._unit_id))
         if self._element_id is not None:
             self.detail_loaded.emit(
-                self._element_id, pipe_rows(self._element_id), param_rows(self._element_id)
+                self._element_id,
+                pipe_rows(self._element_id),
+                param_rows(self._element_id),
+                quantity_rows(self._element_id),
             )
 
     # --- 构件操作 ---
@@ -778,7 +1105,22 @@ class UnitViewModel(QObject):
         update_param(param_id, **{field: value})
 
     def remove_param(self, param_id: int) -> None:
-        delete_param(param_id)
+        message = delete_param(param_id)
+        if message:
+            self.error_occurred.emit(message)
+
+    # --- 工程量行（构筑物） ---
+    def add_quantity(self) -> None:
+        if self._element_id is None:
+            self.error_occurred.emit("请先在上表选择构件条目。")
+            return
+        create_quantity(self._element_id)
+
+    def set_quantity_field(self, quantity_id: int, field: str, value) -> None:
+        update_quantity(quantity_id, **{field: value})
+
+    def remove_quantity(self, quantity_id: int) -> None:
+        delete_quantity(quantity_id)
 
 
 # --------------------------------------------------------------------------- #

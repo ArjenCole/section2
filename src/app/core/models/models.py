@@ -270,6 +270,13 @@ class Element(Base):
         passive_deletes=True,
         order_by="ElementParam.id",
     )
+    #: 附属构筑物的工程量行（mcE7 的“类别|项目|单位”三段参数，v5 起独立成表）
+    quantities: Mapped[list["ElementQuantity"]] = relationship(
+        back_populates="element",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ElementQuantity.order_no",
+    )
     #: 多原则引用（旧版 PEname / PFname 字典，kind 区分 pe/pf）
     principle_refs: Mapped[list["ElementPrinciple"]] = relationship(
         back_populates="element",
@@ -313,7 +320,12 @@ class ElementPrinciple(Base):
 
 
 class ElementParam(Base):
-    """构件扩展参数（如箱涵含钢量），key-value 便于扩展。"""
+    """构件扩展参数（key-value 便于扩展，如箱涵含钢量、图集壁厚覆盖）。
+
+    v5 起参数名与单位分两列：``key`` 只存参数名（旧版尾部“ 单位”已拆出，
+    见 :mod:`app.core.param_naming`），``unit`` 存单位（空 = 无单位，
+    如构筑物的名称 / 单位行）；``value`` 保持字符串原文，可写算式。
+    """
 
     __tablename__ = "element_param"
 
@@ -322,9 +334,35 @@ class ElementParam(Base):
         ForeignKey("element.id", ondelete="CASCADE"), index=True
     )
     key: Mapped[str] = mapped_column(String(100), default="")
+    unit: Mapped[str] = mapped_column(String(50), default="")
     value: Mapped[str] = mapped_column(String(200), default="")
 
     element: Mapped[Element] = relationship(back_populates="params")
+
+
+class ElementQuantity(Base):
+    """附属构筑物的工程量行（对应旧版 mcE7 的“类别|项目|单位”三段参数）。
+
+    v5 起独立成表；界面上在详情面板“工程量”页编辑，行可增删。
+    计算时每行输出一条工程量“类别|项目|单位”，``value`` 为值原文（可写算式），
+    随构件数量（amount）放大。
+    """
+
+    __tablename__ = "element_quantity"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    element_id: Mapped[int] = mapped_column(
+        ForeignKey("element.id", ondelete="CASCADE"), index=True
+    )
+    #: 工程量类别（如“构筑物”）
+    category: Mapped[str] = mapped_column(String(100), default="")
+    #: 项目名称（如“垫层”）
+    item: Mapped[str] = mapped_column(String(100), default="")
+    unit: Mapped[str] = mapped_column(String(50), default="")
+    value: Mapped[str] = mapped_column(String(200), default="0")
+    order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    element: Mapped[Element] = relationship(back_populates="quantities")
 
 
 class Pipe(Base):
@@ -341,6 +379,9 @@ class Pipe(Base):
     dn: Mapped[int] = mapped_column(Integer, default=600)
     #: 含量，字符串原文（可写算式）
     content: Mapped[str] = mapped_column(String(100), default="1")
+    #: 管道壁厚 mm（用户覆盖值；空 = 按图集自动，并参与计算自动回退，
+    #: 见 resolve_atlas 的覆盖处理。v5 起在详情面板“管材”列直接编辑）
+    t: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     element: Mapped[Element] = relationship(back_populates="pipes")
 

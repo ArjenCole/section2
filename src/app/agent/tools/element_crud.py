@@ -80,6 +80,15 @@ def tool_add_element(context: ToolContext, **kwargs) -> str:
     if pw_name and pw_name not in width_names:
         return f"面宽原则“{pw_name}”不存在。可用：{'、'.join(width_names)}"
 
+    # 管道壁厚 t：数字 = 手填覆盖，留空 = 自动按图集（空行灰字显示图集值）
+    pipe = kwargs.get("pipe") or {}
+    t_value = None
+    if isinstance(pipe, dict) and pipe.get("t") is not None:
+        try:
+            t_value = float(pipe["t"])
+        except (TypeError, ValueError):
+            return "管道壁厚 t 需为数字（mm），或留空自动按图集。"
+
     element = unit_vm.create_element(
         context.unit_id,
         category=category if category is not None else 1,
@@ -93,12 +102,18 @@ def tool_add_element(context: ToolContext, **kwargs) -> str:
     )
     if element is None:
         return "新增失败：单位工程不存在。"
-    pipe = kwargs.get("pipe") or {}
     pipe_text = ""
     if isinstance(pipe, dict) and pipe.get("mat"):
-        unit_vm.create_pipe(element.id, mat=str(pipe.get("mat")), dn=int(pipe.get("dn") or 600),
-                            content=str(pipe.get("content") or "1"))
+        unit_vm.create_pipe(
+            element.id,
+            mat=str(pipe.get("mat")),
+            dn=int(pipe.get("dn") or 600),
+            content=str(pipe.get("content") or "1"),
+            t=t_value,
+        )
         pipe_text = f"，管材 {pipe.get('mat')} Dn{pipe.get('dn')}"
+        if t_value is not None:
+            pipe_text += f"（壁厚 {t_value:g}mm）"
     return (
         f"已新增构件 id={element.id}：{name or '（未命名）'} "
         f"{category_name(element.category)}，埋深 {depth}，数量 {amount}{pipe_text}。"
@@ -214,6 +229,7 @@ TOOL_SPECS: list[dict] = [
                         "properties": {
                             "mat": {"type": "string", "description": "管材"},
                             "dn": {"type": "integer", "description": "管径 mm"},
+                            "t": {"type": "number", "description": "管道壁厚 mm（可选，留空自动按图集）"},
                             "content": {"type": "string", "description": "含量"},
                         },
                     },

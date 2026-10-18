@@ -21,6 +21,7 @@ from lxml import etree
 from app.core.models import base as orm
 from app.core.models.models import (
     CATEGORY_NAMES,
+    CATEGORY_STRUCTURE,
     MULTI_PE_TEXT,
     MULTI_PF_TEXT,
     PRECIPITATION_COLUMNS,
@@ -30,6 +31,7 @@ from app.core.models.models import (
     Element,
     ElementParam,
     ElementPrinciple,
+    ElementQuantity,
     EnclosureCushion,
     EnclosureLevel,
     EnclosureWork,
@@ -43,6 +45,7 @@ from app.core.models.models import (
     Unit,
     WidthItem,
 )
+from app.core.param_naming import split_param_key
 
 _CATEGORY_BY_NAME = {name: value for value, name in CATEGORY_NAMES.items()}
 _LEGACY_CATEGORIES = tuple(CATEGORY_NAMES.values())
@@ -517,10 +520,33 @@ def _migrate_inner(source: Path, target: Path) -> MigrationReport:
                     )
                     report.pipes += 1
                 known_params = {key for key, _value in legacy_element.params}
+                # 旧版单键参数 → 新版“参数名/单位”两列；三段“类别|项目|单位”键
+                # 是构筑物工程量，迁 element_quantity 表（与库内结构迁移一致）
+                quantity_order = 0
                 for key, value in legacy_element.params:
-                    session.add(ElementParam(element_id=element.id, key=key, value=value))
+                    if category == 7 and "|" in key:
+                        quantity_category, item, unit = key.split("|", 2)
+                        session.add(
+                            ElementQuantity(
+                                element_id=element.id,
+                                category=quantity_category,
+                                item=item,
+                                unit=unit,
+                                value=value,
+                                order_no=quantity_order,
+                            )
+                        )
+                        quantity_order += 1
+                        continue
+                    name = key.lstrip("-") if category == CATEGORY_STRUCTURE else key
+                    name, unit = split_param_key(name)
+                    session.add(
+                        ElementParam(element_id=element.id, key=name, unit=unit, value=value)
+                    )
                 if category == 3 and "含钢量 kg/m3" not in known_params and _version_tuple(legacy.version or "0") < (1, 2, 1, 1):
-                    session.add(ElementParam(element_id=element.id, key="含钢量 kg/m3", value="150"))
+                    session.add(
+                        ElementParam(element_id=element.id, key="含钢量", unit="kg/m3", value="150")
+                    )
                     report.warnings.append(
                         f"旧版 <1.2.1.1：箱涵“{legacy_element.name or '(未命名)'}”补默认含钢量 150 kg/m³。"
                     )

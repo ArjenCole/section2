@@ -176,11 +176,120 @@ def _migrate_v3_split_precipitation_width(engine: Engine) -> None:
         )
 
 
+def _migrate_v4_param_naming_quantities(engine: Engine) -> None:
+    """v4 → v5：构件参数拆“参数名 / 单位”，附属构筑物工程量独立成表。
+
+    * pipe 表加 t 列（管道壁厚 mm 用户值；空 = 按图集自动）；
+    * element_param 表加 unit 列，key 只存参数名（旧键尾部“ 单位”拆出）；
+    * 建 element_quantity 表：附属构筑物（category=7）“类别|项目|单位”三段参数
+      迁成工程量行并删除原参数行；
+    * 附属构筑物的以“-”为前缀的旧键去掉前缀（-名称/-单位/井筒…）；
+    * 直埋 / 包封 / 箱涵 / 顶管 / 牵引 / 管廊（category 1~6）构件补
+      工作面加宽 / 垫层厚 / 基础厚 三行参数（空值 = 自动按图集）。
+    """
+    from sqlalchemy import inspect as sqla_inspect
+
+    from app.core.models.models import ElementQuantity
+    from app.core.param_naming import ATLAS_PARAM_NAMES, split_param_key
+
+    inspection = sqla_inspect(engine)
+    statements: list[str] = []
+    param_columns = {column["name"] for column in inspection.get_columns("element_param")}
+    if "unit" not in param_columns:
+        statements.append("ALTER TABLE element_param ADD COLUMN unit VARCHAR(50) DEFAULT ''")
+    pipe_columns = {column["name"] for column in inspection.get_columns("pipe")}
+    if "t" not in pipe_columns:
+        statements.append("ALTER TABLE pipe ADD COLUMN t FLOAT")
+    ElementQuantity.__table__.create(engine, checkfirst=True)
+
+    atlas_names = {name for name, _unit in ATLAS_PARAM_NAMES}
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+        # 解析每行旧参数：按类别决定拆分 / 迁移动作
+        rows = connection.execute(
+            text(
+                "SELECT p.id, p.element_id, p.key, p.value, e.category FROM element_param p "
+                "LEFT JOIN element e ON e.id = p.element_id"
+            )
+        ).fetchall()
+        renames: dict[int, tuple[str, str]] = {}
+        drops: list[int] = []
+        quantity_rows: list[dict[str, object]] = []
+        for (param_id, element_id, key, value, category) in rows:
+            key = str(key or "")
+            if int(category or 0) == 7 and "|" in key:  # 三段工程量键 → element_quantity
+                segments = key.split("|", 2)
+                quantity_rows.append(
+                    {
+                        "element_id": int(element_id or 0),
+                        "category": segments[0],
+                        "item": segments[1],
+                        "unit": segments[2] if len(segments) > 2 else "",
+                        "value": str(value or ""),
+                        "order_no": len(quantity_rows),
+                    }
+                )
+                drops.append(param_id)
+                continue
+            name = key
+            if int(category or 0) == 7 and name.startswith("-"):
+                name = name.lstrip("-")  # 构筑物 -前缀键在新版里去掉（含 -名称/-单位）
+            name, unit = split_param_key(name)
+            renames[param_id] = (name, unit)
+
+        for param_id, (name, unit) in renames.items():
+            connection.execute(
+                text("UPDATE element_param SET key = :name, unit = :unit WHERE id = :id"),
+                {"name": name, "unit": unit, "id": param_id},
+            )
+        for param_id in drops:
+            connection.execute(
+                text("DELETE FROM element_param WHERE id = :id"), {"id": param_id}
+            )
+        for row in quantity_rows:
+            connection.execute(
+                text(
+                    "INSERT INTO element_quantity "
+                    "(element_id, category, item, unit, value, order_no) "
+                    "VALUES (:element_id, :category, :item, :unit, :value, :order_no)"
+                ),
+                row,
+            )
+
+        # 混凝土类构件补三行图集覆盖参数（category 1~6；名称 / 单位锁定，空值 = 自动）
+        for element_id, in connection.execute(
+            text("SELECT id FROM element WHERE category BETWEEN 1 AND 6")
+        ).fetchall():
+            keys = {
+                row[0]
+                for row in connection.execute(
+                    text("SELECT key FROM element_param WHERE element_id = :e"),
+                    {"e": element_id},
+                ).fetchall()
+            }
+            missing = [
+                (name, unit) for name, unit in ATLAS_PARAM_NAMES if name not in keys
+            ]
+            if not missing or keys & atlas_names:
+                continue  # 三行一起补，已删过其一的老库视为已迁移
+            for name, unit in missing:
+                connection.execute(
+                    text(
+                        "INSERT INTO element_param (element_id, key, unit, value) "
+                        "VALUES (:e, :name, :unit, '')"
+                    ),
+                    {"e": element_id, "name": name, "unit": unit},
+                )
+
+
 #: 结构迁移入口。键为源版本号，值为“从该版本迁到 +1 版本”的函数。
 _MIGRATIONS: dict[int, "callable"] = {
     1: _migrate_v1_add_element_source,
     2: _migrate_v2_add_multi_principle,
     3: _migrate_v3_split_precipitation_width,
+    4: _migrate_v4_param_naming_quantities,
 }
 
 

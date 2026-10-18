@@ -56,15 +56,24 @@ class AtlasParam:
 
 @dataclass
 class PipeSpec:
-    """查询图集所需的管道信息（材质、管径 mm）。"""
+    """查询图集所需的管道信息（材质、管径 mm）。
+
+    ``t`` 为详情面板的管道壁厚用户值（mm）；None = 自动按图集。
+    """
 
     mat: str = ""
     dn: int = 600
+    t: float | None = None
 
 
 @dataclass
 class AtlasQuery:
-    """图集查询输入：构件类别 + 首管道 + 围护原则相关设定。"""
+    """图集查询输入：构件类别 + 首管道 + 围护原则相关设定。
+
+    ``a`` / ``c1`` / ``c2`` 为详情面板参数行（工作面加宽 / 垫层厚 / 基础厚）
+    的用户覆盖值；None = 未覆盖，按图集行取值。显式 0 是有效覆盖
+    （唯垫层厚 0 在引擎处仍按“垫层取原则”的旧语义回退）。
+    """
 
     category: int
     pipes: list[PipeSpec] = field(default_factory=list)
@@ -75,6 +84,9 @@ class AtlasQuery:
     size_b: float = 0.0  # 断面宽 m
     widths: dict[str, dict[int, float]] = field(default_factory=dict)
     groove_bs: dict[str, dict[int, float]] = field(default_factory=dict)
+    a: float | None = None
+    c1: float | None = None
+    c2: float | None = None
 
 
 def _num(value) -> float:
@@ -322,6 +334,20 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
 
     if query.groove_width == "WorkWidth":
         groove_b = 0.0
+
+    # 详情面板覆盖值：工作面加宽 / 垫层厚 / 基础厚全类别生效；管道壁厚只在
+    # 真正按管线查图的类别生效（包封 / 箱涵 / 管廊断面宽由自身参数决定）。
+    # 壁厚被覆盖时外径按 内径 + 2×壁厚 重推，与图集 oD 列同源。
+    if query.a is not None:
+        a = query.a
+    if query.c1 is not None:
+        c1 = query.c1
+    if query.c2 is not None:
+        c2 = query.c2
+    t_override = query.pipes[0].t if query.pipes else None
+    if t_override is not None and query.category not in (2, 3, 6):
+        t = t_override
+        od = query.pipes[0].dn + t * 2.0
 
     return AtlasParam(od=od, t=t, a=a, c1=c1, c2=c2, workwidth=workwidth, groove_b=groove_b, q=q)
 

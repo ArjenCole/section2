@@ -589,11 +589,11 @@ def _ontology_shapes(info: ElementInput, at, c1: float) -> list[_Shape]:
         shapes.append(_Shape("Rectangle", -width / 2.0, at.c1, width, height))
         found_width = width + at.a * 2
         shapes.append(_Shape("Rectangle", -found_width / 2.0, 0.0, found_width, at.c1))
-        outer = info.params.get("外壁厚 mm", 350.0)
-        inner = info.params.get("内壁厚 mm", 250.0)
-        chambers = int(info.params.get("内壁 道", 0.0))
-        bottom_slab = info.params.get("底板厚 mm", 400.0)
-        top_slab = info.params.get("顶板厚 mm", 300.0)
+        outer = info.params.get("外壁厚", 350.0)
+        inner = info.params.get("内壁厚", 250.0)
+        chambers = int(info.params.get("内壁", 0.0))
+        bottom_slab = info.params.get("底板厚", 400.0)
+        top_slab = info.params.get("顶板厚", 300.0)
         chamber_w = (width - outer * 2 - chambers * inner) / (chambers + 1)
         for index in range(chambers + 1):
             x = outer + (chamber_w + inner) * index - width / 2.0
