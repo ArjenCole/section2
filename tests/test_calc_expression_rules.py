@@ -4,7 +4,8 @@
 
 * 派生量以 Dim 参与计算，算式按运算逐级拼出来，不出现预先算好的数字；
 * 只有直接录入 / 查表的原始数据与软件常数才是单个数字；
-* 括号按运算优先级给（顶层加减进乘除上下文才加；除数位置更严格）；
+* 括号按运算优先级给，且只在语法必需处给（顶层加减进乘除上下文才加；
+  除数位置、乘方底数位置更严格；原子表达式哪里都不加）；
 * 数值与算式同源：Dim.e 重新求值必须等于 Dim.v。
 """
 
@@ -13,7 +14,18 @@ from __future__ import annotations
 import pytest
 
 from app.core.evaluator import evaluate
-from app.core.calc.tracer import dim, dim_min, dim_sum, raw_dim, scale_sum, wrap
+from app.core.calc import engine
+from app.core.calc.tracer import (
+    Dim,
+    dim,
+    dim_min,
+    dim_sum,
+    needs_parens,
+    needs_parens_tight,
+    raw_dim,
+    scale_sum,
+    wrap,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -33,6 +45,56 @@ def test_wrap_tight_also_protects_divisor_positions() -> None:
     assert wrap("65×2", tight=True) == "(65×2)"
     assert wrap("600/1000", tight=True) == "(600/1000)"
     assert wrap("2.85", tight=True) == "2.85"
+
+
+def test_atomic_expressions_never_need_parentheses() -> None:
+    """纯数字 / 单变量 / 函数调用是原子表达式，任何位置都不加括号。"""
+    for text in ("2", "233.988", "0.5", "sin(1.2)", "ceil(40/1.2)"):
+        assert not needs_parens(text), text
+        assert not needs_parens_tight(text), text
+        assert wrap(text, tight=True) == text
+    for text in ("50*2", "600/1000", "1.99+(65+130)/1000", "2-1"):
+        assert needs_parens_tight(text), text
+
+
+# --------------------------------------------------------------------------- #
+# 公式代入的括号：按占位符位置的最小需要
+# --------------------------------------------------------------------------- #
+def test_pre_sub_parentheses_follow_position() -> None:
+    height = dim(2.0)  # 原子
+    width = Dim(1.99, "600/1000+(65×2+130×2+500×2)/1000")  # 顶层加减
+    count = Dim(100.0, "50*2")  # 顶层乘除
+
+    assert engine.pre_sub("1*2*height", height, width, count) == "1*2*2"
+    # 顶层加减：任何位置都括起来
+    assert engine.pre_sub("width*B", height, width, count) == (
+        "(600/1000+(65×2+130×2+500×2)/1000)*B"
+    )
+    # 顶层乘除：除数 / 乘方底数位置才括
+    assert engine.pre_sub("ROUND(count/B,0)/count*A", height, width, count) == (
+        "ROUND(50*2/B,0)/(50*2)*A"
+    )
+    assert engine.pre_sub("count^2", height, width, count) == "(50*2)^2"
+    assert engine.pre_sub("A*count*A", height, width, count) == "A*50*2*A"
+
+
+def test_value_exp_parentheses_follow_position() -> None:
+    params = {
+        "A": ("桩径 mm", "800"),
+        "B": ("搭接 mm", "300"),
+        "D": ("半桩径", "A/2"),
+        "F": ("间距 mm", "A-B"),
+        "Z": ("绕过", "height/D/135"),
+    }
+    assert engine.value_exp(params, "A") == "800"
+    assert engine.value_exp(params, "F") == "800-300"  # 原子代入不加括号
+    # 乘除式代入到除数位置要括号：height/(800/2)/135 不能写成 height/800/2/135
+    assert engine.value_exp(params, "Z") == "height/(800/2)/135"
+
+
+def test_value_exp_detects_cycle() -> None:
+    params = {"A": ("甲", "B+1"), "B": ("乙", "A+1")}
+    assert engine.value_exp(params, "A") == engine._CYCLE
 
 
 # --------------------------------------------------------------------------- #

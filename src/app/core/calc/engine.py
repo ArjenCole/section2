@@ -55,7 +55,17 @@ from app.core.calc.measures import (
 from app.services import atlas as atlas_service
 from app.services.atlas import C2_ZERO_CATEGORIES, AtlasParam, AtlasQuery, PipeSpec, resolve_atlas
 from app.core.calc import foundation, groove, precipitation
-from app.core.calc.tracer import Dim, QDict, dim, dim_sum, fmt, raw_dim, wrap
+from app.core.calc.tracer import (
+    Dim,
+    QDict,
+    dim,
+    dim_sum,
+    fmt,
+    needs_parens,
+    needs_parens_tight,
+    raw_dim,
+    wrap,
+)
 
 _CYCLE = "参数循环引用"
 
@@ -385,18 +395,60 @@ def load_params(component) -> dict[str, tuple[str, str]]:
     return params
 
 
+def _embed(formula: str, start: int, end: int, expression: str) -> str:
+    """把公式里 [start, end) 处的变量名替换成代入算式，括号按位置的最小需要给。
+
+    公式是用户可编辑的文本，代入位置接什么运算符由公式决定（:func:`pre_sub`
+    与 :func:`value_exp` 共用）。规则：
+
+    * 原子表达式（数字、单变量、函数调用，如 ``2`` / ``233.988``）哪里都不用括号；
+    * 顶层是加减的算式一律括起来（它在乘除 / 减号 / 逗号等任何上下文里都可能
+       需要括号，逐处判断不划算，保守处理不会算错）；
+    * 顶层只有乘除的算式（``50*2``）只在“除数位置”（前面是 ``/``）或“乘方底数
+       位置”（前后紧邻 ``^`` / ``**``）才括——乘除同级左结合，
+       ``a*50*2/b`` ≡ ``a*(50*2)/b``；
+    * 其余位置（前面是 ``(`` ``,`` ``+`` ``-`` ``*`` 或开头）不加括号。
+    """
+    if needs_parens(expression):
+        return f"({expression})"
+    if not needs_parens_tight(expression):
+        return expression
+    before = formula[:start].rstrip()
+    after = formula[end:].lstrip()
+    if before.endswith(("/", "÷", "^", "**")) or after.startswith(("^", "**")):
+        return f"({expression})"
+    return expression
+
+
+def _substitute(formula: str, name: str, expression: str) -> str:
+    """把公式里出现的变量名 ``name`` 全部换成 ``expression``（按位置补括号）。"""
+    pattern = re.compile(r"\b" + re.escape(name) + r"\b")
+    parts: list[str] = []
+    cursor = 0
+    for match in pattern.finditer(formula):
+        parts.append(formula[cursor:match.start()])
+        parts.append(_embed(formula, match.start(), match.end(), expression))
+        cursor = match.end()
+    parts.append(formula[cursor:])
+    return "".join(parts)
+
+
 def value_exp(params: dict[str, tuple[str, str]], key: str, _trail: tuple[str, ...] = ()) -> str:
-    """公式里的参数引用递归代入（旧版 ValueExp/SubstitutingExp，含循环引用检测）。"""
+    """公式里的参数引用递归代入（旧版 ValueExp/SubstitutingExp，含循环引用检测）。
+
+    代入的算式按占位符位置的需要加括号（见 :func:`_embed`）：``2`` / ``233.988``
+    这类原子表达式不再套括号，``600/2`` 只有在除数 / 乘方位置才括起来。
+    """
     if key in _trail:
         return _CYCLE
     text = params[key][1]
     for other_key in params:
-        pattern = re.compile(r"\b" + re.escape(other_key) + r"\b")
-        if pattern.search(text):
-            replaced = "(" + value_exp(params, other_key, _trail + (key,)) + ")"
-            if _CYCLE in replaced:
-                return _CYCLE
-            text = pattern.sub(lambda _match, replacement=replaced: replacement, text)
+        if not re.search(r"\b" + re.escape(other_key) + r"\b", text):
+            continue
+        replaced = value_exp(params, other_key, _trail + (key,))
+        if _CYCLE in replaced:
+            return _CYCLE
+        text = _substitute(text, other_key, replaced)
     return text or "0"
 
 
@@ -411,11 +463,11 @@ def key_exp(params: dict[str, tuple[str, str]], key: str) -> str:
 def pre_sub(expression: str, height: Dim, width: Dim, count: Dim) -> str:
     """把 height / width / count 代入公式；埋深/数量为算式时原文随代入进算式。
 
-    代入位置在公式里（接什么运算符未知），算式按最严格方式加括号（tight）。
+    括号按占位符在公式里的位置给（见 :func:`_embed`），与参数引用的代入同一套规则。
     """
     text = expression
     for name, value in (("height", height), ("width", width), ("count", count)):
-        text = re.sub(r"\b" + name + r"\b", lambda _match, replacement=wrap(value.e, tight=True): replacement, text)
+        text = _substitute(text, name, value.e)
     return text
 
 

@@ -97,6 +97,21 @@ def test_expression_matches_value(project) -> None:
             ), f"{quantity.key}: 算式 {quantity.expression} 重算 {replay} ≠ {quantity.value}"
 
 
+def test_expression_has_no_redundant_parentheses(project) -> None:
+    """算式只在语法必需处加括号：与 ast.unparse（最小括号形式）的括号数一致。"""
+    import ast
+
+    from app.core.evaluator import normalize
+
+    unit = project
+    for element in _elements(unit):
+        for quantity in sorted_items(_results(unit)[element.id]):
+            minimal = ast.unparse(ast.parse(normalize(quantity.expression)))
+            assert quantity.expression.count("(") == minimal.count("("), (
+                f"{quantity.key} 有多余括号：{quantity.expression}"
+            )
+
+
 def test_user_expression_in_output(project) -> None:
     """埋深 / 数量列写的算式要以算式形式进入工程量计算表达式。"""
     unit = project
@@ -107,11 +122,11 @@ def test_user_expression_in_output(project) -> None:
     assert "(2.5+0.3+(65+130)/1000)" in dig.expression
     assert dig.expression.endswith("×100")
 
-    # 数量写算式：×数量 以算式原文进每条算式（展示层 * 统一转 ×）
+    # 数量写算式：×数量 按原文进每条算式（不带多余括号，展示层 * 统一转 ×）
     e4 = unit_vm.create_element(unit.id, category=1, name="数量算式", depth="3", amount="50*2")
     unit_vm.create_pipe(e4.id, mat="Ⅱ级混凝土管", dn=600, content="1")
     dig4 = _results(unit)[e4.id].get("开挖|Ⅲ类土|m3")
-    assert "×(50×2)" in dig4.expression
+    assert "×50×2" in dig4.expression
     assert evaluate(dig4.expression) == pytest.approx(dig4.value, rel=0.005)
 
 
@@ -128,7 +143,8 @@ def test_well_point_expression_with_amount_expression(project) -> None:
     unit_vm.create_pipe(element.id, mat="Ⅱ级混凝土管", dn=600, content="1")
 
     row = _results(unit)[element.id].get("降水|轻型井点|根")
-    assert row.expression == "ceil((40×2)/1.2)×2/(40×2)×(40×2)"
+    # 除数位置的括号是必需的（÷(40×2)），尾部 ×数量 不需要（乘除左结合）
+    assert row.expression == "ceil((40×2)/1.2)×2/(40×2)×40×2"
     assert row.value == pytest.approx(134.0)
     assert evaluate(row.expression) == pytest.approx(row.value)
 
@@ -228,8 +244,8 @@ def test_trenchless_only_pipes(project) -> None:
     assert list(jacking_dq.keys()) == ["顶管|钢筋混凝土钢承口管 顶管 Dn1000|m"]
     assert list(pulling_dq.keys()) == ["拖拉管|PE给水管 Dn400|m"]
     assert jacking_dq.get("顶管|钢筋混凝土钢承口管 顶管 Dn1000|m").value == pytest.approx(30.0)
-    # 数量写算式：×数量 以算式原文进算式
-    assert pulling_dq.get("拖拉管|PE给水管 Dn400|m").expression == "1×(20×2)"
+    # 数量写算式：×数量 按原文进算式（乘除左结合，不带多余括号）
+    assert pulling_dq.get("拖拉管|PE给水管 Dn400|m").expression == "1×20×2"
     # 沟槽 / 回填 / 降水 / 围护 / 基础一概没有
     for key in [*jacking_dq.keys(), *pulling_dq.keys()]:
         assert not key.startswith(("开挖|", "回填|", "垫层|", "围护|", "支撑|", "降水|", "管道基础|"))

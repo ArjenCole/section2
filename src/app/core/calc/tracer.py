@@ -51,6 +51,30 @@ def fmt(value: float, digits: int = 4) -> str:
     return text if text not in ("", "-0") else "0"
 
 
+def needs_parens(expression: str) -> bool:
+    """算式作为加减项 / 乘除因子嵌入时是否需要括号：顶层出现加减（含正负号）才需要。
+
+    顶层只有乘除的算式（``600/1000``、``65×2``）嵌进任何位置都不改变结合顺序
+    （乘除同级、左结合：``a×b/c×d`` ≡ ``a×(b/c)×d``），纯数字与函数调用同理。
+    """
+    text = expression.strip()
+    if _NUMERIC.fullmatch(text):
+        return False
+    return _top_operator(text, _ADDITIVE)
+
+
+def needs_parens_tight(expression: str) -> bool:
+    """算式作为除数 / 乘方底数等任意位置嵌入时是否需要括号：顶层有运算符就需要。
+
+    纯数字、单变量、函数调用是“原子”表达式（``2``、``sin(1.2)``），
+    放在哪儿都不用括号。
+    """
+    text = expression.strip()
+    if _NUMERIC.fullmatch(text):
+        return False
+    return _top_operator(text, _ADDITIVE) or _top_operator(text, _MULTIPLICATIVE)
+
+
 def wrap(expression: str, tight: bool = False) -> str:
     """算式嵌入模板前的保护：按运算优先级决定是否加括号。
 
@@ -59,11 +83,8 @@ def wrap(expression: str, tight: bool = False) -> str:
     代入（后面接什么运算符未知），顶层乘除也加括号。纯数字原样保留。
     """
     text = expression.strip()
-    if _NUMERIC.fullmatch(text):
-        return text
-    if _top_operator(text, _ADDITIVE) or (tight and _top_operator(text, _MULTIPLICATIVE)):
-        return f"({text})"
-    return text
+    needed = needs_parens_tight(text) if tight else needs_parens(text)
+    return f"({text})" if needed else text
 
 
 def pair(other: "Dim | float") -> tuple[float, str]:
@@ -186,11 +207,12 @@ class Quantity:
 
     @property
     def expression(self) -> str:
+        """整条算式：各代入项按符号连接；负项只在需要括号时才括（见 needs_parens）。"""
         parts: list[str] = []
         for index, term in enumerate(self.terms):
             expr = term.expr
             negative = term.value < 0
-            if negative and re.search(r"[+×/^-]", expr):
+            if negative and needs_parens(expr):
                 expr = f"({expr})"
             if index == 0:
                 parts.append(f"-{expr}" if negative else expr)
@@ -256,18 +278,19 @@ class QDict:
     def scale(self, coefficient: float, expr: str | None = None) -> None:
         """整体乘系数（旧版 MultDic_StrmcQ）；系数进算式，``expr`` 为系数的算式原文。
 
-        系数原文按最严格方式加括号（tight）：``×(50×2)`` 保留用户写法，
-        也不会因结合顺序改变算式含义。
+        算式变成 ``项×系数``：项只在顶层是加减时才括（乘除左结合，``a/b×c`` ≡
+        ``(a/b)×c``）；系数原文同埋深一样按优先级写进算式——``50*2`` 写成
+        ``×50×2``（与埋深 ``2*3`` 进算式的写法一致），只有 ``×(40-2)`` 这类
+        顶层加减才补括号。除数位置由 :meth:`Dim.__truediv__` 单独保证。
         """
         if coefficient == 1.0:
             return
-        suffix = f"×{wrap(expr, tight=True) if expr is not None else fmt(coefficient)}"
+        suffix = f"×{wrap(expr) if expr is not None else fmt(coefficient)}"
         for quantity in self._items.values():
             quantity.value *= coefficient
             for term in quantity.terms:
                 term.value *= coefficient
-                term.expr = f"({term.expr})" if re.search(r"[+−-]", term.expr) else term.expr
-                term.expr += suffix
+                term.expr = f"{wrap(term.expr)}{suffix}"
 
     # ---------------------------------------------------------------- 汇总
     def total(self) -> float:
