@@ -1,9 +1,9 @@
 """新建工程向导（只保留第一步：项目基本信息）。
 
 沿用旧版 FormNewGuide 的字段：项目名称 / 项目编号 / 编制人 / 标段数量 / 涵盖专业。
-默认围护原则、地基处理原则与图集不再向用户收集，直接按配置默认值
-（config.new_project，缺省同旧版构造）带入 NewProjectSpec；建文件由
-project_io.new_project 执行。
+默认围护原则、地基原则、降水原则、面宽原则与图集不再向用户收集，也不进
+config.toml：缺省值写死在代码里——各项缺省取 NewProjectSpec 的默认值
+（就近单一来源），建文件由 project_io.new_project 执行。
 """
 
 from __future__ import annotations
@@ -28,13 +28,17 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.config import get_config
-from app.core.version import DEFAULT_ATLAS_NAME
+from app.services.project_io import NewProjectSpec
 from app.views.widgets.frameless_dialog import FramelessDialog
 
 #: 旧版 FormNewGuide 的“涵盖专业”勾选项，勾上的会建成单位工程
 _MAJORS = ("雨水工程", "污水工程", "给水工程", "中水工程")
 
-#: 默认围护原则的固定缺省（原第二页的初始值；config 里没有对应键）
+#: 新建工程各项缺省：写死在代码里，不再读 config.toml，也不再随保存写进配置。
+#: 直接取 NewProjectSpec 的默认值，保证与 project_io 实际建库用的缺省一致。
+_DEFAULTS = NewProjectSpec()
+
+#: 默认围护原则的固定缺省（原第二页的初始值）
 _DEFAULT_EXCVT = "Ⅲ类土"
 _DEFAULT_FOUND_ANGLE = 120
 _DEFAULT_CON_FOUND = True
@@ -48,15 +52,14 @@ class BasicInfoPage(QWizardPage):
         # 不设置 title/subTitle：QWizard 的页头横幅（含其底部分隔线）整体隐藏，
         # 页面直接从内容开始（需求：删除页头两行文字与贯穿横线）
 
-        defaults = get_config().new_project
         layout = QVBoxLayout(self)
 
         info_box = QGroupBox("项目基本信息")
         form = QFormLayout(info_box)
-        self.project_name = QLineEdit(str(defaults.get("project_name", "新建项目")))
+        self.project_name = QLineEdit(_DEFAULTS.project_name)
         self.project_name.setPlaceholderText("必填")
-        self.project_index = QLineEdit(str(defaults.get("project_index", "001")))
-        self.author = QLineEdit(str(defaults.get("author", "")) or getpass.getuser())
+        self.project_index = QLineEdit(_DEFAULTS.project_index)
+        self.author = QLineEdit(_DEFAULTS.author or getpass.getuser())
         form.addRow("项目名称", self.project_name)
         form.addRow("项目编号", self.project_index)
         form.addRow("编制人", self.author)
@@ -114,22 +117,22 @@ class NewProjectWizardCore(QWizard):
         self.setPage(0, self._basic_page)
 
     def values(self) -> dict:
-        """收集向导输入，交给 NewProjectSpec；原则与图集直接取配置默认。"""
-        defaults = get_config().new_project
+        """收集向导输入，交给 NewProjectSpec；原则与图集取代码里的固定缺省。"""
         segment_count = self._basic_page.segment_count.value()
-        segment_name = str(defaults.get("segment_name", "新建标段"))
         return {
             "project_name": self._basic_page.project_name.text().strip(),
             "project_index": self._basic_page.project_index.text().strip(),
             "author": self._basic_page.author.text().strip(),
-            "atlas_name": str(defaults.get("atlas_name", DEFAULT_ATLAS_NAME)),
-            "segment_names": [segment_name] * segment_count,
+            "atlas_name": _DEFAULTS.atlas_name,
+            "segment_names": [_DEFAULTS.segment_names[0]] * segment_count,
             "unit_names": self._basic_page.unit_names(),
-            "enclosure_name": str(defaults.get("enclosure_name", "默认围护原则")),
+            "enclosure_name": _DEFAULTS.enclosure_name,
             "enclosure_excvt": _DEFAULT_EXCVT,
             "enclosure_found_angle": _DEFAULT_FOUND_ANGLE,
             "enclosure_con_found": _DEFAULT_CON_FOUND,
-            "foundation_name": str(defaults.get("foundation_name", "默认地基原则")),
+            "foundation_name": _DEFAULTS.foundation_name,
+            "precipitation_name": _DEFAULTS.precipitation_name,
+            "width_name": _DEFAULTS.width_name,
         }
 
 

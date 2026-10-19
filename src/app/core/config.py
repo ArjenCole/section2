@@ -1,6 +1,8 @@
-"""config.toml 读写：界面主题、最近打开工程、AI profile、新建向导默认值。
+"""config.toml 读写：界面主题、最近打开工程、AI profile。
 
 - 配置文件位置见 core.paths.config_file_path()，与工程文件严格分离；
+- 只放“用户设置”与用户数据：新建工程的各项默认值（工程名、标段名与四个
+  默认原则名等）写死在代码里（NewProjectSpec / 新建向导），不在这里配置；
 - API key 一律不进配置文件（只进系统钥匙串 keyring），此模块不提供保存 key 的接口；
 - 读取用标准库 tomllib（Python 3.11+），写入用 tomli_w。
 """
@@ -15,23 +17,12 @@ from typing import Any
 import tomli_w
 
 from app.core.paths import config_file_path
-from app.core.version import DEFAULT_ATLAS_NAME
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "ui": {
         "theme": "light",
         "ai_panel_expanded": False,
         "last_dir": "",
-    },
-    "new_project": {
-        "project_name": "新建项目",
-        "project_index": "001",
-        "author": "",
-        "atlas_name": DEFAULT_ATLAS_NAME,
-        "segment_name": "新建标段",
-        "unit_name": "新建单位工程",
-        "enclosure_name": "默认围护原则",
-        "foundation_name": "默认地基原则",
     },
     # M7 使用；providers 为 [[ai.providers]] 数组表，key 存 keyring 不在此处
     "ai": {
@@ -43,6 +34,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 _RECENT_LIMIT = 10
+
+#: 已废弃的配置节：读取时丢掉，避免它随每次保存一直留在文件里。
+#: new_project（新建工程的默认名）曾可在这里覆盖，但“文件值优先 + 整份写回”
+#: 会把默认值固化进文件、改代码里的默认值时老机器不生效；这些默认值现在
+#: 全部写死在 NewProjectSpec / 新建向导里，配置里不再有这一节。
+_OBSOLETE_SECTIONS = ("new_project",)
 
 
 def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -56,6 +53,13 @@ def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _drop_obsolete(config: dict[str, Any]) -> dict[str, Any]:
+    """丢掉已废弃的配置节（见 _OBSOLETE_SECTIONS）。"""
+    for section in _OBSOLETE_SECTIONS:
+        config.pop(section, None)
+    return config
+
+
 def load_config() -> dict[str, Any]:
     """读取 config.toml；文件不存在或损坏时返回默认配置。"""
     path = config_file_path()
@@ -66,7 +70,7 @@ def load_config() -> dict[str, Any]:
             data = tomllib.load(handle)
     except (OSError, tomllib.TOMLDecodeError):
         return copy.deepcopy(DEFAULT_CONFIG)
-    return _merge(DEFAULT_CONFIG, data)
+    return _drop_obsolete(_merge(DEFAULT_CONFIG, data))
 
 
 def save_config(config: dict[str, Any]) -> None:
@@ -131,10 +135,6 @@ class _Proxy:
     @property
     def last_dir(self) -> str:
         return str(self.ui.get("last_dir", ""))
-
-    @property
-    def new_project(self) -> dict[str, Any]:
-        return self._data().get("new_project", {})
 
     @property
     def ai(self) -> dict[str, Any]:

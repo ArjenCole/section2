@@ -4,6 +4,9 @@
 工程文件由用户自己选路径。
 """
 
+from __future__ import annotations
+
+import os
 from pathlib import Path
 
 import platformdirs
@@ -12,7 +15,14 @@ from app.core.version import APP_NAME
 
 
 def app_data_dir() -> Path:
-    """用户配置/数据目录（Windows: %APPDATA%\\Section2）。"""
+    """用户配置/数据目录（Windows: %APPDATA%\\Section2）。
+
+    环境变量 ``SECTION2_DATA_DIR`` 可指到别的目录：测试（tests/conftest.py）
+    用它把配置 / 数据目录换成临时目录，不碰开发机上的真实 config.toml。
+    """
+    override = os.environ.get("SECTION2_DATA_DIR")
+    if override:
+        return Path(override)
     return Path(platformdirs.user_data_dir(APP_NAME, appauthor=False))
 
 

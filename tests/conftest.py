@@ -6,11 +6,18 @@ Qt 测试统一用离屏平台，不弹窗口。
 """
 
 import os
+import tempfile
+from pathlib import Path
 
 import app  # noqa: F401  # ICU 预加载必须先于 PySide6
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# 配置 / 数据目录换成临时目录：测试（含 MainWindow 打开工程时的“最近打开”
+# 落盘）不读写开发机上的真实 config.toml，用例结果也不再受本机配置影响
+os.environ.setdefault(
+    "SECTION2_DATA_DIR", str(Path(tempfile.mkdtemp(prefix="section2-test-data-")))
+)
 
 from PySide6.QtWidgets import QApplication
 
