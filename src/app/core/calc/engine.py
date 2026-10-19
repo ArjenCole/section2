@@ -55,7 +55,7 @@ from app.core.calc.measures import (
 from app.services import atlas as atlas_service
 from app.services.atlas import C2_ZERO_CATEGORIES, AtlasParam, AtlasQuery, PipeSpec, resolve_atlas
 from app.core.calc import foundation, groove, precipitation
-from app.core.calc.tracer import Dim, QDict, dim, dim_sum, fmt, raw_dim, scale_sum, wrap
+from app.core.calc.tracer import Dim, QDict, dim, dim_sum, fmt, raw_dim, wrap
 
 _CYCLE = "参数循环引用"
 
@@ -592,13 +592,21 @@ def compute_structure(info: ElementInput) -> QDict | None:
 def works_quantities(work, depth: Dim, count: Dim, cat: str, ad: AtlasDims, info: ElementInput, out: QDict, note: str) -> None:
     """围护做法各级构件 + 止水构件的公式量（旧版 cal_Ecpnts）。
 
-    代入公式的 ``width`` 与旧版一致：``(断面宽 + 2×(壁厚+工作面加宽+工作面))/1000``
-    ——旧版把断面宽（m）与图集 mm 值加在一起再 /1000，算式照写以便复核。
+    代入公式的 ``width`` 是槽底宽，与挖方 / 特殊地基同一条
+    :func:`app.core.calc.groove.groove_width`（面宽原则用沟槽宽度表时取表值）。
+
+    与旧版的偏差（修正旧版缺陷）：旧版 cal_Ecpnts 写的是
+    ``D10E3(SizeB + t*2 + a*2 + workwidth*2)``，把米制的断面宽混进毫米的和里
+    整体除 1000，断面宽被抹掉（cal_groove / cal_Fcpnts 用的是
+    ``SizeB + D10E3(…)``，三处只有这里漏了）；结果支撑类做法的 width 偏小——
+    直埋管少算约一个管径，箱涵 / 管廊能少到只有应有槽底宽的 1/4~1/3。
+    凡公式里引用 ``width`` 的做法（钢板桩 / 横列板 / SMW工法桩 的 ZA、
+    钻孔灌注桩 的 ZA~ZD，均属支撑量）修正后数值会比旧版大，属有意偏差。
     """
     levels = list(work.levels)
     fixed_h = dim_sum(*(dim(level.h) for level in levels if level.h >= 0))
     fixed_cnt = sum(1 for level in levels if level.h >= 0)
-    width = (info.size_b_dim + scale_sum((ad.t, ad.a, ad.workwidth), 2.0)) / 1000
+    width = groove.groove_width(ad, info.size_b_dim)
     for level in levels:
         if level.h >= 0:
             height = dim(level.h)

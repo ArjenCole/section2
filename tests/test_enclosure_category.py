@@ -10,6 +10,8 @@ import pytest
 
 from PySide6.QtCore import Qt
 
+from app.core.evaluator import evaluate
+
 
 def _enclosure():
     from app.services import project_io
@@ -102,6 +104,18 @@ def test_sloped_vs_vertical_dig_and_enclosure_quantities(project) -> None:
     bottom = info.size_b + (at.t * 2 + at.a * 2 + at.workwidth * 2) / 1000
     depth = info.depth + (at.t + at.c1) / 1000
     assert dig.value / info.amount == pytest.approx(bottom * depth, rel=1e-9)
+
+    # 支撑公式的 width = 槽底宽（与挖方同源）：
+    # 钢板桩 ZA = ROUND(count/G,0)/count*F*width*H/1000 + 1*2*2*F*I/1000
+    # （F=2 道、G=4m、H=233.988kg/m 支撑、I=38.49kg/m 钢围檩）
+    support = result.get("支撑|钢支撑、钢围檩|t")
+    amount = info.amount
+    per_meter = round(amount / 4.0) / amount * 2 * bottom * 233.988 / 1000 + 1 * 2 * 2 * 2 * 38.49 / 1000
+    assert support.value == pytest.approx(per_meter * amount, rel=1e-9)
+    # 算式里也能看到槽底宽的完整来源（旧版这里是 (断面宽+2×…)/1000，断面宽被抹掉）
+    assert "(600/1000+(60×2+120×2+500×2)/1000)" in support.expression
+    assert evaluate(support.expression) == pytest.approx(support.value, rel=1e-9)
+
     assert any(key.startswith("围护|") for key in result.keys())
     assert any(key.startswith("支撑|") for key in result.keys())
 
