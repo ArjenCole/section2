@@ -197,6 +197,72 @@ def test_category_abbreviations():
     assert _category_abbr(CATEGORY_NONE) == ""
 
 
+def test_param_table_columns_and_no_unit_placeholder(qapp, project):
+    """构件参数表：单位列居中且加宽（参数名列相应变窄）；构筑物名称 / 单位行的单位列
+    显示 “-”；直埋管道显示三行图集参数（空值灰字显示图集自动值）。"""
+    from PySide6.QtCore import Qt
+
+    from app.core.models.models import CATEGORY_STRUCTURE
+    from app.services import project_io
+    from app.viewmodels import unit_vm
+    from app.views.panels.unit_panel import (
+        _NO_UNIT_TEXT,
+        _PARAM_NAME_WIDTH,
+        _PARAM_UNIT_WIDTH,
+        UnitPanel,
+    )
+
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    structure = unit_vm.create_element(unit.id, category=CATEGORY_STRUCTURE, name="检查井")
+    buried = unit_vm.create_element(unit.id, category=1, name="排管")
+    unit_vm.create_pipe(buried.id, mat="Ⅱ级混凝土管", dn=600, content="1")
+
+    panel = UnitPanel()
+    try:
+        panel._show_unit(unit.id)
+        qapp.processEvents()
+        table = panel._param_table
+        assert table.horizontalHeaderItem(1).text() == "单位"
+        # 单位列 = 原 56 × 1.5，参数名列 = 原 150 × 0.6
+        assert _PARAM_UNIT_WIDTH == 84 and _PARAM_NAME_WIDTH == 90
+        assert table.columnWidth(0) == _PARAM_NAME_WIDTH
+        assert table.columnWidth(1) == _PARAM_UNIT_WIDTH
+
+        # 构筑物（第一行）：名称 / 单位两行的单位列由空值改为 “-”，居中只读
+        panel._element_table.setCurrentCell(0, 0)
+        qapp.processEvents()
+        assert [table.item(row, 0).text() for row in range(table.rowCount())] == ["名称", "单位"]
+        for row in (0, 1):
+            cell = table.item(row, 1)
+            assert cell.text() == _NO_UNIT_TEXT
+            assert cell.textAlignment() == Qt.AlignmentFlag.AlignCenter
+            assert not cell.flags() & Qt.ItemFlag.ItemIsEditable
+        # 库里仍然是空单位（“-” 只是显示）
+        assert [(param.key, param.unit) for param in unit_vm.param_rows(structure.id)] == [
+            ("名称", ""),
+            ("单位", ""),
+        ]
+
+        # 排管（直埋）：三行图集参数，单位列居中；空值格灰字显示图集自动值
+        panel._element_table.setCurrentCell(1, 0)
+        qapp.processEvents()
+        assert [table.item(row, 0).text() for row in range(table.rowCount())] == [
+            "工作面加宽",
+            "垫层厚",
+            "基础厚",
+        ]
+        # Dn600 Ⅱ级混凝土管 120° 砼基础：a=130、C1=130、C2=182（灰字自动值）
+        assert [table.item(row, 2).text() for row in range(table.rowCount())] == ["130", "130", "182"]
+        for row in range(table.rowCount()):
+            assert table.item(row, 1).text() == "mm"
+            assert table.item(row, 1).textAlignment() == Qt.AlignmentFlag.AlignCenter
+            # 参数名 / 单位锁定，值可改
+            assert not table.item(row, 0).flags() & Qt.ItemFlag.ItemIsEditable
+            assert table.item(row, 2).flags() & Qt.ItemFlag.ItemIsEditable
+    finally:
+        panel.close()
+
+
 def test_category_column_readonly(qapp, project):
     """主表格“类型”列不再内嵌下拉框：只读文本单元格，显示类别简称、tooltip 完整名。"""
     from PySide6.QtCore import Qt

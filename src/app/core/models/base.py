@@ -284,12 +284,94 @@ def _migrate_v4_param_naming_quantities(engine: Engine) -> None:
                 )
 
 
+def _reconcile_atlas_param_rows(engine: Engine) -> None:
+    """按 param_naming.ATLAS_PARAM_CATEGORIES 收敛三行图集参数（v6 / v7 共用）。
+
+    * 类别上不显示的行删掉（包封 / 箱涵 / 管廊的基础厚、顶管 / 牵引管的全部
+      三行）——这些行不参与计算（基础厚恒为 0），留着只会误导；
+    * 该类别的行缺失时补空值行（空 = 自动按图集 / 软件约定），与新建 /
+      构件库插入的条目保持一致。
+    """
+    from app.core.param_naming import ATLAS_PARAM_CATEGORIES, ATLAS_PARAM_NAMES
+
+    with engine.begin() as connection:
+        for name, unit in ATLAS_PARAM_NAMES:
+            allowed = sorted(
+                category
+                for category, names in ATLAS_PARAM_CATEGORIES.items()
+                if name in names
+            )
+            if allowed:
+                marks = ", ".join(f":c{index}" for index in range(len(allowed)))
+                scope = f"element_id IN (SELECT id FROM element WHERE category NOT IN ({marks}))"
+                scope_params = {f"c{index}": value for index, value in enumerate(allowed)}
+            else:  # 没有任何类别显示这一行：全部删除
+                scope = "1 = 1"
+                scope_params = {}
+            connection.execute(
+                text(
+                    f"DELETE FROM element_param WHERE key = :name AND unit = :unit AND {scope}"
+                ),
+                {"name": name, "unit": unit, **scope_params},
+            )
+        for category, names in sorted(ATLAS_PARAM_CATEGORIES.items()):
+            element_ids = [
+                row[0]
+                for row in connection.execute(
+                    text("SELECT id FROM element WHERE category = :category"),
+                    {"category": category},
+                ).fetchall()
+            ]
+            for element_id in element_ids:
+                keys = {
+                    (row[0], row[1])
+                    for row in connection.execute(
+                        text("SELECT key, unit FROM element_param WHERE element_id = :element"),
+                        {"element": element_id},
+                    ).fetchall()
+                }
+                for name, unit in ATLAS_PARAM_NAMES:
+                    if name not in names or (name, unit) in keys:
+                        continue
+                    connection.execute(
+                        text(
+                            "INSERT INTO element_param (element_id, key, unit, value) "
+                            "VALUES (:element, :name, :unit, '')"
+                        ),
+                        {"element": element_id, "name": name, "unit": unit},
+                    )
+
+
+def _migrate_v5_scope_atlas_params(engine: Engine) -> None:
+    """v5 → v6：三行图集参数按构件类别收敛。
+
+    v5 给全部管道类别（category 1~6）都补了这三行，并可能预填了图集值。
+    v6 起按 :data:`app.core.param_naming.ATLAS_PARAM_CATEGORIES` 决定显示：
+    直埋管道三行都显示（默认按图集、用户可改）；包封埋管 / 箱涵 / 管廊的
+    基础厚恒为 0（不显示、不可改），只显示工作面加宽 / 垫层厚；顶管 / 牵引管
+    只算管材，三行都不显示。不显示的行删除（含残留值），缺失的行补空值行。
+    """
+    _reconcile_atlas_param_rows(engine)
+
+
+def _migrate_v6_scope_atlas_params(engine: Engine) -> None:
+    """v6 → v7：按类别再收敛一次三行图集参数。
+
+    v6 的早期实现把这三行只留在包封埋管上（直埋 / 箱涵 / 管廊上的行被删掉了），
+    与显示规则不符；已经迁到那个版本的文件在这里按新规则补回空值行
+    （直埋三行、包封 / 箱涵 / 管廊的工作面加宽与垫层厚）。
+    """
+    _reconcile_atlas_param_rows(engine)
+
+
 #: 结构迁移入口。键为源版本号，值为“从该版本迁到 +1 版本”的函数。
 _MIGRATIONS: dict[int, "callable"] = {
     1: _migrate_v1_add_element_source,
     2: _migrate_v2_add_multi_principle,
     3: _migrate_v3_split_precipitation_width,
     4: _migrate_v4_param_naming_quantities,
+    5: _migrate_v5_scope_atlas_params,
+    6: _migrate_v6_scope_atlas_params,
 }
 
 

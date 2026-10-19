@@ -3,6 +3,9 @@
 一个构件条目的工程量 = 沟槽断面（挖方/换填/垫层/回填） + 降水 + 围护 + 特殊地基
 + 支撑（Z 类公式） + 管道基础（扣占土） + 管材，全部按“每延米”计算后 ×数量。
 
+例外（同旧版）：附属构筑物（mcE7）只算自己的工程量行（见 compute_structure）；
+顶管 / 牵引管（mcE4 / mcE5）不开槽，只有管材（见 compute_trenchless）。
+
 构件公式（旧版 mcComponent）求值也在这里：参数引用递归代入 →
 height/width/count 代入 → core.evaluator 求值，失败按 0 处理（同旧版 mscExp）。
 
@@ -21,6 +24,8 @@ from app.core.models.models import (
     CATEGORY_ENCASED,
     CATEGORY_BOX_CULVERT,
     CATEGORY_GALLERY,
+    CATEGORY_JACKING,
+    CATEGORY_PULLING,
     CATEGORY_STRUCTURE,
     GROOVE_WIDTH_WORK,
     MULTI_PE_TEXT,
@@ -31,16 +36,20 @@ from app.core.models.models import (
     PcpPrecipitation,
     PcpWidth,
 )
-from app.core.param_naming import PARAM_A_NAME, PARAM_C1_NAME, PARAM_C2_NAME
+from app.core.param_naming import (
+    PARAM_A_NAME,
+    PARAM_C1_NAME,
+    PARAM_C2_NAME,
+    is_atlas_param,
+    is_atlas_param_name,
+    supports_atlas_param,
+)
 from app.services import atlas as atlas_service
 from app.services.atlas import AtlasQuery, PipeSpec, resolve_atlas
 from app.core.calc import foundation, groove, precipitation
 from app.core.calc.tracer import Dim, QDict, dim, fmt, raw_dim, wrap
 
 _CYCLE = "参数循环引用"
-
-#: 图集覆盖参数（工作面加宽 / 垫层厚 / 基础厚）：空值 = 自动按图集，显式数字 = 用户值
-_ATLAS_OVERRIDE_NAMES = frozenset((PARAM_A_NAME, PARAM_C1_NAME, PARAM_C2_NAME))
 
 #: 各类别构件的默认扩展参数（旧版 mcE2/mcE3/mcE6 构造函数；键不带单位，v5 起拆列）
 _DEFAULT_PARAMS: dict[int, dict[str, float]] = {
@@ -179,10 +188,21 @@ def build_element_input(
     """
     named_params = {(param.key, param.unit or ""): param.value for param in element.params}
     params = dict(_DEFAULT_PARAMS.get(element.category, {}))
-    for (key, _unit), text in named_params.items():
+    for (key, unit), text in named_params.items():
         stripped = (text or "").strip()
-        if key in _ATLAS_OVERRIDE_NAMES and not stripped:
-            continue  # 工作面加宽 / 垫层厚 / 基础厚等空值 = 自动按图集
+        if is_atlas_param_name(key):
+            # 工作面加宽 / 垫层厚 / 基础厚：只有该类别显示的图集行（名称 + mm）
+            # 才是用户覆盖值——空值 = 自动按图集，显式数字 = 覆盖（直埋三行、
+            # 包封 / 箱涵 / 管廊的工作面加宽与垫层厚；见 param_naming）。
+            # 其余（包封 / 箱涵 / 管廊的基础厚、顶管 / 牵引管的全部三行）一律
+            # 不参与计算，同名其它单位（如“工作面加宽 cm”）的行也只是普通
+            # 参数行，同样不参与图集取值
+            if (
+                not is_atlas_param(key, unit)
+                or not supports_atlas_param(element.category, key, unit)
+                or not stripped
+            ):
+                continue
         try:
             params[key] = float(evaluate_or_default(text))
         except Exception:
@@ -218,7 +238,9 @@ def build_atlas_query(info: ElementInput, pe: PcpEnclosure, pw: PcpWidth | None 
     """图集查询：基础/角度取围护原则，宽度表与槽宽取值方式取面宽原则。
 
     详情面板的参数行（工作面加宽 / 垫层厚 / 基础厚，param_naming 常量）为
-    空值时不设覆盖（自动按图集），写了数字时按用户值覆盖图集行。
+    空值时不设覆盖（自动按图集），写了数字时按用户值覆盖图集行；不显示的
+    行已被 :func:`build_element_input` 滤掉，这里传不传都由类别规则决定
+    （见 param_naming.ATLAS_PARAM_CATEGORIES）。
     """
     widths, groove_bs = _width_tables(pw)
     params = info.params
@@ -356,12 +378,15 @@ def foundation_thickness(pf: PcpFoundation) -> float:
 def compute_element(info: ElementInput) -> QDict | None:
     """计算一个构件条目的工程量；数量为 0 或原则缺失时返回 None。
 
+    顶管 / 牵引管不开槽，只有管材（见 :func:`compute_trenchless`）；
     多原则（旧版 mscGroove.Cal）：沟槽断面 + 降水 + 围护(F) + 特殊地基按
     pe×pf 组合逐对计算后乘 (pe 比例 × pf 比例) 求和；支撑(Z)、管道基础、
     管材只用主原则（旧版 mainPEname）计算，不乘比例。
     """
     if info.category == CATEGORY_STRUCTURE:
         return compute_structure(info)
+    if info.category in (CATEGORY_JACKING, CATEGORY_PULLING):
+        return compute_trenchless(info)
     main_pe = info.pe
     pf_main = info.pf
     if info.amount == 0 or main_pe is None or pf_main is None or info.pp is None or info.pw is None:
@@ -415,6 +440,25 @@ def compute_element(info: ElementInput) -> QDict | None:
 
     per_meter.scale(info.amount, expr=amount_dim.e)
     return per_meter
+
+
+def compute_trenchless(info: ElementInput) -> QDict | None:
+    """顶管 / 牵引管（旧版 mcE4.getDQ / mcE5.getDQ）：只算管材。
+
+    顶管（键前缀“顶管”）与牵引管（键前缀“拖拉管”）都是非开挖施工，不开槽
+    也就没有开挖 / 换填 / 垫层 / 回填 / 降水 / 围护 / 支撑 / 管道基础——1.0 的
+    这两个构件只输出 ``管材含量 × 数量``，也不看围护 / 地基 / 降水 / 面宽原则。
+    数量为 0 或没录入管材时返回 None（没有可输出的量）。
+    """
+    if info.amount == 0:
+        return None
+    amount_dim = raw_dim(info.amount_text, info.amount)
+    out = QDict()
+    foundation.cal_pipes(info, out, "顶管" if info.category == CATEGORY_JACKING else "拖拉管")
+    if not out:
+        return None  # 没录入管材：没有可输出的量
+    out.scale(info.amount, expr=amount_dim.e)
+    return out
 
 
 def compute_structure(info: ElementInput) -> QDict | None:

@@ -17,7 +17,12 @@ APP_VERSION = "2.0.0.0"
 #:     principle_width_item 表、element.pp_name / pw_name 列；围护原则不再携带这两项）
 #: v5：构件参数拆“参数名 / 单位”（element_param.unit 列、pipe.t 管道壁厚列）；
 #:     附属构筑物工程量独立成表（element_quantity，“类别|项目|单位”三段参数迁走）
-SCHEMA_VERSION = 5
+#: v6：工作面加宽 / 垫层厚 / 基础厚 三行按构件类别收敛：直埋管道三行都显示
+#:     （默认按图集、可改），包封埋管 / 箱涵 / 管廊只显示工作面加宽 / 垫层厚
+#:     （基础厚恒为 0，不显示、不可改），顶管 / 牵引管不显示
+#:     （见 param_naming.ATLAS_PARAM_CATEGORIES）
+#: v7：按类别再收敛一次（v6 的早期实现误删了直埋 / 箱涵 / 管廊上的图集行）
+SCHEMA_VERSION = 7
 
 #: 新版工程文件
 PROJECT_SUFFIX = ".stn2"

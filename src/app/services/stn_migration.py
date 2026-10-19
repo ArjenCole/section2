@@ -45,7 +45,7 @@ from app.core.models.models import (
     Unit,
     WidthItem,
 )
-from app.core.param_naming import split_param_key
+from app.core.param_naming import atlas_param_rows, split_param_key
 
 _CATEGORY_BY_NAME = {name: value for value, name in CATEGORY_NAMES.items()}
 _LEGACY_CATEGORIES = tuple(CATEGORY_NAMES.values())
@@ -550,6 +550,20 @@ def _migrate_inner(source: Path, target: Path) -> MigrationReport:
                     report.warnings.append(
                         f"旧版 <1.2.1.1：箱涵“{legacy_element.name or '(未命名)'}”补默认含钢量 150 kg/m³。"
                     )
+                # 该类别显示的图集参数行（直埋三行，包封 / 箱涵 / 管廊的工作面
+                # 加宽 / 垫层厚；空 = 自动按图集 / 软件约定），与新建 / 构件库
+                # 插入的条目保持一致（1.0 没有这些行）
+                existing_keys = {param.key for param in element.params}
+                for param_name, param_unit in atlas_param_rows(category):
+                    if param_name not in existing_keys:
+                        session.add(
+                            ElementParam(
+                                element_id=element.id,
+                                key=param_name,
+                                unit=param_unit,
+                                value="",
+                            )
+                        )
 
     for key, value in legacy.prices:
         session.add(Price(key=key, value=value))

@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from app.core.evaluator import EvalError, evaluate, format_number
 from app.core.event_bus import bus
+from app.core.param_naming import STRUCTURE_NAME_PARAM, STRUCTURE_UNIT_PARAM
 from app.views.widgets.mac_window import is_mac
 from app.core.models.models import (
     CATEGORY_BOX_CULVERT,
@@ -90,9 +91,18 @@ _PIPE_ROLE = Qt.ItemDataRole.UserRole + 1
 #: 管道壁厚列：空 = 自动按图集（灰字显示图集值），可手填覆盖
 _PIPE_HEADERS = ["管材", "管径(mm)", "管道壁厚(mm)", "含量"]
 _PARAM_ROLE = Qt.ItemDataRole.UserRole + 1
-#: 参数名 / 单位 / 参数值三列；锁定行（工作面加宽、垫层厚、基础厚与构筑物名称 /
-#: 单位行）参数名 / 单位只读，名称行的单位列固定为空
+#: 参数名 / 单位 / 参数值三列；锁定行（该类别显示的图集参数行、构筑物名称 /
+#: 单位行）参数名 / 单位只读，单位列居中，构筑物名称 / 单位行的单位列显示 “-”
 _PARAM_HEADERS = ["参数名", "单位", "参数值"]
+#: 参数表列宽：参数名列窄、单位列宽（单位内容居中显示）
+_PARAM_NAME_WIDTH = 90
+_PARAM_UNIT_WIDTH = 84
+#: 没有单位的参数行（附属构筑物的名称 / 单位行，库里单位列为空）显示 “-”
+_NO_UNIT_TEXT = "-"
+_NO_UNIT_PARAM_ROWS: tuple[tuple[str, str], ...] = (
+    (STRUCTURE_NAME_PARAM, ""),
+    (STRUCTURE_UNIT_PARAM, ""),
+)
 _QTY_ROLE = Qt.ItemDataRole.UserRole + 1
 #: 附属构筑物的工程量行（类别|项目|单位 三段合一 + 值算式）
 _QTY_HEADERS = ["类别", "项目", "单位", "值"]
@@ -258,8 +268,8 @@ class UnitPanel(QWidget):
         self._pipe_table.setColumnWidth(0, 110)
         self._pipe_table.setColumnWidth(1, 72)
         self._pipe_table.setColumnWidth(2, 96)
-        self._param_table.setColumnWidth(0, 150)
-        self._param_table.setColumnWidth(1, 56)
+        self._param_table.setColumnWidth(0, _PARAM_NAME_WIDTH)
+        self._param_table.setColumnWidth(1, _PARAM_UNIT_WIDTH)
         self._qty_table = self._make_table(_QTY_HEADERS)
         self._qty_table.setColumnWidth(0, 110)
         self._qty_table.setColumnWidth(1, 140)
@@ -1142,15 +1152,20 @@ class UnitPanel(QWidget):
                 self._pipe_table.setItem(index, 2, t_item)
                 self._pipe_table.setItem(index, 3, QTableWidgetItem(pipe.content))
 
-            # 参数表：锁定行（工作面加宽/垫层厚/基础厚、构筑物名称/单位）的
-            # 参数名/单位列只读；a/C1/C2 空值 = 自动按图集，灰字显示图集值
+            # 参数表：锁定行（该类别显示的图集参数行、构筑物名称/单位）的
+            # 参数名/单位列只读；图集参数行空值 = 自动按图集 / 软件约定，
+            # 灰字显示自动值；单位列居中，构筑物名称 / 单位行没有单位，显示 “-”
             self._param_table.clearSpans()
             self._param_table.setRowCount(len(params))
             auto_params = auto_atlas_params(element) if element is not None else {}
             for index, param in enumerate(params):
                 key_item = QTableWidgetItem(param.key)
                 key_item.setData(_PARAM_ROLE, param.id)
-                unit_item = QTableWidgetItem(param.unit)
+                if (param.key, param.unit) in _NO_UNIT_PARAM_ROWS:
+                    unit_item = QTableWidgetItem(_NO_UNIT_TEXT)
+                else:
+                    unit_item = QTableWidgetItem(param.unit)
+                unit_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 value_item = QTableWidgetItem(param.value)
                 if (
                     param.lock_name

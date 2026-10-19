@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from app.core.evaluator import evaluate
+from app.core.models import base as orm
 from app.services import project_io
 from app.core.calc.engine import build_element_input, compute_element
 from app.core.calc.tracer import QDict, sorted_items
@@ -176,6 +177,197 @@ def test_box_culvert_steel(project) -> None:
     roof = dq.get("箱涵|顶板|m3").value / info.amount
     steel = dq.get("箱涵|钢筋|t").value / info.amount
     assert steel == pytest.approx(0.15 * (bottom + wall + roof), rel=1e-9)
+
+
+# --------------------------------------------------------------------------- #
+# 顶管 / 牵引管（1.0 mcE4 / mcE5：只算管材）
+# --------------------------------------------------------------------------- #
+def test_trenchless_only_pipes(project) -> None:
+    """顶管 / 牵引管不开槽：只有 “顶管|…” / “拖拉管|…” 一条管材量 × 长度。"""
+    from app.core.models.models import CATEGORY_JACKING, CATEGORY_PULLING
+
+    unit = project
+    jacking = unit_vm.create_element(
+        unit.id, category=CATEGORY_JACKING, name="顶管 D1000", depth="5", amount="30"
+    )
+    unit_vm.create_pipe(jacking.id, mat="钢筋混凝土钢承口管 顶管", dn=1000, content="1")
+    pulling = unit_vm.create_element(
+        unit.id, category=CATEGORY_PULLING, name="拖拉管 D400", depth="2.5", amount="20*2"
+    )
+    unit_vm.create_pipe(pulling.id, mat="PE给水管", dn=400, content="1")
+
+    results = _results(unit)
+    jacking_dq = results[jacking.id]
+    pulling_dq = results[pulling.id]
+    assert list(jacking_dq.keys()) == ["顶管|钢筋混凝土钢承口管 顶管 Dn1000|m"]
+    assert list(pulling_dq.keys()) == ["拖拉管|PE给水管 Dn400|m"]
+    assert jacking_dq.get("顶管|钢筋混凝土钢承口管 顶管 Dn1000|m").value == pytest.approx(30.0)
+    # 数量写算式：×数量 以算式原文进算式
+    assert pulling_dq.get("拖拉管|PE给水管 Dn400|m").expression == "1×(20×2)"
+    # 沟槽 / 回填 / 降水 / 围护 / 基础一概没有
+    for key in [*jacking_dq.keys(), *pulling_dq.keys()]:
+        assert not key.startswith(("开挖|", "回填|", "垫层|", "围护|", "支撑|", "降水|", "管道基础|"))
+
+    # 没有录入管材：算不出量但也不该报“覆土不足”
+    empty = unit_vm.create_element(
+        unit.id, category=CATEGORY_JACKING, name="没录管材", depth="5", amount="10"
+    )
+    _summary, detail = unit_vm.compute_unit(unit.id)
+    rows = {row.id: row for row, _dq in detail}
+    assert compute_element(_input_of(empty)) is None
+    assert rows[empty.id].error == "未录入管材，顶管 / 牵引管只计算管材。"
+
+
+def test_buried_atlas_param_rows_show_atlas_defaults_and_apply(project) -> None:
+    """直埋管道显示工作面加宽 / 垫层厚 / 基础厚：默认按图集（空 = 自动），改值生效。"""
+    from app.core.models.models import ElementParam
+
+    unit = project
+    element = {item.name: item for item in _elements(unit)}["混凝土管"]
+    rows = [(param.key, param.unit, param.lock_name) for param in unit_vm.param_rows(element.id)]
+    assert rows == [("工作面加宽", "mm", True), ("垫层厚", "mm", True), ("基础厚", "mm", True)]
+    # 空值行 = 自动按图集：灰字显示的自动值就是图集行（Dn600 Ⅱ级 120°）的 a / C1 / C2
+    assert unit_vm.auto_atlas_params(element) == {
+        "工作面加宽": 130.0,
+        "垫层厚": 130.0,
+        "基础厚": 182.0,
+    }
+
+    def param_value(name: str) -> float:
+        return _results(unit)[element.id].get(name).value
+
+    amount = {row.name: row for row in unit_vm.element_rows(unit.id)}["混凝土管"].amount_value
+    base_form = param_value("管道基础|模板|m2")
+    # 垫层厚 130 → 260：基础模板 = (C1+C2)×2/1000 变厚；清空回到自动
+    thickness = next(item for item in element.params if item.key == "垫层厚")
+    unit_vm.update_param(thickness.id, value="260")
+    assert param_value("管道基础|模板|m2") == pytest.approx(base_form * (260 + 182) / (130 + 182), rel=1e-9)
+    unit_vm.update_param(thickness.id, value="")
+    assert param_value("管道基础|模板|m2") == pytest.approx(base_form, rel=1e-9)
+
+    # 工作面加宽 130 → 260：基础宽 +0.26m，管道基础混凝土按 (C1+C2)/1000 × 0.26 增加
+    base_found = param_value("管道基础|混凝土|m3")
+    width_param = next(item for item in element.params if item.key == "工作面加宽")
+    unit_vm.update_param(width_param.id, value="260")
+    assert param_value("管道基础|混凝土|m3") - base_found == pytest.approx(
+        (130 + 182) / 1000.0 * 0.26 * amount, rel=1e-9
+    )
+    unit_vm.update_param(width_param.id, value="")
+
+    # 基础厚 182 → 0：管座取消，基础模板只剩垫层厚 130
+    foundation = next(item for item in element.params if item.key == "基础厚")
+    unit_vm.update_param(foundation.id, value="0")
+    assert param_value("管道基础|模板|m2") == pytest.approx(0.26 * amount, rel=1e-9)
+
+    # 单位不是 mm 的同名参数只是普通参数行（不锁定），不影响图集取值
+    orm.session().add(ElementParam(element_id=element.id, key="工作面加宽", unit="cm", value="30"))
+    project_io.commit()
+    orm.session().expire_all()  # 关系集合是旧数据，手动失效后才看得到新行
+    rows = [(param.key, param.unit, param.lock_name) for param in unit_vm.param_rows(element.id)]
+    assert ("工作面加宽", "cm", False) in rows
+    assert unit_vm.auto_atlas_params(element)["工作面加宽"] == 130.0
+
+
+def test_atlas_param_rows_scope_by_category(project) -> None:
+    """基础厚只属于直埋：包封 / 箱涵 / 管廊不显示也不能加，顶管 / 牵引管三行都不显示。"""
+    from app.core.models.models import (
+        CATEGORY_GALLERY,
+        CATEGORY_JACKING,
+        CATEGORY_PULLING,
+        ElementParam,
+    )
+    from app.core.param_naming import PARAM_A_NAME, PARAM_C2_NAME
+
+    unit = project
+    box = {item.name: item for item in _elements(unit)}["箱涵"]
+    assert [param.key for param in unit_vm.param_rows(box.id)][-2:] == ["工作面加宽", "垫层厚"]
+    # 基础厚既不能加也不能改名进来
+    assert unit_vm.create_param(box.id, key=PARAM_C2_NAME, unit="mm", value="500") is None
+    row = unit_vm.create_param(box.id, key="含钢量", unit="kg/m3", value="150")
+    assert unit_vm.update_param(row.id, key=PARAM_C2_NAME, unit="mm") is None
+    assert (row.key, row.unit, row.value) == ("含钢量", "kg/m3", "150")
+
+    # 老库残留的基础厚行不显示、不参与计算（基础厚恒为 0）
+    before = {quantity.key: quantity.value for quantity in sorted_items(_results(unit)[box.id])}
+    orm.session().add(ElementParam(element_id=box.id, key=PARAM_C2_NAME, unit="mm", value="500"))
+    project_io.commit()
+    orm.session().expire_all()  # 关系集合是旧数据，手动失效后才看得到新行
+    assert PARAM_C2_NAME not in [param.key for param in unit_vm.param_rows(box.id)]
+    after = {quantity.key: quantity.value for quantity in sorted_items(_results(unit)[box.id])}
+    assert after == before
+
+    # 包封埋管同样不显示基础厚；工作面加宽 / 垫层厚保留
+    encased = {item.name: item for item in _elements(unit)}["包封管"]
+    assert [param.key for param in unit_vm.param_rows(encased.id)][-2:] == ["工作面加宽", "垫层厚"]
+    assert unit_vm.create_param(encased.id, key=PARAM_C2_NAME, unit="mm", value="500") is None
+    # 管廊与箱涵同规则
+    gallery = unit_vm.create_element(unit.id, category=CATEGORY_GALLERY, name="管廊")
+    assert [param.key for param in unit_vm.param_rows(gallery.id)][-2:] == ["工作面加宽", "垫层厚"]
+    assert unit_vm.create_param(gallery.id, key=PARAM_C2_NAME, unit="mm", value="500") is None
+
+    # 顶管 / 牵引管只算管材：三行都不显示，新增也被拒
+    for category in (CATEGORY_JACKING, CATEGORY_PULLING):
+        element = unit_vm.create_element(unit.id, category=category, name="非开挖")
+        assert unit_vm.param_rows(element.id) == []
+        assert unit_vm.create_param(element.id, key=PARAM_A_NAME, unit="mm", value="100") is None
+
+
+def test_encased_keeps_editable_atlas_params_and_they_apply(project) -> None:
+    """包封埋管显示工作面加宽 / 垫层厚（默认按软件约定），改垫层厚对计算生效。"""
+    from app.core.models.models import CATEGORY_ENCASED, ElementParam
+    from app.core.param_naming import PARAM_C1_NAME, PARAM_C2_NAME
+
+    unit = project
+    element = {item.name: item for item in _elements(unit)}["包封管"]
+    keys = [param.key for param in unit_vm.param_rows(element.id)]
+    assert keys == ["包封宽", "包封高", "工作面加宽", "垫层厚"]
+    # 基础厚不显示（恒为 0）——库里就算有旧行也看不到
+    orm.session().add(ElementParam(element_id=element.id, key=PARAM_C2_NAME, unit="mm", value="500"))
+    project_io.commit()
+    orm.session().expire_all()  # 关系集合是旧数据，手动失效后才看得到新行
+    assert PARAM_C2_NAME not in [param.key for param in unit_vm.param_rows(element.id)]
+
+    before = _results(unit)[element.id].get("垫层|混凝土|m3").value
+    param = next(
+        item for item in element.params if item.key == PARAM_C1_NAME
+    )
+    unit_vm.update_param(param.id, value="200")  # 垫层厚 100 → 200
+    after = _results(unit)[element.id].get("垫层|混凝土|m3").value
+    assert after == pytest.approx(before * 2, rel=1e-9)
+
+
+def test_category_switch_reconciles_atlas_rows(project) -> None:
+    """类别切换按新类别增删图集行：基础厚跟着直埋，切到非开挖类别三行全删。"""
+    from app.core.models.models import (
+        CATEGORY_BOX_CULVERT,
+        CATEGORY_ENCASED,
+        CATEGORY_JACKING,
+    )
+
+    unit = project
+    element = {item.name: item for item in _elements(unit)}["混凝土管"]
+    assert [param.key for param in unit_vm.param_rows(element.id)] == [
+        "工作面加宽",
+        "垫层厚",
+        "基础厚",
+    ]
+
+    # 直埋 → 包封：基础厚行删掉（恒为 0）
+    unit_vm.update_element(element.id, category=CATEGORY_ENCASED)
+    assert [param.key for param in unit_vm.param_rows(element.id)] == ["工作面加宽", "垫层厚"]
+
+    # 包封 → 箱涵：同样只留工作面加宽 / 垫层厚
+    unit_vm.update_element(element.id, category=CATEGORY_BOX_CULVERT)
+    assert [param.key for param in unit_vm.param_rows(element.id)] == ["工作面加宽", "垫层厚"]
+
+    # 箱涵 → 直埋：基础厚行按空值补回（空 = 自动按图集）
+    unit_vm.update_element(element.id, category=1)
+    rows = [(param.key, param.value) for param in unit_vm.param_rows(element.id)]
+    assert rows == [("工作面加宽", ""), ("垫层厚", ""), ("基础厚", "")]
+
+    # 直埋 → 顶管：三行全删（只算管材）
+    unit_vm.update_element(element.id, category=CATEGORY_JACKING)
+    assert unit_vm.param_rows(element.id) == []
 
 
 def _input_of(element):

@@ -115,6 +115,60 @@ def test_migrate_preserves_expressions_and_params(tmp_path: Path) -> None:
         project_io.close_project()
 
 
+def test_migrate_gets_category_atlas_params(tmp_path: Path) -> None:
+    """旧档按类别补空值图集参数行：直埋三行、包封 / 箱涵的工作面加宽与垫层厚。
+
+    1.0 没有这些行，新版补成空值（空 = 自动按图集 / 软件约定），
+    所以补行不改变工程量。
+    """
+    source = _available_samples()[0]
+    tree = etree.parse(str(source))
+    element = tree.getroot().find(".//mcSegment/mcUnit/mcElement")
+    if element is None:
+        pytest.skip("样例无构件")
+    element.find("Category").text = "包封埋管"
+    patched = tmp_path / "包封样例.stn"
+    tree.write(str(patched), encoding="utf-8", xml_declaration=True)
+
+    target = tmp_path / "out.stn2"
+    stn_migration.migrate(patched, target)
+    project_io.open_project(target)
+    try:
+        from sqlalchemy import select
+
+        from app.core.models import base as orm
+        from app.core.models.models import CATEGORY_BURIED, CATEGORY_ENCASED, Element
+
+        encased = orm.session().scalars(
+            select(Element).where(Element.category == CATEGORY_ENCASED)
+        ).first()
+        assert encased is not None
+        assert [param.key for param in unit_vm.param_rows(encased.id)][-2:] == [
+            "工作面加宽",
+            "垫层厚",
+        ]
+        # 同档里改成直埋的构件补三行（基础厚只属于直埋）
+        buried_element = tree.getroot().find(".//mcSegment/mcUnit/mcElement")
+        buried_element.find("Category").text = "直埋管道"
+        buried_path = tmp_path / "直埋样例.stn"
+        tree.write(str(buried_path), encoding="utf-8", xml_declaration=True)
+        buried_target = tmp_path / "buried.stn2"
+        stn_migration.migrate(buried_path, buried_target)
+        orm.close_database()
+        project_io.open_project(buried_target)
+        buried = orm.session().scalars(
+            select(Element).where(Element.category == CATEGORY_BURIED)
+        ).first()
+        assert buried is not None
+        assert [param.key for param in unit_vm.param_rows(buried.id)][-3:] == [
+            "工作面加宽",
+            "垫层厚",
+            "基础厚",
+        ]
+    finally:
+        project_io.close_project()
+
+
 def test_migrate_readonly_source(tmp_path: Path) -> None:
     """迁移绝不修改原 .stn。"""
     source = _available_samples()[0]

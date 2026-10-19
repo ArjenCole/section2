@@ -101,7 +101,7 @@ def test_reopen_keeps_everything(tmp_path: Path) -> None:
     pipes = unit_vm.pipe_rows(element.id)
     assert [(pipe.mat, pipe.dn, pipe.content) for pipe in pipes] == [("HDPE", 600, "1")]
     params = unit_vm.param_rows(element.id)
-    # 直埋构件 v5 起带三行空值图集参数（工作面加宽/垫层厚/基础厚，空 = 自动）
+    # 直埋构件带三行图集参数（工作面加宽 / 垫层厚 / 基础厚，空 = 自动按图集）
     assert [(param.key, param.unit, param.value) for param in params] == [
         ("工作面加宽", "mm", ""),
         ("垫层厚", "mm", ""),
@@ -261,6 +261,104 @@ def test_save_as_moves_lock_and_keeps_data(tmp_path: Path) -> None:
     project_io.close_project()
     project_io.open_project(target)
     assert unit_vm.element_rows(unit.id)[0].name == "另存前"
+
+
+def test_v5_project_scopes_atlas_params(tmp_path: Path) -> None:
+    """v5 → v7：三行图集参数按类别收敛（直埋保三行，包封 / 箱涵 / 管廊去基础厚，顶管全去）。"""
+    path = _make_project(tmp_path)
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    from app.core.models.models import (
+        CATEGORY_BOX_CULVERT,
+        CATEGORY_ENCASED,
+        CATEGORY_JACKING,
+        ElementParam,
+    )
+
+    buried = unit_vm.create_element(unit.id, category=1, name="排管")
+    encased = unit_vm.create_element(unit.id, category=CATEGORY_ENCASED, name="包封管")
+    box = unit_vm.create_element(unit.id, category=CATEGORY_BOX_CULVERT, name="箱涵")
+    jacking = unit_vm.create_element(unit.id, category=CATEGORY_JACKING, name="顶管")
+    def set_param(element, name: str, value: str) -> None:
+        """按 v5 的形态写入某行（没有就新增，模拟六个类别都带三行）。"""
+        row = next((param for param in element.params if param.key == name), None)
+        if row is None:
+            orm.session().add(ElementParam(element_id=element.id, key=name, unit="mm", value=value))
+        else:
+            row.value = value
+
+    for key in ("工作面加宽", "垫层厚", "基础厚"):
+        # v5 的形态：六个管道类别都带三行，且可能预填了图集 / 用户值
+        for element, value in ((buried, "999"), (jacking, "999"), (box, "200")):
+            set_param(element, key, value)
+    for key in ("工作面加宽", "垫层厚", "基础厚"):
+        set_param(encased, key, "200")
+    # 直埋构件先删掉基础厚行（模拟老库里被删过的三行），迁移要补回空值行
+    orm.session().delete(next(param for param in buried.params if param.key == "基础厚"))
+    project_io.commit()
+    project_io.close_project()
+
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("UPDATE meta SET value = '5' WHERE key = 'schema_version'")
+        connection.commit()
+    finally:
+        connection.close()
+
+    project_io.open_project(path)
+    try:
+        assert orm.get_meta("schema_version") == str(SCHEMA_VERSION)
+
+        def rows(element):
+            return [
+                (param.key, param.value)
+                for param in unit_vm.param_rows(element.id)
+                if param.key in ("工作面加宽", "垫层厚", "基础厚")
+            ]
+
+        # 直埋：三行都在，用户填的值保留，缺失的基础厚补空值行
+        assert rows(buried) == [("工作面加宽", "999"), ("垫层厚", "999"), ("基础厚", "")]
+        # 包封 / 箱涵：只留工作面加宽 / 垫层厚（基础厚行删除，值不再有意义）
+        assert rows(encased) == [("工作面加宽", "200"), ("垫层厚", "200")]
+        assert rows(box) == [("工作面加宽", "200"), ("垫层厚", "200")]
+        # 顶管：三行全删
+        assert rows(jacking) == []
+    finally:
+        project_io.close_project()
+
+
+def test_v6_project_gets_buried_atlas_params_back(tmp_path: Path) -> None:
+    """v6 → v7：v6 曾把直埋 / 箱涵 / 管廊上的三行删掉，迁移按新规则补回。"""
+    path = _make_project(tmp_path)
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    from app.core.models.models import ElementParam
+
+    buried = unit_vm.create_element(unit.id, category=1, name="排管")
+    for param in list(buried.params):
+        orm.session().delete(param)  # v6 早期实现：直埋上的三行被删光
+    orm.session().add(ElementParam(element_id=buried.id, key="含钢量", unit="kg/m3", value="35"))
+    project_io.commit()
+    project_io.close_project()
+
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("UPDATE meta SET value = '6' WHERE key = 'schema_version'")
+        connection.commit()
+    finally:
+        connection.close()
+
+    project_io.open_project(path)
+    try:
+        assert orm.get_meta("schema_version") == str(SCHEMA_VERSION)
+        rows = [(param.key, param.unit, param.value) for param in unit_vm.param_rows(buried.id)]
+        # 补的三行排在原有行之后（按 id 排序）
+        assert rows == [
+            ("含钢量", "kg/m3", "35"),
+            ("工作面加宽", "mm", ""),
+            ("垫层厚", "mm", ""),
+            ("基础厚", "mm", ""),
+        ]
+    finally:
+        project_io.close_project()
 
 
 def test_schema_too_new_is_rejected(tmp_path: Path) -> None:

@@ -21,6 +21,8 @@ from app.core.models.models import (
     CATEGORY_BOX_CULVERT,
     CATEGORY_ENCASED,
     CATEGORY_GALLERY,
+    CATEGORY_JACKING,
+    CATEGORY_PULLING,
     CATEGORY_STRUCTURE,
     MULTI_PE_TEXT,
     MULTI_PF_TEXT,
@@ -32,14 +34,16 @@ from app.core.models.models import (
     unit_of,
 )
 from app.core.param_naming import (
-    ATLAS_PARAM_NAMES,
     DEFAULT_PARAM_UNITS,
     PARAM_A_NAME,
     PARAM_C1_NAME,
     PARAM_C2_NAME,
     STRUCTURE_NAME_PARAM,
     STRUCTURE_UNIT_PARAM,
+    atlas_param_rows,
+    is_atlas_param,
     split_param_key,
+    supports_atlas_param,
 )
 from app.services import project_io
 
@@ -58,6 +62,13 @@ _ELEMENT_FIELDS = {
 _PIPE_FIELDS = {"mat", "dn", "content", "t"}
 _PARAM_FIELDS = {"key", "unit", "value"}
 _QUANTITY_FIELDS = {"category", "item", "unit", "value"}
+
+#: 不显示图集参数行的类别上新增 / 改名成图集参数时的提示（见 param_naming）
+_ATLAS_PARAM_LOCKED_HINT = (
+    "该类别构件不显示该图集参数行（直埋显示工作面加宽 / 垫层厚 / 基础厚；"
+    "包封 / 箱涵 / 管廊的基础厚恒为 0，只显示工作面加宽 / 垫层厚；"
+    "顶管 / 牵引管只算管材，三行都不显示）。"
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -180,10 +191,12 @@ def param_rows(element_id: int) -> list[ParamRow]:
             lock_name = (param.key, param.unit) == (STRUCTURE_NAME_PARAM, "") or (
                 param.key, param.unit
             ) == (STRUCTURE_UNIT_PARAM, "")
+        elif is_atlas_param(param.key, param.unit):
+            if not supports_atlas_param(element.category, param.key, param.unit):
+                continue  # 该类别不显示这一行（旧库残留行也不显示，不参与计算）
+            lock_name = True
         else:
-            lock_name = any(
-                param.key == name and param.unit == unit for name, unit in ATLAS_PARAM_NAMES
-            )
+            lock_name = False
         rows.append(ParamRow(id=param.id, key=param.key, unit=param.unit, value=param.value, lock_name=lock_name))
     return rows
 
@@ -233,6 +246,13 @@ def compute_unit(unit_id: int):
             result = compute_element(info) or QDict()
             if element.category == CATEGORY_STRUCTURE and not result:
                 row.error = "数量为 0，未生成工程量。"
+            elif element.category in (CATEGORY_JACKING, CATEGORY_PULLING) and not result:
+                # 顶管 / 牵引管只有管材：数量为 0，或没录入管材
+                row.error = (
+                    "数量为 0，未生成工程量。"
+                    if row.amount_value == 0
+                    else "未录入管材，顶管 / 牵引管只计算管材。"
+                )
             else:
                 row.error = "" if result else "覆土不足或缺少可用的围护/地基原则"
         except Exception as error:  # 单条失败不拖垮整表
@@ -289,11 +309,29 @@ def _structure_default_quantity() -> ElementQuantity:
 
 
 def _append_atlas_rows(element: Element) -> None:
-    """补三行图集覆盖参数行（工作面加宽 / 垫层厚 / 基础厚，空 = 自动按图集）。"""
-    existing = {param.key for param in element.params}
-    for name, unit in ATLAS_PARAM_NAMES:
-        if name not in existing:
+    """补该类别显示的图集参数行（空 = 自动按图集 / 软件约定）。
+
+    直埋管道补工作面加宽 / 垫层厚 / 基础厚三行；包封埋管 / 箱涵 / 管廊补
+    工作面加宽 / 垫层厚（基础厚恒为 0，不显示）；顶管 / 牵引管只算管材，
+    一行不补（1.0 也没有）。见 param_naming.ATLAS_PARAM_CATEGORIES。
+    """
+    existing = {(param.key, param.unit) for param in element.params}
+    for name, unit in atlas_param_rows(element.category):
+        if (name, unit) not in existing:
             element.params.append(ElementParam(key=name, unit=unit, value=""))
+
+
+def _reconcile_atlas_rows(element: Element) -> None:
+    """类别切换后按新类别增删图集参数行（不显示的行删掉，缺的行补空值）。
+
+    直埋 ↔ 包封 / 箱涵 / 管廊：切到基础厚恒为 0 的类别时删掉基础厚行，切回
+    直埋时补回空值行（空 = 自动按图集）；切到顶管 / 牵引管时三行全删。
+    """
+    allowed = set(atlas_param_rows(element.category))
+    for param in list(element.params):
+        if is_atlas_param(param.key, param.unit) and (param.key, param.unit) not in allowed:
+            element.params.remove(param)  # delete-orphan 级联删除
+    _append_atlas_rows(element)
 
 
 def _expire_element(element: Element) -> None:
@@ -310,10 +348,12 @@ def _expire_element(element: Element) -> None:
 
 
 def auto_atlas_params(element: Element) -> dict[str, float]:
-    """工作面加宽 / 垫层厚 / 基础厚的自动值（空参数行灰字显示用）。
+    """该类别显示的图集参数行的自动值（空参数行灰字显示用）。
 
-    按构件当前原则查图集；包封 / 箱涵 / 管廊返回软件约定值
-    （t=0、a=100、C1=100、C2=0），垫层厚为 0 时按围护原则垫层回填（同引擎）。
+    按构件当前原则查图集：直埋管道为图集行的 a / C1 / C2；包封 / 箱涵 /
+    管廊为软件约定值（t=0、a=100、C1=100、C2 恒为 0）里的工作面加宽 /
+    垫层厚；垫层厚为 0 时按围护原则垫层回填（同引擎）。不显示的类别
+    （顶管 / 牵引管等）返回空。
     """
     from app.core.calc.engine import (
         build_atlas_query,
@@ -323,16 +363,20 @@ def auto_atlas_params(element: Element) -> dict[str, float]:
     )
     from app.services.atlas import resolve_atlas
 
+    if not atlas_param_rows(element.category):
+        return {}
     pe, _pf, _pp, pw, _pe_refs, _pf_refs = resolve_element_principles(element, orm.session())
     if pe is None:
         return {}
     info = build_element_input(element, pe, None)
     at = resolve_atlas(build_atlas_query(info, pe, pw))
-    return {
+    values = {
         PARAM_A_NAME: at.a,
         PARAM_C1_NAME: at.c1 if at.c1 != 0 else cushion_thickness(pe),
         PARAM_C2_NAME: at.c2,
     }
+    allowed = {name for name, _unit in atlas_param_rows(element.category)}
+    return {name: value for name, value in values.items() if name in allowed}
 
 
 def auto_pipe_thicknesses(element: Element) -> dict[int, float]:
@@ -363,13 +407,14 @@ def auto_pipe_thicknesses(element: Element) -> dict[int, float]:
 def _seed_atlas_defaults(element: Element) -> None:
     """写入图集 / 软件约定默认值（构件库插入条目的预填，需求 1）。
 
-    a / C1 / C2 与每根管道壁厚按当前图集行写入参数行 / 管材列；
-    已有值（用户先填了之类的情况）不覆盖。
+    图集参数按该类别显示的行预填（直埋三行、包封 / 箱涵 / 管廊的工作面加宽
+    与垫层厚；见 param_naming）：值取当前图集 / 软件约定，查不到（0）的
+    不写——空值本来就会按图集自动取值，预填 0 反而会把“自动”钉死。每根管道
+    壁厚按当前图集行写入管材列；已有值（用户先填了之类的情况）不覆盖。
     """
-    values = auto_atlas_params(element)
     existing = {(param.key, param.unit) for param in element.params}
-    for name, value in values.items():
-        if (name, "mm") not in existing:
+    for name, value in auto_atlas_params(element).items():
+        if value and (name, "mm") not in existing:
             element.params.append(
                 ElementParam(key=name, unit="mm", value=format_number(float(value)))
             )
@@ -426,7 +471,8 @@ def create_element(
     """新增构件条目；未指定原则时取库中第一条（旧版 mcElement.GetData 的做法）。
 
     包封埋管 / 箱涵 / 管廊按旧版构造函数补默认扩展参数（包封宽、净宽、含钢量…），
-    其余构件补空值图集行（工作面加宽 / 垫层厚 / 基础厚，空 = 自动按图集）；
+    各构件再按类别补图集参数行（直埋的工作面加宽 / 垫层厚 / 基础厚，包封 /
+    箱涵 / 管廊的工作面加宽 / 垫层厚；空 = 自动按图集，见 param_naming）；
     构筑物（附属构筑物）补名称 / 单位参数与默认工程量行且不带管材。
     构件库插入传 ``seed_atlas_defaults=True``：图集约定值预填（需求 1）。
     ``params`` 为 (参数名, 单位, 值) 列表；``quantities`` 为
@@ -646,7 +692,8 @@ def update_element(element_id: int, **fields) -> Element | None:
     pe_name / pf_name 按旧版 showPEname / showPFname setter 语义处理：
     选“多围护原则/多地基原则”只切换显示名、保留引用行；选具体原则则把
     引用重置为该原则（比例 1）。类别改为构筑物时清空管材并重置默认
-    参数与工程量行；从构筑物切回其它类别时同样重置。
+    参数与工程量行；从构筑物切回其它类别时同样重置；其余类别之间切换时
+    按新类别增删图集参数行（见 :func:`_reconcile_atlas_rows`）。
     """
     element = _element(element_id)
     if element is None:
@@ -688,6 +735,9 @@ def update_element(element_id: int, **fields) -> Element | None:
                 ElementParam(key=key, unit=DEFAULT_PARAM_UNITS.get(key, ""), value=format_number(value))
             )
         _append_atlas_rows(element)
+    elif category_changed:
+        # 直埋 ↔ 包封 / 箱涵 / 管廊 等之间切换：基础厚只属于直埋，按新类别增删
+        _reconcile_atlas_rows(element)
     project_io.commit()
     bus().unit_changed.emit(element.unit_id)
     return element
@@ -804,6 +854,8 @@ def create_param(element_id: int, key: str = "", unit: str = "", value: str = ""
     element = _element(element_id)
     if element is None:
         return None
+    if is_atlas_param(key, unit) and not supports_atlas_param(element.category, key, unit):
+        return None  # 该类别不显示这一行（由界面提示）
     param = ElementParam(element_id=element_id, key=key, unit=unit, value=value)
     orm.session().add(param)
     project_io.commit()
@@ -813,20 +865,32 @@ def create_param(element_id: int, key: str = "", unit: str = "", value: str = ""
 
 
 def update_param(param_id: int, **fields) -> ElementParam | None:
+    """修改参数行（参数名 / 单位 / 值）；返回 None = 没改。
+
+    改成图集参数行（工作面加宽 / 垫层厚 / 基础厚）的只有该类别显示的
+    行允许（直埋三行、包封 / 箱涵 / 管廊的工作面加宽与垫层厚；见
+    param_naming.ATLAS_PARAM_CATEGORIES）；其余不写库（写了也不参与计算），
+    界面提示后下一次刷新回到原值。
+    """
     param = orm.session().get(ElementParam, param_id) if project_io.is_open() else None
     if param is None:
         return None
-    for key, value in fields.items():
-        if key in _PARAM_FIELDS:
-            setattr(param, key, str(value))
+    element = param.element
+    key = str(fields.get("key", param.key))
+    unit = str(fields.get("unit", param.unit))
+    if is_atlas_param(key, unit) and not supports_atlas_param(element.category, key, unit):
+        return None
+    for name, value in fields.items():
+        if name in _PARAM_FIELDS:
+            setattr(param, name, str(value))
     project_io.commit()
-    _expire_element(param.element)
-    bus().unit_changed.emit(param.element.unit_id)
+    _expire_element(element)
+    bus().unit_changed.emit(element.unit_id)
     return param
 
 
 def delete_param(param_id: int) -> str | None:
-    """删参数行；图集行（工作面加宽/垫层厚/基础厚）与构筑物名称/单位行锁定。
+    """删参数行；该类别显示的图集行与构筑物名称 / 单位行锁定。
 
     返回提示文案；None 表示已删除。
     """
@@ -837,8 +901,11 @@ def delete_param(param_id: int) -> str | None:
     if element.category == CATEGORY_STRUCTURE:
         if (param.key, param.unit) in ((STRUCTURE_NAME_PARAM, ""), (STRUCTURE_UNIT_PARAM, "")):
             return "名称/单位参数行不可删除。"
-    elif any(param.key == name and param.unit == unit for name, unit in ATLAS_PARAM_NAMES):
-        return "工作面加宽 / 垫层厚 / 基础厚为图集参数行，不可删除（清空值即自动）。"
+    elif is_atlas_param(param.key, param.unit) and supports_atlas_param(
+        element.category, param.key, param.unit
+    ):
+        names = " / ".join(name for name, _unit in atlas_param_rows(element.category))
+        return f"{names}为图集参数行，不可删除（清空值即自动）。"
     unit_id = element.unit_id
     orm.session().delete(param)
     project_io.commit()
@@ -1099,10 +1166,12 @@ class UnitViewModel(QObject):
         if self._element_id is None:
             self.error_occurred.emit("请先在上表选择构件条目。")
             return
-        create_param(self._element_id)
+        if create_param(self._element_id) is None:
+            self.error_occurred.emit(_ATLAS_PARAM_LOCKED_HINT)
 
     def set_param_field(self, param_id: int, field: str, value) -> None:
-        update_param(param_id, **{field: value})
+        if update_param(param_id, **{field: value}) is None:
+            self.error_occurred.emit(_ATLAS_PARAM_LOCKED_HINT)
 
     def remove_param(self, param_id: int) -> None:
         message = delete_param(param_id)

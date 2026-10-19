@@ -16,14 +16,23 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from functools import lru_cache
 
 import openpyxl
 
+from app.core.models.models import (
+    CATEGORY_BOX_CULVERT,
+    CATEGORY_ENCASED,
+    CATEGORY_GALLERY,
+)
 from app.core.paths import atlas_dir, resources_dir
 
 INVENTORY_DIR = resources_dir() / "inventory"
+
+#: 垫层以上没有包角管座基础的类别（包封埋管 / 箱涵 / 管廊）：基础厚 C2 恒为 0
+C2_ZERO_CATEGORIES: tuple[int, ...] = (CATEGORY_ENCASED, CATEGORY_BOX_CULVERT, CATEGORY_GALLERY)
 
 #: 图集表，顺序与旧版 mcAtlas.Init() 的 pvDS.Tables 下标一致
 ATLAS_TABLES: tuple[tuple[str, str], ...] = (
@@ -220,16 +229,28 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
     dn_text = _key_text(query.pipes[0].dn if query.pipes else 0)
 
     if query.category == 2:  # 包封埋管
-        return AtlasParam(
-            t=0, a=100, c1=100, c2=0,
-            workwidth=_width_of(query.widths, "包封埋管", 0),
-            groove_b=0,
+        return _apply_overrides(
+            query,
+            AtlasParam(
+                t=0,
+                a=100,
+                c1=100,
+                c2=0,
+                workwidth=_width_of(query.widths, "包封埋管", 0),
+                groove_b=0,
+            ),
         )
     if query.category in (3, 6):  # 箱涵 / 管廊
-        return AtlasParam(
-            t=0, a=100, c1=100, c2=0,
-            workwidth=_width_of(query.widths, "箱涵-管廊", 0),
-            groove_b=0,
+        return _apply_overrides(
+            query,
+            AtlasParam(
+                t=0,
+                a=100,
+                c1=100,
+                c2=0,
+                workwidth=_width_of(query.widths, "箱涵-管廊", 0),
+                groove_b=0,
+            ),
         )
 
     mat = query.pipes[0].mat if query.pipes else ""
@@ -335,21 +356,33 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
     if query.groove_width == "WorkWidth":
         groove_b = 0.0
 
-    # 详情面板覆盖值：工作面加宽 / 垫层厚 / 基础厚全类别生效；管道壁厚只在
-    # 真正按管线查图的类别生效（包封 / 箱涵 / 管廊断面宽由自身参数决定）。
-    # 壁厚被覆盖时外径按 内径 + 2×壁厚 重推，与图集 oD 列同源。
+    return _apply_overrides(
+        query,
+        AtlasParam(od=od, t=t, a=a, c1=c1, c2=c2, workwidth=workwidth, groove_b=groove_b, q=q),
+    )
+
+
+def _apply_overrides(query: AtlasQuery, at: AtlasParam) -> AtlasParam:
+    """详情面板覆盖值：工作面加宽 / 垫层厚 / 基础厚（None = 未覆盖，按图集行）。
+
+    覆盖值由计算引擎与断面图按构件类别决定传不传（直埋传三行、包封 / 箱涵 /
+    管廊传工作面加宽与垫层厚，见 param_naming.ATLAS_PARAM_CATEGORIES）。
+    包封 / 箱涵 / 管廊垫层以上没有包角管座基础，基础厚恒为 0，不认覆盖值。
+    管道壁厚只在真正按管线查图的类别生效：包封 / 箱涵 / 管廊的断面宽由自身
+    参数决定；壁厚被覆盖时外径按 内径 + 2×壁厚 重推，与图集 oD 列同源。
+    """
+    a, c1, c2, t, od = at.a, at.c1, at.c2, at.t, at.od
     if query.a is not None:
         a = query.a
     if query.c1 is not None:
         c1 = query.c1
-    if query.c2 is not None:
+    if query.c2 is not None and query.category not in C2_ZERO_CATEGORIES:
         c2 = query.c2
     t_override = query.pipes[0].t if query.pipes else None
     if t_override is not None and query.category not in (2, 3, 6):
         t = t_override
         od = query.pipes[0].dn + t * 2.0
-
-    return AtlasParam(od=od, t=t, a=a, c1=c1, c2=c2, workwidth=workwidth, groove_b=groove_b, q=q)
+    return dataclasses.replace(at, od=od, t=t, a=a, c1=c1, c2=c2)
 
 
 def _groove_b(query: AtlasQuery, category: str, size_b: float) -> float:
