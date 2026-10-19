@@ -4,7 +4,8 @@
 库里存字符串原文，运行时用本模块算，避免两份数据不一致。
 
 安全边界：只放开 + - * / ** 与括号，以及旧版 mscExp 支持的 abs/round/sqrt/power
-四个函数和常量 pi；没有属性访问、下标、lambda、比较、位运算。
+四个函数和常量 pi（另加计算引擎输出算式要用的 sin/cos/ceil）；没有属性访问、
+下标、lambda、比较、位运算。
 （simpleeval 自带的 ``1 if 1 else 2`` 这类条件表达式无副作用，未额外收紧。）
 """
 
@@ -38,12 +39,13 @@ _OPERATORS: dict[type, Any] = {
 }
 
 #: 白名单函数与常量，对应旧版 mscExp.ProcessFunction / ProcessSymbol；
-#: sin/cos 为弓形面积算式（计算引擎输出）所需
+#: sin/cos 为弓形面积算式（计算引擎输出）所需，ceil 为降水座数算式所需
 _FUNCTIONS: dict[str, Any] = {
     "abs": abs,
     "round": lambda value, digits=2: round(value, int(digits)),
     "sqrt": math.sqrt,
     "power": safe_power,
+    "ceil": math.ceil,
     "sin": math.sin,
     "cos": math.cos,
 }
@@ -84,7 +86,7 @@ def normalize(text: str) -> str:
     for character, exponent in _SUPERSCRIPTS.items():
         result = result.replace(character, f"**{exponent}")
     result = result.replace("PI()", "pi").replace("pi()", "pi")
-    for name in ("ROUND", "SQRT", "ABS", "POWER", "SIN", "COS"):
+    for name in ("ROUND", "SQRT", "ABS", "POWER", "CEIL", "SIN", "COS"):
         result = re.sub(r"\b" + name + r"\b", name.lower(), result)
     return result
 

@@ -40,7 +40,7 @@ def test_set_work_category_rebuilds_level_from_template(project) -> None:
     assert (level.h, level.step_width) == (-1.0, 1.0)  # 均分高度、平台宽 1
     params = {param.key: param.value for param in level.components[0].params}
     assert params["A"] == "单桩宽度 mm|400"  # 模板默认参数一并带入
-    assert level_slope(level) == 0.0  # 非放坡类型 → 直壁
+    assert level_slope(level).v == 0.0  # 非放坡类型 → 直壁
 
     project_io.set_work_category(session, work, library, MULTI_LEVEL_TEXT)
     project_io.commit()
@@ -48,28 +48,30 @@ def test_set_work_category_rebuilds_level_from_template(project) -> None:
     assert work.cpnt_cat == MULTI_LEVEL_TEXT
     # 多级围护：一级取库第一项（旧版 Ecpnti.First().Key）
     assert len(work.levels) == 1 and work.levels[0].name == "放坡"
-    assert level_slope(work.levels[0]) == 1.0
+    assert level_slope(work.levels[0]).v == 1.0
 
     project_io.set_work_category(session, work, library, "放坡")
     project_io.commit()
     work = session.get(EnclosureWork, work.id)
     assert work.cpnt_cat == "放坡"
-    assert level_slope(work.levels[0]) == 1.0
+    assert level_slope(work.levels[0]).v == 1.0
 
 
 def test_sloped_vs_vertical_dig_and_enclosure_quantities(project) -> None:
     """钢板桩（直壁）与放坡（梯形）的挖方算式与围护量对比。"""
-    from app.core.calc.engine import build_element_input, compute_element, resolve_element_principles
+    from app.core.calc.engine import build_atlas_query, build_element_input, compute_element, resolve_element_principles
     from app.core.models import base as orm
     from app.core.models.models import CATEGORY_BURIED
     from app.services import project_io
+    from app.services.atlas import resolve_atlas
     from app.viewmodels import unit_vm
 
     session = orm.session()
 
     def _compute(element):
         pe, pf, pp, pw, pe_refs, pf_refs = resolve_element_principles(element, session)
-        return compute_element(build_element_input(element, pe, pf, pe_refs, pf_refs, pp, pw))
+        info = build_element_input(element, pe, pf, pe_refs, pf_refs, pp, pw)
+        return info, compute_element(info)
 
     library = project_io.component_library()
     unit_id = project_io.units(project_io.segments()[0].id)[0].id
@@ -80,10 +82,10 @@ def test_sloped_vs_vertical_dig_and_enclosure_quantities(project) -> None:
     assert element is not None
 
     # 放坡（默认做法）：挖方算式含放坡项，无支护围护量
-    result = _compute(element)
+    _info, result = _compute(element)
     assert result is not None
     dig = next(q for q in result.items() if q.key.startswith("开挖|"))
-    assert "2×" in dig.expression and "+" in dig.expression  # (B+B+2×H×放坡系数)×H/2
+    assert "2×" in dig.expression and "+" in dig.expression  # (2×B+2×H×放坡系数)×H/2
     assert not [key for key in result.keys() if key.startswith("围护|")]
 
     # 切成钢板桩：挖方为直壁矩形算式，出现围护/支撑量
@@ -91,10 +93,15 @@ def test_sloped_vs_vertical_dig_and_enclosure_quantities(project) -> None:
         session, _enclosure().works_sorted()[0], library, "钢板桩"
     )
     project_io.commit()
-    result = _compute(element)
+    info, result = _compute(element)
     assert result is not None
     dig = next(q for q in result.items() if q.key.startswith("开挖|"))
-    assert "+" not in dig.expression  # 放坡系数 0 → B×H
+    # 放坡系数 0 → 直壁：挖方 = 槽底宽 × 沟槽深度（没有梯形加宽项），槽底宽本身
+    # 仍按 断面宽+2×(壁厚+工作面加宽+工作面) 展开写在算式里
+    at = resolve_atlas(build_atlas_query(info, info.pe, info.pw))
+    bottom = info.size_b + (at.t * 2 + at.a * 2 + at.workwidth * 2) / 1000
+    depth = info.depth + (at.t + at.c1) / 1000
+    assert dig.value / info.amount == pytest.approx(bottom * depth, rel=1e-9)
     assert any(key.startswith("围护|") for key in result.keys())
     assert any(key.startswith("支撑|") for key in result.keys())
 

@@ -3,9 +3,12 @@
 每个工程量条目产出 ``{key, value, expression, details}``：
 
 * ``expression`` 是一条代入后的算式，如
-  ``(1.2+1.2+2×2.85×0.5)×2.85/2×100 = 583.1``；
-* 用户在埋深 / 数量列写的算式以原文（括号保护）出现在代入位置，
-  见 :class:`Dim`；
+  ``(2×(600/1000+(65×2+130×2+500×2)/1000)+2×2.995×1)×2.995/2``；
+* **不预运算**：软件派生出来的数字（槽底宽由管径 + 图集参数 + 面宽原则推出、
+  毫米→米的换算、换填总厚、弓形占位…）在算式里把计算过程写全，只有直接
+  录入 / 查表的原始数据与软件常数才以单个数字出现，见 :class:`Dim`；
+* 用户在埋深 / 数量 / 参数 / 含量列写的算式以原文（括号保护）出现在代入位置，
+  见 :class:`Dim` 与 :func:`raw_dim`；
 * 多来源的量（分层土方、多个构件公式）按项累加，算式用 +/− 连接各代入项；
 * ``details`` 保留中间步骤（分层明细、公式名等），供表格 tooltip / 详情弹窗查看，
   不进主算式。
@@ -18,11 +21,28 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Iterable
 
 _SUPERSCRIPTS = {"0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹"}
 
 #: 纯数字（含负号与小数）——这类算式嵌入模板时无需加括号
 _NUMERIC = re.compile(r"-?\d+(?:\.\d+)?")
+
+_ADDITIVE = frozenset("+-−")
+_MULTIPLICATIVE = frozenset("×*/÷")
+
+
+def _top_operator(text: str, operators: frozenset[str]) -> bool:
+    """括号外是否出现指定运算符（按运算优先级决定要不要加括号用）。"""
+    depth = 0
+    for character in text:
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif depth == 0 and character in operators:
+            return True
+    return False
 
 
 def fmt(value: float, digits: int = 4) -> str:
@@ -31,53 +51,103 @@ def fmt(value: float, digits: int = 4) -> str:
     return text if text not in ("", "-0") else "0"
 
 
-def wrap(expression: str) -> str:
-    """算式嵌入模板前的保护：非纯数字加括号，保证运算优先级不变。"""
+def wrap(expression: str, tight: bool = False) -> str:
+    """算式嵌入模板前的保护：按运算优先级决定是否加括号。
+
+    默认（加 / 减 / 乘上下文）只对顶层加减（含正负号）加括号——``65×2`` 这类
+    纯乘除嵌进任何位置都不会改变结合顺序；``tight=True`` 用于除数位置或变量
+    代入（后面接什么运算符未知），顶层乘除也加括号。纯数字原样保留。
+    """
     text = expression.strip()
-    return text if _NUMERIC.fullmatch(text) else f"({text})"
+    if _NUMERIC.fullmatch(text):
+        return text
+    if _top_operator(text, _ADDITIVE) or (tight and _top_operator(text, _MULTIPLICATIVE)):
+        return f"({text})"
+    return text
+
+
+def pair(other: "Dim | float") -> tuple[float, str]:
+    """Dim 与普通数字统一成 (数值, 算式) 两件套（普通数字的算式就是它本身）。"""
+    if isinstance(other, Dim):
+        return other.v, other.e
+    value = float(other)
+    return value, fmt(value)
 
 
 @dataclass
 class Dim:
-    """带算式的尺寸量（埋深、层厚、数量）：``v`` 为数值，``e`` 为求值等价的算式。
+    """带算式的数值（埋深、层厚、宽度、图集参数、数量…）：``v`` 为数值，``e`` 为求值等价的算式。
 
-    数值与算式同源：加减除都在 Dim 上进行——纯数字之间运算折叠成单个数字
-    （写法与旧版全数字算式一致），含算式的运算把原文括号后拼进算式，
-    保证 ``e`` 重算永远等于 ``v``。``e`` 是裸算式，嵌入模板前须经 :func:`wrap`。
+    数值与算式同源：加减乘除都在 Dim 上进行，算式按运算逐级拼出来，
+    **不做预运算**——派生量（槽底宽 = 管径/1000 + 图集与面宽参数、换填总厚、
+    弓形占位…）在算式里保留全部来源，只有直接录入 / 查表的原始数据
+    （管径、图集 t/a/C1/C2、面宽表值）和软件常数（0.5、π 系数）才是一个数字。
+    ``e`` 是裸算式，嵌入模板前须经 :func:`wrap`。
     """
 
     v: float
     e: str
 
-    def __add__(self, other: "Dim") -> Dim:
+    def __add__(self, other: "Dim | float") -> "Dim":
+        value, expr = pair(other)
+        if value == 0:
+            return self
         if self.v == 0:
-            return other
-        if other.v == 0:
-            return self
-        value = self.v + other.v
-        if _NUMERIC.fullmatch(self.e) and _NUMERIC.fullmatch(other.e):
-            return Dim(value, fmt(value))
+            return Dim(value, expr)
         # 加法两侧都是同级运算，右操作数加括号只为可读；左操作数无须括号
-        return Dim(value, f"{self.e}+{wrap(other.e)}")
+        return Dim(self.v + value, f"{self.e}+{wrap(expr)}")
 
-    def __sub__(self, other: "Dim") -> "Dim":
-        if other.v == 0:
+    __radd__ = __add__
+
+    def __sub__(self, other: "Dim | float") -> "Dim":
+        value, expr = pair(other)
+        if value == 0:
             return self
-        value = self.v - other.v
-        if _NUMERIC.fullmatch(self.e) and _NUMERIC.fullmatch(other.e):
-            return Dim(value, fmt(value))
         # 减法的右操作数是算式时必须括起来，否则 X-(A+B) 会变成 X-A+B
-        return Dim(value, f"{self.e}-{wrap(other.e)}")
+        return Dim(self.v - value, f"{self.e}-{wrap(expr)}")
 
-    def __truediv__(self, divisor: float) -> "Dim":
-        if divisor == 1:
-            return self
-        return Dim(self.v / divisor, f"{wrap(self.e)}/{fmt(divisor)}")
+    def __neg__(self) -> "Dim":
+        return Dim(-self.v, f"-{wrap(self.e)}")
+
+    def __mul__(self, other: "Dim | float") -> "Dim":
+        value, expr = pair(other)
+        return Dim(self.v * value, f"{wrap(self.e)}×{wrap(expr)}")
+
+    __rmul__ = __mul__
+
+    def __truediv__(self, other: "Dim | float") -> "Dim":
+        value, expr = pair(other)
+        if value == 1:
+            return self  # ÷1 不写进算式（只可能是引擎生成的等分，用户写的算式保留原文）
+        # 除数位置的算式要更严格：顶层乘除也得括起来，否则 _a/(b×c) 会变成 _a/b×c
+        return Dim(self.v / value, f"{wrap(self.e)}/{wrap(expr, tight=True)}")
 
 
 def dim(value: float, expr: str | None = None) -> Dim:
     """纯数值尺寸：算式就是数值本身。"""
     return Dim(float(value), expr if expr is not None else fmt(value))
+
+
+def dim_sum(*parts: Dim) -> Dim:
+    """逐项求和：跳过 0 项，每项保留自己的算式（``65+130``、``200+300``）。"""
+    total = dim(0.0)
+    for part in parts:
+        total = total + part
+    return total
+
+
+def scale_sum(parts: Iterable[Dim], factor: float) -> Dim:
+    """Σ(项 × 系数)：系数逐项写进算式并跳过 0 项，如 ``65×2+130×2+500×2``。"""
+    total = dim(0.0)
+    for part in parts:
+        if part.v != 0:
+            total = total + part * factor
+    return total
+
+
+def dim_min(first: Dim, second: Dim) -> Dim:
+    """取较小者（算式取被选中那一项：min 的结果就是它）。"""
+    return first if first.v <= second.v else second
 
 
 def raw_dim(raw: str, value: float) -> Dim:
@@ -184,10 +254,14 @@ class QDict:
             target.details.extend(quantity.details)
 
     def scale(self, coefficient: float, expr: str | None = None) -> None:
-        """整体乘系数（旧版 MultDic_StrmcQ）；系数进算式，``expr`` 为系数的算式原文。"""
+        """整体乘系数（旧版 MultDic_StrmcQ）；系数进算式，``expr`` 为系数的算式原文。
+
+        系数原文按最严格方式加括号（tight）：``×(50×2)`` 保留用户写法，
+        也不会因结合顺序改变算式含义。
+        """
         if coefficient == 1.0:
             return
-        suffix = f"×{wrap(expr) if expr is not None else fmt(coefficient)}"
+        suffix = f"×{wrap(expr, tight=True) if expr is not None else fmt(coefficient)}"
         for quantity in self._items.values():
             quantity.value *= coefficient
             for term in quantity.terms:

@@ -5,19 +5,22 @@
 ``Trapezoid(B,H,slope) = (2B+2Hs)H/2``，同一层挖方与回填取同一面积。
 多级围护按 splitHbyStep 的分级标高切换，切级时按平台宽度加宽底宽。
 
-埋深以 :class:`Dim`（数值 + 算式）参与计算：派生自埋深的层厚把用户埋深
-原文带进算式；纯数字埋深的算式与旧版全数字写法完全一致。
+槽底宽 B（断面宽 + 2×(壁厚 + 工作面加宽 + 工作面)）、各层层厚与放坡系数
+都以 :class:`Dim`（数值 + 算式）参与计算，算式不做预运算：B 在输出算式里
+保留管径 / 图集参数 / 面宽原则的推导，层厚保留 毫米→米 换算与埋深原文，
+见 :mod:`app.core.calc.tracer` 与 :mod:`app.core.calc.measures`。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.core.calc.tracer import Dim, QDict, dim, fmt, wrap
+from app.core.calc.measures import AtlasDims, foundation_thickness
+from app.core.calc.tracer import Dim, QDict, dim, dim_sum, fmt, raw_dim, scale_sum, wrap
 
 
 def mm2m(value: float) -> float:
-    """毫米 → 米（旧版 mscGroove.D10E3）。"""
+    """毫米 → 米（旧版 mscGroove.D10E3）；算式侧由 ``Dim/1000`` 写出换算。"""
     return value / 1000.0
 
 
@@ -26,12 +29,22 @@ def trapezoid(bottom: float, height: float, slope: float) -> float:
     return (bottom + bottom + height * slope * 2) * height / 2.0
 
 
-def trapezoid_expr(bottom: float, height: float, slope: float, height_expr: str | None = None) -> str:
-    """梯形面积的数值代入算式（``height_expr`` 为层厚的算式写法，与数值同源）。"""
-    h = wrap(height_expr) if height_expr is not None else fmt(height)
-    if slope == 0:
-        return f"{fmt(bottom)}×{h}"
-    return f"({fmt(bottom)}+{fmt(bottom)}+2×{h}×{fmt(slope)})×{h}/2"
+def trapezoid_expr(bottom: Dim, height: Dim, slope: Dim) -> str:
+    """梯形面积的代入算式：``(2×B+2×H×放坡系数)×H/2``（直壁为 ``B×H``）。
+
+    B 与 H 都带各自来源的算式（槽底宽由管径 / 图集 / 面宽原则推出），
+    算式展开写全、不做预运算；B 只在算式里出现一次，避免长算式重复。
+    """
+    h = wrap(height.e)
+    b = wrap(bottom.e)
+    if slope.v == 0:
+        return f"{b}×{h}"
+    return f"(2×{b}+2×{h}×{wrap(slope.e)})×{h}/2"
+
+
+def widen(delta: Dim, slope: Dim) -> Dim:
+    """放坡外扩量 ``2×Δ×放坡系数``（底宽随层高外扩，算式保留两个来源）。"""
+    return Dim(delta.v * slope.v * 2, f"2×{wrap(delta.e)}×{wrap(slope.e)}")
 
 
 def min_h(height: Dim, remaining: Dim) -> tuple[Dim, Dim]:
@@ -47,7 +60,7 @@ def split_h_by_step(levels: list, depth: Dim) -> list[Dim]:
     ``levels`` 为做法内的围护构件级列表（order_no 升序，levels[-1] 最深）；
     ``h < 0`` 的级与其余负值级均分 ``depth - 固定高合计``（埋深算式随之进算式）。
     """
-    fixed_h = sum(max(level.h, 0.0) for level in levels)
+    fixed_h = dim_sum(*(dim(level.h) for level in levels if level.h >= 0))
     fixed_cnt = sum(1 for level in levels if level.h >= 0)
     result: list[Dim] = []
     height = dim(0.0)
@@ -55,7 +68,7 @@ def split_h_by_step(levels: list, depth: Dim) -> list[Dim]:
         if level.h >= 0:
             step = dim(level.h)
         elif len(levels) > fixed_cnt:
-            step = (depth - dim(fixed_h)) / (len(levels) - fixed_cnt)
+            step = (depth - fixed_h) / (len(levels) - fixed_cnt)
         else:
             step = depth
         height = height + step
@@ -71,55 +84,54 @@ class _Segment:
     不能与上一段合并成一条梯形。
     """
 
-    bottom: float
+    bottom: Dim
     height: Dim
-    slope: float
+    slope: Dim
     breaks_before: bool = False
 
 
-def foundation_thickness(pf) -> float:
-    """换填总厚 mm（旧版 mcPcpFoundation.TiA）。"""
-    return sum(replacement.h for replacement in pf.replacements)
-
-
-def backfill_layers(pe, pf, at, size_h: float, depth: Dim, cushion_name: str) -> list[tuple[str, Dim, str]]:
+def backfill_layers(
+    pe, pf, ad: AtlasDims, size_h: Dim, depth: Dim, cushion_name: str
+) -> list[tuple[str, Dim, str]]:
     """分层回填列表（旧版 cal_groove 的 Backfill），返回 (定额键, 层厚, 说明)。"""
     layers: list[tuple[str, Dim, str]] = []
     for replacement in reversed(list(pf.replacements)):
-        h = mm2m(replacement.h)
-        layers.append((f"换填|{replacement.name}|m3", dim(h), f"换填 {replacement.name} {fmt(h)}m"))
+        h = dim(replacement.h) / 1000
+        layers.append((f"换填|{replacement.name}|m3", h, f"换填 {replacement.name} {fmt(h.v)}m"))
     total = depth if depth.v >= 0 else dim(0.0)
-    remaining = total - dim(mm2m(foundation_thickness(pf)))
+    remaining = total - foundation_thickness(pf) / 1000
 
-    height, remaining = min_h(dim(mm2m(at.c1 + at.c2)), remaining)
+    height, remaining = min_h((ad.c1 + ad.c2) / 1000, remaining)
     layers.append((f"垫层|{cushion_name}|m3", height, "垫层"))
-    height, remaining = min_h(dim(size_h / 2 + mm2m(at.t - at.c2)), remaining)
+    height, remaining = min_h(size_h / 2 + (ad.t - ad.c2) / 1000, remaining)
     layers.append((f"回填|{pe.dock_l}|m3", height, "坞膀下半"))
-    height, remaining = min_h(dim(size_h / 2 + mm2m(at.t)), remaining)
+    height, remaining = min_h(size_h / 2 + ad.t / 1000, remaining)
     layers.append((f"回填|{pe.dock_h}|m3", height, "坞膀上半"))
     height, remaining = min_h(dim(0.5), remaining)
     layers.append((f"回填|{pe.cover50}|m3", height, "管顶50cm"))
-    cover = total - dim(size_h) - dim(mm2m(foundation_thickness(pf) + at.t * 2 + at.c1)) - dim(0.5)
+    cover = total - size_h - (foundation_thickness(pf) + ad.t * 2 + ad.c1) / 1000 - dim(0.5)
     height, remaining = min_h(cover, remaining)
     layers.append((f"回填|{pe.cover}|m3", height, "覆土"))
     return layers
 
 
-def groove_width(at, size_b: float) -> float:
-    """槽底宽度 m：沟槽宽度表为 0 时按 断面宽+2×(壁厚+工作面+加宽) 推算。"""
-    if at.groove_b != 0:
-        return at.groove_b
-    return size_b + mm2m(at.t * 2 + at.a * 2 + at.workwidth * 2)
+def groove_width(ad: AtlasDims, size_b: Dim) -> Dim:
+    """槽底宽度 m：沟槽宽度表为 0 时按 断面宽+2×(壁厚+工作面加宽+工作面) 推算。"""
+    if ad.groove_b.v != 0:
+        return ad.groove_b
+    return size_b + scale_sum((ad.t, ad.a, ad.workwidth), 2.0) / 1000
 
 
-def cal_groove(pe, work, pf, at, size_b: float, size_h: float, depth: Dim, out: QDict) -> bool:
+def cal_groove(
+    pe, work, pf, ad: AtlasDims, size_b: Dim, size_h: Dim, depth: Dim, out: QDict
+) -> bool:
     """计算沟槽断面工程量（每延米），结果写入 ``out``。
 
     返回 False 表示没有产生任何土方（覆土不足 / 深度为 0）。
     """
     cushion_name = pe.cushions[0].name if pe.cushions else "中粗砂"
-    layers = backfill_layers(pe, pf, at, size_h, depth, cushion_name)
-    bottom = groove_width(at, size_b)
+    layers = backfill_layers(pe, pf, ad, size_h, depth, cushion_name)
+    bottom = groove_width(ad, size_b)
     step_heights = split_h_by_step(list(work.levels), depth)
     if not step_heights:
         return False
@@ -141,9 +153,12 @@ def cal_groove(pe, work, pf, at, size_b: float, size_h: float, depth: Dim, out: 
                 delta = step_top - current
                 clipped = True
             slope = level_slope(work.levels[step])
-            area = trapezoid(bottom, delta.v, slope)
-            expr = trapezoid_expr(bottom, delta.v, slope, delta.e)
-            out.add(key, area, expr, note)
+            out.add(
+                key,
+                trapezoid(bottom.v, delta.v, slope.v),
+                trapezoid_expr(bottom, delta, slope),
+                note,
+            )
             dig_segments.append(_Segment(bottom=bottom, height=delta, slope=slope, breaks_before=jump_pending))
             jump_pending = False
             if target.v <= step_top.v:
@@ -151,12 +166,12 @@ def cal_groove(pe, work, pf, at, size_b: float, size_h: float, depth: Dim, out: 
             else:
                 # 切级处 current 恰好到达分级标高：数值同旧版递推，算式直接取标高，
                 # 避免 "(累计)+(标高−累计)" 这类未化简写法
-                current = dim(current.v + delta.v, step_top.e)
-            bottom += delta.v * slope * 2
+                current = Dim(current.v + delta.v, step_top.e)
+            bottom = bottom + widen(delta, slope)
             if current.v == step_top.v and step > 0:
                 step -= 1
                 if step_heights[step].v != step_heights[step + 1].v and step_heights[step + 1].v != 0:
-                    bottom += work.levels[step].step_width * 2
+                    bottom = bottom + dim(work.levels[step].step_width) * 2
                     jump_pending = True  # 平台加宽处断开，不与上一段合并
             if current.v - target.v >= -0.0001:
                 break
@@ -173,30 +188,34 @@ def cal_groove(pe, work, pf, at, size_b: float, size_h: float, depth: Dim, out: 
         while (
             index < len(dig_segments)
             and not dig_segments[index].breaks_before
-            and dig_segments[index].slope == segment.slope
+            and dig_segments[index].slope.v == segment.slope.v
         ):
             total = total + dig_segments[index].height
             index += 1
         if total.v != 0:
             # 连续段恰好铺满全槽时层厚就是沟槽深度，算式直接用埋深算式（含垫层调整）
-            height_expr = depth.e if abs(total.v - depth.v) < 1e-9 else total.e
+            height = depth if abs(total.v - depth.v) < 1e-9 else total
             dig.add_term(
-                trapezoid(segment.bottom, total.v, segment.slope),
-                trapezoid_expr(segment.bottom, total.v, segment.slope, height_expr),
+                trapezoid(segment.bottom.v, total.v, segment.slope.v),
+                trapezoid_expr(segment.bottom, height, segment.slope),
             )
     if not dig.terms:
         out.discard(dig_key)
     return len(out) > 0
 
 
-def level_slope(level) -> float:
-    """围护级的放坡系数：A 参数显示名以“放坡系数”开头时取其值，否则 0（旧版约定）。"""
+def level_slope(level) -> Dim:
+    """围护级的放坡系数：A 参数显示名以“放坡系数”开头时取其值（旧版约定），否则 0。"""
     component = level.components[0] if level.components else None
     if component is None:
-        return 0.0
+        return dim(0.0)
     for param in component.params:
-        if param.key == "A" and param.value.split("|")[0].startswith("放坡系数"):
-            from app.core.evaluator import evaluate_or_default
+        if param.key != "A":
+            continue
+        display, _, expression = (param.value or "").partition("|")
+        if not display.startswith("放坡系数"):
+            return dim(0.0)
+        from app.core.evaluator import evaluate_or_default
 
-            return evaluate_or_default(param.value.split("|", 1)[1] if "|" in param.value else "")
-    return 0.0
+        return raw_dim(expression, evaluate_or_default(expression))
+    return dim(0.0)

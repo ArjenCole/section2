@@ -48,6 +48,7 @@ from app.core.models.models import (
 from app.core.calc import groove
 from app.core.calc.engine import (
     ElementInput,
+    atlas_dims,
     build_atlas_query,
     build_element_input,
     choice_work,
@@ -493,8 +494,9 @@ def _build_trench_scene(
         return None, "该围护原则没有任何围护分级，无法绘制断面。"
 
     cushion_name = pe.cushions[0].name if pe.cushions else "中粗砂"
-    layers = groove.backfill_layers(pe, pf, at_display, info.size_h, dim(depth), cushion_name)
-    bottom = groove.groove_width(at_display, info.size_b)
+    ad_display = atlas_dims(info, at_display)  # 图集参数的算式伴随（这里只取数值）
+    layers = groove.backfill_layers(pe, pf, ad_display, info.size_h_dim, dim(depth), cushion_name)
+    bottom = groove.groove_width(ad_display, info.size_b_dim).v
     segments = _walk_layers(list(work_left.levels), layers, bottom, depth)
     segments_right = _walk_layers(list(work_right.levels), layers, bottom, depth)
     total_h = segments[-1].h_current + segments[-1].h_delta if segments else 0.0
@@ -541,7 +543,7 @@ def _walk_layers(levels: list, layers: list[tuple[str, float, str]], bottom: flo
         target = current + layer_h
         while True:
             delta = min(target, step_heights[step]) - current
-            slope = level_slope(levels[step])
+            slope = level_slope(levels[step]).v
             continues = bool(segments) and segments[-1].key == key
             segments.append(_Segment(key, bottom, current, delta, slope, continues))
             current += delta

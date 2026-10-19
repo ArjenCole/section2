@@ -71,6 +71,13 @@ def test_closed_form_trapezoid(project) -> None:
     dig_per_meter = (2 * bottom + 2 * groove_depth) * groove_depth / 2
     assert dig_per_meter == pytest.approx(dq.get("开挖|Ⅲ类土|m3").value / 100, rel=1e-9)
 
+    # 算式不预运算：下底边（槽底宽 = 管径/1000 + 2×(壁厚+工作面加宽+工作面)/1000）
+    # 与沟槽深度（埋深原文 + (壁厚+垫层厚)/1000）都把来源写全，不出现算好的数字
+    dig = dq.get("开挖|Ⅲ类土|m3")
+    assert "(600/1000+(65×2+130×2+500×2)/1000)" in dig.expression
+    assert "(2.5+0.3+(65+130)/1000)" in dig.expression
+    assert "(2×" in dig.expression  # 梯形 (2×B+2×H×放坡系数)×H/2
+
     # 分层合计 = 挖方（无平台跳级时连续梯形闭合）
     layers = (c1 + c2) / 1000 + (0.3 + (t - c2) / 1000) + (0.3 + t / 1000) + 0.5 + (
         groove_depth - 0.6 - (t * 2 + c1) / 1000 - 0.5
@@ -95,8 +102,9 @@ def test_user_expression_in_output(project) -> None:
     unit = project
     elements = {element.name: element for element in _elements(unit)}
     dig = _results(unit)[elements["混凝土管"].id].get("开挖|Ⅲ类土|m3")
-    # 埋深 "2.5+0.3"：挖方层厚 = 埋深原文 + 垫层/板厚调整；数量 100 纯数字照旧
-    assert "(2.5+0.3+0.195)" in dig.expression
+    # 埋深 "2.5+0.3"：挖方层厚 = 埋深原文 + 垫层/板厚调整（调整量也不预运算，
+    # (65+130)/1000 写全图集壁厚与垫层厚）；数量 100 纯数字照旧
+    assert "(2.5+0.3+(65+130)/1000)" in dig.expression
     assert dig.expression.endswith("×100")
 
     # 数量写算式：×数量 以算式原文进每条算式（展示层 * 统一转 ×）
@@ -105,6 +113,24 @@ def test_user_expression_in_output(project) -> None:
     dig4 = _results(unit)[e4.id].get("开挖|Ⅲ类土|m3")
     assert "×(50×2)" in dig4.expression
     assert evaluate(dig4.expression) == pytest.approx(dig4.value, rel=0.005)
+
+
+def test_well_point_expression_with_amount_expression(project) -> None:
+    """降水量座数不预运算：ceil(长度/井距)×侧数 写全，数量写算式时 ÷数量 不丢括号。"""
+    from app.core.models.models import PcpPrecipitation
+    from sqlalchemy import select
+
+    unit = project
+    pp = orm.session().scalars(select(PcpPrecipitation)).first()
+    pp.light_well = "1|1.2|2"  # 阈值 1m → 深度 3m 命中轻型井点（井距 1.2m、双侧）
+    project_io.commit()
+    element = unit_vm.create_element(unit.id, category=1, name="井点", depth="3", amount="40*2")
+    unit_vm.create_pipe(element.id, mat="Ⅱ级混凝土管", dn=600, content="1")
+
+    row = _results(unit)[element.id].get("降水|轻型井点|根")
+    assert row.expression == "ceil((40×2)/1.2)×2/(40×2)×(40×2)"
+    assert row.value == pytest.approx(134.0)
+    assert evaluate(row.expression) == pytest.approx(row.value)
 
 
 def test_baseline_file(project) -> None:
