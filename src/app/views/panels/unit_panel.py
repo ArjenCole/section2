@@ -624,9 +624,7 @@ class UnitPanel(QWidget):
             expression = QTableWidgetItem(quantity.expression)
             expression.setFlags(expression.flags() & ~Qt.ItemFlag.ItemIsEditable)
             expression.setData(Qt.ItemDataRole.UserRole, quantity.expression)
-            expression.setToolTip(quantity.expression)
-            if quantity.details:
-                expression.setToolTip(quantity.expression + "\n\n" + "\n".join(quantity.details))
+            expression.setToolTip(_expression_detail(quantity))
             digests.setItem(row_index, _QCOL_EXPRESSION, expression)
             amount = QTableWidgetItem(calc_fmt(quantity.value))
             amount.setFlags(amount.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -699,53 +697,56 @@ class UnitPanel(QWidget):
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     if column == _QCOL_EXPRESSION:
                         item.setData(Qt.ItemDataRole.UserRole, quantity.expression)
-                        tooltip = quantity.expression
-                        if quantity.details:
-                            tooltip += "\n\n" + "\n".join(quantity.details)
-                        item.setToolTip(tooltip)
+                        item.setToolTip(_expression_detail(quantity))
                     listing.setItem(row_index, column, item)
                 row_index += 1
 
     @staticmethod
     def _merge_quantities(qlists: list) -> list:
-        """把多个构件的工程量按键合并：数值求和、表达式用 " + " 连接。"""
+        """把多个构件的工程量按键合并：数值求和、表达式用 " + " 连接，步骤逐条累加。"""
         from app.core.calc.tracer import order_key
 
         merged: dict[str, dict] = {}
-        for dq in qlists:
+        for element_index, dq in enumerate(qlists, start=1):
             for quantity in sorted(dq.items(), key=lambda q: (order_key(q.key), q.key)):
-                entry = merged.setdefault(quantity.key, {"value": 0.0, "exprs": [], "details": []})
+                entry = merged.setdefault(quantity.key, {"value": 0.0, "exprs": [], "steps": []})
                 entry["value"] += quantity.value
                 if quantity.value or quantity.expression not in ("", "0"):
                     entry["exprs"].append(quantity.expression)
-                entry["details"].extend(quantity.details)
+                entry["steps"].extend(
+                    (f"[构件{element_index}] {note}" if note else f"[构件{element_index}]", text)
+                    for note, text in quantity.steps()
+                )
 
         class _Merged:
-            __slots__ = ("key", "value", "expression", "details")
+            """多选合并行：算式是各构件算式的 " + " 连接，步骤按构件分组。"""
 
-            def __init__(self, key: str, value: float, expression: str, details: list[str]) -> None:
+            __slots__ = ("key", "value", "expression", "_steps")
+            #: 展示层据此换用“按构件列出”的说法（只有同一构件内的步骤才构成该构件的算式）
+            per_element = True
+
+            def __init__(self, key: str, value: float, expression: str, steps: list) -> None:
                 self.key = key
                 self.value = value
                 self.expression = expression
-                self.details = details
+                self._steps = steps
+
+            def steps(self) -> list:
+                return self._steps
 
         return [
-            _Merged(key, entry["value"], " + ".join(entry["exprs"]) or "0", entry["details"])
+            _Merged(key, entry["value"], " + ".join(entry["exprs"]) or "0", entry["steps"])
             for key, entry in merged.items()
         ]
 
     def _show_expression_detail(self, item: QTableWidgetItem) -> None:
-        """双击“计算表达式”列：弹窗展示完整算式与中间步骤。"""
-        expression = item.data(Qt.ItemDataRole.UserRole)
-        if not expression:
+        """双击“计算表达式”列：弹窗展示完整算式与中间步骤（各步说明 + 该步算式）。"""
+        text = item.toolTip()
+        if not text:
             return
-        details = item.toolTip()
-        informative = details if details and "\n\n" in details else ""
-        html = (
-            f"<pre style='white-space:pre-wrap'>{expression}</pre>"
-            + (f"<br><br>中间步骤：<br>{informative.split(chr(10)+chr(10))[-1]}" if informative else "")
+        FramelessMessageBox.information(
+            self, "计算表达式", f"<pre style='white-space:pre-wrap'>{text}</pre>"
         )
-        FramelessMessageBox.information(self, "计算表达式", html)
 
     def _fill_element_row(
         self,
@@ -1337,6 +1338,29 @@ def _combo_names(names: list[str], rows: list[ElementRow], field: str) -> list[s
     if not result:
         result = [""]
     return result
+
+
+def _expression_detail(quantity) -> str:
+    """「计算表达式」列的 tooltip / 详情弹窗正文：完整算式 + 中间步骤。
+
+    中间步骤每行 = 该步说明 + 该步算式（由 ``Quantity.steps()`` 派生，见 tracer），
+    各步算式按顺序拼起来就是上面那条完整算式；只有一步且带说明时（没有可拆的
+    步骤，例如“基础 − 弓形占位”）只补一行说明，不重复整条算式。
+    多选合并行（``_Merged``）的步骤是按构件分组的，标题相应改写。
+    """
+    steps = quantity.steps()
+    if len(steps) < 2:
+        notes = [note for note, _text in steps if note]
+        return quantity.expression + ("\n\n" + "\n".join(notes) if notes else "")
+    lines = [
+        f"{index}. {note}：{text}" if note else f"{index}. {text}"
+        for index, (note, text) in enumerate(steps, start=1)
+    ]
+    if getattr(quantity, "per_element", False):
+        heading = "中间步骤（按构件列出；同一构件内各步拼接 = 该构件的算式）："
+    else:
+        heading = "中间步骤（各步拼接 = 上式）："
+    return f"{quantity.expression}\n\n{heading}\n" + "\n".join(lines)
 
 
 def _apply_expression_hint(item: QTableWidgetItem, text: str, error: str) -> None:

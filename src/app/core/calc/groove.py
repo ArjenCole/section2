@@ -80,6 +80,7 @@ def split_h_by_step(levels: list, depth: Dim) -> list[Dim]:
 class _Segment:
     """挖方的一个等坡段（用于把连续梯形合并成一条算式）。
 
+    ``note`` 为本段覆盖的分层说明（如 ``垫层``），合并时首尾相接成 ``垫层~坞膀上半``；
     ``breaks_before`` 为 True 表示本段之前发生过平台加宽（换级），
     不能与上一段合并成一条梯形。
     """
@@ -87,6 +88,7 @@ class _Segment:
     bottom: Dim
     height: Dim
     slope: Dim
+    note: str = ""
     breaks_before: bool = False
 
 
@@ -159,7 +161,15 @@ def cal_groove(
                 trapezoid_expr(bottom, delta, slope),
                 note,
             )
-            dig_segments.append(_Segment(bottom=bottom, height=delta, slope=slope, breaks_before=jump_pending))
+            dig_segments.append(
+                _Segment(
+                    bottom=bottom,
+                    height=delta,
+                    slope=slope,
+                    note=note,
+                    breaks_before=jump_pending,
+                )
+            )
             jump_pending = False
             if target.v <= step_top.v:
                 current = current + delta
@@ -176,7 +186,8 @@ def cal_groove(
             if current.v - target.v >= -0.0001:
                 break
 
-    # 挖方 = 各层梯形之和；等坡且无平台的连续段合并成一条梯形算式（可读性简化）
+    # 挖方 = 各层梯形之和；等坡且无平台的连续段合并成一条梯形算式（可读性简化），
+    # 说明取该段覆盖的分层范围（首层~末层，只有一层时就写该层）
     dig = out.add(dig_key, 0.0)
     dig.terms.clear()
     dig.value = 0.0
@@ -184,6 +195,7 @@ def cal_groove(
     while index < len(dig_segments):
         segment = dig_segments[index]
         total = segment.height
+        notes = [segment.note] if segment.note else []
         index += 1
         while (
             index < len(dig_segments)
@@ -191,6 +203,8 @@ def cal_groove(
             and dig_segments[index].slope.v == segment.slope.v
         ):
             total = total + dig_segments[index].height
+            if dig_segments[index].note:
+                notes.append(dig_segments[index].note)
             index += 1
         if total.v != 0:
             # 连续段恰好铺满全槽时层厚就是沟槽深度，算式直接用埋深算式（含垫层调整）
@@ -198,10 +212,20 @@ def cal_groove(
             dig.add_term(
                 trapezoid(segment.bottom.v, total.v, segment.slope.v),
                 trapezoid_expr(segment.bottom, height, segment.slope),
+                _segment_note(notes),
             )
     if not dig.terms:
         out.discard(dig_key)
     return len(out) > 0
+
+
+def _segment_note(notes: list[str]) -> str:
+    """挖方段的说明：``垫层~坞膀上半``（只覆盖一层时就是该层名）。"""
+    if not notes:
+        return ""
+    if len(notes) == 1 or notes[0] == notes[-1]:
+        return notes[0]
+    return f"{notes[0]}~{notes[-1]}"
 
 
 def level_slope(level) -> Dim:

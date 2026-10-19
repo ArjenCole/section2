@@ -131,8 +131,8 @@ def _found_encased(info, pe, ad: AtlasDims, out: QDict) -> None:
     add_dim(out, f"垫层|{cushion_name}|m3", -(deducted * width), "垫层扣基础占位")
     remain = remain - deducted
 
-    add_dim(out, "包封|混凝土|m3", info.size_b_dim * info.size_h_dim)
-    add_dim(out, "包封|模板|m2", info.size_h_dim * 2)
+    add_dim(out, "包封|混凝土|m3", info.size_b_dim * info.size_h_dim, "包封混凝土")
+    add_dim(out, "包封|模板|m2", info.size_h_dim * 2, "包封模板")
 
     used = dim_min(remain, info.size_h_dim / 2)
     add_dim(out, f"回填|{pe.dock_l}|m3", -(info.size_b_dim * used), "坞膀扣包封")

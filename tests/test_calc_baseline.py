@@ -149,6 +149,21 @@ def test_well_point_expression_with_amount_expression(project) -> None:
     assert evaluate(row.expression) == pytest.approx(row.value)
 
 
+def test_steps_match_expression(project) -> None:
+    """中间步骤与算式同源：各步算式按顺序拼接 = 完整算式，多项条目每项都有说明。"""
+    unit = project
+    checked = 0
+    for element in _elements(unit):
+        for quantity in sorted_items(_results(unit)[element.id]):
+            steps = quantity.steps()
+            joined = "".join(text for _note, text in steps) or "0"
+            assert joined == quantity.expression, f"{quantity.key}：步骤拼接 ≠ 算式"
+            if len(steps) > 1:
+                assert all(note for note, _text in steps), f"{quantity.key} 有没说明的步骤"
+                checked += 1
+    assert checked, "基准算例里应有多步条目"
+
+
 def test_baseline_file(project) -> None:
     """基准回归：结果与 tests/baselines/对拍工程.json 一致。"""
     unit = project

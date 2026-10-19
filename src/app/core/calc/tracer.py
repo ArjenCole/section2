@@ -1,6 +1,6 @@
 """表达式记录器。
 
-每个工程量条目产出 ``{key, value, expression, details}``：
+每个工程量条目产出 ``{key, value, expression, terms}``：
 
 * ``expression`` 是一条代入后的算式，如
   ``(2×(600/1000+(65×2+130×2+500×2)/1000)+2×2.995×1)×2.995/2``；
@@ -10,8 +10,9 @@
 * 用户在埋深 / 数量 / 参数 / 含量列写的算式以原文（括号保护）出现在代入位置，
   见 :class:`Dim` 与 :func:`raw_dim`；
 * 多来源的量（分层土方、多个构件公式）按项累加，算式用 +/− 连接各代入项；
-* ``details`` 保留中间步骤（分层明细、公式名等），供表格 tooltip / 详情弹窗查看，
-  不进主算式。
+* 中间步骤（:meth:`Quantity.steps`）＝逐项一行「说明 + 该步算式」（分层、扣减、
+  公式类别等），由项本身派生，每步算式按顺序拼起来就是完整算式；
+  供表格 tooltip / 详情弹窗查看，不进主算式。
 
 算式求值与表达式拼接共用同一套数值：先拼出可求值的算式字符串，
 再用 core.evaluator 对它求值得到结果，禁止两套算法各算各的。
@@ -189,7 +190,7 @@ def prettify(expression: str) -> str:
 
 @dataclass
 class Term:
-    """工程量的一个代入项：expr 为未带正负号的算式，value 为带符号数值。"""
+    """工程量的一个代入项：expr 为未带正负号的算式，value 为带符号数值，note 为该项说明。"""
 
     expr: str
     value: float
@@ -198,33 +199,46 @@ class Term:
 
 @dataclass
 class Quantity:
-    """一个工程量条目：定额键 + 数值 + 数值代入算式 + 中间步骤。"""
+    """一个工程量条目：定额键 + 数值 + 数值代入算式 + 中间步骤。
+
+    中间步骤由项（:class:`Term`）本身派生，见 :meth:`steps`：说明挂在项上，
+    不单独存一份标签列表，因此“每步算式拼起来”与 :attr:`expression` 必然一致。
+    """
 
     key: str
     value: float = 0.0
     terms: list[Term] = field(default_factory=list)
-    details: list[str] = field(default_factory=list)
 
-    @property
-    def expression(self) -> str:
-        """整条算式：各代入项按符号连接；负项只在需要括号时才括（见 needs_parens）。"""
-        parts: list[str] = []
+    def steps(self) -> list[tuple[str, str]]:
+        """中间步骤：``[(说明, 带符号的该项算式)]``，按相加顺序排列（可能为空）。
+
+        ``"".join(算式 for _说明, 算式 in steps())`` 恒等于 :attr:`expression`
+        ——两者出自同一份项列表，展示层不再拼字符串。
+        """
+        steps: list[tuple[str, str]] = []
         for index, term in enumerate(self.terms):
             expr = term.expr
             negative = term.value < 0
             if negative and needs_parens(expr):
                 expr = f"({expr})"
             if index == 0:
-                parts.append(f"-{expr}" if negative else expr)
+                text = f"-{expr}" if negative else expr
             else:
-                parts.append(f"-{expr}" if negative else f"+{expr}")
-        return prettify("".join(parts)) if parts else "0"
+                text = f"-{expr}" if negative else f"+{expr}"
+            steps.append((term.note, prettify(text)))
+        return steps
 
-    def add_term(self, value: float, expr: str) -> None:
+    @property
+    def expression(self) -> str:
+        """整条算式：各代入项按符号连接（与 :meth:`steps` 同源）。"""
+        parts = [text for _note, text in self.steps()]
+        return "".join(parts) if parts else "0"
+
+    def add_term(self, value: float, expr: str, note: str = "") -> None:
         self.value += value
         if value != 0:
             # 算式只存“数值代入”部分，正负号由 value 决定，避免出现双重负号
-            self.terms.append(Term(expr=expr.lstrip("-") or "0", value=value))
+            self.terms.append(Term(expr=expr.lstrip("-") or "0", value=value, note=note))
 
 
 class QDict:
@@ -254,13 +268,15 @@ class QDict:
 
     # ---------------------------------------------------------------- 累加
     def add(self, key: str, value: float, expr: str = "", note: str = "") -> Quantity:
+        """累加一项：``note`` 是该步的说明，挂在项上随 :meth:`Quantity.steps` 一起展示。
+
+        数值为 0 的项不进算式，其说明也一并丢弃（步骤列表与算式严格一一对应）。
+        """
         quantity = self._items.get(key)
         if quantity is None:
             quantity = Quantity(key=key)
             self._items[key] = quantity
-        quantity.add_term(value, expr or fmt(value))
-        if note:
-            quantity.details.append(note)
+        quantity.add_term(value, expr or fmt(value), note)
         return quantity
 
     def discard(self, key: str) -> None:
@@ -268,12 +284,11 @@ class QDict:
         self._items.pop(key, None)
 
     def extend(self, other: "QDict") -> None:
-        """合并另一本字典（旧版 PlusDic_StrmcQ）。"""
+        """合并另一本字典（旧版 PlusDic_StrmcQ）：项连同说明一起拷贝。"""
         for quantity in other.items():
             target = self.add(quantity.key, 0.0)
             for term in quantity.terms:
-                target.add_term(term.value, term.expr)
-            target.details.extend(quantity.details)
+                target.add_term(term.value, term.expr, term.note)
 
     def scale(self, coefficient: float, expr: str | None = None) -> None:
         """整体乘系数（旧版 MultDic_StrmcQ）；系数进算式，``expr`` 为系数的算式原文。

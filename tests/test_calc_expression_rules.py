@@ -17,6 +17,7 @@ from app.core.evaluator import evaluate
 from app.core.calc import engine
 from app.core.calc.tracer import (
     Dim,
+    QDict,
     dim,
     dim_min,
     dim_sum,
@@ -163,3 +164,85 @@ def test_same_number_from_different_sources_stays_distinct() -> None:
     assert (dim(65) / 1000).e == "65/1000"  # 换算写全
     assert (dim(65) / 1000).v == pytest.approx(dim(0.065).v)
     assert (dim(65) / 1000).e != dim(0.065).e
+
+
+# --------------------------------------------------------------------------- #
+# 中间步骤：说明挂在项上，各步算式拼接 = 完整算式
+# --------------------------------------------------------------------------- #
+def test_steps_carry_note_and_expr_per_term() -> None:
+    out = QDict()
+    out.add("回填|中粗砂|m3", 2.0, "1×2", "坞膀下半")
+    out.add("回填|中粗砂|m3", 0.5, "0.5", "管顶50cm")
+    out.add("回填|中粗砂|m3", -0.3, "0.3+1×0", "坞膀扣弓形")
+    quantity = out.get("回填|中粗砂|m3")
+
+    assert quantity.expression == "1×2+0.5-(0.3+1×0)"
+    assert quantity.steps() == [
+        ("坞膀下半", "1×2"),
+        ("管顶50cm", "+0.5"),
+        ("坞膀扣弓形", "-(0.3+1×0)"),
+    ]
+    # 不变式：各步算式按顺序拼接就是完整算式（展示层不再另拼字符串）
+    assert "".join(text for _note, text in quantity.steps()) == quantity.expression
+
+
+def test_steps_skip_zero_terms_with_their_note() -> None:
+    """数值为 0 的项不进算式，其说明也一并丢弃，步骤与算式严格一一对应。"""
+    out = QDict()
+    out.add("开挖|Ⅲ类土|m3", 1.5, "1.5", "垫层~覆土")
+    out.add("开挖|Ⅲ类土|m3", 0.0, "0", "空段")
+    quantity = out.get("开挖|Ⅲ类土|m3")
+    assert quantity.steps() == [("垫层~覆土", "1.5")]
+    assert quantity.value == pytest.approx(1.5)
+
+
+def test_steps_survive_merge_and_scale() -> None:
+    """多原则合并（extend）与 ×数量 都保留每步说明与算式。"""
+    first = QDict()
+    first.add("开挖|Ⅲ类土|m3", 1.0, "1×(600/1000)", "垫层~坞膀上半")
+    second = QDict()
+    second.add("开挖|Ⅲ类土|m3", 2.0, "2×3", "第2级围护段")
+    merged = QDict()
+    merged.extend(first)
+    merged.extend(second)
+    quantity = merged.get("开挖|Ⅲ类土|m3")
+    assert [note for note, _text in quantity.steps()] == ["垫层~坞膀上半", "第2级围护段"]
+    merged.scale(3.0, expr="3")  # ×数量 3（系数与算式原文都是 3）
+    assert quantity.steps() == [
+        ("垫层~坞膀上半", "1×(600/1000)×3"),
+        ("第2级围护段", "+2×3×3"),
+    ]
+    assert quantity.value == pytest.approx(9.0)
+
+
+def test_merged_rows_keep_per_element_steps() -> None:
+    """多选构件时（定额页签合并行）：算式用 " + " 连接，步骤按构件分组列出。"""
+    from app.views.panels.unit_panel import UnitPanel, _expression_detail
+
+    first = QDict()
+    first.add("开挖|Ⅲ类土|m3", 10.0, "10", "垫层~覆土")
+    second = QDict()
+    second.add("开挖|Ⅲ类土|m3", 20.0, "20", "垫层~覆土")
+    merged = UnitPanel._merge_quantities([first, second])[0]
+    assert merged.value == pytest.approx(30.0)
+    assert merged.expression == "10 + 20"
+    assert _expression_detail(merged) == (
+        "10 + 20\n\n中间步骤（按构件列出；同一构件内各步拼接 = 该构件的算式）：\n"
+        "1. [构件1] 垫层~覆土：10\n2. [构件2] 垫层~覆土：20"
+    )
+
+
+def test_expression_detail_tooltip() -> None:
+    """tooltip / 弹窗正文：完整算式 + 逐步骤算式；单项带说明时只补说明。"""
+    from app.views.panels.unit_panel import _expression_detail
+
+    out = QDict()
+    out.add("垫层|中粗砂|m3", 1.99, "1.99", "垫层")
+    out.add("垫层|中粗砂|m3", -0.3, "0.3", "垫层扣基础占位")
+    assert _expression_detail(out.get("垫层|中粗砂|m3")) == (
+        "1.99-0.3\n\n中间步骤（各步拼接 = 上式）：\n1. 垫层：1.99\n2. 垫层扣基础占位：-0.3"
+    )
+
+    single = QDict()
+    single.add("管道基础|混凝土|m3", 1.0, "2-1", "基础 2 − 120° 弓形占位 1")
+    assert _expression_detail(single.get("管道基础|混凝土|m3")) == "2-1\n\n基础 2 − 120° 弓形占位 1"
