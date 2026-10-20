@@ -11,10 +11,21 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
 from typing import Callable
 
 import httpx
+
+from app.core.version import APP_VERSION
+
+#: 客户端标识（opencode Go 要求用自己的 UA，而不是 httpx 默认的 python-httpx/x.y）
+CLIENT_USER_AGENT = f"section2/{APP_VERSION}"
+
+
+def new_session_id() -> str:
+    """opencode Go 的 ``x-opencode-session``：一场对话内保持稳定即可。"""
+    return uuid.uuid4().hex
 
 
 class AiProviderError(RuntimeError):
@@ -47,13 +58,23 @@ def stream_chat(
     on_content: Callable[[str], None] | None = None,
     on_reasoning: Callable[[str], None] | None = None,
     on_tool_call: Callable[[int, str, str, str], None] | None = None,
+    session_id: str | None = None,
     timeout: float = 120.0,
 ) -> None:
-    """发起一次流式对话；出错抛 AiProviderError。"""
+    """发起一次流式对话；出错抛 AiProviderError。
+
+    ``session_id`` 仅用于 opencode Go（``x-opencode-session``）：同一场对话的
+    多轮请求应传同一个值，便于网关路由与提示词缓存；不传则每次请求随机生成。
+    """
     url = config.base_url.rstrip("/")
     if not url.endswith("/chat/completions"):
         url = url + "/chat/completions"
-    headers = {"Content-Type": "application/json"}
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": CLIENT_USER_AGENT,
+    }
+    if "opencode" in url.lower():
+        headers["x-opencode-session"] = session_id or new_session_id()
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     payload: dict = {

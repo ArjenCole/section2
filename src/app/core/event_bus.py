@@ -22,6 +22,8 @@ class EventBus(QObject):
     node_selected = Signal(object)  # viewmodels.project_vm.TreeNode | None
     unit_changed = Signal(int)  # 单位工程 id：构件/管道/参数变更
     principle_changed = Signal()  # 围护/地基原则内容变更：工程量与断面图需重算
+    #: AI 上下文变化（当前选中单位工程/构件）；载荷 dict，见 app.agent.context
+    ai_context_changed = Signal(object)
 
     # --- 界面 ---
     status_message = Signal(str, int)  # 文本, 毫秒（0 = 常驻）

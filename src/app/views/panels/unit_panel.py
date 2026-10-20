@@ -545,6 +545,7 @@ class UnitPanel(QWidget):
             self._param_table.setRowCount(0)
             self._qty_table.setRowCount(0)
             self._section_view.set_element(None)
+            bus().ai_context_changed.emit({"element_id": None, "element_name": ""})
             return
         self._vm.load_unit(unit_id)
 
@@ -887,6 +888,15 @@ class UnitPanel(QWidget):
         self._auto_switch_multi_tab(element_id)
         self._section_view.set_element(element_id)
         self._fill_quantities()
+        from app.viewmodels.unit_vm import _element
+
+        element = _element(element_id)
+        bus().ai_context_changed.emit(
+            {
+                "element_id": element_id,
+                "element_name": element.name if element is not None else "",
+            }
+        )
 
     def _auto_switch_multi_tab(self, element_id: int) -> None:
         """选中使用多原则的构件时自动切到对应 Tab（旧版 PNLPE/PNLPF 自动出现）。"""
@@ -916,6 +926,7 @@ class UnitPanel(QWidget):
         self._fill_multi_placeholders()
         self._section_view.show_multi()
         self._fill_quantities()
+        bus().ai_context_changed.emit({"element_id": None, "element_name": ""})
 
     def _fill_multi_placeholders(self) -> None:
         """管材 / 构件参数 / 工程量三张表显示居中的“*多种…”占位行。"""

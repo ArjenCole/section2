@@ -81,6 +81,38 @@ def element_library() -> ElementLibrary:
     return ElementLibrary(categories=tuple(categories), units=units)
 
 
+def search_templates(category: str | None = None, keyword: str = "") -> list[dict]:
+    """关键词检索构件库模板（AI 工具用；index 寻址对模型不友好）。
+
+    返回 ``[{category, unit, index, template}]``；category 为空时搜索全部类别，
+    keyword 匹配模板 label / name / 规格文本（大小写不敏感）。
+    """
+    library = element_library()
+    categories = [category] if category else list(library.categories)
+    needle = (keyword or "").strip().lower()
+    results: list[dict] = []
+    for category_name in categories:
+        if category_name not in library.units:
+            continue
+        for unit in library.units_of(category_name):
+            for index, template in enumerate(unit.elements):
+                haystack = " ".join(
+                    [template.label, template.name, template.source]
+                    + [str(pipe[0]) for pipe in template.pipes]
+                ).lower()
+                if needle and needle not in haystack:
+                    continue
+                results.append(
+                    {
+                        "category": category_name,
+                        "unit": unit.name,
+                        "index": index,
+                        "template": template,
+                    }
+                )
+    return results
+
+
 def _template(element) -> ElementTemplate:
     category = _CATEGORY_BY_NAME.get(element.category, 1)
     pipes = tuple(

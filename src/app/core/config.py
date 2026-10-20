@@ -30,6 +30,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "require_confirmation": True,
         "providers": [],
     },
+    # MCP 服务（GUI 内嵌，仅本机回环；见 docs/mcp.md）
+    "mcp": {
+        "enabled": False,
+        "host": "127.0.0.1",
+        "port": 8765,
+        "token": "",
+        # false = 只暴露只读工具（写工具被过滤）
+        "allow_actions": True,
+        # MCP 通道写操作是否弹确认卡（false = 信任客户端自身批准，直接执行）
+        "require_confirmation": True,
+        # 文件写入类工具的目标路径白名单；空 = 不限制
+        "allowed_dirs": [],
+    },
     "recent_projects": [],
 }
 
@@ -158,6 +171,43 @@ class _Proxy:
             if provider.get("name") == name:
                 return provider
         return None
+
+    # ------------------------------------------------------------------ MCP
+    @property
+    def mcp(self) -> dict[str, Any]:
+        return self._data().get("mcp", {})
+
+    @property
+    def mcp_enabled(self) -> bool:
+        return bool(self.mcp.get("enabled", False))
+
+    @property
+    def mcp_host(self) -> str:
+        # 仅允许回环地址：DNS rebinding / 局域网访问防护
+        return "127.0.0.1"
+
+    @property
+    def mcp_port(self) -> int:
+        try:
+            return int(self.mcp.get("port", 8765))
+        except (TypeError, ValueError):
+            return 8765
+
+    @property
+    def mcp_token(self) -> str:
+        return str(self.mcp.get("token", ""))
+
+    @property
+    def mcp_allow_actions(self) -> bool:
+        return bool(self.mcp.get("allow_actions", True))
+
+    @property
+    def mcp_require_confirmation(self) -> bool:
+        return bool(self.mcp.get("require_confirmation", True))
+
+    @property
+    def mcp_allowed_dirs(self) -> list[str]:
+        return [str(p) for p in self.mcp.get("allowed_dirs", [])]
 
     @property
     def recent_projects(self) -> list[str]:

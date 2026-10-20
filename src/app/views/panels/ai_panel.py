@@ -17,6 +17,7 @@ agent 层沿用本项目的 AgentLoop（content/reasoning/status/finished/failed
 from __future__ import annotations
 
 import html
+import time
 
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
@@ -35,19 +36,22 @@ from PySide6.QtWidgets import (
 )
 
 from app.agent.agent_loop import AgentLoop
-from app.agent.tools.element_crud import ToolContext
+from app.agent.context import current as current_agent_context
+from app.agent.tool_registry import default_registry
 from app.core.config import get_config
 from app.core.event_bus import bus
 from app.resources.qss.theme import ThemeManager
 from app.services.ai import ai_keychain
-from app.services.ai.ai_provider import ChatMessage, ProviderConfig
+from app.services.ai.ai_provider import ChatMessage, ProviderConfig, new_session_id
 from app.views.widgets.frameless_dialog import FramelessMessageBox, load_icon
 
 _SYSTEM_PROMPT = (
-    "你是 section2（市政管道等线性工程工程量计算软件）的助手。"
-    "当前工程数据可以通过工具 list_elements / add_element / update_element / delete_element 操作，"
-    "涉及新增/修改/删除时必须先向用户复述将要做的改动。"
-    "回答用简体中文，简明扼要；涉及工程量计算时引用界面上的计算表达式。"
+    "你是 Section 2.0（市政管道等线性工程工程量计算软件）的助手。"
+    "你可以调用工具操作工程数据；涉及新增/修改/删除时，写操作会先弹确认卡。"
+    "回答用简体中文，简明扼要；涉及工程量计算时引用工具返回的计算表达式。\n"
+    "核心约束：禁止编造 id/原则名（必须先查询再写）；埋深/数量/参数值/管材含量可写算式原文"
+    "（如 2.5+0.3），不要把算式预计算后回写；计算结果的 expression/steps 原样引用、不要改写；"
+    "用户取消操作后不要重试同一工具。"
 )
 
 
@@ -250,12 +254,15 @@ class AiPanel(QWidget):
         super().__init__(parent)
         self.setToolTip("AI 助手（Ctrl+L 折叠/展开）")
         self._history: list[ChatMessage] = []
+        self._session_id = new_session_id()  # opencode Go 的稳定会话标识
         self._loop: AgentLoop | None = None
         self._thinking_block: _ThinkingBlock | None = None
         self._bubbles: list[_MessageBubble] = []
         self.unit_id: int | None = None  # 当前单位工程（AI 工具的作用范围）
         self.unit_name: str = ""
         self._stream_text = ""  # 当前流式正文累计
+        self._reasoning_buffer = ""  # 思考流缓冲（节流渲染）
+        self._reasoning_last = 0.0
         self._build()
         self._connect()
         self._refresh_hint()
@@ -428,6 +435,7 @@ class AiPanel(QWidget):
             if widget is not None:
                 widget.deleteLater()
         self._history.clear()
+        self._session_id = new_session_id()
         self._bubbles.clear()
         self._thinking_block = None
         self._send_btn.setEnabled(self._provider() is not None)
@@ -443,17 +451,20 @@ class AiPanel(QWidget):
         api_key = ai_keychain.get_api_key(provider.name)
         self._input.clear()
         self._history.append(ChatMessage(role="user", content=text))
-        system = ChatMessage(role="system", content=_SYSTEM_PROMPT)
+        agent_context = current_agent_context().as_dict()
+        rules = default_registry().to_rules_for_context(agent_context)
+        system = ChatMessage(
+            role="system",
+            content=_SYSTEM_PROMPT + ("\n\n" + rules if rules else ""),
+        )
         self._append_message("user", text)
 
-        context = ToolContext(unit_id=self.unit_id, unit_name=self.unit_name)
-        self._loop = AgentLoop(context)
+        self._loop = AgentLoop(agent_context, session_id=self._session_id)
         self._loop.content.connect(self._on_content)
         self._loop.reasoning.connect(self._on_reasoning)
         self._loop.status.connect(self._on_status)
         self._loop.finished.connect(self._on_finished)
         self._loop.failed.connect(self._on_failed)
-        self._loop.confirm_requested.connect(self._on_confirm)
         self._send_btn.setEnabled(False)
 
         # 预创建思考块并立即启动"思考中"动画（Quotor 同款，消除启动空白期）
@@ -472,9 +483,17 @@ class AiPanel(QWidget):
             self._scroll_to_bottom()
 
     def _on_reasoning(self, text: str) -> None:
-        if self._thinking_block is not None:
-            self._thinking_block.set_stream_text("（思考）" + text[-400:])
-            self._scroll_to_bottom()
+        """思考流节流渲染（0.25s 或累计 40 字符刷新一次，避免逐 token 重排）。"""
+        if self._thinking_block is None:
+            return
+        self._reasoning_buffer += text
+        now = time.monotonic()
+        if now - self._reasoning_last < 0.25 and len(self._reasoning_buffer) < 40:
+            return
+        self._reasoning_last = now
+        self._reasoning_buffer = ""
+        self._thinking_block.set_stream_text("（思考）" + text[-500:])
+        self._scroll_to_bottom()
 
     def _on_status(self, text: str) -> None:
         """工具调用：🔧 行 + 换轮时重置流式标签。"""
@@ -516,28 +535,5 @@ class AiPanel(QWidget):
         if isinstance(message, str) and "401" in message:
             FramelessMessageBox.warning(self, "AI 端点", "鉴权失败，请检查 API key。")
 
-    def _on_confirm(self, description: str) -> None:
-        # 「AI 执行操作前需人工确认」关闭时自动放行（AI 设置里即改即存）
-        if not get_config().ai_require_confirmation:
-            bus().status_message.emit("AI 写操作已自动执行（已关闭人工确认）", 3000)
-            if self._loop is not None:
-                self._loop.answer_confirm(True)
-            return
-        approved = (
-            FramelessMessageBox.question(
-                self,
-                "AI 写操作确认",
-                description,
-                FramelessMessageBox.StandardButton.Yes | FramelessMessageBox.StandardButton.No,
-                FramelessMessageBox.StandardButton.No,
-                button_texts={
-                    FramelessMessageBox.StandardButton.Yes: "允许执行",
-                    FramelessMessageBox.StandardButton.No: "拒绝",
-                },
-            )
-            == FramelessMessageBox.StandardButton.Yes
-        )
-        if self._loop is not None:
-            self._loop.answer_confirm(approved)
-            if approved:
-                bus().status_message.emit("AI 正在执行写操作…", 3000)
+    # 写操作确认统一由主窗体安装的全局确认处理器完成
+    # （见 app.agent.confirm_policy.install_confirm_handler）。

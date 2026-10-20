@@ -968,7 +968,57 @@ headers = { Authorization = "Bearer <MCP 设置对话框生成的 token>" }
   AI 改算式相关数据前应先取 `get_conventions`）；
 - 多原则：按 ratio 加权合并；支撑 Z 量按主围护原则（main_pe_name）计算。
 
-### D. 术语表
+### D. 实施记录（v1.2，已落地）
+
+> 实施日期：2026-10-20；基线提交 `085304a`；测试结果 **182 passed**
+> （原有 152 + 新增 30）。
+
+**已交付**
+
+| 项 | 文件 |
+|---|---|
+| 统一工具注册表（74 工具） | `agent/tool_registry.py`、`agent/tools/`（project/tree/element/element_parts/principle/reference/compute/migrate/summary/meta） |
+| 上下文 / 约定 / 治理 / 序列化 | `agent/context.py`、`conventions.py`、`governance.py`、`serializers.py`、`errors.py` |
+| 双通道确认 + 结构化确认卡 + cancelled | `agent/confirm_policy.py`、`main_window.py::_confirm_ai_write` |
+| 循环升级（预算/停滞/收尾/截断/退避/文本兜底） | `agent/agent_loop.py`、`governance.py` |
+| MCP 服务器（内嵌 + CLI 四模式） | `mcp_server/adapter.py`、`server.py`、`auth.py`、`controller.py`、`__main__.py` |
+| 设置界面 | `views/dialogs/mcp_settings_dialog.py`、AI 菜单「MCP 服务…」、状态栏 |
+| 原则编辑纯函数 | `services/principle_edit.py` |
+| 汇总 / Excel 导出（M5 共用） | `services/summary.py` |
+| 配置 | `core/config.py` 的 `[mcp]` 段 |
+| 文档 | `docs/mcp.md`、README M10 章节 |
+| 测试 | `tests/test_mcp_adapter.py`、`test_mcp_tools.py`、`test_mcp_server.py`、`test_agent_governance.py` |
+
+**与 v1.1 方案的差异（实施决策）**
+
+1. `add_element` 的 `seed_atlas_defaults` 默认 **false**（与界面 `create_element`
+   一致；构件库插入走 `insert_element_from_template` 时由 unit_vm 自己预填）。
+2. 确认卡由主窗体安装的**全局处理器**统一渲染（`install_confirm_handler` /
+   关闭时 `uninstall_confirm_handler`），内置面板与外部 MCP 共用；MCP 通道判定
+   在 worker 线程完成，因此不需要 Quotor 的 contextvar 快照/恢复。
+3. 写操作在无界面进程直接返回可读错误（不再弹无人应答的确认框）；只读工具
+   全部 headless 可用。
+4. 原则对话框保留原有增量落库逻辑（复用 `project_io` 原语）；`principle_edit`
+   提供工具侧整表语义，两者建立在同一批原语上。后续可把对话框统一切换过去。
+5. Excel 导出列：类别/项目/单位/计算表达式/工程量/单价/合价；整工程导出多一列
+   单位工程。
+6. 未实现（均按方案列为 v2/可选）：导航类工具（`navigate_to_*` / `select_*`）、
+   MCP elicitation、LangGraph 重构 / `<<tool_call>>` 文本协议（治理已独立实现，
+   `extract_tool_call` 提供兜底解析）、断面图 PNG、`--http` 多客户端独立实例。
+
+**验收对照**
+
+| 方案验收项 | 结果 |
+|---|---|
+| 74 工具注册表，内置面板与 MCP 同一来源 | ✅（`len(names()) == 74`） |
+| 无头冒烟（不建 QApplication 走业务层） | ✅（`test_mcp_tools.py`） |
+| 计算对拍（数值 + 表达式逐字段一致） | ✅（复用 `test_calc_baseline.py` 算例，工具路径一致） |
+| steps 拼接不变式 | ✅（`test_mcp_tools.py::test_compute_tools_and_steps_invariant`） |
+| MCP 协议闭环 + Bearer 鉴权 | ✅（官方 SDK 客户端连本地 uvicorn） |
+| 内嵌控制器真实启停 | ✅（74 工具，`evaluate_expression` 往返成功） |
+| 全量回归不回退 | ✅ 182 passed |
+
+### E. 术语表
 
 | 术语 | 含义 |
 |---|---|

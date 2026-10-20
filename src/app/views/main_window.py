@@ -33,8 +33,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.agent import context as agent_context
+from app.agent.confirm_policy import install_confirm_handler
 from app.core.config import add_recent_project, get_config, remove_recent_project, update_config
 from app.core.event_bus import bus
+from app.mcp_server.controller import McpServerController
 from app.core.version import (
     APP_DISPLAY_NAME,
     APP_VERSION,
@@ -330,9 +333,12 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_statusbar()
         self._connect_events()
+        # AI / MCP 写操作确认：统一走全局确认处理器（内置面板与外部 MCP 共用）
+        install_confirm_handler(self._confirm_ai_write)
         self._update_title()
         self._refresh_recent_menu()
         self._enable_win11_rounded_corners()
+        QTimer.singleShot(0, self._start_mcp_if_enabled)
         if is_mac():
             # mac 的 chrome 在首次 showEvent 里套用：show 时 Qt 会按窗口标志重置
             # NSWindow 样式掩码，提前设置会被覆盖（对话框无此问题，见 FramelessDialog）
@@ -526,6 +532,7 @@ class MainWindow(QMainWindow):
         self._act_theme = self._action("切换暗色主题", self._toggle_theme, "Ctrl+Shift+T")
         self._act_ai_panel = self._action("AI 助手", lambda: self._toggle_ai_panel(), "Ctrl+L")
         self._act_ai_settings = self._action("AI 设置…", self._ai_settings)
+        self._act_mcp = self._action("MCP 服务…", self._mcp_settings)
         self._act_about = self._action("关于 Section", self._about)
 
         for attr, icon_name in self._ACTION_ICONS.items():
@@ -629,8 +636,10 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self._act_ai_panel)
 
         ai_menu = menubar.addMenu("AI(&A)")
-        ai_menu.addAction(self._act_ai_settings)
         ai_menu.addAction(self._act_ai_panel)
+        ai_menu.addAction(self._act_ai_settings)
+        ai_menu.addSeparator()
+        ai_menu.addAction(self._act_mcp)
 
         help_menu = menubar.addMenu("帮助(&H)")
         help_menu.addAction(self._act_about)
@@ -660,6 +669,9 @@ class MainWindow(QMainWindow):
         # 边缘缩放由 nativeEvent 的 WM_NCHITTEST 处理，手柄冗余
         statusbar.setSizeGripEnabled(False)
         self.setStatusBar(statusbar)
+        self._status_mcp = QLabel("")
+        self._status_mcp.setProperty("role", "hint")
+        statusbar.addPermanentWidget(self._status_mcp)
         self._status_path = QLabel("未打开工程")
         self._status_path.setProperty("role", "hint")
         statusbar.addPermanentWidget(self._status_path)
@@ -671,6 +683,7 @@ class MainWindow(QMainWindow):
         bus().project_closed.connect(self._on_project_closed)
         bus().project_saved.connect(lambda path: self._set_status(f"已保存：{path}"))
         bus().node_selected.connect(self._on_node_selected)
+        bus().ai_context_changed.connect(self._on_ai_context_changed)
         bus().status_message.connect(self._set_status)
         ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
         # 主题切换按钮文字与图标随当前主题变化：暗色 → 太阳「切换亮色…」、亮色 → 月亮「切换暗色…」
@@ -678,6 +691,15 @@ class MainWindow(QMainWindow):
         self._set_theme_action_icon()
 
     def _on_project_opened(self, path: str) -> None:
+        from app.core.models import base as _orm
+
+        agent_context.update_context(
+            unit_id=None,
+            unit_name="",
+            element_id=None,
+            element_name="",
+            source="gui" if _orm.is_open() else "headless",
+        )
         if project_io.is_transient():
             # 临时工程：临时路径不进最近列表，状态栏提示尚未保存
             self._set_project_actions(True)
@@ -694,15 +716,23 @@ class MainWindow(QMainWindow):
         self._set_status(f"已打开工程：{path}")
 
     def _on_project_closed(self) -> None:
+        agent_context.reset_context()
         self._set_project_actions(False)
         self._update_title()
         self._status_path.setText("未打开工程")
         self._center_stack.setCurrentIndex(0)
 
     def _on_node_selected(self, node: TreeNode | None) -> None:
+        is_unit = node is not None and node.kind == KIND_UNIT
+        agent_context.update_context(
+            unit_id=node.id if is_unit else None,
+            unit_name=node.name if is_unit else "",
+            element_id=None,
+            element_name="",
+        )
         self._ai_panel.set_current_unit(
-            node.id if node is not None and node.kind == KIND_UNIT else None,
-            node.name if node is not None and node.kind == KIND_UNIT else "",
+            node.id if is_unit else None,
+            node.name if is_unit else "",
         )
         if node is None:
             self._center_stack.setCurrentIndex(0)
@@ -918,6 +948,75 @@ class MainWindow(QMainWindow):
         dialog.exec()
         self._ai_panel._refresh_hint()
 
+    # ------------------------------------------------------------------ MCP
+    def _mcp_settings(self) -> None:
+        from app.views.dialogs.mcp_settings_dialog import McpSettingsDialog
+
+        dialog = McpSettingsDialog(self)
+        dialog.exec()
+        self._refresh_mcp_status()
+
+    def _start_mcp_if_enabled(self) -> None:
+        if not get_config().mcp_enabled:
+            self._refresh_mcp_status()
+            return
+        ok, message = McpServerController.instance().start()
+        self._refresh_mcp_status()
+        if not ok:
+            bus().status_message.emit(message, 8000)
+
+    def _refresh_mcp_status(self) -> None:
+        status = McpServerController.instance().status()
+        if status["running"]:
+            self._status_mcp.setText(f"MCP: 运行中 · 127.0.0.1:{status['port']}")
+            self._status_mcp.setToolTip(status["url"])
+        else:
+            self._status_mcp.setText("MCP: 已停止")
+            self._status_mcp.setToolTip(status.get("error") or "AI → MCP 服务…")
+
+    def _on_ai_context_changed(self, payload) -> None:
+        """子面板（主表格选中行）更新 AI 上下文中的构件信息。"""
+        if not isinstance(payload, dict):
+            return
+        agent_context.update_context(
+            element_id=payload.get("element_id"),
+            element_name=payload.get("element_name", ""),
+        )
+
+    def _confirm_ai_write(self, preview: dict) -> bool:
+        """全局写操作确认卡（内置 AI 与外部 MCP 共用，界面线程执行）。"""
+        action = str(preview.get("action") or "执行操作")
+        target = str(preview.get("target") or "")
+        summary = str(preview.get("summary") or "")
+        details = "\n".join(str(item) for item in (preview.get("details") or []))
+        lines = [f"AI 请求：{action}"]
+        if target:
+            lines.append(f"工具：{target}")
+        if summary:
+            lines.append(summary)
+        if details:
+            lines.append("")
+            lines.append(details)
+        lines.append("")
+        lines.append("允许执行吗？")
+        approved = (
+            FramelessMessageBox.question(
+                self,
+                "AI 写操作确认",
+                "\n".join(lines),
+                FramelessMessageBox.StandardButton.Yes | FramelessMessageBox.StandardButton.No,
+                FramelessMessageBox.StandardButton.No,
+                button_texts={
+                    FramelessMessageBox.StandardButton.Yes: "允许执行",
+                    FramelessMessageBox.StandardButton.No: "拒绝",
+                },
+            )
+            == FramelessMessageBox.StandardButton.Yes
+        )
+        if approved:
+            bus().status_message.emit("AI 正在执行写操作…", 3000)
+        return approved
+
     def _about(self) -> None:
         FramelessMessageBox.about(
             self,
@@ -933,11 +1032,15 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ 退出
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
-        """退出前检查未保存的临时工程，然后落盘并释放锁。"""
+        """退出前检查未保存的临时工程，然后停止 MCP、落盘并释放锁。"""
         # 临时工程（尚未保存到文件）在退出前提示保存；用户取消则不关闭
         if not self._prompt_save_if_unsaved("关闭"):
             event.ignore()
             return
+        McpServerController.instance().stop()
+        from app.agent.confirm_policy import uninstall_confirm_handler
+
+        uninstall_confirm_handler()
         try:
             project_io.close_project()
         except Exception as error:  # pragma: no cover - 退出路径不阻塞

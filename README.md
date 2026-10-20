@@ -17,7 +17,7 @@
 
 新版工程文件为单文件 SQLite：**`.stn2`**（提交即落盘 = 自动保存，带 `.lock` 防双开与 Backup 自动备份）。
 
-## 功能总览（里程碑 M1~M9）
+## 功能总览（里程碑 M1~M10）
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
@@ -30,6 +30,7 @@
 | M7 AI 对话 | AI 设置（keyring 存 key）、SSE 流式对话、思考过程折叠 | ✅ |
 | M8 AI 工具 | 构件条目增删改查 4 个工具 + 确认弹窗 + 自动刷新 | ✅ |
 | M9 发布 | 全量回归、PyInstaller 打 Windows 包 | ✅ |
+| M10 MCP 服务 | 全部功能 MCP 化（74 工具）：GUI 内嵌 Streamable HTTP + 独立 CLI（stdio / 桥 / headless 只读） | ✅ |
 
 ## 技术栈
 
@@ -59,6 +60,7 @@ src/app/
 ├── viewmodels/        MVVM 视图模型
 ├── views/             主窗体（含无边框标题栏）、三栏面板、对话框、新建/导入向导
 ├── agent/             AI 工具调用（tool_registry / agent_loop / confirm_policy / tools）
+├── mcp_server/        MCP 适配层 / Server / 鉴权 / GUI 生命周期 / CLI（section2-mcp）
 └── resources/         QSS 主题、图集 xlsx、构件库、字体/图标/logo
 tests/                 单元测试（工程文件、算式、计算对拍、旧档迁移）
 docs/                  架构说明
@@ -142,6 +144,25 @@ py -3.12 -m venv .venv
 - 一期工具：`list_elements` / `add_element` / `update_element` / `delete_element`，
   只作用于项目树里当前选中的单位工程；新增、修改、删除都会先弹确认窗，
   执行后工程量表自动刷新。
+
+## MCP 服务（M10）
+
+全部功能已注册为 74 个 MCP 工具，外部 AI 客户端（Claude Desktop / Codex / Cursor /
+Cline / VS Code / WorkBuddy…）可直接操作本软件：
+
+- **主入口（GUI 内嵌）**：`AI → MCP 服务…` 启用，默认 `http://127.0.0.1:8765/mcp`，
+  Bearer token 鉴权、仅本机回环；与界面共享工程会话，写操作在界面弹确认卡；
+- **独立 CLI**：`section2-mcp`（stdio / 本地 HTTP / `--connect` stdio 桥 /
+  `--project` headless 只读）；
+- 与内置 AI 助手**共用同一套工具注册表**，业务代码只有一条路径；
+- `[mcp] allow_actions=false` 只暴露只读工具，`require_confirmation` 控制写确认。
+
+安装与客户端配置见 [docs/mcp.md](docs/mcp.md)，设计方案见
+[docs/mcp_development_plan.md](docs/mcp_development_plan.md)。
+
+```bash
+.venv/Scripts/python.exe -m pip install -e ".[mcp]"   # 安装 MCP 依赖与 section2-mcp 入口
+```
 
 ## 常见问题
 

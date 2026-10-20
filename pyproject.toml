@@ -28,9 +28,16 @@ dev = [
     "pytest>=8",
     "pyinstaller>=6",
 ]
+# MCP 服务（GUI 内嵌 Streamable HTTP + 独立 CLI）；见 docs/mcp.md
+mcp = [
+    "mcp>=2.0,<3",
+    "uvicorn>=0.30",
+    "anyio>=4",
+]
 
 [project.scripts]
 section2 = "app.main:main"
+section2-mcp = "app.mcp_server.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
