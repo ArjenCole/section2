@@ -17,7 +17,7 @@
 | 圆角轮廓 | 贴角子控件 QSS `border-radius` | 背景沿圆角路径抗锯齿填充，轮廓由子控件自己画 |
 | 圆角背景真正裁剪 | 规则里**必须带 border**（1px 透明即可） | Qt 的 QSS 背景裁剪走 border 盒子路径，无 border 一律方角填充 |
 | 1px 窗体描边 | 置顶、鼠标穿透的 overlay 子控件 | 沿同一圆角路径画抗锯齿描边，兼作窗体轮廓线 |
-| 外阴影 | 影子窗口（贴在宿主正后方的透明 Tool 窗口） | 沿圆角路径由内向外多圈描边，透明度二次衰减 |
+| 外阴影 | 影子窗口（贴在宿主正后方的透明 Tool 窗口） | 核心填充 + 环带指数渐隐，整体下移并加强下缘 |
 | 影子不挡鼠标 | `WA_TransparentForMouseEvents` + 不接受焦点 | 纯视觉层 |
 | 最大化退化 | 窗体级样式表压平子控件圆角 + 隐藏影子 | 与系统行为一致，还原自动恢复 |
 | 圆角弹出层（菜单/下拉列表） | 首次 polish 时开透明 + 无边框 + 关系统阴影 | 让 QSS 圆角成为弹出层的真实窗口轮廓 |
@@ -214,34 +214,75 @@ class _ShadowWindow(QWidget):
 注意：影子窗口是**独立顶层窗口**，不能设 widget 父对象（会把顶层降级为子控
 件）。生命周期挂靠：`helper.destroyed.connect(shadow.deleteLater)`。
 
-### 4.2 渲染：同心描边 + 二次衰减 + 位图缓存
+### 4.2 渲染：核心填充 + 环带指数渐隐 + 位图缓存
 
-影子窗口尺寸 = 宿主 `frameGeometry()` 向四周各扩 `_SHADOW_MARGIN`（20px）。
+影子窗口尺寸 = 宿主 `frameGeometry()` 向四周各扩 `_SHADOW_MARGIN`（48px）。
 **宿主轮廓在影子窗口坐标系里是四周缩进 margin 的圆角矩形**——坐标基准千万
 别再外扩（本项目曾因此把阴影画到右上/左下两个错误方向上）。
 
+阴影目标按本机原生 Win11 阴影实测标定（纯白背景、逐像素 alpha）：
+
+| 位置 | 贴边 | 10px | 20px | 30px |
+|---|---|---|---|---|
+| 侧面 | 11% | 4.3% | 1.6% | 0.9% |
+| 下缘 | 22% | 15.7% | 11.8% | 9% |
+| 上缘 | 6.3% | 1.2% | 0 | 0 |
+
+实现分三步：
+
+1. **核心填充**：把宿主轮廓整体下移 `_SHADOW_OFFSET`（8px），用 `_SHADOW_ALPHA`
+   （14 ≈ 5.5%，约为原生 11% 的一半）整体填一层。下移形成的“下重上轻”与原生
+   阴影一致，也补上了偏移轮廓内部（尤其下缘）原本会漏空的区域。
+2. **环带渐隐**：从核心边缘向外逐条填 40 条环带，每条只覆盖 `[e_{i-1}, e_i]`
+   这一圈，透明度按 `exp(-_SHADOW_DECAY * t)` 衰减到 0。环带用 OddEven 路径
+   （外圈圆角矩形 + 内圈圆角矩形）挖空，**不要再用 1.5px 描边笔**——旧实现
+   相邻圈的半幅互相叠加，贴边实际不透明度约 29%，且中段衰减太慢，是
+   “阴影太深”的根因。
+   横向/纵向扩展距离分开取 `_SHADOW_RANGE_X=36` / `_SHADOW_RANGE_Y=40`，
+   下缘因此比侧面更长。
+3. **下缘增强**：填充用纵向 `QLinearGradient` 当画刷；窗体高度 75% 以下
+   线性增强，到窗底为 `_SHADOW_BOTTOM_BOOST=1.5` 倍（5.5% → 约 8.2%）。
+   保留原生“下重上轻”的方向，但整体强度约为原生的一半。
+
 ```python
-def _render(self, dpr: float) -> None:
-    w, h, m = self.width(), self.height(), _SHADOW_MARGIN
-    pixmap = QPixmap(round(w * dpr), round(h * dpr))     # 画布 = 影子窗口本身
-    pixmap.fill(Qt.GlobalColor.transparent)
-    pixmap.setDevicePixelRatio(dpr)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    host = QRectF(m, m, w - 2.0 * m, h - 2.0 * m)        # 宿主轮廓
-    for i in range(m):                                   # i = 距宿主边缘的距离
-        t = i / m
-        alpha = int(_SHADOW_ALPHA * (1.0 - t) ** 2)      # 贴边最深，向外二次衰减
-        painter.setPen(QPen(QColor(0, 0, 0, alpha), 1.5))
-        painter.drawPath(_rounded_path(
-            host.adjusted(-i - 0.5, -i - 0.5, i + 0.5, i + 0.5),
-            _RADIUS + i))                                # 外偏的圆角半径同步变大
-    painter.end()
-    self._cache = pixmap                                 # 按尺寸+DPR 缓存，仅 resize 重绘
+host = QRectF(m, m, w - 2.0 * m, h - 2.0 * m)
+base = host.translated(0, _SHADOW_OFFSET)                # 整体下移
+
+def shadow_brush(alpha: int) -> QBrush:                  # 下缘增强渐变
+    g = QLinearGradient(base.topLeft(), base.bottomLeft())
+    top = QColor(0, 0, 0, alpha)
+    bottom = QColor(0, 0, 0, min(255, round(alpha * _SHADOW_BOTTOM_BOOST)))
+    g.setColorAt(0.0, top)
+    g.setColorAt(_SHADOW_BOTTOM_RAMP, top)
+    g.setColorAt(1.0, bottom)
+    return QBrush(g)
+
+painter.fillPath(_rounded_path(base, _RADIUS), shadow_brush(_SHADOW_ALPHA))
+
+for i in range(1, _SHADOW_LAYERS + 1):
+    t0, t1 = (i - 1) / _SHADOW_LAYERS, i / _SHADOW_LAYERS
+    t = (t0 + t1) * 0.5
+    alpha = round(_SHADOW_ALPHA
+                  * (math.exp(-_SHADOW_DECAY * t) - math.exp(-_SHADOW_DECAY))
+                  / (1.0 - math.exp(-_SHADOW_DECAY)))
+    if alpha <= 0:
+        continue
+    ex0, ey0 = _SHADOW_RANGE_X * t0, _SHADOW_RANGE_Y * t0
+    ex1, ey1 = _SHADOW_RANGE_X * t1, _SHADOW_RANGE_Y * t1
+    band = QPainterPath()
+    band.setFillRule(Qt.FillRule.OddEvenFill)            # 挖空内圈，只留环带
+    band.addRoundedRect(base.adjusted(-ex1, -ey1, ex1, ey1),
+                        _RADIUS + max(ex1, ey1), _RADIUS + max(ex1, ey1))
+    band.addRoundedRect(base.adjusted(-ex0, -ey0, ex0, ey0),
+                        _RADIUS + max(ex0, ey0), _RADIUS + max(ex0, ey0))
+    painter.fillPath(band, shadow_brush(alpha))
+
+self._cache = pixmap                                     # 按尺寸+DPR 缓存，仅 resize 重绘
 ```
 
-描边圈内半幅压在宿主底下不可见，无副作用。参数经验值：margin 20、最深
-alpha 60（≈24%）、1.5px 笔宽逐像素步进，视觉上与系统阴影接近。
+环带边缘共享同一条曲线，抗锯齿覆盖互补：既不会出现旧描边方案的“亮缝”，
+也不会因重叠而越描越深。调整参数时按上表逐边量 alpha，不要只凭肉眼——
+缩略图上的观感误差很大。
 
 ### 4.3 同步与 z 序
 

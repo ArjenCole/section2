@@ -135,16 +135,20 @@ def test_shadow_gradient_faces_outward_on_all_sides(qapp, message_box):
     def alpha(x, y):
         return img.pixelColor(x, y).alpha()
 
-    # 宿主轮廓在影子窗口里四周缩进 m；逐边比较贴边与远处的不透明度
+    # 阴影范围（36px）小于影子窗口边距（48px），不能像旧版那样取到画布边缘
+    # （m-3 处已衰减为 0）；取渐隐中段 14px，仍能验证“越靠外越淡”。
+    far = min(14, m - 3)
     host_l, host_t, host_r, host_b = m, m, w - m, h - m
     sides = (
-        ("左", alpha(host_l - 3, h // 2), alpha(host_l - m + 3, h // 2)),
-        ("右", alpha(host_r + 2, h // 2), alpha(host_r + m - 3, h // 2)),
-        ("上", alpha(w // 2, host_t - 3), alpha(w // 2, host_t - m + 3)),
-        ("下", alpha(w // 2, host_b + 2), alpha(w // 2, host_b + m - 3)),
+        ("左", alpha(host_l - 3, h // 2), alpha(host_l - far, h // 2)),
+        ("右", alpha(host_r + 2, h // 2), alpha(host_r + far, h // 2)),
+        ("上", alpha(w // 2, host_t - 3), alpha(w // 2, host_t - far)),
+        ("下", alpha(w // 2, host_b + 2), alpha(w // 2, host_b + far)),
     )
-    for name, near, far in sides:
-        assert near > far > 0, f"{name}侧阴影方向错误: near={near}, far={far}"
+    for name, near, far_alpha in sides:
+        assert near > far_alpha > 0, (
+            f"{name}侧阴影方向错误: near={near}, far={far_alpha}"
+        )
 
 
 def test_item_rule_has_transparent_background(qapp):

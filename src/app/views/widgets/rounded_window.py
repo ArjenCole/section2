@@ -10,9 +10,10 @@
 一致），还原时自动恢复。
 
 外阴影：一个透明的 Tool 影子窗口（:class:`_ShadowWindow`）贴在宿主窗体正
-后方，随宿主显示/移动/缩放同步，沿圆角路径画多圈渐隐的黑色描边模拟投影。
-不改动宿主内容几何，主窗体与弹窗通用；宿主最大化/最小化/隐藏时影子同步
-隐藏。影子窗口开启输入穿透，不挡鼠标也不抢焦点。
+后方，随宿主显示/移动/缩放同步，用“核心填充 + 向外指数渐隐的环带”模拟投影。
+深度/范围按原生 Win11 阴影的分布标定，但强度约为原生的一半（侧面贴边约
+5.5%，下缘略深）。不改动宿主内容几何，主窗体与弹窗通用；宿主最大化/最小化/
+隐藏时影子同步隐藏。影子窗口开启输入穿透，不挡鼠标也不抢焦点。
 
 顶层窗体命中的全局 QSS 背景（``QWidget/QMainWindow/QDialog`` 规则）会把
 整个矩形填成实心、露出方角，助手用窗体级样式表 + ID 选择器精确关掉。
@@ -21,20 +22,48 @@ macOS 走原生红绿灯窗口（见 mac_window.py），不要装这个助手。
 
 from __future__ import annotations
 
+import math
 import sys
 
 from PySide6.QtCore import QEvent, QObject, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import QComboBox, QMainWindow, QMenu, QWidget
 
 #: 圆角半径（逻辑像素），与 theme.py 里贴角子控件的 border-radius 一致
 _RADIUS = 8
 
-#: 阴影向外扩散的距离（逻辑像素）
-_SHADOW_MARGIN = 20
+#: 阴影向外扩散的最大距离（逻辑像素）。纵向阴影比横向长，取两个方向的最大值。
+_SHADOW_MARGIN = 48
 
-#: 阴影最深处（贴着窗体边缘）的不透明度
-_SHADOW_ALPHA = 60
+#: 阴影整体向下偏移（逻辑像素），模拟光源在上方；原生 Win11 阴影下缘明显比上缘深。
+_SHADOW_OFFSET = 8
+
+#: 贴边处阴影核心的不透明度（0-255）。原生 Win11 侧面贴边约 11%；这里取 14
+#: （≈5.5%），约为原生的一半。旧值 60 叠加 1.5px 描边后实际贴边约 29%，明显偏深。
+_SHADOW_ALPHA = 14
+
+#: 横向/纵向阴影的可见衰减范围（逻辑像素）。原生阴影侧面约 35px、下缘约 55px。
+_SHADOW_RANGE_X = 36
+_SHADOW_RANGE_Y = 40
+
+#: 渐隐环带数量；环带越密，透明度阶梯越细，肉眼看起来越平滑。
+_SHADOW_LAYERS = 40
+
+#: 圈层透明度按 exp(-_SHADOW_DECAY * t) 衰减，t 为 0（贴边）到 1（最外圈）
+_SHADOW_DECAY = 3.1
+
+#: 下缘增强：原生 Win11 阴影下缘贴边约 22%，而侧面只有约 11%。从窗体高度
+#: 的 _SHADOW_BOTTOM_RAMP 处开始线性增强，到窗底达到 _SHADOW_BOTTOM_BOOST 倍。
+_SHADOW_BOTTOM_RAMP = 0.75
+_SHADOW_BOTTOM_BOOST = 1.5
 
 #: 最大化时压平贴角子控件圆角的窗体级样式表片段（widget 级样式表优先于
 #: 全局 QSS，同选择器下直接覆盖）。选择器必须用 QMainWindow > 直接子选择器
@@ -158,27 +187,66 @@ class _ShadowWindow(QWidget):
 
     def _render(self, dpr: float) -> None:
         w, h, m = self.width(), self.height(), _SHADOW_MARGIN
-        # 影子窗口本身就是宿主 + 四周各 m 的留白，画布即窗口大小；
+        # 影子窗口本身就是宿主 + 四周留白，画布即窗口大小；
         # 宿主轮廓在本窗口坐标系里是四周缩进 m 的圆角矩形
         pixmap = QPixmap(max(1, round(w * dpr)), max(1, round(h * dpr)))
         pixmap.fill(Qt.GlobalColor.transparent)
         pixmap.setDevicePixelRatio(dpr)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        # 从宿主轮廓开始一圈圈向外描，透明度按距离二次衰减，叠加成
-        # “贴边最深、向外渐隐”的外阴影；半径随外扩同步变大（圆角矩形
-        # 外偏的几何性质）。描边圈的内半幅压在宿主底下，不可见也无害。
+
+        # 阴影轮廓整体下移，形成“光从上方来”的下重上轻；核心先整体填一层，
+        # 保证下缘偏移出的那条带、以及圆角缺口处都有底色。
         host = QRectF(m, m, w - 2.0 * m, h - 2.0 * m)
-        for i in range(m):
-            t = i / m
-            alpha = int(_SHADOW_ALPHA * (1.0 - t) ** 2)
+        base = host.translated(0, _SHADOW_OFFSET)
+
+        def shadow_brush(alpha: int) -> QBrush:
+            """同一条纵向渐变：窗体上部保持 alpha，向下缘逐渐加强。"""
+            gradient = QLinearGradient(base.topLeft(), base.bottomLeft())
+            top = QColor(0, 0, 0, alpha)
+            bottom = QColor(
+                0, 0, 0, min(255, round(alpha * _SHADOW_BOTTOM_BOOST))
+            )
+            gradient.setColorAt(0.0, top)
+            gradient.setColorAt(_SHADOW_BOTTOM_RAMP, top)
+            gradient.setColorAt(1.0, bottom)
+            return QBrush(gradient)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.fillPath(_rounded_path(base, _RADIUS), shadow_brush(_SHADOW_ALPHA))
+
+        # 向外逐条环带填充：每条环带只覆盖 [e_{i-1}, e_i] 这一圈，用 OddEven
+        # 挖掉内圈，避免旧实现“1.5px 笔宽 + 1px 步进”相邻圈互相叠加导致贴边
+        # 实际不透明度翻倍。环带边缘共享同一条曲线，抗锯齿覆盖互补，既不会
+        # 出现亮缝，也不会越描越深。
+        # 透明度按 t 指数衰减，横向/纵向用不同扩展距离（下缘更长）。
+        decay = _SHADOW_DECAY
+        norm = 1.0 - math.exp(-decay)
+        for i in range(1, _SHADOW_LAYERS + 1):
+            t0 = (i - 1) / _SHADOW_LAYERS
+            t1 = i / _SHADOW_LAYERS
+            alpha = round(
+                _SHADOW_ALPHA
+                * (math.exp(-decay * (t0 + t1) * 0.5) - math.exp(-decay))
+                / norm
+            )
             if alpha <= 0:
                 continue
-            painter.setPen(QPen(QColor(0, 0, 0, alpha), 1.5))
-            painter.drawPath(
-                _rounded_path(host.adjusted(-i - 0.5, -i - 0.5, i + 0.5, i + 0.5),
-                              _RADIUS + i)
+            ex0, ey0 = _SHADOW_RANGE_X * t0, _SHADOW_RANGE_Y * t0
+            ex1, ey1 = _SHADOW_RANGE_X * t1, _SHADOW_RANGE_Y * t1
+            band = QPainterPath()
+            band.setFillRule(Qt.FillRule.OddEvenFill)
+            band.addRoundedRect(
+                base.adjusted(-ex1, -ey1, ex1, ey1),
+                _RADIUS + max(ex1, ey1),
+                _RADIUS + max(ex1, ey1),
             )
+            band.addRoundedRect(
+                base.adjusted(-ex0, -ey0, ex0, ey0),
+                _RADIUS + max(ex0, ey0),
+                _RADIUS + max(ex0, ey0),
+            )
+            painter.fillPath(band, shadow_brush(alpha))
         painter.end()
         self._cache = pixmap
 
