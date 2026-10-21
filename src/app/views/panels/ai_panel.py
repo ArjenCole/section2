@@ -9,7 +9,7 @@
     流式正文就地刷新；
 * 输入区 = QPlainTextEdit#aiInputEdit（圆角、右下角 overlay 模型来源选择器
   #aiSourceBtn + 发送按钮 #aiSendBtn），Enter 发送、Shift/Ctrl+Enter 换行；
-  - 模型来源选择器显示当前 provider 的显示名 + 下箭头，点击向上弹出菜单；
+  - 模型来源选择器显示「provider 显示名/当前模型」+ 下箭头，点击向上弹出菜单；
     菜单上半部分是 AI 设置左侧的 provider 列表，底部「管理模型」打开设置窗体；
 * 顶部：标题 + 「清空」（兼停止，运行中点击即中断）+ 齿轮「设置」。
 
@@ -487,28 +487,52 @@ class AiPanel(QWidget):
         super().showEvent(event)
         self._refresh_source_button()
 
+    @staticmethod
+    def _source_label(provider: dict) -> str:
+        """按钮文字 = 模型来源/当前模型，例如 OpenCodeGo/deepseek-V4.1-flash。"""
+        source = str(provider.get("display_name") or provider.get("name") or "").strip()
+        model = str(provider.get("default_model") or "").strip()
+        if source and model:
+            return f"{source}/{model}"
+        return source or model or "选择模型来源"
+
+    @staticmethod
+    def _elide_source_label(metrics, source: str, model: str, width: int) -> str:
+        """空间不足时只省略来源名，尽量保留完整的「/当前模型」。"""
+        label = f"{source}/{model}" if source and model else (source or model or "选择模型来源")
+        if metrics.horizontalAdvance(label) <= width:
+            return label
+        if source and model:
+            room = width - metrics.horizontalAdvance("/") - metrics.horizontalAdvance(model)
+            if room >= metrics.horizontalAdvance("…"):
+                short = metrics.elidedText(source, Qt.TextElideMode.ElideRight, room)
+                return f"{short}/{model}"
+        return metrics.elidedText(label, Qt.TextElideMode.ElideMiddle, width)
+
     def _refresh_source_button(self) -> None:
         provider = self._active_provider()
         if provider is None:
             self._source_btn.setVisible(False)
             return
         self._source_btn.setVisible(True)
-        label = str(provider.get("display_name") or provider.get("name") or "")
-        label = label or "选择模型来源"
+        source = str(provider.get("display_name") or provider.get("name") or "").strip()
+        model = str(provider.get("default_model") or "").strip()
         # 面板较窄时给发送按钮和右侧留白让位
-        cap = max(72, min(220, self.width() - 70))
+        cap = max(72, min(250, self.width() - 70))
         self._source_btn.ensurePolished()
         metrics = self._source_btn.fontMetrics()
         # 右侧内边距 24px 由 QSS 留给箭头，这里再收 8px 作为文字与箭头的间距
-        text = metrics.elidedText(label, Qt.TextElideMode.ElideMiddle, max(24, cap - 32))
+        text = self._elide_source_label(metrics, source, model, max(24, cap - 32))
         self._source_btn.setText(text)
         width = min(cap, metrics.horizontalAdvance(text) + 32)
         self._source_btn.setFixedWidth(max(56, width))
         self._source_btn.setEnabled(self._loop is None)
-        model = str(provider.get("default_model") or "").strip()
-        tooltip = f"当前模型来源：{label}"
-        if model:
-            tooltip += f"\n模型：{model}"
+        if source and model:
+            tooltip = f"模型来源：{source}\n当前模型：{model}"
+        elif source:
+            tooltip = f"模型来源：{source}\n当前模型：未设置"
+        else:
+            tooltip = f"当前模型：{model}" if model else "选择模型来源"
         self._source_btn.setToolTip(tooltip + "\n点击切换")
         self._reposition_overlay_buttons()
 
