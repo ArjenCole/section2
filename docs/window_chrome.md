@@ -4,10 +4,11 @@
 弹出层（菜单与下拉列表）的完整方案，供其他项目参照开发。所有代码可直接复制；本项目落地位置见文末索引。
 
 - **效果**：窗体（主窗体 + 一切弹窗）四角 8px 抗锯齿圆角、1px 描边、向外渐隐
-  20px 的柔和投影；下拉/右键菜单四角真圆角；外观在 Win10 / Win11 完全一致，
-  不依赖系统版本（Win11 的 DWM 圆角、macOS 原生圆角之外的自给自足方案）。
-- **平台**：Windows 10/11（Linux X11 理论可用，未充分测试）；**macOS 不要用**，
-  走原生标题栏 + 系统圆角（NSWindow 自带，无需任何本文技术）。
+  36px（下缘 48px）的柔和投影；下拉/右键菜单四角真圆角；外观在 Win10 / Win11
+  完全一致——不使用 Win11 DWM 原生圆角，也不使用系统阴影，圆角/阴影全部自绘。
+  macOS 是唯一例外：走原生标题栏 + 系统圆角（NSWindow 自带，无需本文技术）。
+- **平台**：Windows 10/11（Linux X11 理论可用，未充分测试）；**macOS 不要用**
+  本文的自绘方案，走原生标题栏 + 系统圆角。
 - **依赖**：PySide6 ≥ 6.6（注意避开 6.12.0，见 §7）。
 
 ## 1. 方案总览
@@ -29,7 +30,7 @@
 | `setMask` 圆角区域 | **弃用** | mask 是 1-bit 系统级裁剪，边缘锯齿明显；描边圈盖不住从锯齿缺口透出的阴影。曾长期使用，最终整体移除 |
 | `QGraphicsDropShadowEffect` | 不可用 | Qt 的 GraphicsEffect 对顶层窗口无效，套在内容容器上需要改布局且性能差 |
 | 窗体内缩一圈、窗体内画阴影 | 不可行 | `QMainWindow` 的布局**忽略 `setContentsMargins`**（实测 central/statusbar 仍顶格），主窗体内容无法整体缩进 |
-| DWM 系统圆角（`DWMWA_WINDOW_CORNER_PREFERENCE`） | 仅 Win11 | 属性 33 是 Win11（build 22000）引入，Win10 返回 `E_INVALIDARG`；本项目保留该调用作为 Win11 兜底，但不依赖它 |
+| DWM 系统圆角（`DWMWA_WINDOW_CORNER_PREFERENCE`） | **已移除** | 属性 33 仅 Win11 有效，且与 QSS 自绘圆角叠加会形成两套轮廓；Win10 没有该效果。现在宿主/菜单均保持 `WS_POPUP` + DWM 非客户区渲染关闭，圆角/阴影完全自绘 |
 | QSS `border-radius` 直接给窗体 | 不够 | QSS 背景的圆角裁剪需要规则带 border（见 §3.2），且裸窗体方案管不住所有贴角子控件 |
 
 关键教训：**先在小程序里验证前提，再写方案**。本项目"窗体内缩画阴影"方案就是
@@ -40,9 +41,20 @@
 ### 3.1 窗体准备
 
 ```python
-window.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+window.setWindowFlags(
+    Qt.WindowType.Window
+    | Qt.WindowType.FramelessWindowHint
+    | Qt.WindowType.NoDropShadowWindowHint   # 禁止系统投影，阴影由影子窗口自绘
+)
 window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 ```
+
+**不要调用 `DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND)`**：
+那是 Win11 的第二套系统圆角，和 QSS 自绘圆角叠加会出现双轮廓，Win10 上又完全
+没有该效果，正是跨版本不一致的来源。去掉后窗口仍是 `WS_POPUP`、DWM 非客户区
+渲染关闭（本机实测 `DwmGetWindowAttribute(DWMWA_NCRENDERING_ENABLED)=0`），
+系统不会参与圆角或阴影；`RoundedWindowHelper.install()` 还会统一补上
+`NoDropShadowWindowHint`，防止宿主或菜单被 DWM 额外加一层阴影。
 
 两个必须处理的配套点：
 

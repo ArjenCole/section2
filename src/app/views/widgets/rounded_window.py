@@ -313,6 +313,11 @@ class RoundedWindowHelper(QObject):
         self.destroyed.connect(self._shadow.deleteLater)
         self._squared = False
 
+        # 系统原生阴影一律关掉：外阴影全部由 _ShadowWindow 自绘，避免 Win11
+        # 在自绘阴影外再叠一层 DWM 阴影（Win10/Win11 观感不一致）
+        window.setWindowFlags(
+            window.windowFlags() | Qt.WindowType.NoDropShadowWindowHint
+        )
         window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         if not window.objectName():
             window.setObjectName("RoundedWindowRoot")

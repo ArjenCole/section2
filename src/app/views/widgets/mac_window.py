@@ -1,6 +1,6 @@
 """macOS 原生窗口装饰（Apple HIG）：红绿灯按钮 + 透明标题栏 + 系统圆角。
 
-Windows 上“无边框”由 Qt.FramelessWindowHint + Win11 DWM 圆角实现；macOS 上
+Windows 上“无边框”由 Qt.FramelessWindowHint + 自绘圆角/阴影实现；macOS 上
 FramelessWindowHint 会把系统圆角、阴影、红绿灯一并剥掉且无法找回。因此 mac
 改走原生路线：保留系统窗口边框，但用 fullSizeContentView + 透明标题栏，把
 系统标题栏“藏”进自绘界面——视觉上无边框，而圆角、阴影、红绿灯、边缘缩放

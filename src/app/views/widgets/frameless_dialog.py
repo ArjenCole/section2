@@ -2,15 +2,14 @@
 
 为所有弹出窗体提供统一风格：
 - 去除系统标题栏与边框（Qt.FramelessWindowHint）+ 自定义标题栏（支持拖拽）
-- Windows 11 原生圆角（Win10 自动忽略）
+- Windows/Linux 完全自绘圆角与外阴影（不调用 DWM 圆角、不依赖系统阴影），
+  Win10/Win11 外观一致
 - :class:`FramelessMessageBox` 提供与 QMessageBox 一致的静态方法 API，
   图标为 Lucide SVG 着色渲染，按钮文案/顺序统一（肯定在前、取消最后），
   全项目统一用它替换 QMessageBox。
 """
 
 from __future__ import annotations
-
-import sys
 
 from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
@@ -305,8 +304,7 @@ class FramelessDialog(QDialog):
             self.setWindowFlags(Qt.WindowType.Window)
         else:
             self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
-            # Windows/Linux：自绘圆角（WA_TranslucentBackground + mask + 描边圈），
-            # 不依赖 Win11 DWM，Win10/11 外观一致
+            # Windows/Linux：完全自绘圆角与阴影（不调用 Win11 DWM），Win10/11 外观一致
             self._rounded = RoundedWindowHelper.install(self)
 
         self._title_bar = None if self._mac else DialogTitleBar(title, self)
@@ -350,7 +348,6 @@ class FramelessDialog(QDialog):
             # 窗体销毁后挂起回调自动取消，避免打到已删除对象）
             QTimer.singleShot(0, self, self._mac_fit_safe_area)
         super().showEvent(event)
-        self._enable_win11_rounded_corners()
 
     def _mac_fit_safe_area(self) -> None:
         """fullSizeContentView 的安全区内边距（标题栏高度）会把布局压下 28pt，
@@ -364,22 +361,6 @@ class FramelessDialog(QDialog):
         needed = self.sizeHint().height() + extra
         if self.height() < needed:
             self.resize(self.width(), needed)
-
-    def _enable_win11_rounded_corners(self) -> None:
-        """Windows 11 原生圆角（Win10 自动忽略）。"""
-        if sys.platform != "win32":
-            return
-        try:
-            import ctypes  # noqa: PLC0415
-
-            hwnd = int(self.winId())
-            # DWMWA_WINDOW_CORNER_PREFERENCE = 33; DWMWCP_ROUND = 2
-            pref = ctypes.c_int(2)
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, 33, ctypes.byref(pref), ctypes.sizeof(pref)
-            )
-        except Exception:  # noqa: BLE001
-            pass
 
 
 class FramelessMessageBox(FramelessDialog):

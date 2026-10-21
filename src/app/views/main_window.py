@@ -337,7 +337,6 @@ class MainWindow(QMainWindow):
         install_confirm_handler(self._confirm_ai_write)
         self._update_title()
         self._refresh_recent_menu()
-        self._enable_win11_rounded_corners()
         QTimer.singleShot(0, self._start_mcp_if_enabled)
         if is_mac():
             # mac 的 chrome 在首次 showEvent 里套用：show 时 Qt 会按窗口标志重置
@@ -348,21 +347,6 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, lambda: self._open_path(project_path))
 
     # ------------------------------------------------------------------ 原生窗口辅助
-    def _enable_win11_rounded_corners(self) -> None:
-        """Windows 11：为无边框窗口启用原生圆角（Win10 自动忽略）。照搬 Quotor。"""
-        if sys.platform != "win32":
-            return
-        try:
-            import ctypes
-
-            hwnd = int(self.winId())
-            preference = ctypes.c_int(2)  # DWMWCP_ROUND
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, 33, ctypes.byref(preference), ctypes.sizeof(preference)
-            )
-        except Exception:
-            pass
-
     def nativeEvent(self, event_type, message):  # noqa: N802 - Qt 命名
         """Windows：无边框窗口的边缘缩放（WM_NCHITTEST）。照搬 Quotor。"""
         if event_type == "windows_generic_MSG":
