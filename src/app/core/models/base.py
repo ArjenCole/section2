@@ -4,7 +4,10 @@
 统一通过本模块拿会话；一次 `commit()` 就是一次落盘（自动保存）。
 
 会话只有一个、长驻、跑在界面线程上——桌面单用户场景下这样才能让
-“改完立刻 commit”的自动保存最简单可靠。
+“改完立刻 commit”的自动保存最简单可靠。界面启动时由
+:func:`app.core.main_thread.mark_main_thread` 标记主线程；此后
+:func:`session` / :func:`commit` / 工程生命周期函数在 worker 线程调用会直接报错，
+AI/MCP 工具统一经 ``execute_on_main`` 投递回主线程执行。
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from pathlib import Path
 from sqlalchemy import Engine, MetaData, create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
+from app.core.main_thread import ensure_main_thread
 from app.core.version import APP_VERSION, SCHEMA_VERSION
 
 #: 统一的约束命名，方便以后在 SQLite 上做结构迁移
@@ -394,6 +398,7 @@ def _make_engine(path: Path) -> Engine:
 
 
 def _bind(engine: Engine, path: Path) -> None:
+    ensure_main_thread("绑定工程数据库")
     global _engine, _session_factory, _path, _session
     _engine = engine
     _path = Path(path)
@@ -403,6 +408,7 @@ def _bind(engine: Engine, path: Path) -> None:
 
 def create_database(path: str | Path) -> Engine:
     """新建 .stn2：建库 + 建表 + 写 meta。"""
+    ensure_main_thread("新建工程数据库")
     from app.core.models import models  # noqa: F401  建表前先注册全部表
 
     close_database()
@@ -427,6 +433,7 @@ def create_database(path: str | Path) -> Engine:
 
 def open_database(path: str | Path) -> Engine:
     """打开已有 .stn2：校验结构版本 → 迁移 → 补建缺失的表。"""
+    ensure_main_thread("打开工程数据库")
     from app.core.models import models  # noqa: F401
 
     close_database()
@@ -498,6 +505,7 @@ def _write_meta_raw(engine: Engine, key: str, value: str) -> None:
 
 def close_database() -> None:
     """关闭会话、释放引擎；调用后工程处于“未打开”状态。"""
+    ensure_main_thread("关闭工程数据库")
     global _engine, _session_factory, _path, _session
     if _session is not None:
         try:
@@ -522,7 +530,8 @@ def is_open() -> bool:
 
 
 def session() -> Session:
-    """当前工程的共享会话。"""
+    """当前工程的共享会话（只能在界面主线程使用）。"""
+    ensure_main_thread("访问工程数据库")
     if _session is None:
         raise NoProjectOpenError("尚未打开工程。")
     return _session
@@ -530,6 +539,7 @@ def session() -> Session:
 
 def commit() -> None:
     """落盘：commit + 刷新 meta.updated_at（“保存”与自动保存都走这里）。"""
+    ensure_main_thread("保存工程数据")
     if _session is None:
         return
     _session.commit()
@@ -550,6 +560,7 @@ def get_meta_with(target: Session, key: str, default: str = "") -> str:
 
 def set_meta(key: str, value: str, *, commit_now: bool = False) -> None:
     """写 meta 表某项。"""
+    ensure_main_thread("写入工程元数据")
     from app.core.models import models
 
     if _session is None:

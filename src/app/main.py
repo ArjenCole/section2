@@ -29,6 +29,7 @@ from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator  # noqa: E402
 from PySide6.QtGui import QFontDatabase, QIcon  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from app.core.main_thread import install_main_thread_executor
 from app.core.paths import fonts_dir, log_dir, resources_dir  # noqa: E402
 from app.core.version import (  # noqa: E402
     APP_DISPLAY_NAME,
@@ -123,6 +124,9 @@ def main(argv: list[str] | None = None) -> int:
     _logger.info("启动 %s %s", APP_DISPLAY_NAME, APP_VERSION)
 
     app = QApplication(arguments)
+    # 数据层是单会话、非线程安全：所有 AI/MCP 工具执行与工程生命周期操作
+    # 都经这个执行器回到主线程（见 app.core.main_thread）。
+    install_main_thread_executor()
     app.setApplicationName(APP_NAME)
     app.setApplicationDisplayName(APP_DISPLAY_NAME)
     app.setApplicationVersion(APP_VERSION)

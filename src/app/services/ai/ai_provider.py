@@ -6,6 +6,9 @@
 * ``on_content(text)`` —— 正文增量；
 * ``on_reasoning(text)`` —— 思考过程增量（DeepSeek reasoning_content，其它端点通常没有）；
 * ``on_tool_call(tool_index, tool_id, name, arguments_delta)`` —— 工具调用增量（M8）。
+
+思考模式端点要求后续请求的 assistant 消息带回上一轮 ``reasoning_content``
+（否则 400），由 :class:`ChatMessage` / :func:`ProviderConfig` 控制是否回传。
 """
 
 from __future__ import annotations
@@ -32,12 +35,20 @@ class AiProviderError(RuntimeError):
     """AI 端点错误（网络 / 鉴权 / 参数）。"""
 
 
+def default_send_reasoning_content(base_url: str) -> bool:
+    """是否默认回传 reasoning_content：官方 DeepSeek 关闭，其它思考端点开启。"""
+    return "api.deepseek.com" not in str(base_url or "").lower()
+
+
 @dataclass
 class ChatMessage:
     role: str
     content: str = ""
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
+    #: 思考模式（DeepSeek/OpenCode 等）的 assistant 思考内容；多轮/工具调用
+    #: 必须原样回传，否则端点返回 400（reasoning_content must be passed back）
+    reasoning_content: str = ""
 
 
 @dataclass
@@ -46,6 +57,9 @@ class ProviderConfig:
     base_url: str
     default_model: str
     temperature: float = 0.2
+    #: 是否把 assistant 的 reasoning_content 回传给端点。思考模式端点
+    #: （OpenCode/GLM 等）在工具调用/多轮时必须回传；官方 DeepSeek 默认关闭。
+    send_reasoning_content: bool = True
 
 
 def stream_chat(
@@ -79,7 +93,10 @@ def stream_chat(
         headers["Authorization"] = f"Bearer {api_key}"
     payload: dict = {
         "model": model or config.default_model,
-        "messages": [_encode(message) for message in messages],
+        "messages": [
+            _encode(message, send_reasoning=config.send_reasoning_content)
+            for message in messages
+        ],
         "stream": True,
         "temperature": config.temperature,
     }
@@ -102,10 +119,13 @@ def stream_chat(
         raise AiProviderError(f"无法连接 AI 端点：{error}") from error
 
 
-def _encode(message: ChatMessage) -> dict:
+def _encode(message: ChatMessage, *, send_reasoning: bool = True) -> dict:
     body: dict = {"role": message.role}
     if message.content:
         body["content"] = message.content
+    if send_reasoning and message.role == "assistant" and message.reasoning_content:
+        # 思考模式：上一轮 assistant 的 reasoning_content 必须随消息回传
+        body["reasoning_content"] = message.reasoning_content
     if message.tool_calls:
         body["tool_calls"] = message.tool_calls
     if message.tool_call_id:

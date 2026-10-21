@@ -67,3 +67,69 @@ def test_other_providers_do_not_get_opencode_header(monkeypatch) -> None:
     captured = _capture(monkeypatch)
     _chat("https://api.deepseek.com/v1", session_id="stable-123")
     assert "x-opencode-session" not in captured["headers"]
+
+
+def test_reasoning_content_passed_back_for_assistant_only(monkeypatch) -> None:
+    """思考模式：assistant 的 reasoning_content 必须随消息回传；其它角色不带。"""
+    captured = _capture(monkeypatch)
+    messages = [
+        ai_provider.ChatMessage(role="system", content="system"),
+        ai_provider.ChatMessage(role="user", content="user"),
+        ai_provider.ChatMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "list_elements", "arguments": "{}"},
+                }
+            ],
+            reasoning_content="先查一下构件列表",
+        ),
+        ai_provider.ChatMessage(
+            role="tool", tool_call_id="call_1", content='{"ok": true}'
+        ),
+    ]
+    ai_provider.stream_chat(
+        ai_provider.ProviderConfig(
+            name="p", base_url="https://example.com/v1", default_model="m"
+        ),
+        "sk-test",
+        messages,
+    )
+    encoded = captured["json"]["messages"]
+    assert encoded[2]["reasoning_content"] == "先查一下构件列表"
+    assert "reasoning_content" not in encoded[0]
+    assert "reasoning_content" not in encoded[1]
+    assert "reasoning_content" not in encoded[3]
+
+
+def test_reasoning_content_can_be_disabled_per_provider(monkeypatch) -> None:
+    """官方 DeepSeek 等不需要回传的端点可关闭该字段。"""
+    captured = _capture(monkeypatch)
+    messages = [
+        ai_provider.ChatMessage(
+            role="assistant", content="ok", reasoning_content="思考内容"
+        )
+    ]
+    ai_provider.stream_chat(
+        ai_provider.ProviderConfig(
+            name="p",
+            base_url="https://api.deepseek.com/v1",
+            default_model="m",
+            send_reasoning_content=False,
+        ),
+        "sk-test",
+        messages,
+    )
+    assert "reasoning_content" not in captured["json"]["messages"][0]
+
+
+def test_default_send_reasoning_content_by_endpoint() -> None:
+    assert not ai_provider.default_send_reasoning_content(
+        "https://api.deepseek.com/v1"
+    )
+    assert ai_provider.default_send_reasoning_content(
+        "https://opencode.ai/zen/go/v1"
+    )

@@ -2,6 +2,8 @@
 
 与 Quotor 同款执行模型：
 - 同步执行器放 ``anyio.to_thread``，不阻塞 asyncio 事件循环；
+- 工具执行器由 ``ToolRegistry`` 经 ``execute_on_main`` 投递回 Qt 主线程
+  （全局单会话非线程安全；本适配层的锁只负责 MCP 调用串行）；
 - ``allow_actions=false`` 时只暴露只读工具；
 - 写工具在无界面进程直接拒绝（没有确认面，避免无人值守改数据）；
 - MCP 通道写操作按 ``[mcp] require_confirmation`` 决定是否弹确认卡；

@@ -42,7 +42,12 @@ from app.core.config import get_config
 from app.core.event_bus import bus
 from app.resources.qss.theme import ThemeManager
 from app.services.ai import ai_keychain
-from app.services.ai.ai_provider import ChatMessage, ProviderConfig, new_session_id
+from app.services.ai.ai_provider import (
+    ChatMessage,
+    ProviderConfig,
+    default_send_reasoning_content,
+    new_session_id,
+)
 from app.views.widgets.frameless_dialog import FramelessMessageBox, load_icon
 
 _SYSTEM_PROMPT = (
@@ -383,11 +388,16 @@ class AiPanel(QWidget):
             provider = providers[0] if providers else None
         if provider is None:
             return None
+        base_url = str(provider.get("base_url", ""))
+        send_reasoning = provider.get("send_reasoning_content")
+        if send_reasoning is None:
+            send_reasoning = default_send_reasoning_content(base_url)
         return ProviderConfig(
             name=provider.get("name", ""),
-            base_url=provider.get("base_url", ""),
+            base_url=base_url,
             default_model=provider.get("default_model", ""),
             temperature=float(provider.get("temperature", 0.2)),
+            send_reasoning_content=bool(send_reasoning),
         )
 
     def _refresh_hint(self) -> None:
@@ -512,8 +522,17 @@ class AiPanel(QWidget):
             self._thinking_block.stop_thinking()
         answer = text or self._stream_text
         self._stream_text = ""
+        # 思考模式的端点要求把历史 assistant 的 reasoning_content 原样回传，
+        # 否则下一轮对话会 400（AiPanel 每轮用 _history 重建请求）。
+        reasoning = (
+            getattr(self._loop, "last_reasoning", "")
+            if self._loop is not None
+            else ""
+        )
         self._append_message("ai", answer)
-        self._history.append(ChatMessage(role="assistant", content=answer))
+        self._history.append(
+            ChatMessage(role="assistant", content=answer, reasoning_content=reasoning)
+        )
         self._thinking_block = None
         self._send_btn.setEnabled(self._provider() is not None)
         self._loop = None

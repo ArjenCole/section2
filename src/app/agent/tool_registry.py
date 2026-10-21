@@ -9,6 +9,9 @@
 执行器签名 ``Callable[[dict], dict]``；业务失败返回 ``{"error": ...}``（带下一步
 指引），用户取消确认返回 ``{"cancelled": true}``，正常结果也必须是 dict。
 :meth:`execute` 统一兜底：未注册工具 / 未捕获异常都转成 ``{"error": ...}``。
+
+执行器统一经 :func:`app.core.main_thread.execute_on_main` 投递到 Qt 主线程：
+数据层只有一个长驻 SQLAlchemy Session，不能由 AI/MCP 的 worker 线程直接访问。
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from app.agent.errors import ToolError
+from app.core.main_thread import execute_on_main
 
 ToolExecutor = Callable[[dict], dict]
 
@@ -75,7 +79,9 @@ class ToolRegistry:
         if not isinstance(arguments, dict):
             return {"error": "参数必须是 JSON 对象。"}
         try:
-            result = tool.executor(arguments)
+            # 数据层是全局单会话：无论调用方是内置 AI 还是 MCP 的 worker 线程，
+            # 执行器都回到 Qt 主线程，避免与界面刷新并发访问同一个 Session。
+            result = execute_on_main(tool.executor, arguments)
         except ToolError as error:
             return {"error": str(error)}
         except Exception as error:  # 未预期异常：包成业务错误，避免循环中断

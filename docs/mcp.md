@@ -12,7 +12,7 @@ WorkBuddy…）可以直接建工程、管项目树、录构件、编辑六类�
 
 | 入口 | 传输 | 说明 |
 |---|---|---|
-| **GUI 内嵌**（主方案） | Streamable HTTP（`127.0.0.1:8765/mcp`） | 在桌面应用里启用；与界面共享同一个工程会话和锁，界面经 EventBus 实时刷新，写操作在界面弹确认卡 |
+| **GUI 内嵌**（主方案） | Streamable HTTP（`127.0.0.1:8765/mcp`） | 在桌面应用里启用；与界面共享同一个工程会话和锁，工具执行器经 `execute_on_main` 回到主线程串行执行，界面经 EventBus 实时刷新，写操作在界面弹确认卡 |
 | **独立 CLI** `section2-mcp` | stdio / 本地 HTTP / stdio 桥 / headless | 见下文四种模式 |
 
 内嵌与 CLI 用的是**同一套工具注册表**（`app/agent/tools/`），与内置 AI 助手

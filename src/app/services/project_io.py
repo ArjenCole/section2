@@ -30,6 +30,7 @@ from app.core.version import (
     LOCK_SUFFIX,
     PROJECT_SUFFIX,
 )
+from app.core.main_thread import ensure_main_thread
 from app.core.models import base as orm
 from app.core.models.models import (
     GROOVE_WIDTH_WORK,
@@ -220,6 +221,7 @@ def new_project(spec: NewProjectSpec) -> Path:
     """
     global _original_path, _backup_done_for_session
 
+    ensure_main_thread("新建工程")
     path = Path(spec.path) if spec.path is not None else None
     close_project()
     if path is None:
@@ -282,6 +284,7 @@ def open_project(path: str | Path) -> Path:
     """打开工程：抢锁 → 校验结构版本 → 绑定会话。"""
     global _original_path, _backup_done_for_session
 
+    ensure_main_thread("打开工程")
     target = Path(path)
     close_project()
     if not target.exists():
@@ -307,6 +310,7 @@ def save() -> Path | None:
     临时工程（尚未保存过）没有可保存的文件，由界面层引导用户
     走另存为流程选择保存位置。
     """
+    ensure_main_thread("保存工程")
     if _original_path is None:
         raise ProjectIoError("工程尚未保存过，请先选择保存位置。")
     path = orm.database_path()
@@ -321,6 +325,7 @@ def save_as(path: str | Path) -> Path:
     之后继续在新文件上工作；临时工程的临时库随手删除。"""
     global _original_path, _backup_done_for_session
 
+    ensure_main_thread("另存工程")
     old_path = orm.database_path()
     was_transient = _original_path is None
     target = Path(path)
@@ -357,6 +362,7 @@ def close_project() -> Path | None:
     """关闭工程：落盘 → 关会话 → 释放锁；临时工程随手删掉临时库。"""
     global _original_path, _backup_done_for_session
 
+    ensure_main_thread("关闭工程")
     path = orm.database_path()
     if path is None:
         return None
@@ -375,6 +381,7 @@ def close_project() -> Path | None:
 
 def commit() -> None:
     """一次修改落盘（自动保存）；本次打开后的第一次修改会顺手备份一份。"""
+    ensure_main_thread("保存工程数据")
     _commit_and_backup(force_backup=False)
 
 

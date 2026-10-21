@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from app.core.config import get_config, update_config
 from app.services.ai import ai_keychain
+from app.services.ai.ai_provider import default_send_reasoning_content
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 
 # Provider 预设模板: display_name / base_url / default_model（Quotor 同款）
@@ -295,6 +296,14 @@ class AiSettingsDialog(FramelessDialog):
         self._temperature_edit.textEdited.connect(self._on_field_edited)
         form.addRow("温度:", self._temperature_edit)
 
+        self._reasoning_check = QCheckBox("回传思考内容（reasoning_content）")
+        self._reasoning_check.setToolTip(
+            "思考模型（OpenCode/GLM 等）在工具调用后要求把上一轮 assistant 的"
+            " reasoning_content 原样回传；官方 DeepSeek API 默认关闭。"
+        )
+        self._reasoning_check.clicked.connect(self._on_field_edited)
+        form.addRow("思考回传:", self._reasoning_check)
+
         right.addLayout(form)
 
         # 测试连接按钮 + 结果标签
@@ -382,6 +391,13 @@ class AiSettingsDialog(FramelessDialog):
         self._api_key_edit.setText("")
         self._api_key_edit.setPlaceholderText("留空表示不修改已保存的 key")
         self._temperature_edit.setText(f"{profile.get('temperature', 0.2):g}")
+        base_url = str(profile.get("base_url", "")).lower()
+        send_default = default_send_reasoning_content(base_url)
+        self._reasoning_check.blockSignals(True)
+        self._reasoning_check.setChecked(
+            bool(profile.get("send_reasoning_content", send_default))
+        )
+        self._reasoning_check.blockSignals(False)
         self._test_result.setText("")
 
     def _clear_form(self) -> None:
@@ -392,6 +408,9 @@ class AiSettingsDialog(FramelessDialog):
         self._default_model_edit.blockSignals(False)
         self._api_key_edit.clear()
         self._temperature_edit.clear()
+        self._reasoning_check.blockSignals(True)
+        self._reasoning_check.setChecked(False)
+        self._reasoning_check.blockSignals(False)
         self._test_result.setText("")
 
     def _set_form_enabled(self, enabled: bool) -> None:
@@ -401,6 +420,7 @@ class AiSettingsDialog(FramelessDialog):
             self._default_model_edit,
             self._api_key_edit,
             self._temperature_edit,
+            self._reasoning_check,
             self._test_btn,
         ):
             widget.setEnabled(enabled)
@@ -453,6 +473,7 @@ class AiSettingsDialog(FramelessDialog):
             p["temperature"] = float(self._temperature_edit.text().strip() or 0.2)
         except ValueError:
             p["temperature"] = 0.2
+        p["send_reasoning_content"] = self._reasoning_check.isChecked()
         # api_key 单独处理（只在非空时写入 keychain）
         new_key = self._api_key_edit.text()
         if new_key:

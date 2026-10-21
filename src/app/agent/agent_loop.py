@@ -1,8 +1,10 @@
 """function calling 循环（M8 + 二期治理）。
 
 与界面同一路径：工具执行走统一 ToolRegistry → unit_vm / project_io 纯函数。
-写操作先经确认通道（内置面板 = builtin 通道），用户拒绝返回
-``{"cancelled": true}`` 并立即终止本轮循环（防反复弹窗）。
+本类只在后台线程做模型请求；工具执行器由 ToolRegistry 经
+``app.core.main_thread.execute_on_main`` 投递回 Qt 主线程（数据层单会话，
+不能被 worker 线程并发访问）。写操作先经确认通道（内置面板 = builtin 通道），
+用户拒绝返回 ``{"cancelled": true}`` 并立即终止本轮循环（防反复弹窗）。
 
 治理（对齐 Quotor 已验证配置，见 app.agent.governance）：
 预算软着陆、停滞检测、提前收尾抢救、空 content 重试、超长结果截断、
@@ -41,6 +43,8 @@ class AgentLoop(QObject):
         self._session_id = session_id
         self._cancelled = threading.Event()
         self._registry = tool_registry.default_registry()
+        #: 最后一轮正常回答的思考内容（AiPanel 写入对话历史时回传给思考模式端点）
+        self.last_reasoning = ""
 
     # ------------------------------------------------------------------ 界面
     def cancel(self) -> None:
@@ -67,6 +71,7 @@ class AgentLoop(QObject):
         model: str | None,
     ) -> None:
         conversation = list(messages)
+        self.last_reasoning = ""
         budget = governance.Budget()
         stagnation = governance.StagnationDetector()
         empty_retries = 0
@@ -118,6 +123,7 @@ class AgentLoop(QObject):
                         )
                         continue
                     else:
+                        self.last_reasoning = reasoning_text
                         self.finished.emit(text)
                         return
 
@@ -133,7 +139,13 @@ class AgentLoop(QObject):
                     for index, buffer in sorted(tool_buffers.items())
                 ]
                 conversation.append(
-                    ChatMessage(role="assistant", content=text or "", tool_calls=tool_calls)
+                    ChatMessage(
+                        role="assistant",
+                        content=text or "",
+                        tool_calls=tool_calls,
+                        # 思考模式要求把本轮 assistant 的思考内容原样带回
+                        reasoning_content=reasoning_text,
+                    )
                 )
                 nudge = False
                 for index, buffer in sorted(tool_buffers.items()):
@@ -159,6 +171,7 @@ class AgentLoop(QObject):
                             )
                             self.finished.emit("（用户取消了操作，已停止。）")
                             return
+                    # ToolRegistry.execute 内部会 marshal 到 Qt 主线程执行
                     result = self._registry.execute(name, arguments)
                     if isinstance(result, dict) and result.get("cancelled"):
                         conversation.append(

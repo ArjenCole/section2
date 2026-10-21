@@ -87,9 +87,11 @@ Quotor（`F:\GithubRepos\ArjenCole\Quotor`，只读参照）已把同样的"MCP 
 
 1. **不需要 `AgentActionBridge`**：Quotor 工具执行器直接操作运行中的 ViewModel/Panel/Dialog
    （`panel._vm`），必须 `execute_on_main`（QEventLoop 阻塞 marshal）到 Qt 主线程；
-   section2 的工具走 `unit_vm`/`project_vm` **模块级纯函数**（不碰 Qt 控件），worker 线程直接
-   调用即可——现有 GUI 内置 AI 已如此工作。唯一跨线程触点是确认窗（经现有 `ConfirmBridge`
-   队列信号到主线程）；
+   section2 的工具走 `unit_vm`/`project_vm` **模块级纯函数**（不碰 Qt 控件），但数据层是
+   **全局单 SQLAlchemy Session（非线程安全）**，因此工具执行器同样经
+   `app.core.main_thread.execute_on_main` 投递回 Qt 主线程，worker 只负责模型请求；
+   跨线程触点还包括确认窗（经 `ConfirmPolicy` 队列信号到主线程）。工程生命周期操作
+   （新建/打开/另存/关闭）由 `project_io` 的线程守卫强制在主线程执行；
 2. **headless 可用面更大**：Quotor headless 只有 9 个纯查询工具（其余依赖主窗口）；
    section2 数据层全部无 GUI 依赖，`--project` 模式下**除写操作外的全部工具**（读树/读构件/
    读原则/计算/图集/迁移 inspect…）都可在无 GUI 进程执行。
@@ -174,12 +176,14 @@ Quotor（`F:\GithubRepos\ArjenCole\Quotor`，只读参照）已把同样的"MCP 
 ```
 
 - **数据流**：外部客户端 `call_tool(name, args)` → HTTP → Bearer 中间件 → mcp Server →
-  `McpToolAdapter.call_tool`（`anyio.to_thread.run_sync`）→ `ToolRegistry.execute` →
+  `McpToolAdapter.call_tool`（`anyio.to_thread.run_sync`）→ `ToolRegistry.execute`
+  （内部经 `execute_on_main` 投递回 Qt 主线程，ContextVar 随上下文复制）→
   工具执行器调 `unit_vm`/`project_io` 纯函数（commit 落盘、EventBus 广播界面刷新）→
-  写操作经 `ConfirmBridge` 在主线程弹结构化确认卡 → 用户批准/拒绝 → 结果 dict →
+  写操作经 `ConfirmPolicy` 在主线程弹结构化确认卡 → 用户批准/拒绝 → 结果 dict →
   `isError` 分类 → JSON 文本回传客户端；
 - **会话/锁**：内嵌模式下**GUI 是唯一持锁者**，MCP 调用直接复用 GUI 进程内的全局 SQLAlchemy
-  会话——**不存在锁冲突、不存在双写**，界面经 EventBus 实时刷新（这是内嵌路线的核心收益）；
+  会话；**所有工具执行器与工程生命周期操作都在 Qt 主线程串行执行**（全局单 Session
+  非线程安全），界面经 EventBus 实时刷新（这是内嵌路线的核心收益）；
 - **鉴权**：启用时生成 `secrets.token_urlsafe(32)` 存 config；仅回环绑定，禁止 `0.0.0.0`。
 
 ### 4.2 辅助入口：独立 CLI `section2-mcp`（四模式，对齐 Quotor）
@@ -898,7 +902,7 @@ token → 401；对 token → 200；仅回环可达）；E2E：临时工程 → 
 | 写操作确认在无人值守场景卡住 | `[mcp] require_confirmation=false` 跳过弹窗（信任客户端批准）；`allow_actions=false` 干脆不暴露写工具；文档写明默认行为 |
 | 无 QApplication 下 PySide6.QtCore/EventBus 行为异常 | P0-4 冒烟先行；兜底 = event_bus 可选 Qt 改造（8.9）；内嵌模式（主路线）必然有 QApplication，风险只在辅助入口 |
 | `compute_unit` 返回过大（token 爆炸） | include_steps 默认关（compute_unit）；紧凑 prompt 格式（8.6）；per_element 分页列 v2 |
-| 全局单会话被并发写破坏（HTTP 多客户端） | `anyio.to_thread.run_sync` 只是避免阻塞事件循环，**工具执行仍需全局串行**：适配层加 `threading.Lock`（一次只跑一个工具执行器；内嵌模式与 GUI 操作同进程同会话，SQLite 会话串行访问） |
+| 全局单会话被并发写破坏（HTTP 多客户端） | **工具执行统一经 `execute_on_main` 回到 Qt 主线程串行**（`ToolRegistry.execute` 内实现，ContextVar 随调用复制）；适配层另加 `threading.Lock` 串行 MCP 调用；`project_io`/ORM 加主线程守卫，worker 直接访问会立即报错而不是偶发 `prepared` 竞态 |
 | 原则抽取重构碰坏 GUI 对话框 | 对话框行为不变原则；`test_principle_ui*` + 手工过一遍六类编辑器 |
 | 74 工具 system prompt 膨胀 | 紧凑参数格式（Quotor 实测 token 减半以上）+ 上下文层动态注入 |
 | AI 误操作（写文件/删数据） | 双通道确认 + readonly + 路径白名单 + 备份兜底（Backup 20 份可人工恢复） |
