@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
 from PySide6.QtCore import QRect, Qt, QThread, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
@@ -38,7 +37,11 @@ from PySide6.QtWidgets import (
 
 from app.core.config import get_config, update_config
 from app.services.ai import ai_keychain
-from app.services.ai.ai_provider import default_send_reasoning_content
+from app.services.ai.ai_provider import (
+    AiProviderError,
+    default_send_reasoning_content,
+    fetch_models,
+)
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 
 # Provider 预设模板: display_name / base_url / default_model（Quotor 同款）
@@ -102,30 +105,11 @@ class _TestConnectionWorker(QThread):
         self._api_key = api_key
 
     def run(self) -> None:  # noqa: N802 - Qt 命名
-        url = self._base_url.rstrip("/")
-        if not url.endswith("/models"):
-            url = url + "/models"
-        headers = {}
-        if self._api_key:
-            headers["Authorization"] = f"Bearer {self._api_key}"
         try:
-            response = httpx.get(url, headers=headers, timeout=10.0)
-        except httpx.HTTPError as error:
-            self.finished_with_result.emit(False, f"无法连接端点：{error}", [])
+            models = fetch_models(self._base_url, self._api_key, timeout=10.0)
+        except AiProviderError as error:
+            self.finished_with_result.emit(False, str(error), [])
             return
-        if response.status_code != 200:
-            body = response.text[:200].replace("\n", " ")
-            self.finished_with_result.emit(
-                False, f"端点返回 {response.status_code}：{body}", []
-            )
-            return
-        try:
-            data = response.json().get("data", [])
-            models = [
-                item.get("id", "") for item in data if isinstance(item, dict) and item.get("id")
-            ]
-        except ValueError:
-            models = []
         self.finished_with_result.emit(True, f"连接成功，发现 {len(models)} 个模型", models)
 
 
@@ -379,6 +363,11 @@ class AiSettingsDialog(FramelessDialog):
         self._display_name_edit.setText(profile.get("display_name", ""))
         self._base_url_edit.setText(profile.get("base_url", ""))
         self._default_model_edit.blockSignals(True)
+        # 上次「测试连接」发现的模型列表（面板下拉也读这份缓存）
+        self._default_model_edit.clear()
+        self._default_model_edit.addItems(
+            [str(m) for m in profile.get("models", []) if str(m).strip()]
+        )
         current = profile.get("default_model", "")
         idx = self._default_model_edit.findText(current)
         if idx >= 0:
@@ -589,6 +578,9 @@ class AiSettingsDialog(FramelessDialog):
             model_ids = [m for m in models if isinstance(m, str) and m]
             if not model_ids:
                 return
+            if 0 <= self._selected_index < len(self._providers):
+                # 记住发现结果：确定保存后落盘，AI 面板的模型下拉直接可用
+                self._providers[self._selected_index]["models"] = list(model_ids)
             current = self._default_model_edit.currentText().strip()
             self._default_model_edit.blockSignals(True)
             self._default_model_edit.clear()
@@ -635,6 +627,10 @@ class AiSettingsDialog(FramelessDialog):
             }
             if "temperature" in p:
                 clean["temperature"] = p.get("temperature", 0.2)
+            if p.get("models"):
+                clean["models"] = [
+                    str(m) for m in p.get("models", []) if str(m).strip()
+                ]
             providers_clean.append(clean)
             if "_pending_api_key" in p:
                 ai_keychain.set_api_key(p["name"], p.pop("_pending_api_key"))

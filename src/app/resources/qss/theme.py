@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from string import Template
 
 from PySide6.QtCore import QObject, Signal
+from PySide6.QtSvg import QSvgRenderer
 
 from app.core.paths import ensure_app_data_dir
 
@@ -548,6 +549,21 @@ QPushButton#aiSendBtn:hover { background-color: $primary_hover; }
 QPushButton#aiSendBtn:pressed { background-color: $primary_pressed; }
 QPushButton#aiSendBtn:disabled { background-color: $bg_pressed; color: $text_disabled; }
 
+/* AI 面板模型来源选择器: 发送按钮左侧, provider 显示名 + 下拉箭头
+   右侧 24px 内边距留给自绘箭头（与 QComboBox::down-arrow 同款 SVG） */
+QPushButton#aiSourceBtn {
+    border: none;
+    border-radius: 8px;
+    padding: 0 24px 0 8px;
+    background: transparent;
+    color: $text_secondary;
+    font-size: 12px;
+    text-align: left;
+}
+QPushButton#aiSourceBtn:hover { background-color: $bg_hover; color: $text_primary; }
+QPushButton#aiSourceBtn:pressed { background-color: $bg_pressed; }
+QPushButton#aiSourceBtn:disabled { background: transparent; color: $text_disabled; }
+
 /* ===================== 表格/列表里的勾选指示器 ===================== */
 QTableView::indicator, QTableWidget::indicator, QTreeView::indicator, QListView::indicator {
     width: 15px;
@@ -570,14 +586,32 @@ QDialog QComboBox QAbstractItemView { background-color: $bg_card; }
 )
 
 
+_COMBO_ARROW_BODY = '<path d="m6 9 6 6 6-6" />'
+
+
+def combo_arrow_path(color: str) -> str:
+    """组合框下拉箭头 SVG 文件路径（QSS 用）。"""
+    return _write_svg("combo-arrow", color, _COMBO_ARROW_BODY)
+
+
+def combo_arrow_renderer(color: str) -> QSvgRenderer:
+    """组合框下拉箭头同款矢量渲染器（自绘按钮用）。
+
+    直接渲染到 QPainter（而不是先转 pixmap），高分屏下箭头不会发虚、
+    也不会因 devicePixelRatio 被裁切。
+    """
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
+        'viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.4" '
+        'stroke-linecap="round" stroke-linejoin="round">{body}</svg>'
+    ).format(color=color, body=_COMBO_ARROW_BODY)
+    return QSvgRenderer(svg.encode("utf-8"))
+
+
 def build_stylesheet(colors: ThemeColors) -> str:
     """由调色板生成整份 QSS。"""
-    combo_arrow = _write_svg(
-        "combo-arrow", colors.text_secondary, '<path d="m6 9 6 6 6-6" />'
-    )
-    combo_arrow_disabled = _write_svg(
-        "combo-arrow", colors.text_disabled, '<path d="m6 9 6 6 6-6" />'
-    )
+    combo_arrow = combo_arrow_path(colors.text_secondary)
+    combo_arrow_disabled = combo_arrow_path(colors.text_disabled)
     check_mark = _write_svg(
         "check-mark", colors.text_inverse, '<path d="m5 12 5 5 9-10" />'
     )

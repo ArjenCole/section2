@@ -7,8 +7,10 @@
     + :class:`_MarkdownView`（高度随文档自适应；AI 用 Markdown，用户/错误转义 <pre>）；
   - :class:`_ThinkingBlock` —— 可折叠思考块，"思考中…" 400ms 动画，工具调用与
     流式正文就地刷新；
-* 输入区 = QPlainTextEdit#aiInputEdit（圆角、右下角 overlay 发送按钮 #aiSendBtn），
-  Enter 发送、Shift/Ctrl+Enter 换行；
+* 输入区 = QPlainTextEdit#aiInputEdit（圆角、右下角 overlay 模型来源选择器
+  #aiSourceBtn + 发送按钮 #aiSendBtn），Enter 发送、Shift/Ctrl+Enter 换行；
+  - 模型来源选择器显示当前 provider 的显示名 + 下箭头，点击向上弹出菜单；
+    菜单上半部分是 AI 设置左侧的 provider 列表，底部「管理模型」打开设置窗体；
 * 顶部：标题 + 「清空」（兼停止，运行中点击即中断）+ 齿轮「设置」。
 
 agent 层沿用本项目的 AgentLoop（content/reasoning/status/finished/failed/confirm 信号）。
@@ -19,12 +21,15 @@ from __future__ import annotations
 import html
 import time
 
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -38,9 +43,9 @@ from PySide6.QtWidgets import (
 from app.agent.agent_loop import AgentLoop
 from app.agent.context import current as current_agent_context
 from app.agent.tool_registry import default_registry
-from app.core.config import get_config
+from app.core.config import get_config, set_ai_active_provider
 from app.core.event_bus import bus
-from app.resources.qss.theme import ThemeManager
+from app.resources.qss.theme import ThemeManager, combo_arrow_renderer
 from app.services.ai import ai_keychain
 from app.services.ai.ai_provider import (
     ChatMessage,
@@ -252,6 +257,37 @@ class _InputEdit(QPlainTextEdit):
         super().keyPressEvent(event)
 
 
+class _SourceButton(QPushButton):
+    """模型来源按钮：左侧文字 + 右侧与 AI 设置「默认模型」下拉框同款箭头。"""
+
+    ARROW_SIZE = 12
+    ARROW_RIGHT = 6
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._arrow_key: tuple[str, bool] | None = None
+        self._arrow_renderer: QSvgRenderer | None = None
+
+    def _arrow_svg(self) -> QSvgRenderer:
+        colors = _c()
+        key = (colors.name, self.isEnabled())
+        if self._arrow_key != key or self._arrow_renderer is None:
+            color = colors.text_secondary if self.isEnabled() else colors.text_disabled
+            self._arrow_renderer = combo_arrow_renderer(color)
+            self._arrow_key = key
+        return self._arrow_renderer
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().paintEvent(event)
+        painter = QPainter(self)
+        x = self.width() - self.ARROW_SIZE - self.ARROW_RIGHT
+        y = (self.height() - self.ARROW_SIZE) // 2
+        self._arrow_svg().render(
+            painter, QRectF(x, y, self.ARROW_SIZE, self.ARROW_SIZE)
+        )
+        painter.end()
+
+
 class AiPanel(QWidget):
     """AI 助手面板。"""
 
@@ -316,7 +352,8 @@ class AiPanel(QWidget):
         self._input.setMaximumHeight(108)
         self._input.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._input.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._input.setViewportMargins(0, 0, 40, 0)  # 右侧留给发送按钮
+        # 右侧留给发送按钮；底部整条留给模型选择器 + 发送按钮，正文不会压到它们
+        self._input.setViewportMargins(0, 0, 40, 38)
         self._input.submitted.connect(self._send_message)
         layout.addWidget(self._input)
 
@@ -328,6 +365,16 @@ class AiPanel(QWidget):
         self._send_btn.setParent(self._input)
         self._send_btn.raise_()
         self._send_btn.clicked.connect(self._send_message)
+
+        # 发送按钮左侧的模型来源选择器：provider 显示名 + 下箭头
+        self._source_btn = _SourceButton()
+        self._source_btn.setObjectName("aiSourceBtn")
+        self._source_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._source_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._source_btn.setFixedHeight(30)
+        self._source_btn.setParent(self._input)
+        self._source_btn.clicked.connect(self._show_source_menu)
+        self._source_btn.raise_()
         self._input.installEventFilter(self)
 
     def _connect(self) -> None:
@@ -338,10 +385,16 @@ class AiPanel(QWidget):
     # ------------------------------------------------------------------ 事件
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt 命名
         if obj is self._input and event.type() == QEvent.Type.Resize:
-            self._reposition_send_btn()
+            self._reposition_overlay_buttons()
         return super().eventFilter(obj, event)
 
-    def _reposition_send_btn(self) -> None:
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().resizeEvent(event)
+        # 面板宽度变化后 provider 名可用宽度也变了，重新省略 + 定位
+        if getattr(self, "_source_btn", None) is not None:
+            self._refresh_source_button()
+
+    def _reposition_overlay_buttons(self) -> None:
         rect = self._input.rect()
         margin = 6
         self._send_btn.move(
@@ -349,6 +402,11 @@ class AiPanel(QWidget):
             rect.bottom() - self._send_btn.height() - margin,
         )
         self._send_btn.raise_()
+        self._source_btn.move(
+            self._send_btn.x() - self._source_btn.width() - 4,
+            self._send_btn.y(),
+        )
+        self._source_btn.raise_()
 
     @staticmethod
     def _make_send_arrow_icon():
@@ -376,16 +434,22 @@ class AiPanel(QWidget):
 
     def _on_theme_changed(self) -> None:
         self._btn_settings.setIcon(load_icon("settings", color=_c().text_primary, size=16))
+        self._source_btn.update()  # 箭头颜色随主题重绘
         for bubble in self._bubbles:
             bubble.refresh_theme()
 
-    def _provider(self) -> ProviderConfig | None:
+    def _active_provider(self) -> dict | None:
+        """当前启用的 provider 条目；未指定时退回列表第一个。"""
         config = get_config()
         name = config.ai_active_provider
         provider = config.ai_provider(name) if name else None
         if provider is None:
             providers = config.ai_providers
             provider = providers[0] if providers else None
+        return provider
+
+    def _provider(self) -> ProviderConfig | None:
+        provider = self._active_provider()
         if provider is None:
             return None
         base_url = str(provider.get("base_url", ""))
@@ -406,13 +470,102 @@ class AiPanel(QWidget):
         self._send_btn.setEnabled(provider is not None)
         if provider is None:
             self._input.setPlaceholderText("尚未配置 AI 模型，请点击右上角齿轮进行配置。")
+        else:
+            self._input.setPlaceholderText("输入问题... (Enter 发送, Shift+Enter 换行)")
+        self._refresh_source_button()
 
     def _open_settings(self) -> None:
         from app.views.dialogs.ai_settings_dialog import AiSettingsDialog
 
         dialog = AiSettingsDialog(self)
-        if dialog.exec():
-            self._refresh_hint()
+        dialog.exec()
+        # 「设为当前启用」是即改即存，取消对话框也可能已切换 provider
+        self._refresh_hint()
+
+    # ------------------------------------------------------------------ 模型来源
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().showEvent(event)
+        self._refresh_source_button()
+
+    def _refresh_source_button(self) -> None:
+        provider = self._active_provider()
+        if provider is None:
+            self._source_btn.setVisible(False)
+            return
+        self._source_btn.setVisible(True)
+        label = str(provider.get("display_name") or provider.get("name") or "")
+        label = label or "选择模型来源"
+        # 面板较窄时给发送按钮和右侧留白让位
+        cap = max(72, min(220, self.width() - 70))
+        self._source_btn.ensurePolished()
+        metrics = self._source_btn.fontMetrics()
+        # 右侧内边距 24px 由 QSS 留给箭头，这里再收 8px 作为文字与箭头的间距
+        text = metrics.elidedText(label, Qt.TextElideMode.ElideMiddle, max(24, cap - 32))
+        self._source_btn.setText(text)
+        width = min(cap, metrics.horizontalAdvance(text) + 32)
+        self._source_btn.setFixedWidth(max(56, width))
+        self._source_btn.setEnabled(self._loop is None)
+        model = str(provider.get("default_model") or "").strip()
+        tooltip = f"当前模型来源：{label}"
+        if model:
+            tooltip += f"\n模型：{model}"
+        self._source_btn.setToolTip(tooltip + "\n点击切换")
+        self._reposition_overlay_buttons()
+
+    def _build_source_menu(self) -> QMenu | None:
+        providers = get_config().ai_providers
+        if not providers:
+            return None
+        active = self._active_provider() or {}
+        active_name = str(active.get("name", ""))
+        menu = QMenu(self)
+        menu.setMinimumWidth(max(180, self._source_btn.width()))
+        for provider in providers:
+            name = str(provider.get("name", ""))
+            display = str(provider.get("display_name") or name)
+            action = menu.addAction(display)
+            action.setCheckable(True)
+            action.setChecked(name == active_name)
+            action.triggered.connect(
+                lambda _checked=False, selected=name: self._select_source(selected)
+            )
+        menu.addSeparator()
+        manage = menu.addAction("管理模型")
+        # 等菜单收起后再开模态窗体，避免 QMenu 的事件循环里嵌套 modal
+        manage.triggered.connect(lambda: QTimer.singleShot(0, self._open_settings))
+        return menu
+
+    def _show_source_menu(self) -> None:
+        menu = self._build_source_menu()
+        if menu is not None:
+            menu.exec(self._source_menu_position(menu))
+
+    def _source_menu_position(self, menu: QMenu) -> QPoint:
+        """优先向按钮上方展开（面板贴着窗口底部，下方通常没有空间）。"""
+        menu.ensurePolished()
+        hint = menu.sizeHint()
+        anchor = self._source_btn.mapToGlobal(QPoint(0, 0))
+        screen = self._source_btn.screen() or QApplication.primaryScreen()
+        available = screen.availableGeometry()
+        x = max(available.left(), min(anchor.x(), available.right() - hint.width() + 1))
+        above = anchor.y() - hint.height() - 4
+        below = anchor.y() + self._source_btn.height() + 4
+        if above >= available.top():
+            y = above
+        elif below + hint.height() <= available.bottom():
+            y = below
+        else:
+            y = max(available.top(), available.bottom() - hint.height() + 1)
+        return QPoint(x, y)
+
+    def _select_source(self, name: str) -> None:
+        provider = get_config().ai_provider(name)
+        if provider is None or get_config().ai_active_provider == name:
+            return
+        set_ai_active_provider(name)
+        self._refresh_hint()
+        display = str(provider.get("display_name") or name)
+        bus().status_message.emit(f"已切换模型来源：{display}", 3000)
 
     def set_current_unit(self, unit_id: int | None, name: str = "") -> None:
         """主窗体在树选择变化时调用，让 AI 工具作用于当前单位工程。"""
@@ -449,6 +602,7 @@ class AiPanel(QWidget):
         self._bubbles.clear()
         self._thinking_block = None
         self._send_btn.setEnabled(self._provider() is not None)
+        self._source_btn.setEnabled(self._provider() is not None)
 
     # ------------------------------------------------------------------ 发送
     def _send_message(self) -> None:
@@ -476,6 +630,7 @@ class AiPanel(QWidget):
         self._loop.finished.connect(self._on_finished)
         self._loop.failed.connect(self._on_failed)
         self._send_btn.setEnabled(False)
+        self._source_btn.setEnabled(False)
 
         # 预创建思考块并立即启动"思考中"动画（Quotor 同款，消除启动空白期）
         self._thinking_block = _ThinkingBlock("思考过程")
@@ -535,6 +690,7 @@ class AiPanel(QWidget):
         )
         self._thinking_block = None
         self._send_btn.setEnabled(self._provider() is not None)
+        self._source_btn.setEnabled(self._provider() is not None)
         self._loop = None
         self._scroll_to_bottom()
 
@@ -549,6 +705,7 @@ class AiPanel(QWidget):
         self._append_message("error", str(message))
         self._thinking_block = None
         self._send_btn.setEnabled(self._provider() is not None)
+        self._source_btn.setEnabled(self._provider() is not None)
         self._loop = None
         self._scroll_to_bottom()
         if isinstance(message, str) and "401" in message:

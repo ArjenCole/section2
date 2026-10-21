@@ -100,6 +100,22 @@ def update_config(updates: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def set_ai_active_provider(name: str) -> None:
+    """切换当前启用的 AI 模型来源（AI 面板“模型来源”下拉用）。"""
+    name = str(name or "").strip()
+    if not name:
+        return
+    config = load_config()
+    ai = config.get("ai", {})
+    providers = ai.get("providers", [])
+    if not any(provider.get("name") == name for provider in providers):
+        return
+    if ai.get("active_provider") == name:
+        return
+    ai["active_provider"] = name
+    save_config(config)
+
+
 def add_recent_project(path: str | Path) -> None:
     """把工程路径插到最近打开列表首位（去重、限长）。"""
     config = load_config()

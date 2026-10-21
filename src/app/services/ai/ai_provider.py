@@ -62,6 +62,38 @@ class ProviderConfig:
     send_reasoning_content: bool = True
 
 
+def fetch_models(base_url: str, api_key: str = "", timeout: float = 10.0) -> list[str]:
+    """GET ``{base_url}/models``，返回端点声明的模型 id 列表。
+
+    用于 AI 设置对话框的「测试连接」与 AI 面板的模型下拉；未配置 Base URL、
+    网络错误、非 200 都抛 :class:`AiProviderError`。
+    """
+    url = str(base_url or "").strip().rstrip("/")
+    if not url:
+        raise AiProviderError("请先填写 Base URL")
+    if not url.endswith("/models"):
+        url = url + "/models"
+    headers = {"User-Agent": CLIENT_USER_AGENT}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        response = httpx.get(url, headers=headers, timeout=timeout)
+    except httpx.HTTPError as error:
+        raise AiProviderError(f"无法连接端点：{error}") from error
+    if response.status_code != 200:
+        body = response.text[:400].replace("\n", " ")
+        raise AiProviderError(f"端点返回 {response.status_code}：{body}")
+    try:
+        data = response.json().get("data", [])
+    except (ValueError, AttributeError):
+        return []
+    return [
+        str(item.get("id", ""))
+        for item in data
+        if isinstance(item, dict) and item.get("id")
+    ]
+
+
 def stream_chat(
     config: ProviderConfig,
     api_key: str,

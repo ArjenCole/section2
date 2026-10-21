@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
 from app.services.ai import ai_provider
 
@@ -133,3 +134,38 @@ def test_default_send_reasoning_content_by_endpoint() -> None:
     assert ai_provider.default_send_reasoning_content(
         "https://opencode.ai/zen/go/v1"
     )
+
+
+def test_fetch_models_parses_ids_and_sends_auth(monkeypatch) -> None:
+    captured: dict = {}
+
+    class _Response:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"data": [{"id": "m1"}, {"id": "m2"}, {"no_id": True}, "bad"]}
+
+    def fake_get(url, headers=None, timeout=None):
+        captured.update(url=url, headers=headers or {}, timeout=timeout)
+        return _Response()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    assert ai_provider.fetch_models("http://host/v1", "sk-test") == ["m1", "m2"]
+    assert captured["url"] == "http://host/v1/models"
+    assert captured["headers"]["Authorization"] == "Bearer sk-test"
+    assert captured["headers"]["User-Agent"].startswith("section2/")
+
+
+def test_fetch_models_reports_endpoint_errors(monkeypatch) -> None:
+    class _Response:
+        status_code = 401
+        text = "unauthorized"
+
+    monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: _Response())
+    with pytest.raises(ai_provider.AiProviderError):
+        ai_provider.fetch_models("http://host/v1")
+
+    with pytest.raises(ai_provider.AiProviderError):
+        ai_provider.fetch_models("")
