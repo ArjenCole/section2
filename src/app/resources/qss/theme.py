@@ -243,13 +243,15 @@ QToolButton:hover { background-color: $bg_hover; }
 QToolButton:pressed { background-color: $bg_pressed; }
 QToolButton:disabled { color: $text_disabled; }
 QToolButton[role="icon-btn"] { padding: 4px 6px; }
-QToolButton[role="toggle-bar"] {
-    background-color: $bg_window;
-    border: 1px solid $border;
-    border-radius: 4px;
+/* AI 面板展开/收起竖条：底色与箭头全部自绘（widgets/panel_splitter.py），
+   QSS 只负责把 QPushButton 的默认白底和边框让掉，免得悬停时出现双层背景 */
+QPushButton[role="toggle-bar"] {
+    background: transparent;
+    border: none;
+    border-radius: 0;
     padding: 0;
+    margin: 0;
 }
-QToolButton[role="toggle-bar"]:hover { background-color: $primary_soft; }
 
 /* ===================== 状态提示浮层 / 窗体底部圆角 ===================== */
 /* 主窗体没有状态栏（三栏直接顶到窗体最下方），瞬时提示改为绝对定位的
@@ -278,13 +280,18 @@ QWidget#AiPanelColumn, QWidget#AiColumnContainer {
     border: 1px solid $bg_window;
     border-bottom-right-radius: 8px;
 }
-QToolButton#AiToggleColumn { border-bottom-right-radius: 8px; }
+/* 竖条自身的底色/圆角由自绘负责（折叠时贴窗体右下角，见 panel_splitter） */
 
 /* ===================== 分隔条 ===================== */
 QSplitter::handle { background-color: $border; }
 QSplitter::handle:horizontal { width: 1px; }
 QSplitter::handle:vertical { height: 1px; }
 QSplitter::handle:hover { background-color: $border_focus; }
+/* 主三栏的分割手柄是自绘的（widgets/panel_splitter.py）：抓取区 6px 但只画
+   居中 1px 线，悬停/拖拽时线变 border_focus。QSS 必须把背景让空，否则
+   ::handle:hover 会把整条 6px 抓取区刷成实色，看着像一块蓝条 */
+QSplitter#MainSplitter::handle,
+QSplitter#MainSplitter::handle:hover { background: transparent; }
 
 /* ===================== 输入控件 ===================== */
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDateEdit, QTimeEdit, QPlainTextEdit, QTextEdit, QTextBrowser {

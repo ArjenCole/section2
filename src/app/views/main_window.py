@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenuBar,
     QSizePolicy,
-    QSplitter,
     QStackedWidget,
     QToolBar,
     QToolButton,
@@ -57,6 +56,12 @@ from app.views.panels.tree_panel import TreePanel
 from app.views.panels.unit_panel import UnitPanel
 from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.views.widgets.mac_window import apply_mac_window_chrome, is_mac
+from app.views.widgets.panel_splitter import (
+    SPLITTER_HANDLE_WIDTH,
+    TOGGLE_BAR_WIDTH,
+    DragToggleBar,
+    LineSplitter,
+)
 from app.views.widgets.rounded_window import RoundedWindowHelper
 from app.views.dialogs.new_project_wizard import (
     NewProjectWizard,
@@ -66,7 +71,6 @@ from app.views.dialogs.new_project_wizard import (
 
 _TREE_WIDTH = 250  # 左侧面板默认宽度（取自运行实例实测）
 _AI_WIDTH = 360
-_AI_TOGGLE_WIDTH = 14
 
 
 class _WindowButton(QToolButton):
@@ -294,21 +298,6 @@ class FramelessTitleBar(QFrame):
         event.accept()
 
 
-class _ToggleBar(QToolButton):
-    """AI 面板折叠条（竖条，14px）。"""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setProperty("role", "toggle-bar")
-        self.setFixedWidth(_AI_TOGGLE_WIDTH)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAutoRaise(True)
-
-    def set_expanded(self, expanded: bool) -> None:
-        self.setText("›" if expanded else "‹")
-        self.setToolTip("折叠 AI 助手 (Ctrl+L)" if expanded else "展开 AI 助手 (Ctrl+L)")
-
-
 class _StatusToast(QLabel):
     """底部状态浮层，替代已移除的状态栏。
 
@@ -518,20 +507,21 @@ class MainWindow(QMainWindow):
         ai_layout = QHBoxLayout(ai_container)
         ai_layout.setContentsMargins(0, 0, 0, 0)
         ai_layout.setSpacing(0)
-        self._ai_toggle = _ToggleBar()
+        self._ai_toggle = DragToggleBar()
         self._ai_toggle.setObjectName("AiToggleColumn")
         self._ai_toggle.clicked.connect(self._toggle_ai_panel)
         ai_layout.addWidget(self._ai_toggle)
         ai_layout.addWidget(self._ai_panel)
         self._ai_container = ai_container
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        # 自绘 1px 线的手柄：抓取区宽 6px，鼠标才落得上去、悬停高亮才看得见
+        splitter = LineSplitter(Qt.Orientation.Horizontal)
         # 无状态栏：splitter 自身也会铺满窗体最底部，底角同样要倒圆
         splitter.setObjectName("MainSplitter")
         splitter.addWidget(self._tree_panel)
         splitter.addWidget(center_page)
         splitter.addWidget(ai_container)
-        splitter.setHandleWidth(1)
+        splitter.setHandleWidth(SPLITTER_HANDLE_WIDTH)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
@@ -553,10 +543,13 @@ class MainWindow(QMainWindow):
     def _apply_ai_visible(self, expanded: bool, *, initial: bool = False) -> None:
         self._ai_panel.setVisible(expanded)
         self._ai_toggle.set_expanded(expanded)
+        self._ai_toggle.setToolTip(
+            "折叠 AI 助手 (Ctrl+L)" if expanded else "展开 AI 助手 (Ctrl+L)"
+        )
         if expanded:
             self._ai_container.setMaximumWidth(16777215)
         else:
-            self._ai_container.setMaximumWidth(_AI_TOGGLE_WIDTH)
+            self._ai_container.setMaximumWidth(TOGGLE_BAR_WIDTH)
 
         if initial:
             # 窗口还没显示过，splitter.sizes() 全是 0，直接用默认宽度
@@ -564,19 +557,19 @@ class MainWindow(QMainWindow):
             sizes = [
                 _TREE_WIDTH,
                 600,
-                _AI_WIDTH + _AI_TOGGLE_WIDTH if expanded else _AI_TOGGLE_WIDTH,
+                _AI_WIDTH + TOGGLE_BAR_WIDTH if expanded else TOGGLE_BAR_WIDTH,
             ]
         else:
             sizes = self._splitter.sizes()
             if expanded:
-                target = self._ai_saved_width + _AI_TOGGLE_WIDTH
+                target = self._ai_saved_width + TOGGLE_BAR_WIDTH
                 take = min(max(0, target - sizes[2]), max(0, sizes[1] - 200))
                 sizes[1] -= take
                 sizes[2] += take
             else:
                 self._ai_saved_width = max(240, self._ai_panel.width())
-                sizes[1] += max(0, sizes[2] - _AI_TOGGLE_WIDTH)
-                sizes[2] = _AI_TOGGLE_WIDTH
+                sizes[1] += max(0, sizes[2] - TOGGLE_BAR_WIDTH)
+                sizes[2] = TOGGLE_BAR_WIDTH
         self._splitter.setSizes(sizes)
         toast = getattr(self, "_toast", None)
         if toast is not None:

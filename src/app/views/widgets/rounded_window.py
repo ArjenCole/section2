@@ -71,13 +71,13 @@ _SHADOW_BOTTOM_BOOST = 2.0
 #: 等会把主窗体最大化的压平规则泄漏到其子弹窗上（弹窗圆角变直角，实测）。
 #: 无状态栏后，底部两角由左右两栏自己倒圆（theme.py 里按 objectName 命中），
 #: 最大化时同样要压平，否则最大化窗口的底角会留两个透明缺口。
+#: AI 展开/收起竖条不在此列：它自绘底色，最大化时自己按方角铺满。
 _SQUARE_CORNERS_SHEET = (
     "QMainWindow > QFrame#FramelessTitleBar, "
     "QMainWindow QSplitter#MainSplitter, "
     "QMainWindow QWidget#TreePanelColumn, "
     "QMainWindow QWidget#AiPanelColumn, "
-    "QMainWindow QWidget#AiColumnContainer, "
-    "QMainWindow QToolButton#AiToggleColumn "
+    "QMainWindow QWidget#AiColumnContainer "
     "{ border-radius: 0px; }"
 )
 

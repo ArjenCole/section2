@@ -226,8 +226,11 @@ def test_rounded_clip_rules_use_solid_border(qapp):
         "QWizard",
     ):
         blocks = [part.split("}", 1)[0] for part in qss.split(selector)[1:]]
-        assert any("border: 1px solid" in block for block in blocks), selector
-        assert not any("transparent" in block for block in blocks), (
+        # 同一个前缀下还可能有 ::handle 之类不带 border 的规则
+        # （如 MainSplitter 的自绘手柄背景透明），只看真正写了 border 的块
+        border_blocks = [block for block in blocks if "border:" in block]
+        assert any("border: 1px solid" in block for block in border_blocks), selector
+        assert not any("transparent" in block for block in border_blocks), (
             f"{selector} 的 border 不能用 transparent，会露缝"
         )
 
