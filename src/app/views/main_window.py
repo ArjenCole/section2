@@ -2,10 +2,13 @@
 
     ┌ 菜单栏 + 工具栏 ─────────────────────────────┐
     │ 项目树 250px │ 中部工作区 │ AI 助手 360px │
-    └ 状态栏 ────────────────────────────────────┘
+    └─────────────────────────────────────────────┘
 
 中部工作区是 QStackedWidget，项目树选中的任何节点都显示对应
 单位工程的工程量工作台；原则编辑走顶部原则横条 + 模态对话框。
+
+不带状态栏：三栏直接顶到窗体最下方，瞬时提示改由底部浮层
+（_StatusToast）显示，浮层绝对定位、不占布局高度。
 """
 
 from __future__ import annotations
@@ -26,7 +29,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStackedWidget,
-    QStatusBar,
     QToolBar,
     QToolButton,
     QVBoxLayout,
@@ -307,6 +309,83 @@ class _ToggleBar(QToolButton):
         self.setToolTip("折叠 AI 助手 (Ctrl+L)" if expanded else "展开 AI 助手 (Ctrl+L)")
 
 
+class _StatusToast(QLabel):
+    """底部状态浮层，替代已移除的状态栏。
+
+    状态栏那一行去掉后，界面元素直接顶到窗体最下方；但原来的瞬时提示
+    （算式结果、拖拽被拒、MCP 启动失败等）仍需可见，于是改成这个
+    **绝对定位的子控件**：不参与 QMainWindow 布局，因此不占任何高度，
+    只浮在右下角内容之上，鼠标穿透、超时自动隐藏。
+    """
+
+    #: 与窗体边缘的间距（逻辑像素）
+    _MARGIN = 14
+    #: 左右内边距合计（QSS 里 12px padding × 2 + 1px border × 2）
+    _PAD_H = 26
+    #: 常驻提示（timeout=0）的兜底时长，避免浮层永久压在内容上
+    _DEFAULT_MS = 6000
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("StatusToast")
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.setWordWrap(True)
+        self.hide()
+        self._avoid: QWidget | None = None
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self.hide)
+
+    def set_avoid_widget(self, widget: QWidget | None) -> None:
+        """设置需要避让的控件（AI 面板输入区）：浮层落在它上方，不盖住发送按钮。"""
+        self._avoid = widget
+
+    def show_message(self, text: str, timeout_ms: int = 0) -> None:
+        text = (text or "").strip()
+        if not text:
+            self.clear()
+            return
+        self.setText(text)
+        self._reposition()
+        self.show()
+        self.raise_()
+        self._timer.start(timeout_ms if timeout_ms > 0 else self._DEFAULT_MS)
+
+    def clear(self) -> None:
+        self._timer.stop()
+        self.hide()
+
+    def refresh_position(self) -> None:
+        if self.isVisible():
+            self._reposition()
+
+    def _reposition(self) -> None:
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        hint = self.sizeHint()
+        # wordWrap 下的 sizeHint 是"窄宽 + 已折行高度"，不能用；按文字实际宽度取自然宽
+        natural = max(hint.width(), self.fontMetrics().horizontalAdvance(self.text()) + self._PAD_H)
+        max_w = max(160, parent.width() - 2 * self._MARGIN)
+        width = min(natural, max_w)
+        # 放得下按单行高取（用自然宽 + 余量问），放不下才按折行后的高度
+        measure = width if width < natural else natural + 40
+        height = self.heightForWidth(measure) or hint.height()
+        self.resize(width, height)
+        bottom = parent.height() - self._MARGIN
+        avoid = self._avoid
+        if avoid is not None and avoid.isVisible():
+            # 输入区顶边以上还有空间时把浮层抬上去，免得压住发送按钮
+            top = avoid.mapTo(parent, QPoint(0, 0)).y() - self._MARGIN
+            if top - height >= self._MARGIN:
+                bottom = top
+        self.move(
+            max(self._MARGIN, parent.width() - width - self._MARGIN),
+            max(self._MARGIN, bottom - height),
+        )
+
+
 class MainWindow(QMainWindow):
     """Section 2.0 主窗体。"""
 
@@ -331,7 +410,7 @@ class MainWindow(QMainWindow):
         self._build_actions()
         self._build_menus()
         self._build_toolbar()
-        self._build_statusbar()
+        self._build_toast()
         self._connect_events()
         # AI / MCP 写操作确认：统一走全局确认处理器（内置面板与外部 MCP 共用）
         install_confirm_handler(self._confirm_ai_write)
@@ -399,11 +478,21 @@ class MainWindow(QMainWindow):
             self._title_bar.update_max_icon()
         super().changeEvent(event)
 
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        # 状态浮层是绝对定位子控件，不随布局走，尺寸变化时自己贴回右下角
+        super().resizeEvent(event)
+        toast = getattr(self, "_toast", None)
+        if toast is not None:
+            toast.refresh_position()
+
     # ------------------------------------------------------------------ 布局
     def _build_central(self) -> None:
         self._tree_panel = TreePanel()
+        # 无状态栏：左右两栏直接落在窗体底部，自己倒圆下角（QSS 按 objectName 命中）
+        self._tree_panel.setObjectName("TreePanelColumn")
         self._unit_panel = UnitPanel()
         self._ai_panel = AiPanel()
+        self._ai_panel.setObjectName("AiPanelColumn")
 
         self._center_stack = QStackedWidget()
         placeholder = QLabel("请从左侧选择节点。\n文件 → 新建工程 / 打开工程")
@@ -425,16 +514,20 @@ class MainWindow(QMainWindow):
         center_layout.addWidget(self._center_stack, 1)
 
         ai_container = QWidget()
+        ai_container.setObjectName("AiColumnContainer")
         ai_layout = QHBoxLayout(ai_container)
         ai_layout.setContentsMargins(0, 0, 0, 0)
         ai_layout.setSpacing(0)
         self._ai_toggle = _ToggleBar()
+        self._ai_toggle.setObjectName("AiToggleColumn")
         self._ai_toggle.clicked.connect(self._toggle_ai_panel)
         ai_layout.addWidget(self._ai_toggle)
         ai_layout.addWidget(self._ai_panel)
         self._ai_container = ai_container
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        # 无状态栏：splitter 自身也会铺满窗体最底部，底角同样要倒圆
+        splitter.setObjectName("MainSplitter")
         splitter.addWidget(self._tree_panel)
         splitter.addWidget(center_page)
         splitter.addWidget(ai_container)
@@ -485,6 +578,10 @@ class MainWindow(QMainWindow):
                 sizes[1] += max(0, sizes[2] - _AI_TOGGLE_WIDTH)
                 sizes[2] = _AI_TOGGLE_WIDTH
         self._splitter.setSizes(sizes)
+        toast = getattr(self, "_toast", None)
+        if toast is not None:
+            # AI 面板折叠/展开会改变浮层的避让目标，重新贴位
+            toast.refresh_position()
 
     # ------------------------------------------------------------------ 动作
     #: 工具栏动作 → Lucide 图标名（svg 随主题重着色，Quotor 同款机制）
@@ -647,19 +744,10 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self._act_ai_panel)
         self.addToolBar(toolbar)
 
-    def _build_statusbar(self) -> None:
-        statusbar = QStatusBar()
-        # 右下角的尺寸手柄是 16x16 方角贴片，会盖掉状态栏的 QSS 圆角；
-        # 边缘缩放由 nativeEvent 的 WM_NCHITTEST 处理，手柄冗余
-        statusbar.setSizeGripEnabled(False)
-        self.setStatusBar(statusbar)
-        self._status_mcp = QLabel("")
-        self._status_mcp.setProperty("role", "hint")
-        statusbar.addPermanentWidget(self._status_mcp)
-        self._status_path = QLabel("未打开工程")
-        self._status_path.setProperty("role", "hint")
-        statusbar.addPermanentWidget(self._status_path)
-        statusbar.showMessage("就绪")
+    def _build_toast(self) -> None:
+        """主窗体不放状态栏：三栏直接顶到窗体底部，提示改由右下角浮层承载。"""
+        self._toast = _StatusToast(self)
+        self._toast.set_avoid_widget(self._ai_panel.input_widget)
 
     # ------------------------------------------------------------------ 事件
     def _connect_events(self) -> None:
@@ -685,10 +773,9 @@ class MainWindow(QMainWindow):
             source="gui" if _orm.is_open() else "headless",
         )
         if project_io.is_transient():
-            # 临时工程：临时路径不进最近列表，状态栏提示尚未保存
+            # 临时工程：临时路径不进最近列表，浮层提示尚未保存
             self._set_project_actions(True)
             self._update_title()
-            self._status_path.setText("（尚未保存到文件）")
             self._set_status("已创建临时工程（尚未保存），点击「保存」选择文件位置", 5000)
             return
         add_recent_project(path)
@@ -696,14 +783,12 @@ class MainWindow(QMainWindow):
         self._refresh_recent_menu()
         self._set_project_actions(True)
         self._update_title()
-        self._status_path.setText(str(path))
         self._set_status(f"已打开工程：{path}")
 
     def _on_project_closed(self) -> None:
         agent_context.reset_context()
         self._set_project_actions(False)
         self._update_title()
-        self._status_path.setText("未打开工程")
         self._center_stack.setCurrentIndex(0)
 
     def _on_node_selected(self, node: TreeNode | None) -> None:
@@ -736,22 +821,27 @@ class MainWindow(QMainWindow):
         self._ai_panel.refresh_theme()
 
     def _set_status(self, message: str, timeout: int = 0) -> None:
-        self.statusBar().showMessage(message, timeout)
+        """瞬时提示：走右下角浮层（状态栏已移除，界面顶到窗体底部）。"""
+        self._toast.show_message(message, timeout)
 
     def _set_project_actions(self, enabled: bool) -> None:
         for action in self._project_actions:
             action.setEnabled(enabled)
 
     def _update_title(self) -> None:
+        path_hint = ""
         if not project_io.is_open():
             title = f"{APP_DISPLAY_NAME} {APP_VERSION}"
         else:
             # 临时工程没有文件路径，也照常显示工程名（Quotor 同款）
             name = project_io.project_name() or "未命名工程"
             title = f"{name} - {APP_DISPLAY_NAME} {APP_VERSION}"
+            path = project_io.current_path()
+            # 状态栏已移除：工程路径改挂在标题提示上，信息不丢
+            path_hint = str(path) if path else "（尚未保存到文件）"
         self.setWindowTitle(title)
         if self._title_bar is not None:  # mac 上标题只由系统菜单栏/红绿灯行呈现
-            self._title_bar.setToolTip(title)
+            self._title_bar.setToolTip(f"{title}\n{path_hint}" if path_hint else title)
 
     def _refresh_recent_menu(self) -> None:
         self._recent_menu.clear()
@@ -938,25 +1028,19 @@ class MainWindow(QMainWindow):
 
         dialog = McpSettingsDialog(self)
         dialog.exec()
-        self._refresh_mcp_status()
 
     def _start_mcp_if_enabled(self) -> None:
+        # 状态栏已移除：MCP 运行状态改在「AI → MCP 服务」对话框里看，
+        # 启动结果走底部浮层提示一次，不再常驻占一行界面
         if not get_config().mcp_enabled:
-            self._refresh_mcp_status()
             return
         ok, message = McpServerController.instance().start()
-        self._refresh_mcp_status()
-        if not ok:
-            bus().status_message.emit(message, 8000)
-
-    def _refresh_mcp_status(self) -> None:
-        status = McpServerController.instance().status()
-        if status["running"]:
-            self._status_mcp.setText(f"MCP: 运行中 · 127.0.0.1:{status['port']}")
-            self._status_mcp.setToolTip(status["url"])
+        if ok:
+            status = McpServerController.instance().status()
+            port = status.get("port")
+            bus().status_message.emit(f"MCP 服务已启动 · 127.0.0.1:{port}", 5000)
         else:
-            self._status_mcp.setText("MCP: 已停止")
-            self._status_mcp.setToolTip(status.get("error") or "AI → MCP 服务…")
+            bus().status_message.emit(message, 8000)
 
     def _on_ai_context_changed(self, payload) -> None:
         """子面板（主表格选中行）更新 AI 上下文中的构件信息。"""

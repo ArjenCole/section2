@@ -68,9 +68,16 @@ _SHADOW_BOTTOM_BOOST = 2.0
 #: 最大化时压平贴角子控件圆角的窗体级样式表片段（widget 级样式表优先于
 #: 全局 QSS，同选择器下直接覆盖）。选择器必须用 QMainWindow > 直接子选择器
 #: 限定：窗体级样式表会沿对象树作用于全部后代，裸的 QFrame#FramelessTitleBar
-#: 等会把主窗体最大化的压平规则泄漏到其子弹窗上（弹窗圆角变直角，实测）
+#: 等会把主窗体最大化的压平规则泄漏到其子弹窗上（弹窗圆角变直角，实测）。
+#: 无状态栏后，底部两角由左右两栏自己倒圆（theme.py 里按 objectName 命中），
+#: 最大化时同样要压平，否则最大化窗口的底角会留两个透明缺口。
 _SQUARE_CORNERS_SHEET = (
-    "QMainWindow > QFrame#FramelessTitleBar, QMainWindow > QStatusBar "
+    "QMainWindow > QFrame#FramelessTitleBar, "
+    "QMainWindow QSplitter#MainSplitter, "
+    "QMainWindow QWidget#TreePanelColumn, "
+    "QMainWindow QWidget#AiPanelColumn, "
+    "QMainWindow QWidget#AiColumnContainer, "
+    "QMainWindow QToolButton#AiToggleColumn "
     "{ border-radius: 0px; }"
 )
 

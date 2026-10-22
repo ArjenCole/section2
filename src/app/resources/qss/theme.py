@@ -251,17 +251,32 @@ QToolButton[role="toggle-bar"] {
 }
 QToolButton[role="toggle-bar"]:hover { background-color: $primary_soft; }
 
-/* ===================== 状态栏 ===================== */
-QStatusBar {
+/* ===================== 状态提示浮层 / 窗体底部圆角 ===================== */
+/* 主窗体没有状态栏（三栏直接顶到窗体最下方），瞬时提示改为绝对定位的
+   浮层，浮在内容之上、不占布局高度。 */
+QLabel#StatusToast {
     background-color: $bg_card;
+    border: 1px solid $border;
+    border-radius: 6px;
+    color: $text_secondary;
+    padding: 6px 12px;
+}
+/* 贴窗体底部的左右两栏自己倒圆下角：否则方角会顶出窗体圆角弧线外面
+   （Qt 的 QSS 背景只有规则里带 border 时才按圆角裁剪） */
+QSplitter#MainSplitter {
     border: 1px solid transparent;
-    border-top: 1px solid $border;
     border-bottom-left-radius: 8px;
     border-bottom-right-radius: 8px;
-    color: $text_secondary;
 }
-QStatusBar::item { border: none; }
-QStatusBar QLabel { color: $text_secondary; }
+QWidget#TreePanelColumn {
+    border: 1px solid transparent;
+    border-bottom-left-radius: 8px;
+}
+QWidget#AiPanelColumn, QWidget#AiColumnContainer {
+    border: 1px solid transparent;
+    border-bottom-right-radius: 8px;
+}
+QToolButton#AiToggleColumn { border-bottom-right-radius: 8px; }
 
 /* ===================== 分隔条 ===================== */
 QSplitter::handle { background-color: $border; }

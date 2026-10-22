@@ -308,6 +308,11 @@ class AiPanel(QWidget):
         self._connect()
         self._refresh_hint()
 
+    @property
+    def input_widget(self) -> QWidget:
+        """底部输入区。主窗体的提示浮层靠它避让，免得盖住发送按钮。"""
+        return self._input
+
     # ------------------------------------------------------------------ 界面
     def _build(self) -> None:
         layout = QVBoxLayout(self)

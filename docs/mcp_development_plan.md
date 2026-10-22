@@ -285,7 +285,7 @@ mcp_require_confirmation`（照现有 `ai_*` 属性写法）。
 |---|---|
 | `AI → MCP 服务…` | 打开 `views/dialogs/mcp_settings_dialog.py`：开关、端口、token（可复制/重置）、`allow_actions`、连接状态、「复制 Codex / Claude Desktop / WorkBuddy 配置」按钮（生成可直接粘贴的片段） |
 | 启动自动拉起 | `[mcp] enabled=true` 时 `main()` 启动后调 `McpServerController.start()` |
-| 状态栏 | `MCP: 运行中 · 127.0.0.1:8765` / `MCP: 已停止` / 启动失败原因 |
+| 状态提示 | 主窗体不放状态栏（三栏顶到窗体底部），MCP 启动结果走底部浮层一次性提示；运行状态在 `AI → MCP 服务…` 对话框里查看 |
 | `closeEvent` | `McpServerController.stop()` 释放端口 |
 
 ### 5.3 生命周期（`mcp_server/controller.py`）
