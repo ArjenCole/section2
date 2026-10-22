@@ -262,18 +262,20 @@ QLabel#StatusToast {
     padding: 6px 12px;
 }
 /* 贴窗体底部的左右两栏自己倒圆下角：否则方角会顶出窗体圆角弧线外面
-   （Qt 的 QSS 背景只有规则里带 border 时才按圆角裁剪） */
+   （Qt 的 QSS 背景只有规则里带 border 时才按圆角裁剪）。
+   border 必须填成面板自身的底色，不能写 transparent —— 无边框窗体的
+   背景是透明的，透明 border 那 1px 会直接透出窗体后方，形成一条缝隙。 */
 QSplitter#MainSplitter {
-    border: 1px solid transparent;
+    border: 1px solid $bg_window;
     border-bottom-left-radius: 8px;
     border-bottom-right-radius: 8px;
 }
 QWidget#TreePanelColumn {
-    border: 1px solid transparent;
+    border: 1px solid $bg_window;
     border-bottom-left-radius: 8px;
 }
 QWidget#AiPanelColumn, QWidget#AiColumnContainer {
-    border: 1px solid transparent;
+    border: 1px solid $bg_window;
     border-bottom-right-radius: 8px;
 }
 QToolButton#AiToggleColumn { border-bottom-right-radius: 8px; }
@@ -526,15 +528,17 @@ QDialog QTableWidget, QDialog QTableView, QDialog QTreeWidget, QDialog QListView
 QDialog QHeaderView::section { background-color: $bg_card; color: $text_secondary; }
 QDialog #FramelessTitleBar, QDialog #FramelessDialogBody { background-color: $bg_dialog; }
 /* Qt 的 QSS 背景只有在规则带 border 时才按圆角裁剪（走 border 盒子路径），
-   没有 border 的规则背景一律方角填充——这里和下面的圆角规则都要带透明 border */
+   没有 border 的规则背景一律方角填充——这里和下面的圆角规则都要带 border。
+   border 用 body 自己的底色（不是 transparent）：无边框对话框的窗体背景
+   是透明的，透明 border 会让那 1px 露出窗体后方，表现为标题栏下方一条缝。 */
 QDialog #FramelessDialogBody {
-    border: 1px solid transparent;
+    border: 1px solid $bg_dialog;
     border-bottom-left-radius: 8px;
     border-bottom-right-radius: 8px;
 }
 /* 向导内嵌页齐边充满 body，底部两角随窗体轮廓一起倒圆 */
 QWizard {
-    border: 1px solid transparent;
+    border: 1px solid $bg_dialog;
     border-bottom-left-radius: 8px;
     border-bottom-right-radius: 8px;
 }

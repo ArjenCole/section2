@@ -210,6 +210,28 @@ def test_square_corners_sheet_scoped_to_main_window(qapp):
     assert "QWizard" not in _SQUARE_CORNERS_SHEET
 
 
+def test_rounded_clip_rules_use_solid_border(qapp):
+    """回归防护：无边框窗体背景是透明的，圆角裁剪规则里的 1px border 若写成
+    transparent，那 1px 不会被任何控件绘制，直接透出窗体后方——表现为工具栏
+    下方 / 弹窗标题栏下方一条缝（实测该行 alpha=128）。改完 border 必须用
+    面板自身的底色。"""
+    from app.resources.qss.theme import ThemeManager, build_stylesheet
+
+    qss = build_stylesheet(ThemeManager.instance().current())
+    for selector in (
+        "QSplitter#MainSplitter",
+        "QWidget#TreePanelColumn",
+        "QWidget#AiPanelColumn",
+        "QDialog #FramelessDialogBody",
+        "QWizard",
+    ):
+        blocks = [part.split("}", 1)[0] for part in qss.split(selector)[1:]]
+        assert any("border: 1px solid" in block for block in blocks), selector
+        assert not any("transparent" in block for block in blocks), (
+            f"{selector} 的 border 不能用 transparent，会露缝"
+        )
+
+
 def test_combo_popup_rounding_applied(qapp):
     """下拉框弹出列表与菜单同款修整：容器透明 + 无边框 + 关系统阴影。
 
