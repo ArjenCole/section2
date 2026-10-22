@@ -489,10 +489,14 @@ def component_quantities(component, height: Dim, width: Dim, count: Dim, cat: st
 
 
 def prettify_formula(expression: str) -> str:
-    """公式算式：ROUND→round、^→** 由 evaluator.normalize 处理，这里统一小写函数名。"""
-    text = expression
-    for name in ("ROUND", "SQRT", "ABS", "POWER"):
-        text = re.sub(r"\b" + name + r"\b", name.lower(), text)
+    """公式算式：函数名转 Excel 大写写法（``ROUND``/``SQRT``…），``**`` 转 ``^``。
+
+    ``^`` 仍由 evaluator.normalize 在求值时转回 ``**``，所以这里只负责输出好看、
+    贴进 Excel 能用。
+    """
+    text = expression.replace("**", "^")
+    for name in ("CEILING", "ROUNDUP", "ROUND", "SQRT", "ABS", "POWER", "CEIL", "SIN", "COS"):
+        text = re.sub(r"(?<![A-Za-z])" + name + r"(?=\s*\()", name, text, flags=re.IGNORECASE)
     return text
 
 
@@ -634,7 +638,7 @@ def compute_structure(info: ElementInput) -> QDict | None:
         out.add(
             "构筑物|井筒|m3",
             count.v * well_h.v * rate.v,
-            f"{wrap(count.e)}×{wrap(well_h.e)}×{wrap(rate.e)}",
+            f"{wrap(count.e)}*{wrap(well_h.e)}*{wrap(rate.e)}",
             "井筒",
         )
     out.scale(info.amount, expr=amount_dim.e)

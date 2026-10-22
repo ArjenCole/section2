@@ -74,9 +74,9 @@ def test_closed_form_trapezoid(project) -> None:
     # 算式不预运算：下底边（槽底宽 = 管径/1000 + 2×(壁厚+工作面加宽+工作面)/1000）
     # 与沟槽深度（埋深原文 + (壁厚+垫层厚)/1000）都把来源写全，不出现算好的数字
     dig = dq.get("开挖|Ⅲ类土|m3")
-    assert "(600/1000+(65×2+130×2+500×2)/1000)" in dig.expression
+    assert "(600/1000+(65*2+130*2+500*2)/1000)" in dig.expression
     assert "(2.5+0.3+(65+130)/1000)" in dig.expression
-    assert "(2×" in dig.expression  # 梯形 (2×B+2×H×放坡系数)×H/2
+    assert "(2*" in dig.expression  # 梯形 (2*B+2*H*放坡系数)*H/2
 
     # 分层合计 = 挖方（无平台跳级时连续梯形闭合）
     layers = (c1 + c2) / 1000 + (0.3 + (t - c2) / 1000) + (0.3 + t / 1000) + 0.5 + (
@@ -107,7 +107,9 @@ def test_expression_has_no_redundant_parentheses(project) -> None:
     for element in _elements(unit):
         for quantity in sorted_items(_results(unit)[element.id]):
             minimal = ast.unparse(ast.parse(normalize(quantity.expression)))
-            assert quantity.expression.count("(") == minimal.count("("), (
+            # PI() 是 Excel 的零参函数、Python 里是常量 pi（不带括号），比对时先抹平
+            expression = quantity.expression.replace("PI()", "PI")
+            assert expression.count("(") == minimal.count("("), (
                 f"{quantity.key} 有多余括号：{quantity.expression}"
             )
 
@@ -120,18 +122,18 @@ def test_user_expression_in_output(project) -> None:
     # 埋深 "2.5+0.3"：挖方层厚 = 埋深原文 + 垫层/板厚调整（调整量也不预运算，
     # (65+130)/1000 写全图集壁厚与垫层厚）；数量 100 纯数字照旧
     assert "(2.5+0.3+(65+130)/1000)" in dig.expression
-    assert dig.expression.endswith("×100")
+    assert dig.expression.endswith("*100")
 
-    # 数量写算式：×数量 按原文进每条算式（不带多余括号，展示层 * 统一转 ×）
+    # 数量写算式：*数量 按原文进每条算式（不带多余括号）
     e4 = unit_vm.create_element(unit.id, category=1, name="数量算式", depth="3", amount="50*2")
     unit_vm.create_pipe(e4.id, mat="Ⅱ级混凝土管", dn=600, content="1")
     dig4 = _results(unit)[e4.id].get("开挖|Ⅲ类土|m3")
-    assert "×50×2" in dig4.expression
+    assert "*50*2" in dig4.expression
     assert evaluate(dig4.expression) == pytest.approx(dig4.value, rel=0.005)
 
 
 def test_well_point_expression_with_amount_expression(project) -> None:
-    """降水量座数不预运算：ceil(长度/井距)×侧数 写全，数量写算式时 ÷数量 不丢括号。"""
+    """降水量座数不预运算：CEILING(长度/井距,1)*侧数 写全，数量写算式时 /数量 不丢括号。"""
     from app.core.models.models import PcpPrecipitation
     from sqlalchemy import select
 
@@ -144,7 +146,7 @@ def test_well_point_expression_with_amount_expression(project) -> None:
 
     row = _results(unit)[element.id].get("降水|轻型井点|根")
     # 除数位置的括号是必需的（÷(40×2)），尾部 ×数量 不需要（乘除左结合）
-    assert row.expression == "ceil((40×2)/1.2)×2/(40×2)×40×2"
+    assert row.expression == "CEILING((40*2)/1.2,1)*2/(40*2)*40*2"
     assert row.value == pytest.approx(134.0)
     assert evaluate(row.expression) == pytest.approx(row.value)
 
@@ -259,8 +261,8 @@ def test_trenchless_only_pipes(project) -> None:
     assert list(jacking_dq.keys()) == ["顶管|钢筋混凝土钢承口管 顶管 Dn1000|m"]
     assert list(pulling_dq.keys()) == ["拖拉管|PE给水管 Dn400|m"]
     assert jacking_dq.get("顶管|钢筋混凝土钢承口管 顶管 Dn1000|m").value == pytest.approx(30.0)
-    # 数量写算式：×数量 按原文进算式（乘除左结合，不带多余括号）
-    assert pulling_dq.get("拖拉管|PE给水管 Dn400|m").expression == "1×20×2"
+    # 数量写算式：*数量 按原文进算式（乘除左结合，不带多余括号）
+    assert pulling_dq.get("拖拉管|PE给水管 Dn400|m").expression == "1*20*2"
     # 沟槽 / 回填 / 降水 / 围护 / 基础一概没有
     for key in [*jacking_dq.keys(), *pulling_dq.keys()]:
         assert not key.startswith(("开挖|", "回填|", "垫层|", "围护|", "支撑|", "降水|", "管道基础|"))

@@ -37,11 +37,11 @@ def _bow(diameter: float, angle: float) -> float:
 
 
 def _bow_expr(diameter: Dim, angle: float) -> str:
-    """弓形面积的代入算式（π 取 3.141593，重算误差 <0.001%）；外径带自己的算式。"""
+    """弓形面积的代入算式（Excel 语法，π 写 ``PI()``）；外径带自己的算式。"""
     d = wrap(diameter.e)
     return (
-        f"3.141593×{d}×{d}/4×{fmt(angle)}/360"
-        f"-{d}×{d}/8×sin({fmt(angle)}×3.141593/180)"
+        f"PI()*{d}*{d}/4*{fmt(angle)}/360"
+        f"-{d}*{d}/8*SIN({fmt(angle)}*PI()/180)"
     )
 
 
@@ -106,14 +106,14 @@ def _found_pipe(info, pe, ad: AtlasDims, out: QDict) -> None:
         f"回填|{pe.dock_l}|m3",
         Dim(
             -(half_circle - _bow(outside.v, angle)),
-            f"3.141593×{wrap(outside.e)}×{wrap(outside.e)}/8-({_bow_expr(outside, angle)})",
+            f"PI()*{wrap(outside.e)}*{wrap(outside.e)}/8-({_bow_expr(outside, angle)})",
         ),
         "坞膀扣弓形",
     )
     add_dim(
         out,
         f"回填|{pe.dock_h}|m3",
-        Dim(-half_circle, f"3.141593×{wrap(outside.e)}×{wrap(outside.e)}/8"),
+        Dim(-half_circle, f"PI()*{wrap(outside.e)}*{wrap(outside.e)}/8"),
         "上半回填扣半圆",
     )
 
@@ -209,7 +209,7 @@ def encased_pipe_deduction(info, out: QDict) -> None:
         out.add(
             "包封|混凝土|m3",
             -math.pi * radius.v * radius.v * content.v,
-            # 底数带除号，**2 前必须括起来（tight），否则 (…)/1000² 会算错
-            f"3.141593×{wrap(radius.e, tight=True)}**2×{wrap(content.e)}",
+            # 底数带除号，^2 前必须括起来（tight），否则 (…)/1000^2 会算错
+            f"PI()*{wrap(radius.e, tight=True)}^2*{wrap(content.e)}",
             f"扣 Dn{fmt(pipe.dn)} 管位",
         )

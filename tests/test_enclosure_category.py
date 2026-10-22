@@ -6,6 +6,8 @@
 放坡系数 → 放坡系数按 0 处理，沟槽为直壁并走支护的 F/Z 公式出围护量。
 """
 
+import math
+
 import pytest
 
 from PySide6.QtCore import Qt
@@ -87,7 +89,7 @@ def test_sloped_vs_vertical_dig_and_enclosure_quantities(project) -> None:
     _info, result = _compute(element)
     assert result is not None
     dig = next(q for q in result.items() if q.key.startswith("开挖|"))
-    assert "2×" in dig.expression and "+" in dig.expression  # (2×B+2×H×放坡系数)×H/2
+    assert "2*" in dig.expression and "+" in dig.expression  # (2*B+2*H*放坡系数)*H/2
     assert not [key for key in result.keys() if key.startswith("围护|")]
 
     # 切成钢板桩：挖方为直壁矩形算式，出现围护/支撑量
@@ -110,10 +112,11 @@ def test_sloped_vs_vertical_dig_and_enclosure_quantities(project) -> None:
     # （F=2 道、G=4m、H=233.988kg/m 支撑、I=38.49kg/m 钢围檩）
     support = result.get("支撑|钢支撑、钢围檩|t")
     amount = info.amount
-    per_meter = round(amount / 4.0) / amount * 2 * bottom * 233.988 / 1000 + 1 * 2 * 2 * 2 * 38.49 / 1000
+    # ROUND 按 Excel 语义取整：逢 5 远离零（10/4=2.5 → 3），不是 Python 的银行家舍入（→2）
+    per_meter = math.floor(amount / 4.0 + 0.5) / amount * 2 * bottom * 233.988 / 1000 + 1 * 2 * 2 * 2 * 38.49 / 1000
     assert support.value == pytest.approx(per_meter * amount, rel=1e-9)
     # 算式里也能看到槽底宽的完整来源（旧版这里是 (断面宽+2×…)/1000，断面宽被抹掉）
-    assert "(600/1000+(60×2+120×2+500×2)/1000)" in support.expression
+    assert "(600/1000+(60*2+120*2+500*2)/1000)" in support.expression
     assert evaluate(support.expression) == pytest.approx(support.value, rel=1e-9)
 
     assert any(key.startswith("围护|") for key in result.keys())

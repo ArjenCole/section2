@@ -118,7 +118,7 @@ def register(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
             "evaluate_expression",
-            "用软件白名单求值器计算算式（支持 +-*/、括号、abs/round/sqrt/power/ceil/sin/cos/pi）。只读。",
+            "用软件白名单求值器计算算式（支持 +-*/^、括号、ABS/ROUND/ROUNDUP/SQRT/POWER/CEILING/SIN/COS/PI()，Excel 写法可直接用）。只读。",
             {"type": "object", "properties": {"expression": {"type": "string"}},
              "required": ["expression"]},
             tool_evaluate_expression, read_only=True,

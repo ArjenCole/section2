@@ -30,21 +30,22 @@ def trapezoid(bottom: float, height: float, slope: float) -> float:
 
 
 def trapezoid_expr(bottom: Dim, height: Dim, slope: Dim) -> str:
-    """梯形面积的代入算式：``(2×B+2×H×放坡系数)×H/2``（直壁为 ``B×H``）。
+    """梯形面积的代入算式：``(2*B+2*H*放坡系数)*H/2``（直壁为 ``B*H``）。
 
     B 与 H 都带各自来源的算式（槽底宽由管径 / 图集 / 面宽原则推出），
     算式展开写全、不做预运算；B 只在算式里出现一次，避免长算式重复。
+    写法为 Excel 语法，可直接复制进 Excel。
     """
     h = wrap(height.e)
     b = wrap(bottom.e)
     if slope.v == 0:
-        return f"{b}×{h}"
-    return f"(2×{b}+2×{h}×{wrap(slope.e)})×{h}/2"
+        return f"{b}*{h}"
+    return f"(2*{b}+2*{h}*{wrap(slope.e)})*{h}/2"
 
 
 def widen(delta: Dim, slope: Dim) -> Dim:
-    """放坡外扩量 ``2×Δ×放坡系数``（底宽随层高外扩，算式保留两个来源）。"""
-    return Dim(delta.v * slope.v * 2, f"2×{wrap(delta.e)}×{wrap(slope.e)}")
+    """放坡外扩量 ``2*Δ*放坡系数``（底宽随层高外扩，算式保留两个来源）。"""
+    return Dim(delta.v * slope.v * 2, f"2*{wrap(delta.e)}*{wrap(slope.e)}")
 
 
 def min_h(height: Dim, remaining: Dim) -> tuple[Dim, Dim]:

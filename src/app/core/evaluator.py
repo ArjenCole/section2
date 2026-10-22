@@ -4,9 +4,13 @@
 库里存字符串原文，运行时用本模块算，避免两份数据不一致。
 
 安全边界：只放开 + - * / ** 与括号，以及旧版 mscExp 支持的 abs/round/sqrt/power
-四个函数和常量 pi（另加计算引擎输出算式要用的 sin/cos/ceil）；没有属性访问、
-下标、lambda、比较、位运算。
+四个函数和常量 pi（另加计算引擎输出算式要用的 sin/cos/ceiling/roundup）；没有
+属性访问、下标、lambda、比较、位运算。
 （simpleeval 自带的 ``1 if 1 else 2`` 这类条件表达式无副作用，未额外收紧。）
+
+**输出侧是 Excel 语法**（`*` `/` `^`、`CEILING(x,1)`、`SIN(...)`、`PI()`），
+用户复制进 Excel 即为可用公式；本模块的归一化与函数表保证这些写法自己也能求值，
+并且 Excel 与 Python 在舍入上对齐（ROUND 逢 5 远离零，见 :func:`_excel_round`）。
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ import ast
 import math
 import operator
 import re
+from decimal import ROUND_HALF_UP, ROUND_UP, Decimal
 from typing import Any
 
 from simpleeval import InvalidExpression, SimpleEval, safe_power
@@ -39,13 +44,45 @@ _OPERATORS: dict[type, Any] = {
 }
 
 #: 白名单函数与常量，对应旧版 mscExp.ProcessFunction / ProcessSymbol；
-#: sin/cos 为弓形面积算式（计算引擎输出）所需，ceil 为降水座数算式所需
+#: 同时补齐 Excel 函数名（CEILING/ROUNDUP/PI），使输出的算式能被自己重算。
+#: ``round``/``ceiling`` 采用 Excel 语义（见 :func:`_excel_round` / :func:`_ceiling`），
+#: 与 Python 内置的银行家舍入、``math.ceil`` 的浮点行为不同，改动时注意别退回。
+def _excel_round(value: Any, digits: Any = 0) -> float:
+    """Excel ``ROUND``：四舍五入到 ``digits`` 位小数，逢 5 远离零（0.125 → 0.13）。
+
+    Python 内置 ``round`` 是银行家舍入（0.125 → 0.12），复制到 Excel 会得到不同
+    结果，所以这里按十进制表示做 ``ROUND_HALF_UP``，与 Excel 对齐。
+    """
+    places = int(digits)
+    quant = Decimal(1).scaleb(-places)
+    return float(Decimal(repr(float(value))).quantize(quant, rounding=ROUND_HALF_UP))
+
+
+def _excel_roundup(value: Any, digits: Any = 0) -> float:
+    """Excel ``ROUNDUP``：远离零向上取到 ``digits`` 位小数。"""
+    places = int(digits)
+    quant = Decimal(1).scaleb(-places)
+    return float(Decimal(repr(float(value))).quantize(quant, rounding=ROUND_UP))
+
+
+def _ceiling(value: Any, significance: Any = 1) -> float:
+    """Excel ``CEILING(number, significance)``：向上取到 ``significance`` 的整数倍。
+
+    ``CEILING(x,1)`` 与 ``math.ceil(x)`` 等价（负数同样向 +∞ 取），是引擎输出的
+    井点座数写法；旧写法 ``ceil(x)`` 也指向这里，保持兼容。
+    """
+    step = float(significance) or 1.0
+    return math.ceil(float(value) / step) * step
+
+
 _FUNCTIONS: dict[str, Any] = {
     "abs": abs,
-    "round": lambda value, digits=2: round(value, int(digits)),
+    "round": _excel_round,
+    "roundup": _excel_roundup,
     "sqrt": math.sqrt,
     "power": safe_power,
-    "ceil": math.ceil,
+    "ceil": _ceiling,
+    "ceiling": _ceiling,
     "sin": math.sin,
     "cos": math.cos,
 }
@@ -77,17 +114,23 @@ def normalize(text: str) -> str:
     """全角符号转半角、`^`/上标视作乘方、函数名转小写、去掉首尾空白。
 
     旧版用 SoftCircuits Eval，公式库里写的是 `^` 乘方、`PI()`、大写 ROUND，
-    这里一并归一化成 Python 可求值的形式。
+    这里一并归一化成 Python 可求值的形式；引擎输出的是 Excel 语法
+    （`CEILING(x,1)`、`SIN(...)`、`PI()`），同一套归一化保证它也能被自己重算。
+    用户从 Excel 粘进来的公式带开头 `=`，这里直接剥掉。
     """
     result = text.strip()
     for source, target in _SYMBOLS.items():
         result = result.replace(source, target)
+    result = result.lstrip("=").strip()
+    # Excel 的 CEILING.MATH 带点，不是合法标识符，先收敛成 CEILING
+    result = re.sub(r"\bCEILING\.MATH\s*\(", "CEILING(", result, flags=re.IGNORECASE)
     result = _POWER_MARK.sub("**", result)
     for character, exponent in _SUPERSCRIPTS.items():
         result = result.replace(character, f"**{exponent}")
     result = result.replace("PI()", "pi").replace("pi()", "pi")
-    for name in ("ROUND", "SQRT", "ABS", "POWER", "CEIL", "SIN", "COS"):
-        result = re.sub(r"\b" + name + r"\b", name.lower(), result)
+    # 长名在前：\b 保证 CEIL 不会咬掉 CEILING，ROUND 不会咬掉 ROUNDUP
+    for name in ("CEILING", "ROUNDUP", "ROUND", "SQRT", "ABS", "POWER", "CEIL", "SIN", "COS"):
+        result = re.sub(r"\b" + name + r"\b", name.lower(), result, flags=re.IGNORECASE)
     return result
 
 

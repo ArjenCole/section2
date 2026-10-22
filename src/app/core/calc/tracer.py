@@ -3,7 +3,7 @@
 每个工程量条目产出 ``{key, value, expression, terms}``：
 
 * ``expression`` 是一条代入后的算式，如
-  ``(2×(600/1000+(65×2+130×2+500×2)/1000)+2×2.995×1)×2.995/2``；
+  ``(2*(600/1000+(65*2+130*2+500*2)/1000)+2*2.995*1)*2.995/2``；
 * **不预运算**：软件派生出来的数字（槽底宽由管径 + 图集参数 + 面宽原则推出、
   毫米→米的换算、换填总厚、弓形占位…）在算式里把计算过程写全，只有直接
   录入 / 查表的原始数据与软件常数才以单个数字出现，见 :class:`Dim`；
@@ -24,7 +24,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable
 
-_SUPERSCRIPTS = {"0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹"}
+#: 输出算式里的函数名（Excel 写法，展示时统一转大写）
+_EXCEL_FUNCTIONS = ("CEILING", "ROUNDUP", "ROUND", "SQRT", "ABS", "POWER", "CEIL", "SIN", "COS")
 
 #: 纯数字（含负号与小数）——这类算式嵌入模板时无需加括号
 _NUMERIC = re.compile(r"-?\d+(?:\.\d+)?")
@@ -55,8 +56,8 @@ def fmt(value: float, digits: int = 4) -> str:
 def needs_parens(expression: str) -> bool:
     """算式作为加减项 / 乘除因子嵌入时是否需要括号：顶层出现加减（含正负号）才需要。
 
-    顶层只有乘除的算式（``600/1000``、``65×2``）嵌进任何位置都不改变结合顺序
-    （乘除同级、左结合：``a×b/c×d`` ≡ ``a×(b/c)×d``），纯数字与函数调用同理。
+    顶层只有乘除的算式（``600/1000``、``65*2``）嵌进任何位置都不改变结合顺序
+    （乘除同级、左结合：``a*b/c*d`` ≡ ``a*(b/c)*d``），纯数字与函数调用同理。
     """
     text = expression.strip()
     if _NUMERIC.fullmatch(text):
@@ -79,7 +80,7 @@ def needs_parens_tight(expression: str) -> bool:
 def wrap(expression: str, tight: bool = False) -> str:
     """算式嵌入模板前的保护：按运算优先级决定是否加括号。
 
-    默认（加 / 减 / 乘上下文）只对顶层加减（含正负号）加括号——``65×2`` 这类
+    默认（加 / 减 / 乘上下文）只对顶层加减（含正负号）加括号——``65*2`` 这类
     纯乘除嵌进任何位置都不会改变结合顺序；``tight=True`` 用于除数位置或变量
     代入（后面接什么运算符未知），顶层乘除也加括号。纯数字原样保留。
     """
@@ -133,7 +134,7 @@ class Dim:
 
     def __mul__(self, other: "Dim | float") -> "Dim":
         value, expr = pair(other)
-        return Dim(self.v * value, f"{wrap(self.e)}×{wrap(expr)}")
+        return Dim(self.v * value, f"{wrap(self.e)}*{wrap(expr)}")
 
     __rmul__ = __mul__
 
@@ -141,7 +142,7 @@ class Dim:
         value, expr = pair(other)
         if value == 1:
             return self  # ÷1 不写进算式（只可能是引擎生成的等分，用户写的算式保留原文）
-        # 除数位置的算式要更严格：顶层乘除也得括起来，否则 _a/(b×c) 会变成 _a/b×c
+        # 除数位置的算式要更严格：顶层乘除也得括起来，否则 _a/(b*c) 会变成 _a/b*c
         return Dim(self.v / value, f"{wrap(self.e)}/{wrap(expr, tight=True)}")
 
 
@@ -159,7 +160,7 @@ def dim_sum(*parts: Dim) -> Dim:
 
 
 def scale_sum(parts: Iterable[Dim], factor: float) -> Dim:
-    """Σ(项 × 系数)：系数逐项写进算式并跳过 0 项，如 ``65×2+130×2+500×2``。"""
+    """Σ(项 × 系数)：系数逐项写进算式并跳过 0 项，如 ``65*2+130*2+500*2``。"""
     total = dim(0.0)
     for part in parts:
         if part.v != 0:
@@ -183,9 +184,22 @@ def raw_dim(raw: str, value: float) -> Dim:
 
 
 def prettify(expression: str) -> str:
-    """把 Python 语法的算式转成可读写法：**n → 上标，* → ×。"""
-    text = re.sub(r"\*\*(\d+)", lambda m: "".join(_SUPERSCRIPTS[ch] for ch in m.group(1)), expression)
-    return text.replace("*", "×")
+    """把算式整理成 Excel 可粘贴的写法。
+
+    * 乘除统一 ``*`` ``/``（旧串里的 ``×`` ``÷`` 一并转掉）；
+    * 乘方 ``**n`` 写成 Excel 的 ``^n``（不再转上标）；
+    * 函数名转大写（``sin`` → ``SIN``、``ceil`` → ``CEILING``）；
+    * 常量写成 ``PI()``。
+
+    输出的算式直接复制进 Excel 即为可用公式，所以这里只做“可读化”以外的
+    Excel 语法收敛，不改动括号（括号由 :func:`wrap` 按运算优先级决定）。
+    """
+    text = expression.replace("×", "*").replace("÷", "/")
+    text = text.replace("**", "^")
+    text = re.sub(r"(?<![A-Za-z])pi(?![A-Za-z(])", "PI()", text)
+    for name in _EXCEL_FUNCTIONS:
+        text = re.sub(r"(?<![A-Za-z])" + name + r"(?=\s*\()", name, text, flags=re.IGNORECASE)
+    return text
 
 
 @dataclass
@@ -293,14 +307,14 @@ class QDict:
     def scale(self, coefficient: float, expr: str | None = None) -> None:
         """整体乘系数（旧版 MultDic_StrmcQ）；系数进算式，``expr`` 为系数的算式原文。
 
-        算式变成 ``项×系数``：项只在顶层是加减时才括（乘除左结合，``a/b×c`` ≡
-        ``(a/b)×c``）；系数原文同埋深一样按优先级写进算式——``50*2`` 写成
-        ``×50×2``（与埋深 ``2*3`` 进算式的写法一致），只有 ``×(40-2)`` 这类
+        算式变成 ``项*系数``：项只在顶层是加减时才括（乘除左结合，``a/b*c`` ≡
+        ``(a/b)*c``）；系数原文同埋深一样按优先级写进算式——``50*2`` 写成
+        ``*50*2``（与埋深 ``2*3`` 进算式的写法一致），只有 ``*(40-2)`` 这类
         顶层加减才补括号。除数位置由 :meth:`Dim.__truediv__` 单独保证。
         """
         if coefficient == 1.0:
             return
-        suffix = f"×{wrap(expr) if expr is not None else fmt(coefficient)}"
+        suffix = f"*{wrap(expr) if expr is not None else fmt(coefficient)}"
         for quantity in self._items.values():
             quantity.value *= coefficient
             for term in quantity.terms:

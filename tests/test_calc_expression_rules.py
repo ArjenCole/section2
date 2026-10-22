@@ -35,22 +35,22 @@ from app.core.calc.tracer import (
 def test_wrap_parenthesises_only_additive_expressions() -> None:
     assert wrap("2.85") == "2.85"  # 纯数字原样
     assert wrap("600/1000") == "600/1000"  # 顶层只有乘除 → 不需括号
-    assert wrap("65×2") == "65×2"
+    assert wrap("65*2") == "65*2"
     assert wrap("(65+130)/1000") == "(65+130)/1000"  # 加减在括号内，顶层是除
     assert wrap("1.99+(65+130)/1000") == "(1.99+(65+130)/1000)"  # 顶层加减 → 加括号
     assert wrap("0.3-0.117") == "(0.3-0.117)"
 
 
 def test_wrap_tight_also_protects_divisor_positions() -> None:
-    # 除数位置：顶层乘除必须括号，否则 a/(b×c) 会变成 a/b×c
-    assert wrap("65×2", tight=True) == "(65×2)"
+    # 除数位置：顶层乘除必须括号，否则 a/(b*c) 会变成 a/b*c
+    assert wrap("65*2", tight=True) == "(65*2)"
     assert wrap("600/1000", tight=True) == "(600/1000)"
     assert wrap("2.85", tight=True) == "2.85"
 
 
 def test_atomic_expressions_never_need_parentheses() -> None:
     """纯数字 / 单变量 / 函数调用是原子表达式，任何位置都不加括号。"""
-    for text in ("2", "233.988", "0.5", "sin(1.2)", "ceil(40/1.2)"):
+    for text in ("2", "233.988", "0.5", "SIN(1.2)", "CEILING(40/1.2,1)"):
         assert not needs_parens(text), text
         assert not needs_parens_tight(text), text
         assert wrap(text, tight=True) == text
@@ -63,13 +63,13 @@ def test_atomic_expressions_never_need_parentheses() -> None:
 # --------------------------------------------------------------------------- #
 def test_pre_sub_parentheses_follow_position() -> None:
     height = dim(2.0)  # 原子
-    width = Dim(1.99, "600/1000+(65×2+130×2+500×2)/1000")  # 顶层加减
+    width = Dim(1.99, "600/1000+(65*2+130*2+500*2)/1000")  # 顶层加减
     count = Dim(100.0, "50*2")  # 顶层乘除
 
     assert engine.pre_sub("1*2*height", height, width, count) == "1*2*2"
     # 顶层加减：任何位置都括起来
     assert engine.pre_sub("width*B", height, width, count) == (
-        "(600/1000+(65×2+130×2+500×2)/1000)*B"
+        "(600/1000+(65*2+130*2+500*2)/1000)*B"
     )
     # 顶层乘除：除数 / 乘方底数位置才括
     assert engine.pre_sub("ROUND(count/B,0)/count*A", height, width, count) == (
@@ -107,7 +107,7 @@ def test_dim_keeps_derivation_instead_of_precomputing() -> None:
     t, a, workwidth = dim(65), dim(130), dim(500)  # 图集与面宽表值（原始数据）
     bottom = dn / 1000 + scale_sum((t, a, workwidth), 2.0) / 1000
     assert bottom.v == pytest.approx(1.99)
-    assert bottom.e == "600/1000+(65×2+130×2+500×2)/1000"
+    assert bottom.e == "600/1000+(65*2+130*2+500*2)/1000"
     assert evaluate(bottom.e) == pytest.approx(bottom.v)
 
     # 层厚同样保留 毫米→米 换算与埋深原文
@@ -140,7 +140,7 @@ def test_dim_subtraction_keeps_parentheses() -> None:
 
 def test_dim_sum_and_min_skip_empty_parts() -> None:
     assert dim_sum(dim(0.0), dim(200), dim(300)).e == "200+300"
-    assert scale_sum((dim(0), dim(100), dim(500)), 2.0).e == "100×2+500×2"
+    assert scale_sum((dim(0), dim(100), dim(500)), 2.0).e == "100*2+500*2"
     assert dim_min(dim(2.0), dim(0.5)).v == 0.5
     assert dim_min(dim(2.0), dim(0.5)).e == "0.5"
 
@@ -171,16 +171,16 @@ def test_same_number_from_different_sources_stays_distinct() -> None:
 # --------------------------------------------------------------------------- #
 def test_steps_carry_note_and_expr_per_term() -> None:
     out = QDict()
-    out.add("回填|中粗砂|m3", 2.0, "1×2", "坞膀下半")
+    out.add("回填|中粗砂|m3", 2.0, "1*2", "坞膀下半")
     out.add("回填|中粗砂|m3", 0.5, "0.5", "管顶50cm")
-    out.add("回填|中粗砂|m3", -0.3, "0.3+1×0", "坞膀扣弓形")
+    out.add("回填|中粗砂|m3", -0.3, "0.3+1*0", "坞膀扣弓形")
     quantity = out.get("回填|中粗砂|m3")
 
-    assert quantity.expression == "1×2+0.5-(0.3+1×0)"
+    assert quantity.expression == "1*2+0.5-(0.3+1*0)"
     assert quantity.steps() == [
-        ("坞膀下半", "1×2"),
+        ("坞膀下半", "1*2"),
         ("管顶50cm", "+0.5"),
-        ("坞膀扣弓形", "-(0.3+1×0)"),
+        ("坞膀扣弓形", "-(0.3+1*0)"),
     ]
     # 不变式：各步算式按顺序拼接就是完整算式（展示层不再另拼字符串）
     assert "".join(text for _note, text in quantity.steps()) == quantity.expression
@@ -197,20 +197,20 @@ def test_steps_skip_zero_terms_with_their_note() -> None:
 
 
 def test_steps_survive_merge_and_scale() -> None:
-    """多原则合并（extend）与 ×数量 都保留每步说明与算式。"""
+    """多原则合并（extend）与 *数量 都保留每步说明与算式。"""
     first = QDict()
-    first.add("开挖|Ⅲ类土|m3", 1.0, "1×(600/1000)", "垫层~坞膀上半")
+    first.add("开挖|Ⅲ类土|m3", 1.0, "1*(600/1000)", "垫层~坞膀上半")
     second = QDict()
-    second.add("开挖|Ⅲ类土|m3", 2.0, "2×3", "第2级围护段")
+    second.add("开挖|Ⅲ类土|m3", 2.0, "2*3", "第2级围护段")
     merged = QDict()
     merged.extend(first)
     merged.extend(second)
     quantity = merged.get("开挖|Ⅲ类土|m3")
     assert [note for note, _text in quantity.steps()] == ["垫层~坞膀上半", "第2级围护段"]
-    merged.scale(3.0, expr="3")  # ×数量 3（系数与算式原文都是 3）
+    merged.scale(3.0, expr="3")  # *数量 3（系数与算式原文都是 3）
     assert quantity.steps() == [
-        ("垫层~坞膀上半", "1×(600/1000)×3"),
-        ("第2级围护段", "+2×3×3"),
+        ("垫层~坞膀上半", "1*(600/1000)*3"),
+        ("第2级围护段", "+2*3*3"),
     ]
     assert quantity.value == pytest.approx(9.0)
 
