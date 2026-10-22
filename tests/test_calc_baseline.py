@@ -145,9 +145,32 @@ def test_well_point_expression_with_amount_expression(project) -> None:
     unit_vm.create_pipe(element.id, mat="Ⅱ级混凝土管", dn=600, content="1")
 
     row = _results(unit)[element.id].get("降水|轻型井点|根")
-    # 除数位置的括号是必需的（÷(40×2)），尾部 ×数量 不需要（乘除左结合）
+    # 除数位置的括号是必需的（/(40*2)），尾部 *数量 不需要（乘除左结合）
     assert row.expression == "CEILING((40*2)/1.2,1)*2/(40*2)*40*2"
     assert row.value == pytest.approx(134.0)
+    assert evaluate(row.expression) == pytest.approx(row.value)
+
+
+def test_well_point_exact_division_keeps_count(project) -> None:
+    """长度正好是井距整数倍时不多算一座：4.2/1.4 的浮点噪声只在求值内部收敛。
+
+    4.2/1.4 在二进制浮点里是 3.0000000000000004，直接 ceil 会得 4 座；收敛后应为
+    3 座，且**输出的算式里不能出现 ROUND 之类的收敛函数**（保持 Excel 标准写法）。
+    """
+    from app.core.models.models import PcpPrecipitation
+    from sqlalchemy import select
+
+    unit = project
+    pp = orm.session().scalars(select(PcpPrecipitation)).first()
+    pp.light_well = "1|1.4|1"  # 阈值 1m、井距 1.4m、单侧
+    project_io.commit()
+    element = unit_vm.create_element(unit.id, category=1, name="整除井点", depth="3", amount="4.2")
+    unit_vm.create_pipe(element.id, mat="Ⅱ级混凝土管", dn=600, content="1")
+
+    row = _results(unit)[element.id].get("降水|轻型井点|根")
+    assert row.expression == "CEILING(4.2/1.4,1)*1/4.2*4.2"
+    assert "ROUND" not in row.expression
+    assert row.value == pytest.approx(3.0)
     assert evaluate(row.expression) == pytest.approx(row.value)
 
 

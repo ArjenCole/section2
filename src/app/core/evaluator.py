@@ -24,7 +24,7 @@ from typing import Any
 
 from simpleeval import InvalidExpression, SimpleEval, safe_power
 
-__all__ = ["EvalError", "evaluate", "evaluate_or_default", "format_number", "normalize"]
+__all__ = ["EvalError", "ceil_ratio", "evaluate", "evaluate_or_default", "format_number", "normalize"]
 
 
 class EvalError(ValueError):
@@ -65,14 +65,33 @@ def _excel_roundup(value: Any, digits: Any = 0) -> float:
     return float(Decimal(repr(float(value))).quantize(quant, rounding=ROUND_UP))
 
 
+#: 取整前把商收敛到的小数位：抹掉二进制浮点噪声（4.2/1.4 = 3.0000000000000004），
+#: 真实商离整数的最小距离是 1/间距 量级，远大于 1e-9，不会误伤。
+_CEIL_DIGITS = 9
+
+
+def ceil_ratio(value: Any, divisor: Any = 1) -> float:
+    """⌈value/divisor⌉：井点座数 = ⌈长度/井距⌉。
+
+    二进制浮点存不下 4.2、1.4 这类十进制小数，商可能落在整数**略上方**
+    （``4.2/1.4 = 3.0000000000000004``），直接 ``math.ceil`` 会多进一位、多算
+    一座井。这里先把商收敛到 ``_CEIL_DIGITS`` 位小数再取整。
+
+    **收敛只发生在求值内部**：输出的算式仍然写 ``CEILING(长度/井距,1)``，
+    不带任何辅助函数，用户复制进 Excel 看到的还是标准写法。
+    """
+    step = float(divisor) or 1.0
+    return float(math.ceil(round(float(value) / step, _CEIL_DIGITS)))
+
+
 def _ceiling(value: Any, significance: Any = 1) -> float:
     """Excel ``CEILING(number, significance)``：向上取到 ``significance`` 的整数倍。
 
-    ``CEILING(x,1)`` 与 ``math.ceil(x)`` 等价（负数同样向 +∞ 取），是引擎输出的
-    井点座数写法；旧写法 ``ceil(x)`` 也指向这里，保持兼容。
+    ``CEILING(x,1)`` 即 ``⌈x⌉``，是引擎输出的井点座数写法；旧写法 ``ceil(x)``
+    也指向这里，保持兼容。取整前先收敛浮点噪声，见 :func:`ceil_ratio`。
     """
     step = float(significance) or 1.0
-    return math.ceil(float(value) / step) * step
+    return ceil_ratio(value, step) * step
 
 
 _FUNCTIONS: dict[str, Any] = {

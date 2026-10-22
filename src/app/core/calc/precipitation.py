@@ -6,12 +6,16 @@
 
 座数的算式不做预运算：``CEILING(长度/井距,1)*侧数`` 写全井距与侧数（Excel 语法，
 可直接复制进 Excel）；``CEILING`` 是 evaluator 白名单里为这条算式放开的取整函数。
+
+座数的数值走 :func:`app.core.evaluator.ceil_ratio`，与算式求值同一个函数：它在
+求值内部先把商收敛到 9 位小数，抹掉 ``4.2/1.4 = 3.0000000000000004`` 这类二进制
+浮点噪声（否则长度正好整除时会多算一座井）。收敛**只发生在代码里**，输出算式仍
+是标准写法，不带任何辅助函数。
 """
 
 from __future__ import annotations
 
-import math
-
+from app.core.evaluator import ceil_ratio
 from app.core.models.models import parse_precipitation
 from app.core.calc import groove
 from app.core.calc.measures import AtlasDims
@@ -38,7 +42,9 @@ def cal_precipitation(pp, pe, work, pf, ad: AtlasDims, info, groove_depth: Dim, 
     ):
         enabled, elevation, gap, sides = _enabled(getattr(pp, key), key)
         if enabled and groove_depth.v > elevation and gap > 0:
-            wells = math.ceil(amount / gap) * sides
+            # ⌈长度/井距⌉：ceil_ratio 在求值内部收敛浮点噪声（4.2/1.4 别多算一座），
+            # 但输出算式仍是标准 CEILING(…,1)，不带任何辅助函数
+            wells = ceil_ratio(amount, gap) * sides
             # 座数按每延米存储（÷数量）：数量在除数位置，算式必须加括号（tight），
             # 数量为算式时 /(40*2) 不能写成 /40*2
             length = wrap(amount_dim.e, tight=True)

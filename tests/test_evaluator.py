@@ -26,6 +26,17 @@ from app.core.evaluator import EvalError, evaluate, evaluate_or_default, format_
         ("abs(-3.5)", 3.5),
         ("power(2,10)", 1024.0),
         ("round(3.14159,2)", 3.14),
+        # Excel 语义：ROUND 逢 5 远离零（Python 内置 round 会给 0.12）
+        ("ROUND(0.125,2)", 0.13),
+        ("ROUNDUP(2.11,1)", 2.2),
+        # Excel 写法可直接求值；CEILING 内部先收敛浮点噪声，4.2/1.4 不多进一位
+        ("CEILING(4.2/1.4,1)", 3.0),
+        ("CEILING(22.1/0.85,1)", 26.0),
+        ("CEILING(7.3,0.5)", 7.5),
+        ("CEILING(-2.1,1)", -2.0),
+        ("3.141593*2", 6.283186),
+        ("PI()*2", 2 * math.pi),
+        ("=CEILING(4,1)+1", 5.0),
     ],
 )
 def test_evaluate_ok(text: str, expected: float) -> None:
