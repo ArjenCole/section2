@@ -37,6 +37,8 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QComboBox, QMainWindow, QMenu, QWidget
 
+from app.core import window_diag
+
 #: 圆角半径（逻辑像素），与 theme.py 里贴角子控件的 border-radius 一致
 _RADIUS = 8
 
@@ -165,6 +167,14 @@ class _ShadowWindow(QWidget):
                     self.winId()  # 先建原生窗口才能设置 owner
                     handle = self.windowHandle()
                 if handle is not None and handle.transientParent() is not host_handle.transientParent():
+                    if window_diag.enabled():
+                        window_diag.record(
+                            "rounded.set_transient_parent",
+                            f"host={type(host).__name__} host_hwnd={int(host.winId())} "
+                            f"shadow_hwnd={int(self.winId())} "
+                            f"owner_now={handle.transientParent()}",
+                            stack=3,
+                        )
                     handle.setTransientParent(host_handle.transientParent())
             self.show()
 
@@ -175,10 +185,19 @@ class _ShadowWindow(QWidget):
         try:
             import ctypes
 
+            shadow_hwnd = int(self.winId())
+            host_hwnd = int(self._host.winId())
             ctypes.windll.user32.SetWindowPos(
-                int(self.winId()), int(self._host.winId()), 0, 0, 0, 0,
+                shadow_hwnd, host_hwnd, 0, 0, 0, 0,
                 _SWP_NOSIZE | _SWP_NOMOVE | _SWP_NOACTIVATE,
             )
+            if window_diag.enabled():
+                window_diag.record(
+                    "rounded.restack",
+                    f"shadow_hwnd={shadow_hwnd} after_host_hwnd={host_hwnd} "
+                    f"host={type(self._host).__name__}",
+                    stack=3,
+                )
         except Exception:  # noqa: BLE001 - 离屏/无句柄时静默跳过
             pass
 
@@ -344,6 +363,22 @@ class RoundedWindowHelper(QObject):
         if obj is not window:
             return False
         etype = event.type()
+        # 诊断：这一层是运行时唯一"在窗口可见期间动原生窗口"的代码，
+        # 只记真正会走到原生窗口的事件（Resize/Move 太吵，跳过）
+        if window_diag.enabled() and etype in (
+            QEvent.Type.Show,
+            QEvent.Type.Hide,
+            QEvent.Type.Close,
+            QEvent.Type.WindowStateChange,
+            QEvent.Type.ActivationChange,
+            QEvent.Type.ZOrderChange,
+        ):
+            window_diag.record(
+                "rounded.host_event",
+                f"{etype.name} host={type(window).__name__} hwnd={int(window.winId())} "
+                f"title={window.windowTitle()!r} visible={window.isVisible()}",
+                stack=3,
+            )
         if etype in (QEvent.Type.Show, QEvent.Type.Resize, QEvent.Type.Move):
             self._apply()
             self._shadow.sync()
@@ -370,6 +405,12 @@ class RoundedWindowHelper(QObject):
         if squared != self._squared:
             # 最大化时压平贴角子控件的圆角（与系统行为一致），还原时恢复
             self._squared = squared
+            if window_diag.enabled():
+                window_diag.record(
+                    "rounded.set_stylesheet",
+                    f"squared={squared} host={type(window).__name__} hwnd={int(window.winId())}",
+                    stack=3,
+                )
             window.setStyleSheet(
                 self._base_sheet + _SQUARE_CORNERS_SHEET if squared else self._base_sheet
             )

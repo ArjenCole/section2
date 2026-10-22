@@ -31,6 +31,8 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from app.core.main_thread import install_main_thread_executor
 from app.core.paths import fonts_dir, log_dir, resources_dir  # noqa: E402
+from app.core.window_diag import install as install_window_diag  # noqa: E402
+from app.core.window_diag import shutdown as shutdown_window_diag  # noqa: E402
 from app.core.version import (  # noqa: E402
     APP_DISPLAY_NAME,
     APP_NAME,
@@ -150,10 +152,16 @@ def main(argv: list[str] | None = None) -> int:
     install_menu_rounding(app)
     _apply_window_icon(app)
     _install_excepthook()
+    # 窗口"消失"诊断黑匣子：只有设置 SECTION2_DIAG=1 时才启用，
+    # 正常启动这里返回 None、record() 全是空操作（见 app/core/window_diag.py）
+    install_window_diag(app)
 
     window = MainWindow(project_path=_project_from_args(arguments))
     window.showMaximized()
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        shutdown_window_diag()
 
 
 if __name__ == "__main__":

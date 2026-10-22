@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.core import window_diag
 from app.core.event_bus import bus
 from app.services import project_io
 from app.views.dialogs.enclosure_edit_dialog import EnclosureEditDialog
@@ -221,6 +222,8 @@ class PrincipleBar(QWidget):
     # ------------------------------------------------------------------ 编辑 / 右键菜单
     def _open_editor(self, kind: str, name: str) -> None:
         """ShowPEPF：双击标签打开对应原则编辑对话框。"""
+        if window_diag.enabled():
+            window_diag.record("principle.open_editor", f"kind={kind} name={name!r}", stack=3)
         if kind == _KIND_ENCLOSURE:
             enclosure = next((e for e in project_io.enclosures() if e.name == name), None)
             if enclosure is not None:
