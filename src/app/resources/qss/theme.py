@@ -283,13 +283,15 @@ QWidget#AiPanelColumn, QWidget#AiColumnContainer {
 /* 竖条自身的底色/圆角由自绘负责（折叠时贴窗体右下角，见 panel_splitter） */
 
 /* ===================== 分隔条 ===================== */
+/* 应用内的分割条都换成了自绘手柄（widgets/panel_splitter.py）：抓取区 6px、
+   只画居中 1px 线，悬停/拖拽时线变 border_focus。实际粗细由各处的
+   setHandleWidth(SPLITTER_HANDLE_WIDTH) 决定，下面这几条只是给万一出现的
+   原生 QSplitter 兜底，手柄自身的背景由控件级样式让空 */
 QSplitter::handle { background-color: $border; }
 QSplitter::handle:horizontal { width: 1px; }
 QSplitter::handle:vertical { height: 1px; }
 QSplitter::handle:hover { background-color: $border_focus; }
-/* 主三栏的分割手柄是自绘的（widgets/panel_splitter.py）：抓取区 6px 但只画
-   居中 1px 线，悬停/拖拽时线变 border_focus。QSS 必须把背景让空，否则
-   ::handle:hover 会把整条 6px 抓取区刷成实色，看着像一块蓝条 */
+/* 主三栏保持兜底：万一自绘失效，::handle:hover 也别把整条抓取区刷成实色 */
 QSplitter#MainSplitter::handle,
 QSplitter#MainSplitter::handle:hover { background: transparent; }
 

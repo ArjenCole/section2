@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QSplitter,
     QStyle,
     QTabWidget,
     QTableWidget,
@@ -58,6 +57,7 @@ from app.viewmodels.unit_vm import (
 )
 from app.views.panels.multi_principle_tab import MultiPrincipleTab
 from app.views.widgets.frameless_dialog import FramelessMessageBox
+from app.views.widgets.panel_splitter import SPLITTER_HANDLE_WIDTH, LineSplitter
 from app.views.widgets.table_edit_delegate import TableEditDelegate
 
 _ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -214,7 +214,9 @@ class UnitPanel(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        # 自绘 1px 线的手柄：抓取区加宽，鼠标移上去线会高亮
+        splitter = LineSplitter(Qt.Orientation.Vertical)
+        splitter.setHandleWidth(SPLITTER_HANDLE_WIDTH)
         splitter.addWidget(self._build_element_table())
         splitter.addWidget(self._build_bottom_area())
         splitter.setStretchFactor(0, 1)
@@ -252,7 +254,8 @@ class UnitPanel(QWidget):
 
     def _build_bottom_area(self) -> QWidget:
         """横向三栏：构件明细（管材/构件参数/工程量/多原则）｜工程量表（定额/清单）｜断面示意图。"""
-        bottom = QSplitter(Qt.Orientation.Horizontal)
+        bottom = LineSplitter(Qt.Orientation.Horizontal)
+        bottom.setHandleWidth(SPLITTER_HANDLE_WIDTH)
 
         # 左：选中构件的明细
         detail = QTabWidget()

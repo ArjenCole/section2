@@ -131,6 +131,40 @@ def test_toggle_bar_chevron_direction(qapp):
     assert collapsed_path.elementAt(0).x > cx
 
 
+def test_tree_and_unit_panels_use_line_handles(qapp):
+    """左栏「项目结构 / 构件库」、工作区「表格 / 明细」、底部三栏之间的分割条
+    都是同一套自绘手柄：抓取区一样宽，鼠标移上去才亮。"""
+    from app.views.panels.tree_panel import TreePanel
+    from app.views.panels.unit_panel import UnitPanel
+
+    tree = TreePanel()
+    tree.resize(250, 800)
+    tree.show()
+    unit = UnitPanel()
+    unit.resize(1000, 700)
+    unit.show()
+    try:
+        tree_splitter = tree.findChild(LineSplitter)
+        assert tree_splitter is not None
+        assert tree_splitter.orientation() == Qt.Orientation.Vertical
+        assert tree_splitter.handleWidth() == SPLITTER_HANDLE_WIDTH
+        assert isinstance(tree_splitter.handle(1), LineSplitterHandle)
+
+        work = unit._work_area
+        assert isinstance(work, LineSplitter)
+        assert work.handleWidth() == SPLITTER_HANDLE_WIDTH
+
+        bottom = work.widget(1)  # 底部三栏：明细 / 工程量表 / 断面
+        assert isinstance(bottom, LineSplitter)
+        assert bottom.orientation() == Qt.Orientation.Horizontal
+        assert bottom.handleWidth() == SPLITTER_HANDLE_WIDTH
+    finally:
+        tree.close()
+        unit.close()
+        tree.deleteLater()
+        unit.deleteLater()
+
+
 def test_toggle_click_collapses_ai_panel(qapp):
     """点竖条切换 AI 面板：收起后容器只剩竖条宽度，再点恢复原宽度。"""
     from app.views.main_window import MainWindow

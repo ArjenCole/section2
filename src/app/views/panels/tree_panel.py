@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
-    QSplitter,
     QStackedWidget,
     QToolButton,
     QTreeWidget,
@@ -42,6 +41,7 @@ from app.viewmodels.project_vm import (
 )
 from app.views.panels.element_library_panel import ElementLibraryPanel
 from app.views.widgets.frameless_dialog import FramelessInputDialog, load_icon
+from app.views.widgets.panel_splitter import SPLITTER_HANDLE_WIDTH, LineSplitter
 
 _NODE_ROLE = Qt.ItemDataRole.UserRole + 1
 
@@ -222,7 +222,9 @@ class TreePanel(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
 
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        # 自绘 1px 线的手柄：抓取区加宽，鼠标移上去线会高亮
+        splitter = LineSplitter(Qt.Orientation.Vertical)
+        splitter.setHandleWidth(SPLITTER_HANDLE_WIDTH)
 
         # ---- 上半段：项目结构
         tree_page = QWidget()
