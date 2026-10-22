@@ -530,6 +530,13 @@ class WidthEditDialog(FramelessDialog):
         self._tables: dict[str, CellFillTable] = {}
         self._build_ui()
         self._fill()
+        # 取值方式跟随当前 tab（旧版 grooveWidth 单选）。
+        # 必须在 _fill() 之后才连：QTabWidget 的 currentChanged 会在显示/布局阶段
+        # 延迟补发一次，若在 _fill() 之前连上，那一发会在对话框早已关闭后触发一次
+        # 多余的 project_io.commit()；碰上"下一次新建工程正在提交事务"就会重入
+        # commit，把 SQLAlchemy 的提交状态机打断（实测 IllegalStateChangeError /
+        # ResourceClosedError，也就是日志里那条 "session is in 'prepared' state"）。
+        self._tabs.currentChanged.connect(self._on_tab_changed)
 
     # ------------------------------------------------------------------ 界面
     def _build_ui(self) -> None:
@@ -562,8 +569,6 @@ class WidthEditDialog(FramelessDialog):
             layout.addWidget(table)
             self._tabs.addTab(page, title)
             self._tables[kind] = table
-        # 取值方式跟随当前 tab（旧版 grooveWidth 单选）
-        self._tabs.currentChanged.connect(self._on_tab_changed)
         root.addWidget(self._tabs, 1)
 
         button_row = QHBoxLayout()
@@ -618,7 +623,10 @@ class WidthEditDialog(FramelessDialog):
         width = self._width()
         if width is None:
             return
-        width.groove_width = GROOVE_WIDTH_WORK if self._tabs.currentIndex() == 0 else GROOVE_WIDTH_B
+        desired = GROOVE_WIDTH_WORK if self._tabs.currentIndex() == 0 else GROOVE_WIDTH_B
+        if width.groove_width == desired:
+            return  # 值没变就不写库：延迟补发的信号不该再产生一次 commit
+        width.groove_width = desired
         project_io.commit()
 
     def _reset_current(self) -> None:

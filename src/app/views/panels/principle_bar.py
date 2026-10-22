@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.core import window_diag
-from app.core.event_bus import bus
+from app.core.event_bus import bus, connect_weak
 from app.services import project_io
 from app.views.dialogs.enclosure_edit_dialog import EnclosureEditDialog
 from app.views.dialogs.foundation_edit_dialog import FoundationEditDialog
@@ -80,7 +80,7 @@ class PrincipleBar(QWidget):
         super().__init__(parent)
         self._menu_name = ""  # 右键时记住的原则名（原版 CMSpcp.Text）
         self._build_ui()
-        bus().project_opened.connect(lambda _path: self.reload())
+        connect_weak(bus().project_opened, self, "reload")
         bus().project_closed.connect(self._on_project_closed)
         bus().tree_structure_changed.connect(self.reload)
 
@@ -224,22 +224,32 @@ class PrincipleBar(QWidget):
         """ShowPEPF：双击标签打开对应原则编辑对话框。"""
         if window_diag.enabled():
             window_diag.record("principle.open_editor", f"kind={kind} name={name!r}", stack=3)
+        dialog = None
         if kind == _KIND_ENCLOSURE:
             enclosure = next((e for e in project_io.enclosures() if e.name == name), None)
             if enclosure is not None:
-                EnclosureEditDialog(enclosure.id, self).exec()
+                dialog = EnclosureEditDialog(enclosure.id, self)
         elif kind == _KIND_FOUNDATION:
             foundation = next((f for f in project_io.foundations() if f.name == name), None)
             if foundation is not None:
-                FoundationEditDialog(foundation.id, self).exec()
+                dialog = FoundationEditDialog(foundation.id, self)
         elif kind == _KIND_PRECIPITATION:
             precipitation = next((p for p in project_io.precipitations() if p.name == name), None)
             if precipitation is not None:
-                PrecipitationEditDialog(precipitation.id, self).exec()
+                dialog = PrecipitationEditDialog(precipitation.id, self)
         else:
             width = next((w for w in project_io.width_principles() if w.name == name), None)
             if width is not None:
-                WidthEditDialog(width.id, self).exec()
+                dialog = WidthEditDialog(width.id, self)
+        if dialog is None:
+            return
+        try:
+            dialog.exec()
+        finally:
+            # 用完即销毁：关闭后仍存活的弹窗，其字段/信号还会被全局事件总线与
+            # 延迟信号回调到（例如 QTabWidget 补发的 currentChanged 会去 commit），
+            # 那时工程会话可能已经换掉或正在提交，轻则报错、重则打坏事务状态。
+            dialog.deleteLater()
 
     def _show_context_menu(self, kind: str, name: str, global_pos) -> None:
         """PrincpleLab_MouseUp：右键菜单（编辑/导入/导出/删除/添加）。"""

@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.evaluator import EvalError, evaluate, format_number
-from app.core.event_bus import bus
+from app.core.event_bus import bus, connect_weak
 from app.core.param_naming import STRUCTURE_NAME_PARAM, STRUCTURE_UNIT_PARAM
 from app.views.widgets.mac_window import is_mac
 from app.core.models.models import (
@@ -493,8 +493,9 @@ class UnitPanel(QWidget):
         self._detail_tabs.currentChanged.connect(self._on_detail_tab_changed)
         self._quantity_tabs.currentChanged.connect(self._on_detail_tab_changed)
         bus().node_selected.connect(self._on_node_selected)
-        bus().project_closed.connect(lambda: self._show_unit(None))
-        bus().project_opened.connect(lambda _path: self._show_unit(None))
+        # 换成连接时先清空选中：夹带常量 None，走弱引用连接
+        connect_weak(bus().project_closed, self, "_show_unit", None)
+        connect_weak(bus().project_opened, self, "_show_unit", None)
         # 原则窗体确认修改：工程量与断面图重算（编辑过程中不刷新）
         bus().principle_changed.connect(self._on_principle_changed)
         # 原则增删改名 / 标段单位变化：整表重载（原则下拉、工程量、断面全刷新）

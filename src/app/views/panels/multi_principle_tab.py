@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.evaluator import EvalError, evaluate, format_number
-from app.core.event_bus import bus
+from app.core.event_bus import bus, connect_weak
 from app.core.models.models import MULTI_PE_TEXT, MULTI_PF_TEXT
 from app.services import project_io
 from app.viewmodels.unit_vm import (
@@ -69,7 +69,7 @@ class MultiPrincipleTab(QWidget):
         self._loading = False
         self._last_active = False
         self._build_ui()
-        bus().unit_changed.connect(lambda _unit_id: self._defer_reload())
+        connect_weak(bus().unit_changed, self, "_defer_reload")
         bus().tree_structure_changed.connect(self._defer_reload)
 
     # ------------------------------------------------------------------ 界面

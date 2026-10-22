@@ -44,7 +44,7 @@ from app.agent.agent_loop import AgentLoop
 from app.agent.context import current as current_agent_context
 from app.agent.tool_registry import default_registry
 from app.core.config import get_config, set_ai_active_provider
-from app.core.event_bus import bus
+from app.core.event_bus import bus, connect_weak
 from app.resources.qss.theme import ThemeManager, combo_arrow_renderer
 from app.services.ai import ai_keychain
 from app.services.ai.ai_provider import (
@@ -383,7 +383,9 @@ class AiPanel(QWidget):
         self._input.installEventFilter(self)
 
     def _connect(self) -> None:
-        bus().project_opened.connect(lambda _path: self._refresh_hint())
+        # 连接一律走弱引用：lambda 会被 PySide 整体强引用，闭包里抓着的 self
+        # 永远释放不掉（面板会带着整棵控件树一起泄漏）
+        connect_weak(bus().project_opened, self, "_refresh_hint")
         bus().project_closed.connect(self._refresh_hint)
         ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
 

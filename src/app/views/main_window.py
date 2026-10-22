@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 from app.agent import context as agent_context
 from app.agent.confirm_policy import install_confirm_handler
 from app.core.config import add_recent_project, get_config, remove_recent_project, update_config
-from app.core.event_bus import bus
+from app.core.event_bus import bus, connect_weak
 from app.mcp_server.controller import McpServerController
 from app.core.version import (
     APP_DISPLAY_NAME,
@@ -599,12 +599,15 @@ class MainWindow(QMainWindow):
         self._act_import_legacy = self._action("导入旧版工程(.stn)…", self._import_legacy)
         self._act_exit = self._action("退出(&Q)", self.close, "Ctrl+Q")
 
-        self._act_add_segment = self._action("新增标段", lambda: self._tree_panel.add_segment())
-        self._act_add_unit = self._action("新增单位工程", lambda: self._tree_panel.add_unit())
+        # 动作一律接绑定方法：QAction 是窗口的 C++ 子对象，lambda 抓 self 会形成
+        # 跨 C++/Python 边界的循环引用——Python GC 看不见 C++ 那条边，窗口永不释放
+        # （close() 只是隐藏）。见 2026-10-22 的崩溃排查记录。
+        self._act_add_segment = self._action("新增标段", self._tree_panel.add_segment)
+        self._act_add_unit = self._action("新增单位工程", self._tree_panel.add_unit)
         self._act_add_element = self._action("新增构件条目", self._add_element)
         self._act_refresh = self._action("刷新", self._refresh, "F5")
         self._act_theme = self._action("切换暗色主题", self._toggle_theme, "Ctrl+Shift+T")
-        self._act_ai_panel = self._action("AI 助手", lambda: self._toggle_ai_panel(), "Ctrl+L")
+        self._act_ai_panel = self._action("AI 助手", self._toggle_ai_panel, "Ctrl+L")
         self._act_ai_settings = self._action("AI 设置…", self._ai_settings)
         self._act_mcp = self._action("MCP 服务…", self._mcp_settings)
         self._act_about = self._action("关于 Section", self._about)
@@ -697,10 +700,11 @@ class MainWindow(QMainWindow):
         project_menu.addAction(self._act_add_unit)
         project_menu.addAction(self._act_add_element)
         project_menu.addSeparator()
-        project_menu.addAction("添加沟槽围护原则", lambda: self._principle_bar.add_enclosure())
-        project_menu.addAction("添加地基处理原则", lambda: self._principle_bar.add_foundation())
-        project_menu.addAction("添加降水原则", lambda: self._principle_bar.add_precipitation())
-        project_menu.addAction("添加面宽原则", lambda: self._principle_bar.add_width())
+        # 直接接原则横条上的绑定方法（不包 lambda，避免把主窗体钉住）
+        project_menu.addAction("添加沟槽围护原则", self._principle_bar.add_enclosure)
+        project_menu.addAction("添加地基处理原则", self._principle_bar.add_foundation)
+        project_menu.addAction("添加降水原则", self._principle_bar.add_precipitation)
+        project_menu.addAction("添加面宽原则", self._principle_bar.add_width)
         project_menu.addSeparator()
         project_menu.addAction(self._act_refresh)
 
@@ -746,7 +750,7 @@ class MainWindow(QMainWindow):
     def _connect_events(self) -> None:
         bus().project_opened.connect(self._on_project_opened)
         bus().project_closed.connect(self._on_project_closed)
-        bus().project_saved.connect(lambda path: self._set_status(f"已保存：{path}"))
+        bus().project_saved.connect(self._on_project_saved)
         bus().node_selected.connect(self._on_node_selected)
         bus().ai_context_changed.connect(self._on_ai_context_changed)
         bus().status_message.connect(self._set_status)
@@ -777,6 +781,10 @@ class MainWindow(QMainWindow):
         self._set_project_actions(True)
         self._update_title()
         self._set_status(f"已打开工程：{path}")
+
+    def _on_project_saved(self, path: str) -> None:
+        """保存成功提示（绑定方法连接：PySide 只持弱引用，窗口销毁自动断开）。"""
+        self._set_status(f"已保存：{path}")
 
     def _on_project_closed(self) -> None:
         agent_context.reset_context()
@@ -845,7 +853,8 @@ class MainWindow(QMainWindow):
             return
         for path in recent:
             action = self._recent_menu.addAction(path)
-            action.triggered.connect(lambda _checked=False, target=path: self._open_path(target))
+            # 夹带路径参数，走弱引用连接（lambda 会钉住主窗体）
+            connect_weak(action.triggered, self, "_open_path", path)
 
     # ------------------------------------------------------------------ 工程操作
     def _new_project(self) -> None:

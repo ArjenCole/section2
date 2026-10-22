@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.core.event_bus import bus
+from app.core.event_bus import bus, connect_weak
 from app.services.element_library import element_library
 
 _ROLE_TEMPLATE = Qt.ItemDataRole.UserRole + 1
@@ -60,8 +60,9 @@ class ElementLibraryPanel(QWidget):
 
     def _connect(self) -> None:
         # 复刻原版 FlashControlsEnable：未打开工程时构件库禁用
-        bus().project_opened.connect(lambda _path: self.setEnabled(True))
-        bus().project_closed.connect(lambda: self.setEnabled(False))
+        # 带常量参数，用 connect_weak（弱引用）；lambda 会钉死这个面板
+        connect_weak(bus().project_opened, self, "setEnabled", True)
+        connect_weak(bus().project_closed, self, "setEnabled", False)
 
     def reload(self) -> None:
         library = element_library()

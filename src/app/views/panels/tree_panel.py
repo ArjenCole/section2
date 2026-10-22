@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.core.event_bus import bus
+from app.core.event_bus import bus, connect_weak
 from app.resources.qss.theme import ThemeManager
 from app.viewmodels.project_vm import (
     KIND_PROJECT,
@@ -283,7 +283,7 @@ class TreePanel(QWidget):
         self._tree.itemSelectionChanged.connect(self._on_selection_changed)
         self._tree.move_node_requested.connect(self._on_move_node_requested)
         self._tree.drop_rejected.connect(lambda message: bus().status_message.emit(message, 5000))
-        bus().project_opened.connect(lambda _path: self._vm.load())
+        connect_weak(bus().project_opened, self._vm, "load")
         bus().project_closed.connect(self._on_project_closed)
         ThemeManager.instance().theme_changed.connect(self._refresh_icons)
 
