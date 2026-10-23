@@ -490,6 +490,38 @@ def test_sand_table_120_degree_starts_at_dn400() -> None:
     assert (lookup(600).t, lookup(600).a, lookup(600).c1, lookup(600).c2) == (60, 500, 100, 180)
 
 
+def test_thickness_falls_back_to_concrete_table_for_sand_foundation(project) -> None:
+    """砂基础表没有小管径行 → 壁厚退回砼基础表（不许变成 0 或空）。
+
+    回归：`_seed_atlas_defaults` 曾把"图集无数据"的 0 当真实壁厚写进管材行，
+    界面显示"手填覆盖 0mm"，外径/工程量跟着少算 2t。
+    """
+    from app.services.atlas_match import _principles  # noqa: PLC0415
+    from app.services.principle_edit import apply_enclosure_fields
+
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    element = unit_vm.create_element(unit.id, category=1, name="排管")
+    assert element is not None
+    unit_vm.create_pipe(element.id, mat="Ⅱ级混凝土管", dn=150, content="1")
+    pe, _pw = _principles(element)
+    assert pe is not None
+
+    # 围护原则改成不采用砼基础（砂基础）：图集砂基础表没有 Dn150
+    apply_enclosure_fields(pe.id, {"con_found": False})
+    element = unit_vm._element(element.id)
+    pipe = element.pipes[0]
+    assert pipe.t in (None, 25.0), f"壁厚不能是 0/空：{pipe.t!r}"
+    assert unit_vm.auto_pipe_thicknesses(element)[pipe.id] == 25.0  # 图集页21 Ⅱ级 Dn150
+
+    # 直接从构件库插入也一样（模板快照的壁厚按砼基础组兜底）
+    template = element_library().find("直埋混凝土管", "Ⅱ级混凝土管", 0)
+    inserted = unit_vm.insert_element_template(unit.id, template)
+    assert inserted is not None
+    inserted = unit_vm._element(inserted.id)
+    assert inserted.pipes[0].t == 25.0
+    assert template.pipes[0].thickness_at(False, 120) == 25.0
+
+
 def test_editing_pipe_category_is_normalized(project) -> None:
     unit = project_io.units(project_io.segments()[0].id)[0]
     element = unit_vm.create_element(unit.id, category=1, name="测试管", pipes=[("Ⅱ级混凝土管", 600, "1")])

@@ -433,6 +433,7 @@ def auto_pipe_thicknesses(element: Element) -> dict[int, float]:
     直埋类别查（同扣管位逻辑）；箱涵 / 管廊不带管道表壁厚按 0。
     """
     from app.core.calc.engine import build_atlas_query, build_element_input, resolve_element_principles
+    from app.core.pipe_category import CONCRETE_PIPE_CATEGORIES
     from app.services.atlas import PipeSpec, resolve_atlas
 
     if element.category in (CATEGORY_BOX_CULVERT, CATEGORY_GALLERY):
@@ -448,7 +449,13 @@ def auto_pipe_thicknesses(element: Element) -> dict[int, float]:
         probe.pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn, cat=pipe.pipe_category)]
         if element.category == CATEGORY_ENCASED:
             probe.category = CATEGORY_BURIED  # 同引擎包封扣管位的临时直埋查询
-        result[pipe.id] = resolve_atlas(probe).t
+        thickness = resolve_atlas(probe).t
+        if not thickness and pipe.pipe_category in CONCRETE_PIPE_CATEGORIES:
+            # 砂基础表没有小管径行（页8~14 从 D=400/600 起）→ 退回砼基础表
+            # 同角度的壁厚：壁厚是管子属性，不该因为选了砂基础就变 0
+            probe.con_found = True
+            thickness = resolve_atlas(probe).t
+        result[pipe.id] = thickness
     return result
 
 
@@ -474,7 +481,8 @@ def _seed_atlas_defaults(element: Element) -> None:
                 )
     for pipe_id, t in auto_pipe_thicknesses(element).items():
         target = next((row for row in element.pipes if row.id == pipe_id), None)
-        if target is not None and target.t is None:
+        # t 为 0 = 图集没有这一行（如砂基础的小管径），不能当成真实壁厚写进管材行
+        if target is not None and target.t is None and t:
             target.t = t
 
 

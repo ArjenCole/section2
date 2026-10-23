@@ -44,8 +44,16 @@ class PipeTemplate:
     thickness: dict[str, float | None] = field(default_factory=dict)
 
     def thickness_at(self, con_found: bool, angle: int) -> float | None:
-        """按 (基础形式, 角度) 取壁厚，缺该组合时按就近角度取。"""
-        return nearest_value(self.thickness, con_found, angle)
+        """按 (基础形式, 角度) 取壁厚，缺该组合时按就近角度取。
+
+        砂基础表没有小管径行（06MS201-1 页8~14 只从 D=400/600 起），取不到时
+        退回"砼基础"组同角度的壁厚——壁厚是管子本身的属性，不该因为围护原则
+        选了砂基础就变空。
+        """
+        value = nearest_value(self.thickness, con_found, angle)
+        if value:
+            return value
+        return nearest_value(self.thickness, True, angle)
 
 
 @dataclass(frozen=True)
