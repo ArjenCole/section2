@@ -442,10 +442,14 @@ def test_category_switch_reconciles_atlas_rows(project) -> None:
     unit_vm.update_element(element.id, category=CATEGORY_BOX_CULVERT)
     assert [param.key for param in unit_vm.param_rows(element.id)] == ["工作面加宽", "垫层厚"]
 
-    # 箱涵 → 直埋：基础厚行按空值补回（空 = 自动按图集）
+    # 箱涵 → 直埋：基础厚行补回，且按 v9 自动匹配写值（现场查图集补候选一次）
     unit_vm.update_element(element.id, category=1)
     rows = [(param.key, param.value) for param in unit_vm.param_rows(element.id)]
-    assert rows == [("工作面加宽", ""), ("垫层厚", ""), ("基础厚", "")]
+    assert [key for key, _value in rows] == ["工作面加宽", "垫层厚", "基础厚"]
+    refreshed = {
+        param.key: param.value for param in unit_vm.param_rows(element.id)
+    }
+    assert refreshed["基础厚"] != ""  # 自动匹配已从候选里选了当前围护原则的组
 
     # 直埋 → 顶管：三行全删（只算管材）
     unit_vm.update_element(element.id, category=CATEGORY_JACKING)

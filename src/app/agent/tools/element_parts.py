@@ -34,10 +34,11 @@ def tool_add_pipe(arguments: dict) -> dict:
         dn=dn,
         content=str(arguments.get("content") if arguments.get("content") is not None else "1"),
         t=t,
+        cat=str(arguments.get("cat") or ""),
     )
     if pipe is None:
         raise ToolError(f"找不到 id={element_id} 的构件。")
-    return {"ok": True, "data": {"pipe_id": pipe.id}}
+    return {"ok": True, "data": {"pipe_id": pipe.id, "cat": pipe.pipe_category}}
 
 
 def tool_update_pipe(arguments: dict) -> dict:
@@ -45,13 +46,15 @@ def tool_update_pipe(arguments: dict) -> dict:
     pipe_id = arguments.get("pipe_id")
     if pipe_id in (None, ""):
         raise ToolError("请提供 pipe_id（见 get_element_detail 的 pipes）。")
-    fields = {key: arguments[key] for key in ("mat", "dn", "content", "t") if arguments.get(key) is not None}
+    fields = {
+        key: arguments[key] for key in ("mat", "cat", "dn", "content", "t") if arguments.get(key) is not None
+    }
     if not fields:
-        raise ToolError("没有给出要修改的字段（mat/dn/content/t）。")
+        raise ToolError("没有给出要修改的字段（mat/cat/dn/content/t）。")
     pipe = unit_vm.update_pipe(int(pipe_id), **fields)
     if pipe is None:
         raise ToolError(f"找不到 pipe_id={pipe_id}。请先调 get_element_detail。")
-    return {"ok": True, "data": {"pipe_id": pipe.id}}
+    return {"ok": True, "data": {"pipe_id": pipe.id, "cat": pipe.pipe_category}}
 
 
 def tool_delete_pipe(arguments: dict) -> dict:
@@ -227,12 +230,20 @@ def tool_set_main_pe(arguments: dict) -> dict:
 
 
 def register(registry: ToolRegistry) -> None:
+    from app.core.pipe_category import PIPE_CATEGORIES
+
     element_id_schema = {"type": "integer", "description": "构件 id；省略时用当前选中构件"}
+    cat_schema = {
+        "type": "string",
+        "enum": list(PIPE_CATEGORIES),
+        "description": "管材类别（计算唯一依据：面宽表行 / 图集分流 / 断面图砼判断）；不传=按 mat 折算",
+    }
     registry.register(
         Tool(
             "add_pipe", "为构件新增一根管材（t 留空=自动按图集）。写操作。",
             {"type": "object", "properties": {
                 "element_id": element_id_schema, "mat": {"type": "string"},
+                "cat": cat_schema,
                 "dn": {"type": "integer"}, "content": {"type": "string"},
                 "t": {"type": "number", "description": "壁厚 mm；不传=自动按图集"}},
              "required": ["element_id"]},
@@ -241,9 +252,10 @@ def register(registry: ToolRegistry) -> None:
     )
     registry.register(
         Tool(
-            "update_pipe", "修改管材行（mat/dn/content/t）。写操作。",
+            "update_pipe", "修改管材行（mat/cat/dn/content/t）。写操作。",
             {"type": "object", "properties": {
                 "pipe_id": {"type": "integer"}, "mat": {"type": "string"},
+                "cat": cat_schema,
                 "dn": {"type": "integer"}, "content": {"type": "string"},
                 "t": {"type": ["number", "null"]}},
              "required": ["pipe_id"]},

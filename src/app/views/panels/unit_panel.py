@@ -31,7 +31,15 @@ from PySide6.QtWidgets import (
 
 from app.core.evaluator import EvalError, evaluate, format_number
 from app.core.event_bus import bus, connect_weak
-from app.core.param_naming import STRUCTURE_NAME_PARAM, STRUCTURE_UNIT_PARAM
+from app.core.atlas_candidates import columns_for
+from app.core.param_naming import (
+    PARAM_A_NAME,
+    PARAM_C1_NAME,
+    PARAM_C2_NAME,
+    STRUCTURE_NAME_PARAM,
+    STRUCTURE_UNIT_PARAM,
+)
+from app.core.pipe_category import is_concrete as _pipe_is_concrete
 from app.views.widgets.mac_window import is_mac
 from app.core.models.models import (
     CATEGORY_BOX_CULVERT,
@@ -45,6 +53,7 @@ from app.core.models.models import (
     MULTI_PF_TEXT,
     category_name,
 )
+from app.core.pipe_category import PIPE_CATEGORIES
 from app.resources.qss.theme import ThemeManager
 from app.services import project_io
 from app.viewmodels.project_vm import TreeNode
@@ -88,12 +97,27 @@ _QCOL_AMOUNT = 5
 _QUANTITY_WIDTHS = [77, 66, 193, 48, 434, 135]
 
 _PIPE_ROLE = Qt.ItemDataRole.UserRole + 1
-#: 管道壁厚列：空 = 自动按图集（灰字显示图集值），可手填覆盖
-_PIPE_HEADERS = ["管材", "管径(mm)", "管道壁厚(mm)", "含量"]
+#: 管材表 5 列：管材（材质文字）/ 管径 / 管道壁厚 / 含量 / 类别。
+#: 壁厚空 = 自动按图集（灰字显示图集值），可手填；"类别"是计算唯一依据
+#: （面宽表行、图集分流、断面图砼判断都读它），默认由构件库快照写入；
+#: "管材"是材质描述文字（规格与设备材料表用），不参与计算。
+_PIPE_HEADERS = ["管材", "管径(mm)", "管道壁厚(mm)", "含量", "类别"]
+_PIPE_COL_MAT = 0
+_PIPE_COL_DN = 1
+_PIPE_COL_T = 2
+_PIPE_COL_CONTENT = 3
+_PIPE_COL_CAT = 4
 _PARAM_ROLE = Qt.ItemDataRole.UserRole + 1
-#: 参数名 / 单位 / 参数值三列；锁定行（该类别显示的图集参数行、构筑物名称 /
-#: 单位行）参数名 / 单位只读，单位列居中，构筑物名称 / 单位行的单位列显示 “-”
+#: 候选参数格携带 (候选行 id, 字段名 a/c1/c2)
+_CANDIDATE_ROLE = Qt.ItemDataRole.UserRole + 2
+#: 参数名 / 单位 / 参数值三列；直埋构件在"参数值"右侧追加候选参数列
+#: （砼基础/非砼基础 × 90/120/150/180，混凝土管 8 列、其他管材 4 列）。
+#: 锁定行（该类别显示的图集参数行、构筑物名称 / 单位行）参数名 / 单位只读，
+#: 单位列居中，构筑物名称 / 单位行的单位列显示 “-”
 _PARAM_HEADERS = ["参数名", "单位", "参数值"]
+#: 直埋 + 有候选时参数值列锁定（自动从候选里选），候选列可编辑
+_CANDIDATE_FIELD_BY_PARAM = {PARAM_A_NAME: "a", PARAM_C1_NAME: "c1", PARAM_C2_NAME: "c2"}
+_CANDIDATE_WIDTH = 56
 #: 参数表列宽：参数名列窄、单位列宽（单位内容居中显示）
 _PARAM_NAME_WIDTH = 90
 _PARAM_UNIT_WIDTH = 84
@@ -189,6 +213,34 @@ class _FocusCellDelegate(TableEditDelegate):
     # --- 编辑态抛光见基类 TableEditDelegate（去 QLineEdit 边框/边距并占满单元格） ---
 
 
+class _PipeCategoryDelegate(_FocusCellDelegate):
+    """管材表“管材”列下拉：四类管材（宽度表行），其余列仍是文本框。
+
+    管材类别是计算唯一依据（面宽表行 / 图集分流 / 断面图砼判断 / 包封扣管位），
+    所以做成固定枚举，避免用户敲出表外文字导致静默兜底。
+    """
+
+    def createEditor(self, parent, option, index):  # noqa: N802 - Qt 命名
+        if index.column() != _PIPE_COL_CAT:
+            return super().createEditor(parent, option, index)
+        combo = QComboBox(parent)
+        combo.addItems(list(PIPE_CATEGORIES))
+        combo.setFrame(False)
+        return combo
+
+    def setEditorData(self, editor, index):  # noqa: N802 - Qt 命名
+        if isinstance(editor, QComboBox):
+            editor.setCurrentText(str(index.data() or ""))
+            return
+        super().setEditorData(editor, index)
+
+    def setModelData(self, editor, model, index):  # noqa: N802 - Qt 命名
+        if isinstance(editor, QComboBox):
+            model.setData(index, editor.currentText())
+            return
+        super().setModelData(editor, model, index)
+
+
 class UnitPanel(QWidget):
     """单位工程工作台。"""
 
@@ -204,6 +256,8 @@ class UnitPanel(QWidget):
         # 明细面板跟随主表格选中行：多选时左右中三块都显示占位/合计
         self._multi_detail = False
         self._current_detail_id: int | None = None
+        #: 参数表当前显示的候选列（直埋构件有候选时非空，见 _on_detail_loaded）
+        self._candidate_columns: list = []
         self._build_ui()
         self._connect()
         self._show_unit(None)
@@ -267,10 +321,12 @@ class UnitPanel(QWidget):
         detail.tabBar().setDrawBase(False)
         self._pipe_table = self._make_table(_PIPE_HEADERS)
         self._param_table = self._make_table(_PARAM_HEADERS)
-        # 手设列宽：末列仍自动拉伸，前三列保持可读（管径/壁厚列常有四位数字）
-        self._pipe_table.setColumnWidth(0, 110)
-        self._pipe_table.setColumnWidth(1, 72)
-        self._pipe_table.setColumnWidth(2, 96)
+        # 手设列宽：末列（管材）自动拉伸，前三列保持可读（管径/壁厚列常有四位数字）
+        self._pipe_table.setColumnWidth(_PIPE_COL_MAT, 120)
+        self._pipe_table.setColumnWidth(_PIPE_COL_DN, 72)
+        self._pipe_table.setColumnWidth(_PIPE_COL_T, 96)
+        self._pipe_table.setColumnWidth(_PIPE_COL_CONTENT, 66)
+        self._pipe_table.setItemDelegate(_PipeCategoryDelegate(self._pipe_table))
         self._param_table.setColumnWidth(0, _PARAM_NAME_WIDTH)
         self._param_table.setColumnWidth(1, _PARAM_UNIT_WIDTH)
         self._qty_table = self._make_table(_QTY_HEADERS)
@@ -1151,8 +1207,9 @@ class UnitPanel(QWidget):
             for index, pipe in enumerate(pipes):
                 mat_item = QTableWidgetItem(pipe.mat)
                 mat_item.setData(_PIPE_ROLE, pipe.id)
-                self._pipe_table.setItem(index, 0, mat_item)
-                self._pipe_table.setItem(index, 1, QTableWidgetItem(str(pipe.dn)))
+                mat_item.setToolTip("管材（材质文字）：只用于规格与设备材料表，不参与计算。")
+                self._pipe_table.setItem(index, _PIPE_COL_MAT, mat_item)
+                self._pipe_table.setItem(index, _PIPE_COL_DN, QTableWidgetItem(str(pipe.dn)))
                 auto_t = auto_ts.get(pipe.id)
                 if pipe.t is None:
                     t_item = QTableWidgetItem("" if auto_t is None else format_number(auto_t))
@@ -1165,13 +1222,42 @@ class UnitPanel(QWidget):
                 else:
                     t_item = QTableWidgetItem(format_number(pipe.t))
                     t_item.setToolTip(f"管道壁厚（手填覆盖）：{format_number(pipe.t)}mm。")
-                self._pipe_table.setItem(index, 2, t_item)
-                self._pipe_table.setItem(index, 3, QTableWidgetItem(pipe.content))
+                self._pipe_table.setItem(index, _PIPE_COL_T, t_item)
+                self._pipe_table.setItem(
+                    index, _PIPE_COL_CONTENT, QTableWidgetItem(pipe.content)
+                )
+                cat_item = QTableWidgetItem(pipe.cat)
+                cat_item.setToolTip(
+                    "类别（计算唯一依据）：决定面宽表行、图集分流、断面图是否砼基础、"
+                    "包封砼扣管位取壁厚。默认由构件库快照写入，可改。"
+                )
+                self._pipe_table.setItem(index, _PIPE_COL_CAT, cat_item)
 
-            # 参数表：锁定行（该类别显示的图集参数行、构筑物名称/单位）的
-            # 参数名/单位列只读；图集参数行空值 = 自动按图集 / 软件约定，
-            # 灰字显示自动值；单位列居中，构筑物名称 / 单位行没有单位，显示 “-”
+            # 参数表：直埋构件且有候选时，"参数值"右侧追加候选参数列
+            # （混凝土管 8 列 / 其他管材 4 列）；此时参数值列锁定（自动从
+            # 候选里选），候选列可编辑。其他构件维持三列、值可编辑。
+            show_candidates = (
+                element is not None
+                and element.category == CATEGORY_BURIED
+                and bool(element.atlas_candidates)
+            )
+            first_pipe = element.pipes[0] if (element is not None and element.pipes) else None
+            self._candidate_columns = list(
+                columns_for(
+                    _pipe_is_concrete(
+                        first_pipe.cat if first_pipe else "",
+                        mat=first_pipe.mat if first_pipe else "",
+                    )
+                )
+                if show_candidates
+                else ()
+            )
+            headers = list(_PARAM_HEADERS) + [c.label for c in self._candidate_columns]
             self._param_table.clearSpans()
+            self._param_table.setColumnCount(len(headers))
+            self._param_table.setHorizontalHeaderLabels(headers)
+            for offset in range(len(self._candidate_columns)):
+                self._param_table.setColumnWidth(len(_PARAM_HEADERS) + offset, _CANDIDATE_WIDTH)
             self._param_table.setRowCount(len(params))
             auto_params = auto_atlas_params(element) if element is not None else {}
             for index, param in enumerate(params):
@@ -1195,12 +1281,34 @@ class UnitPanel(QWidget):
                     value_item.setToolTip(
                         f"参数值：空 = 自动按图集（图集值 {format_number(auto_value)}）。"
                     )
+                value_locked = bool(show_candidates) and param.key in _CANDIDATE_FIELD_BY_PARAM
                 if param.lock_name:
                     key_item.setFlags(key_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     unit_item.setFlags(unit_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if value_locked:
+                    value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    value_item.setToolTip(
+                        "参数值按当前围护原则（砼基础开关 + 基础角度）自动从候选参数里选，"
+                        "改候选列即可生效。"
+                    )
                 self._param_table.setItem(index, 0, key_item)
                 self._param_table.setItem(index, 1, unit_item)
                 self._param_table.setItem(index, 2, value_item)
+                if show_candidates:
+                    candidate_field = _CANDIDATE_FIELD_BY_PARAM.get(param.key)
+                    for offset, column in enumerate(self._candidate_columns):
+                        entry = param.candidates.get(column.key)
+                        if entry is None or candidate_field is None:
+                            cell = QTableWidgetItem("")
+                            cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        else:
+                            cid, raw_value = entry
+                            cell = QTableWidgetItem(
+                                "" if raw_value is None else format_number(raw_value)
+                            )
+                            cell.setData(_CANDIDATE_ROLE, (cid, candidate_field))
+                            cell.setToolTip(column.tooltip)
+                        self._param_table.setItem(index, len(_PARAM_HEADERS) + offset, cell)
 
             # 工程量表：仅附属构筑物可录入；其它类别显示占位说明
             self._qty_table.clearSpans()
@@ -1236,7 +1344,13 @@ class UnitPanel(QWidget):
         pipe_id = self._pipe_id_at(item.row())
         if pipe_id is None:
             return
-        field = {0: "mat", 1: "dn", 2: "t", 3: "content"}.get(item.column())
+        field = {
+            _PIPE_COL_MAT: "mat",
+            _PIPE_COL_DN: "dn",
+            _PIPE_COL_T: "t",
+            _PIPE_COL_CONTENT: "content",
+            _PIPE_COL_CAT: "cat",
+        }.get(item.column())
         if field is None:
             return
         if field == "t":
@@ -1276,6 +1390,16 @@ class UnitPanel(QWidget):
         field = {0: "key", 1: "unit", 2: "value"}.get(item.column())
         if field is not None:
             self._vm.set_param_field(param_id, field, item.text())
+            return
+        # 候选参数列：格子带着 (候选行 id, 字段 a/c1/c2)
+        offset = item.column() - len(_PARAM_HEADERS)
+        if not 0 <= offset < len(self._candidate_columns):
+            return
+        payload = item.data(_CANDIDATE_ROLE)
+        if payload is None:
+            return
+        candidate_id, candidate_field = payload
+        self._vm.update_atlas_candidate(candidate_id, candidate_field, item.text())
 
     def _on_qty_item_changed(self, item: QTableWidgetItem) -> None:
         if self._loading:

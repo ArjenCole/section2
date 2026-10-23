@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -59,7 +59,7 @@ _ELEMENT_FIELDS = {
     "source",
     "order_no",
 }
-_PIPE_FIELDS = {"mat", "dn", "content", "t"}
+_PIPE_FIELDS = {"mat", "cat", "dn", "content", "t"}
 _PARAM_FIELDS = {"key", "unit", "value"}
 _QUANTITY_FIELDS = {"category", "item", "unit", "value"}
 
@@ -107,6 +107,8 @@ class PipeRow:
     content: str
     #: 管道壁厚 mm 用户值；None = 自动按图集（界面灰色显示默认值）
     t: float | None = None
+    #: 管材类别（宽度表行名，见 core.pipe_category）：计算唯一依据
+    cat: str = ""
 
 
 @dataclass
@@ -117,6 +119,9 @@ class ParamRow:
     value: str
     #: 参数名/单位锁定（图集行、构筑物的名称/单位行），只允许改值
     lock_name: bool = False
+    #: 候选参数列（v9，直埋构件）：{combo_key: (候选行 id, 该参数对应的值)}；
+    #: 空字典 = 该构件不显示候选列
+    candidates: dict[str, tuple[int, float | None]] = field(default_factory=dict)
 
 
 @dataclass
@@ -176,7 +181,14 @@ def pipe_rows(element_id: int) -> list[PipeRow]:
     if element is None:
         return []
     return [
-        PipeRow(id=pipe.id, mat=pipe.mat, dn=pipe.dn, content=pipe.content, t=pipe.t)
+        PipeRow(
+            id=pipe.id,
+            mat=pipe.mat,
+            cat=pipe.pipe_category,
+            dn=pipe.dn,
+            content=pipe.content,
+            t=pipe.t,
+        )
         for pipe in element.pipes
     ]
 
@@ -185,6 +197,10 @@ def param_rows(element_id: int) -> list[ParamRow]:
     element = _element(element_id)
     if element is None:
         return []
+    from app.core.atlas_candidates import combo_key
+
+    #: 参数名 → 候选行字段（a / C1 / C2）
+    field_by_param = {PARAM_A_NAME: "a", PARAM_C1_NAME: "c1", PARAM_C2_NAME: "c2"}
     rows = []
     for param in element.params:
         if element.category == CATEGORY_STRUCTURE:
@@ -197,7 +213,24 @@ def param_rows(element_id: int) -> list[ParamRow]:
             lock_name = True
         else:
             lock_name = False
-        rows.append(ParamRow(id=param.id, key=param.key, unit=param.unit, value=param.value, lock_name=lock_name))
+        candidates: dict[str, tuple[int, float | None]] = {}
+        candidate_field = field_by_param.get(param.key)
+        if element.category == CATEGORY_BURIED and candidate_field:
+            for row in element.atlas_candidates:
+                candidates[combo_key(row.con_found, row.angle)] = (
+                    row.id,
+                    getattr(row, candidate_field),
+                )
+        rows.append(
+            ParamRow(
+                id=param.id,
+                key=param.key,
+                unit=param.unit,
+                value=param.value,
+                lock_name=lock_name,
+                candidates=candidates,
+            )
+        )
     return rows
 
 
@@ -397,7 +430,8 @@ def auto_pipe_thicknesses(element: Element) -> dict[int, float]:
     result: dict[int, float] = {}
     for pipe in element.pipes:
         probe = build_atlas_query(info, pe, pw)
-        probe.pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn)]
+        # 壁厚留空才显示图集值，所以这里刻意不传 t（传了就会走快照短路返回它本身）
+        probe.pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn, cat=pipe.pipe_category)]
         if element.category == CATEGORY_ENCASED:
             probe.category = CATEGORY_BURIED  # 同引擎包封扣管位的临时直埋查询
         result[pipe.id] = resolve_atlas(probe).t
@@ -405,23 +439,56 @@ def auto_pipe_thicknesses(element: Element) -> dict[int, float]:
 
 
 def _seed_atlas_defaults(element: Element) -> None:
-    """写入图集 / 软件约定默认值（构件库插入条目的预填，需求 1）。
+    """补图集值（v9）。
 
-    图集参数按该类别显示的行预填（直埋三行、包封 / 箱涵 / 管廊的工作面加宽
-    与垫层厚；见 param_naming）：值取当前图集 / 软件约定，查不到（0）的
-    不写——空值本来就会按图集自动取值，预填 0 反而会把“自动”钉死。每根管道
-    壁厚按当前图集行写入管材列；已有值（用户先填了之类的情况）不覆盖。
+    * 直埋构件：补 8 组候选（候选缺失时现场查图集一次）并按当前围护原则
+      自动匹配写参数行（见 services.atlas_match）；
+    * 包封埋管 / 箱涵 / 管廊：预填软件约定值（a=100、C1=100），参数值仍
+      由用户自由编辑；
+    * 每根管道壁厚空时按当前图集行写入（灰字显示的自动值来源）。
     """
-    existing = {(param.key, param.unit) for param in element.params}
-    for name, value in auto_atlas_params(element).items():
-        if value and (name, "mm") not in existing:
-            element.params.append(
-                ElementParam(key=name, unit="mm", value=format_number(float(value)))
-            )
+    if element.category == CATEGORY_BURIED:
+        from app.services.atlas_match import match_atlas_candidates
+
+        match_atlas_candidates(element, commit=False)
+    else:
+        existing = {(param.key, param.unit) for param in element.params}
+        for name, value in auto_atlas_params(element).items():
+            if value and (name, "mm") not in existing:
+                element.params.append(
+                    ElementParam(key=name, unit="mm", value=format_number(float(value)))
+                )
     for pipe_id, t in auto_pipe_thicknesses(element).items():
         target = next((row for row in element.pipes if row.id == pipe_id), None)
         if target is not None and target.t is None:
             target.t = t
+
+
+def _pipe_fields(data) -> tuple[str, str, int, str, float | None]:
+    """管道输入归一化 → (材质, 管材类别, 管径, 含量, 壁厚)。
+
+    接受三种写法，兼容旧调用与 AI 工具：
+    ``(mat, cat, dn, content, t)`` / ``(mat, dn, content, t)`` / ``(mat, dn, content)``；
+    没有类别时按材质折算（``core.pipe_category``），没有壁厚记 None（= 按图集）。
+    """
+    from app.core.pipe_category import normalize_category
+
+    if len(data) >= 5:
+        mat, cat, dn, content, t = data[0], data[1], data[2], data[3], data[4]
+    elif len(data) == 4:
+        mat, dn, content, t = data
+        cat = ""
+    else:
+        mat, dn, content = data
+        cat, t = "", None
+    text = "" if t is None else str(t).strip()
+    return (
+        str(mat),
+        normalize_category(str(cat or ""), mat=str(mat)),
+        int(dn),
+        str(content),
+        float(text) if text else None,
+    )
 
 
 def _convert_legacy_params(
@@ -467,6 +534,7 @@ def create_element(
     pf_refs: list[tuple[str, float]] | None = None,
     main_pe_name: str = "",
     seed_atlas_defaults: bool = False,
+    atlas_candidates: list[tuple[bool, int, float | None, float | None, float | None]] | None = None,
 ) -> Element | None:
     """新增构件条目；未指定原则时取库中第一条（旧版 mcElement.GetData 的做法）。
 
@@ -474,9 +542,11 @@ def create_element(
     各构件再按类别补图集参数行（直埋的工作面加宽 / 垫层厚 / 基础厚，包封 /
     箱涵 / 管廊的工作面加宽 / 垫层厚；空 = 自动按图集，见 param_naming）；
     构筑物（附属构筑物）补名称 / 单位参数与默认工程量行且不带管材。
-    构件库插入传 ``seed_atlas_defaults=True``：图集约定值预填（需求 1）。
+    ``atlas_candidates`` 为图集候选快照 (con_found, angle, a, C1, C2) 列表
+    （构件库插入传资产里的 8 组）；``seed_atlas_defaults=True`` 时直埋构件
+    自动匹配候选（候选缺失则现场查图集补），包封 / 箱涵 / 管廊预填软件约定值。
     ``params`` 为 (参数名, 单位, 值) 列表；``quantities`` 为
-    (类别, 项目, 单位, 值) 列表；``pipes`` 为 (材质, 管径, 含量[, 壁厚]) 列表。
+    (类别, 项目, 单位, 值) 列表；``pipes`` 为 (材质, 类别, 管径, 含量[, 壁厚]) 列表。
     """
     if not project_io.is_open() or not _unit_exists(unit_id):
         return None
@@ -506,9 +576,10 @@ def create_element(
 
     if pipes and category != CATEGORY_STRUCTURE:
         for pipe_data in pipes:
-            mat, dn, content = pipe_data[0], pipe_data[1], pipe_data[2]
-            t = pipe_data[3] if len(pipe_data) > 3 else None
-            element.pipes.append(Pipe(mat=mat, dn=int(dn), content=str(content), t=t))
+            mat, cat, dn, content, t = _pipe_fields(pipe_data)
+            element.pipes.append(
+                Pipe(mat=mat, cat=cat, dn=int(dn), content=str(content), t=t)
+            )
     if params:
         for key, unit, value in params:
             element.params.append(ElementParam(key=key, unit=unit, value=str(value)))
@@ -537,6 +608,20 @@ def create_element(
     session.add(element)
     session.flush()
     _seed_principle_refs(session, element, pe_refs, pf_refs)
+    if atlas_candidates and category == CATEGORY_BURIED:
+        from app.core.models.models import ElementAtlasCandidate
+
+        for order, (con_found, angle, a, c1, c2) in enumerate(atlas_candidates):
+            element.atlas_candidates.append(
+                ElementAtlasCandidate(
+                    con_found=con_found,
+                    angle=int(angle),
+                    a=a,
+                    c1=c1,
+                    c2=c2,
+                    order_no=order,
+                )
+            )
     if seed_atlas_defaults and category != CATEGORY_STRUCTURE:
         _seed_atlas_defaults(element)
     project_io.commit()
@@ -592,7 +677,10 @@ def element_snapshot(element_id: int) -> dict | None:
         "pw_name": element.pw_name,
         "main_pe_name": element.main_pe_name,
         "source": element.source,
-        "pipes": [(pipe.mat, pipe.dn, pipe.content, pipe.t) for pipe in element.pipes],
+        "pipes": [
+            (pipe.mat, pipe.pipe_category, pipe.dn, pipe.content, pipe.t)
+            for pipe in element.pipes
+        ],
         "params": [(param.key, param.unit, param.value) for param in element.params],
         "quantities": [
             (quantity.category, quantity.item, quantity.unit, quantity.value)
@@ -651,17 +739,50 @@ def insert_element_data(
         pf_refs=pf_refs,
         main_pe_name=data.get("main_pe_name", "") or "",
         seed_atlas_defaults=bool(data.get("seed_atlas_defaults", False)),
+        atlas_candidates=list(data.get("atlas_candidates") or []) or None,
     )
+
+
+def _first_enclosure_pair() -> tuple[bool, int]:
+    """项目第一条围护原则的 (砼基础开关, 基础角度)；库为空时 (True, 120)。
+
+    构件库插入时构件还没建，先按它取每根管的图集壁厚快照；插入完成后
+    :func:`match_atlas_candidates` 会按构件自己的围护原则重新选组。
+    """
+    from sqlalchemy import select
+
+    from app.core.models.models import PcpEnclosure
+
+    pe = orm.session().scalars(
+        select(PcpEnclosure).order_by(PcpEnclosure.order_no, PcpEnclosure.id)
+    ).first()
+    return (bool(pe.con_found), int(pe.found_angle)) if pe is not None else (True, 120)
 
 
 def insert_element_template(unit_id: int, template, before_element_id: int | None = None) -> Element | None:
     """把构件库模板插入主表格（原版 FormMdi 构件库双击 + FormUnit.Insert）。
 
-    模板参数仍是旧版单键格式，先拆成 (参数名, 单位) + 工程量行；
-    图集约定值（t / a / C1 / C2）按需求预填。
+    模板参数仍是旧版单键格式，先拆成 (参数名, 单位) + 工程量行。图集值不再
+    现场查表：资产里的 8 组快照（砼/非砼 × 90/120/150/180）整组写进候选表，
+    每根管壁厚按项目第一条围护原则取快照，参数值由自动匹配写进参数行；
+    之后换围护原则 / 改类别都自动重匹配，候选本身不再自动变。
+
+    旧 .stn 兜底读到的模板没有快照（``template.atlas`` 为空），才退回现场查图集。
     """
     params, quantities = _convert_legacy_params(template.category, list(template.params))
     legacy_quantities = quantities if template.category == CATEGORY_STRUCTURE else []
+    con_found, angle = _first_enclosure_pair()
+    pipes = [
+        [pipe.mat, pipe.cat, pipe.dn, pipe.content, pipe.thickness_at(con_found, angle)]
+        for pipe in template.pipes
+    ]
+    candidates = []
+    for key, row in template.atlas.items():
+        if row is None:
+            continue  # 图集该组合没有数据（如砼基础 150°），不留空候选行
+        con_found = key.startswith("con")
+        angle = int(key[len("con") if con_found else len("plain"):])
+        candidates.append((con_found, angle, row[0], row[1], row[2]))
     return insert_element_data(
         unit_id,
         {
@@ -670,9 +791,12 @@ def insert_element_template(unit_id: int, template, before_element_id: int | Non
             "depth": template.depth,
             "amount": template.amount,
             "source": template.source,
-            "pipes": [list(pipe) for pipe in template.pipes],
+            "pipes": pipes,
             "params": [list(param) for param in params],
             "quantities": [list(quantity) for quantity in legacy_quantities],
+            "atlas_candidates": candidates,
+            # 候选已在（来自资产）→ 直埋走自动匹配选组，不查图集；
+            # 旧 .stn 模板无候选 → ensure 现场查图集补
             "seed_atlas_defaults": True,
         },
         before_element_id,
@@ -680,10 +804,18 @@ def insert_element_template(unit_id: int, template, before_element_id: int | Non
 
 
 def insert_blank_element(unit_id: int, before_element_id: int | None = None) -> Element | None:
-    """插入一条空白构件（主表格 Insert 键 / “新增构件条目”按钮）。"""
+    """插入一条空白构件（主表格 Insert 键 / “新增构件条目”按钮）。
+
+    也补图集快照（seed_atlas_defaults=True）：保证任何入口建出的条目都自带
+    图集值，计算侧不再依赖现场查表。
+    """
     if not project_io.is_open() or not _unit_exists(unit_id):
         return None
-    return insert_element_data(unit_id, {"name": "新建构件", "depth": "0", "amount": "0"}, before_element_id)
+    return insert_element_data(
+        unit_id,
+        {"name": "新建构件", "depth": "0", "amount": "0", "seed_atlas_defaults": True},
+        before_element_id,
+    )
 
 
 def update_element(element_id: int, **fields) -> Element | None:
@@ -738,6 +870,17 @@ def update_element(element_id: int, **fields) -> Element | None:
     elif category_changed:
         # 直埋 ↔ 包封 / 箱涵 / 管廊 等之间切换：基础厚只属于直埋，按新类别增删
         _reconcile_atlas_rows(element)
+        if element.category == CATEGORY_BURIED:
+            # 切回直埋：候选若已在（曾切走过）直接重匹配；没有则现场查图集补
+            from app.services.atlas_match import match_atlas_candidates
+
+            match_atlas_candidates(element, commit=False)
+    elif "pe_name" in fields or "main_pe_name" in fields:
+        # 围护原则切换（con_found / 角度可能变了）：从候选自动重选一组
+        if element.category == CATEGORY_BURIED:
+            from app.services.atlas_match import match_atlas_candidates
+
+            match_atlas_candidates(element, commit=False)
     project_io.commit()
     bus().unit_changed.emit(element.unit_id)
     return element
@@ -806,11 +949,21 @@ def create_pipe(
     dn: int = 600,
     content: str = "1",
     t: float | None = None,
+    cat: str = "",
 ) -> Pipe | None:
+    from app.core.pipe_category import normalize_category
+
     element = _element(element_id)
     if element is None:
         return None
-    pipe = Pipe(element_id=element_id, mat=mat, dn=int(dn), content=str(content), t=t)
+    pipe = Pipe(
+        element_id=element_id,
+        mat=mat,
+        cat=normalize_category(cat, mat=mat),
+        dn=int(dn),
+        content=str(content),
+        t=t,
+    )
     orm.session().add(pipe)
     project_io.commit()
     _expire_element(element)
@@ -819,6 +972,8 @@ def create_pipe(
 
 
 def update_pipe(pipe_id: int, **fields) -> Pipe | None:
+    from app.core.pipe_category import normalize_category
+
     pipe = _pipe(pipe_id)
     if pipe is None:
         return None
@@ -831,8 +986,16 @@ def update_pipe(pipe_id: int, **fields) -> Pipe | None:
             # 壁厚空 = 自动按图集（None）；数字按用户值存
             text = str(value).strip()
             setattr(pipe, key, float(text) if text else None)
+        elif key == "cat":
+            # 管材类别收敛成合法枚举（非法 / 空值按材质折算）
+            setattr(pipe, key, normalize_category(str(value), mat=pipe.mat))
         else:
             setattr(pipe, key, str(value))
+    if "cat" in fields:
+        # 类别变化（混凝土 ↔ 非混凝土）会换候选组：直埋构件自动重选参数值
+        from app.services.atlas_match import match_atlas_candidates
+
+        match_atlas_candidates(pipe.element)
     project_io.commit()
     bus().unit_changed.emit(pipe.element.unit_id)
     return pipe
@@ -887,6 +1050,28 @@ def update_param(param_id: int, **fields) -> ElementParam | None:
     _expire_element(element)
     bus().unit_changed.emit(element.unit_id)
     return param
+
+
+def update_atlas_candidate(candidate_id: int, field: str, value) -> bool:
+    """改一格候选参数（候选列）；空 = 清回图集无值。
+
+    候选是用户可改的快照；改完立刻按当前围护原则重新自动匹配一次参数值
+    （改的可能正是当前匹配的那格）。
+    """
+    from app.core.models.models import ElementAtlasCandidate
+    from app.services.atlas_match import match_atlas_candidates
+
+    row = orm.session().get(ElementAtlasCandidate, int(candidate_id)) if project_io.is_open() else None
+    if row is None or field not in ("a", "c1", "c2"):
+        return False
+    text = str(value).strip()
+    setattr(row, field, float(text) if text else None)
+    project_io.commit()
+    match_atlas_candidates(row.element, commit=False)
+    project_io.commit()
+    _expire_element(row.element)
+    bus().unit_changed.emit(row.element.unit_id)
+    return True
 
 
 def delete_param(param_id: int) -> str | None:
@@ -1172,6 +1357,11 @@ class UnitViewModel(QObject):
     def set_param_field(self, param_id: int, field: str, value) -> None:
         if update_param(param_id, **{field: value}) is None:
             self.error_occurred.emit(_ATLAS_PARAM_LOCKED_HINT)
+
+    def update_atlas_candidate(self, candidate_id: int, field: str, value) -> None:
+        """改一格候选参数（候选列）；改完自动重匹配当前构件的参数值。"""
+        if not update_atlas_candidate(candidate_id, field, value):
+            self.error_occurred.emit("候选参数行不存在。")
 
     def remove_param(self, param_id: int) -> None:
         message = delete_param(param_id)

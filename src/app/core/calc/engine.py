@@ -257,7 +257,10 @@ def build_element_input(
         except Exception:
             params[key] = 0.0
         param_dims[key] = raw_dim(_usable_text(text), params[key])
-    pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn, t=pipe.t) for pipe in element.pipes]
+    pipes = [
+        PipeSpec(mat=pipe.mat, dn=pipe.dn, t=pipe.t, cat=pipe.pipe_category)
+        for pipe in element.pipes
+    ]
     contents = [evaluate_or_default(pipe.content) for pipe in element.pipes]
     quantities = [
         (quantity.category, quantity.item, quantity.unit, quantity.value)
@@ -721,6 +724,11 @@ def resolve_element_principles(element: Element, session):
 
 
 def is_concrete_pipe(info: ElementInput) -> bool:
-    """是否混凝土管道（旧版 mcE1.IsConPipe）。"""
-    mat = info.pipes[0].mat if info.pipes else ""
-    return ("混凝土" in mat) or ("砼" in mat)
+    """是否混凝土管道（旧版 mcE1.IsConPipe）。
+
+    v8 起读管道行的管材类别（混凝土管-刚性 / 柔性接口），不再按材质名称判断。
+    """
+    from app.core.pipe_category import is_concrete
+
+    pipe = info.pipes[0] if info.pipes else None
+    return is_concrete(pipe.cat if pipe else "", mat=pipe.mat if pipe else "")

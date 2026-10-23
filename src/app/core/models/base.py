@@ -368,6 +368,46 @@ def _migrate_v6_scope_atlas_params(engine: Engine) -> None:
     _reconcile_atlas_param_rows(engine)
 
 
+def _migrate_v7_pipe_category(engine: Engine) -> None:
+    """v7 → v8：pipe 表加“管材类别”列（cat），按材质名称折算回填一次。
+
+    类别是计算的唯一依据（面宽表行 / 图集表分流 / 断面图砼基础判断 /
+    包封砼扣管位取壁厚）。老文件里只有材质文字 ``mat``，这里按
+    :func:`app.core.pipe_category.category_of_mat` 的优先级折算并固化成列值；
+    之后用户改「管材」列或改材质名，都不会让算量漂移。已有值不覆盖。
+    """
+    from sqlalchemy import inspect as sqla_inspect
+
+    from app.core.pipe_category import category_of_mat
+
+    inspection = sqla_inspect(engine)
+    columns = {column["name"] for column in inspection.get_columns("pipe")}
+    with engine.begin() as connection:
+        if "cat" not in columns:
+            connection.execute(text("ALTER TABLE pipe ADD COLUMN cat VARCHAR(50) DEFAULT ''"))
+        rows = connection.execute(text("SELECT id, mat, cat FROM pipe")).fetchall()
+        for pipe_id, mat, cat in rows:
+            if str(cat or "").strip():
+                continue
+            connection.execute(
+                text("UPDATE pipe SET cat = :cat WHERE id = :id"),
+                {"cat": category_of_mat(str(mat or "")), "id": pipe_id},
+            )
+
+
+def _migrate_v8_atlas_candidates(engine: Engine) -> None:
+    """v8 → v9：新建 element_atlas_candidate（"候选参数列"）。
+
+    每行 = 采用/不采用混凝土基础 × 90/120/150/180 一个组合的 (a, C1, C2)，
+    数据源是构件库资产的一次性快照，参数值按当前围护原则自动选组
+    （见 unit_vm.match_atlas_candidates）。只建表不补数据：老工程的直埋
+    构件首次被选中 / 原则修改时由 ensure_candidates 现场查图集补齐。
+    """
+    from app.core.models.models import ElementAtlasCandidate
+
+    ElementAtlasCandidate.__table__.create(engine, checkfirst=True)
+
+
 #: 结构迁移入口。键为源版本号，值为“从该版本迁到 +1 版本”的函数。
 _MIGRATIONS: dict[int, "callable"] = {
     1: _migrate_v1_add_element_source,
@@ -376,6 +416,8 @@ _MIGRATIONS: dict[int, "callable"] = {
     4: _migrate_v4_param_naming_quantities,
     5: _migrate_v5_scope_atlas_params,
     6: _migrate_v6_scope_atlas_params,
+    7: _migrate_v7_pipe_category,
+    8: _migrate_v8_atlas_candidates,
 }
 
 

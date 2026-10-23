@@ -19,8 +19,9 @@ def _pipes(arguments: dict):
     result = []
     for pipe in pipes or []:
         if not isinstance(pipe, dict):
-            raise ToolError("pipes 每一项必须是对象 {mat, dn, content, t}。")
+            raise ToolError("pipes 每一项必须是对象 {mat, cat, dn, content, t}。")
         mat = str(pipe.get("mat") or "Ⅱ级混凝土管")
+        cat = str(pipe.get("cat") or "")
         try:
             dn = int(pipe.get("dn") or 600)
         except (TypeError, ValueError) as error:
@@ -33,7 +34,7 @@ def _pipes(arguments: dict):
                 t = float(t_value)
             except (TypeError, ValueError) as error:
                 raise ToolError("管道壁厚 t 需为数字（mm），留空=自动按图集。") from error
-        result.append((mat, dn, content, t))
+        result.append((mat, cat, dn, content, t))
     return result or None
 
 
@@ -132,7 +133,8 @@ def tool_add_element(arguments: dict) -> dict:
         pe_refs=pe_refs,
         pf_refs=pf_refs,
         main_pe_name=str(arguments.get("main_pe_name") or ""),
-        seed_atlas_defaults=bool(arguments.get("seed_atlas_defaults", False)),
+        # v8 起默认补图集快照（计算侧不再查图集），AI 不必显式传
+        seed_atlas_defaults=bool(arguments.get("seed_atlas_defaults", True)),
     )
     if element is None:
         raise ToolError("新增失败：单位工程不存在。请先调 get_project_tree 查看 unit_id。")
@@ -273,7 +275,7 @@ def register(registry: ToolRegistry) -> None:
                     "source": {"type": "string"},
                     "pipe": {"type": "object", "description": "单根管材 {mat, dn, t, content}"},
                     "pipes": {"type": "array", "items": {"type": "object"},
-                              "description": "多根管材 [{mat,dn,content,t}]"},
+                              "description": "多根管材 [{mat,cat,dn,content,t}]，cat 为管材类别（混凝土管-刚性接口/混凝土管-柔性接口/金属类管道/化学建材管道），不传=按 mat 折算"},
                     "params": {"type": "array", "items": {"type": "object"},
                                "description": "[{key,unit,value}]"},
                     "quantities": {"type": "array", "items": {"type": "object"},
@@ -282,7 +284,7 @@ def register(registry: ToolRegistry) -> None:
                                 "description": "多围护引用 [{name,ratio}]"},
                     "pf_refs": {"type": "array", "items": {"type": "object"}},
                     "main_pe_name": {"type": "string"},
-                    "seed_atlas_defaults": {"type": "boolean", "default": False},
+                    "seed_atlas_defaults": {"type": "boolean", "default": True},
                 },
                 "required": ["name"],
             },

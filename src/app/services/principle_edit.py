@@ -161,6 +161,10 @@ def apply_enclosure_fields(
         session.expire(enclosure)
     project_io.commit()
     session.expire(enclosure)
+    # 围护原则的 砼基础开关 / 基础角度 变了：引用它的直埋构件自动重选候选组
+    from app.services.atlas_match import match_for_enclosure
+
+    match_for_enclosure(enclosure.name)
     return enclosure
 
 

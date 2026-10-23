@@ -170,7 +170,10 @@ def tool_list_library_templates(arguments: dict) -> dict:
                 "label": template.label,
                 "name": template.name,
                 "category_value": template.category,
-                "pipes": [list(pipe) for pipe in template.pipes],
+                "pipes": [
+                    {"mat": pipe.mat, "cat": pipe.cat, "dn": pipe.dn, "content": pipe.content}
+                    for pipe in template.pipes
+                ],
             }
         )
     return {

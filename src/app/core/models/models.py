@@ -270,6 +270,13 @@ class Element(Base):
         passive_deletes=True,
         order_by="ElementParam.id",
     )
+    #: 图集候选参数（"候选参数列"，v9；只有直埋构件用，见 ElementAtlasCandidate）
+    atlas_candidates: Mapped[list["ElementAtlasCandidate"]] = relationship(
+        back_populates="element",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ElementAtlasCandidate.order_no",
+    )
     #: 附属构筑物的工程量行（mcE7 的“类别|项目|单位”三段参数，v5 起独立成表）
     quantities: Mapped[list["ElementQuantity"]] = relationship(
         back_populates="element",
@@ -366,7 +373,12 @@ class ElementQuantity(Base):
 
 
 class Pipe(Base):
-    """管道（对应旧版 mcPipe）：材质 / 管径(mm) / 含量。"""
+    """管道（对应旧版 mcPipe）：管材类别 / 材质 / 管径(mm) / 含量 / 壁厚。
+
+    ``cat`` 是计算的唯一依据（面宽表行、图集表分流、断面图是否砼基础、
+    包封扣管位取壁厚），由构件库资产快照写入、允许用户改；``mat`` 只作
+    描述性材质文字（构件规格、设备材料表），不参与任何计算判断。
+    """
 
     __tablename__ = "pipe"
 
@@ -374,16 +386,60 @@ class Pipe(Base):
     element_id: Mapped[int] = mapped_column(
         ForeignKey("element.id", ondelete="CASCADE"), index=True
     )
+    #: 管材类别（宽度表行名，见 app.core.pipe_category.PIPE_CATEGORIES）；
+    #: 空 = 按 mat 折算一次（v8 之前的工程文件由迁移回填）
+    cat: Mapped[str] = mapped_column(String(50), default="")
+    #: 材质文字（如“球墨铸铁管 K9”）：只用于构件规格与设备材料表，不参与计算
     mat: Mapped[str] = mapped_column(String(100), default="Ⅱ级混凝土管")
     #: 管径 mm（旧版为 double，图集查表按 mm 整数）
     dn: Mapped[int] = mapped_column(Integer, default=600)
     #: 含量，字符串原文（可写算式）
     content: Mapped[str] = mapped_column(String(100), default="1")
     #: 管道壁厚 mm（用户覆盖值；空 = 按图集自动，并参与计算自动回退，
-    #: 见 resolve_atlas 的覆盖处理。v5 起在详情面板“管材”列直接编辑）
+    #: 见 resolve_atlas 的覆盖处理。v5 起在详情面板“管道壁厚”列直接编辑）
     t: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     element: Mapped[Element] = relationship(back_populates="pipes")
+
+    @property
+    def pipe_category(self) -> str:
+        """计算用管材类别（空值按材质折算，不写库）。"""
+        from app.core.pipe_category import normalize_category
+
+        return normalize_category(self.cat, mat=self.mat)
+
+
+class ElementAtlasCandidate(Base):
+    """直埋构件的图集候选参数（"候选参数列"，构件库一次性快照，用户可改）。
+
+    每行 = 一个"基础形式 × 角度"组合的 (a, C1, C2)，mm；值 None 表示图集
+    该组合没有数据（如砼管**砼基础表没有 150° 行**）。混凝土管 8 组都用，
+    其他管材的 con/plain 两组值相同、界面只展示"不采用混凝土基础"的 4 列。
+
+    参数值（工作面加宽 / 垫层厚 / 基础厚三行参数）按当前主围护原则的
+    ``con_found + found_angle`` 从这里自动选（:func:`unit_vm.match_atlas_candidates`）；
+    围护原则 / 管材类别变化时自动重新匹配，但候选行本身永不自动改写。
+    """
+
+    __tablename__ = "element_atlas_candidate"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    element_id: Mapped[int] = mapped_column(
+        ForeignKey("element.id", ondelete="CASCADE"), index=True
+    )
+    #: 是否采用混凝土基础（对应围护原则 con_found）
+    con_found: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: 基础角度 °（90 / 120 / 150 / 180）
+    angle: Mapped[int] = mapped_column(Integer, default=120)
+    #: 工作面加宽 mm；None = 图集该组合无值
+    a: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: 垫层厚 mm；None = 图集该组合无值
+    c1: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: 基础厚 mm；None = 图集该组合无值
+    c2: Mapped[float | None] = mapped_column(Float, nullable=True)
+    order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    element: Mapped[Element] = relationship(back_populates="atlas_candidates")
 
 
 class PcpEnclosure(Base):

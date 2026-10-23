@@ -28,6 +28,7 @@ from app.core.models.models import (
     CATEGORY_GALLERY,
 )
 from app.core.paths import atlas_dir, resources_dir
+from app.core.pipe_category import CONCRETE_PIPE_CATEGORIES
 
 INVENTORY_DIR = resources_dir() / "inventory"
 
@@ -65,14 +66,22 @@ class AtlasParam:
 
 @dataclass
 class PipeSpec:
-    """查询图集所需的管道信息（材质、管径 mm）。
+    """查询图集所需的管道信息（管材类别、材质、管径 mm、壁厚覆盖值）。
 
+    ``cat`` 是计算唯一依据（面宽表行 + 图集表分流）；空值才按 ``mat`` 折算
+    （见 :func:`app.core.pipe_category.category_of_mat`，仅供库外构件兜底）。
     ``t`` 为详情面板的管道壁厚用户值（mm）；None = 自动按图集。
     """
 
     mat: str = ""
     dn: int = 600
     t: float | None = None
+    cat: str = ""
+
+    def resolved_category(self) -> str:
+        from app.core.pipe_category import normalize_category
+
+        return normalize_category(self.cat, mat=self.mat)
 
 
 @dataclass
@@ -214,43 +223,90 @@ def _width_of(table: dict[str, dict[int, float]], category: str, size_b: float) 
 
     超出 0~3000 的管径按边界取值（旧版会直接 KeyError）。
     """
-    dn = int(round(size_b * 1000 / 100.0) * 100)
+    return _width_of_dn(table, category, size_b * 1000.0)
+
+
+def _width_of_dn(table: dict[str, dict[int, float]], category: str, dn_mm: float) -> float:
+    """按管径（mm，向百位取整）查宽度表；超出 0~3000 按边界取值。"""
+    dn = int(round(float(dn_mm) / 100.0) * 100)
     dn = max(0, min(3000, dn))
     return table.get(category, {}).get(dn, 0.0)
 
 
+def _width_pair(query: AtlasQuery) -> tuple[float, float]:
+    """(工作面宽度 mm, 沟槽底宽 m)：行由构件类别 + 管材类别决定。
+
+    直埋管道取第一根管的管材类别与管径（这是唯一读管材类别的构件）；
+    包封埋管 / 箱涵 / 管廊按构件类别固定取对应行、管径按 0（旧版语义）。
+    """
+    from app.core.pipe_category import width_dn_for, width_row_for
+
+    pipe = query.pipes[0] if query.pipes else None
+    row = width_row_for(query.category, pipe.resolved_category() if pipe else "")
+    dn = width_dn_for(query.category, pipe.dn if pipe else 0)
+    workwidth = _width_of_dn(query.widths, row, dn)
+    groove_b = 0.0 if query.groove_width == "WorkWidth" else _width_of_dn(query.groove_bs, row, dn) / 1000.0
+    return workwidth, groove_b
+
+
+def _snapshot_atlas(query: AtlasQuery) -> AtlasParam | None:
+    """快照短路：参数齐了就不再查图集表，返回 None 表示需要查表兜底。
+
+    v8 起构件库资产在插入时就把 工作面加宽 / 垫层厚 / 基础厚 与每根管的壁厚
+    快照进条目，计算、断面、包封扣管位都只读这些值。只有库外构件或用户删了
+    参数行时才回落查表。
+    """
+    if not query.pipes or query.pipes[0].t is None:
+        return None
+    if query.a is None or query.c1 is None:
+        return None
+    zero_c2 = query.category in C2_ZERO_CATEGORIES
+    if not zero_c2 and query.c2 is None:
+        return None
+    t = 0.0 if zero_c2 else float(query.pipes[0].t)
+    workwidth, groove_b = _width_pair(query)
+    return AtlasParam(
+        od=query.pipes[0].dn + t * 2.0,
+        t=t,
+        a=float(query.a),
+        c1=float(query.c1),
+        c2=0.0 if zero_c2 else float(query.c2),
+        workwidth=workwidth,
+        groove_b=groove_b,
+        q=0.0,
+    )
+
+
 def resolve_atlas(query: AtlasQuery) -> AtlasParam:
-    """复刻旧版 mcAtlas.Access_06M201_1：按类别与材质选表查询。"""
+    """图集参数：优先按条目快照返回，参数不齐时才按管材类别查表。
+
+    分流键是 **管材类别**（``PipeSpec.cat``，见 app.core.pipe_category），
+    不再是材质名称；材质名称只用来在本表里细分级别（Ⅱ级 / K9 / 1.6Mpa …），
+    且仅走兜底路径时使用。
+    """
+    snapshot = _snapshot_atlas(query)
+    if snapshot is not None:
+        return snapshot
+
     cat = catalog()
     od, t, a, c1, c2, q = -1.0, 0.0, 0.0, 0.0, 0.0, 0.0
     workwidth = 0.0
     groove_b = 0.0
     angle = str(query.found_angle)
     dn_text = _key_text(query.pipes[0].dn if query.pipes else 0)
+    pipe_cat = query.pipes[0].resolved_category() if query.pipes else ""
 
     if query.category == 2:  # 包封埋管
+        workwidth, groove_b = _width_pair(query)
         return _apply_overrides(
             query,
-            AtlasParam(
-                t=0,
-                a=100,
-                c1=100,
-                c2=0,
-                workwidth=_width_of(query.widths, "包封埋管", 0),
-                groove_b=0,
-            ),
+            AtlasParam(t=0, a=100, c1=100, c2=0, workwidth=workwidth, groove_b=groove_b),
         )
     if query.category in (3, 6):  # 箱涵 / 管廊
+        workwidth, groove_b = _width_pair(query)
         return _apply_overrides(
             query,
-            AtlasParam(
-                t=0,
-                a=100,
-                c1=100,
-                c2=0,
-                workwidth=_width_of(query.widths, "箱涵-管廊", 0),
-                groove_b=0,
-            ),
+            AtlasParam(t=0, a=100, c1=100, c2=0, workwidth=workwidth, groove_b=groove_b),
         )
 
     mat = query.pipes[0].mat if query.pipes else ""
@@ -270,7 +326,7 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
     elif query.category == 5:  # 牵引管
         od, t, a, c1, c2, q = cat.read(cat.find(4, dn_text))
     elif query.category == 1:  # 直埋管道
-        is_con_pipe = ("混凝土" in mat) or ("砼" in mat)
+        is_con_pipe = pipe_cat in CONCRETE_PIPE_CATEGORIES
         if is_con_pipe and query.con_found and ("预应力" not in mat):
             # 混凝土基础：按级别（Ⅰ/Ⅱ/Ⅲ 级管）查砼管砼基础表
             if ("Ⅰ" in mat) or ("一级" in mat):
@@ -282,8 +338,8 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
             od, t, a, c1, c2, q = cat.read(cat.find(0, dn_text, angle, level))
             if t == 0:  # 该角度无此级别时退回不限角度（同旧版）
                 od, t, a, c1, c2, q = cat.read(cat.find(0, dn_text, level=level))
-            workwidth = _width_of(query.widths, "混凝土管-刚性接口", query.size_b)
-            groove_b = _groove_b(query, "混凝土管-刚性接口", query.size_b)
+            workwidth = _width_of_dn(query.widths, pipe_cat, query.pipes[0].dn)
+            groove_b = _groove_b_dn(query, pipe_cat, query.pipes[0].dn)
         elif is_con_pipe:
             # 砂基础
             tmp_level = "非预应力"
@@ -298,9 +354,11 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
                 tmp_angle = "120"
             od, t, a, c1, c2, q = cat.read(cat.find(1, dn_text, tmp_angle, tmp_level))
             workwidth = 0.0
-            groove_b = _groove_b(query, "混凝土管-刚性接口", query.size_b)
+            groove_b = _groove_b_dn(query, pipe_cat, query.pipes[0].dn)
         else:
-            width_category = "化学建材管道"
+            # 非混凝土：管材类别决定面宽表行（用户可改），材质文字只用于在本
+            # 表内细分级别（HDPE / PVC / PE / 球墨 K9 / 焊接 1.6MPa …）。
+            width_category = pipe_cat
             if "HDPE" in mat:
                 od, t, a, c1, c2, q = cat.read(cat.find(3, dn_text, angle))
             elif ("PVC" in mat) or ("pvc" in mat):
@@ -329,7 +387,6 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
                         )
                     od, t, a, c1, c2, q = cat.read(cat.find(6, dn_text, angle, tmp_level))
             elif ("球墨" in mat) or ("球铁" in mat) or ("铸铁" in mat):
-                width_category = "金属类管道"
                 tmp_level = "K9"
                 if ("K8" in mat) or ("k8" in mat):
                     tmp_level = "K8"
@@ -337,7 +394,6 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
                     tmp_level = "K10"
                 od, t, a, c1, c2, q = cat.read(cat.find(8, dn_text, angle, tmp_level))
             elif "钢管" in mat:
-                width_category = "金属类管道"
                 tmp_level = "给水钢管"
                 if query.size_b <= 0.15:
                     tmp_level = "焊接钢管1.0Mpa"
@@ -350,8 +406,9 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
                 elif "无缝" in mat:
                     tmp_level = "无缝钢管"
                 od, t, a, c1, c2, q = cat.read(cat.find(9, dn_text, angle, tmp_level))
-            workwidth = _width_of(query.widths, width_category, query.size_b)
-            groove_b = _groove_b(query, width_category, query.size_b)
+            width_dn = query.pipes[0].dn if query.pipes else 0
+            workwidth = _width_of_dn(query.widths, width_category, width_dn)
+            groove_b = _groove_b_dn(query, width_category, width_dn)
 
     if query.groove_width == "WorkWidth":
         groove_b = 0.0
@@ -386,13 +443,18 @@ def _apply_overrides(query: AtlasQuery, at: AtlasParam) -> AtlasParam:
 
 
 def _groove_b(query: AtlasQuery, category: str, size_b: float) -> float:
-    """沟槽底宽（m）。
+    """沟槽底宽（m），按断面宽折算管径查表（兼容旧调用）。"""
+    return _groove_b_dn(query, category, size_b * 1000.0)
+
+
+def _groove_b_dn(query: AtlasQuery, category: str, dn_mm: float) -> float:
+    """沟槽底宽（m），按管径 mm 查 GrooveB 表。
 
     旧版 GetWidthOrB 恒读 WorkWidth 表且未除以 1000（把 mm 当 m 用），
     “沟槽宽度表”形同虚设；这里按字面语义查 GrooveB 表并换算成 m。
     默认模式（WorkWidth）下旧版直接置 0，两者一致。
     """
-    return _width_of(query.groove_bs, category, size_b) / 1000.0
+    return _width_of_dn(query.groove_bs, category, dn_mm) / 1000.0
 
 
 # --------------------------------------------------------------------------- #

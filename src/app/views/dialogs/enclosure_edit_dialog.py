@@ -405,33 +405,36 @@ class EnclosureEditDialog(FramelessDialog):
         if renamed:
             project_io.rename_enclosure(enclosure.id, name)
             enclosure = self._enclosure()
-        enclosure.excvt = self._excvt.currentText()
-        enclosure.dock_l = self._dock_material.text().strip()
         dock_mode = self._dock_mode.currentText()
-        dock = enclosure.dock_l
+        dock = self._dock_material.text().strip()
         cover = self._cover.text().strip()
         # GetDetailFormFm 原版映射
         if dock_mode == "至管顶50cm":
-            enclosure.dock_h = dock
-            enclosure.cover50 = dock
-            enclosure.cover = cover
+            dock_h, cover50, cover_value = dock, dock, cover
         elif dock_mode == "至管顶标高":
-            enclosure.dock_h = dock
-            enclosure.cover50 = cover
-            enclosure.cover = cover
+            dock_h, cover50, cover_value = dock, cover, cover
         elif dock_mode == "至管中心标高":
-            enclosure.dock_h = cover
-            enclosure.cover50 = cover
-            enclosure.cover = cover
+            dock_h, cover50, cover_value = cover, cover, cover
         else:  # 至沟槽顶标高
-            enclosure.dock_h = dock
-            enclosure.cover50 = dock
-            enclosure.cover = dock
-        enclosure.con_found = "不" not in self._con_found.currentText()
+            dock_h, cover50, cover_value = dock, dock, dock
+        # 顶部参数统一走 principle_edit.apply_enclosure_fields：
+        # 砼基础开关 / 基础角度变化时它会对引用该原则的直埋构件自动重选候选组
+        # （v9 候选参数列的自动匹配只挂这一处，不能绕过）
+        from app.services.principle_edit import apply_enclosure_fields
+
+        fields = {
+            "excvt": self._excvt.currentText(),
+            "dock_l": dock,
+            "dock_h": dock_h,
+            "cover50": cover50,
+            "cover": cover_value,
+            "con_found": "不" not in self._con_found.currentText(),
+        }
         try:
-            enclosure.found_angle = int(self._angle.currentText())
+            fields["found_angle"] = int(self._angle.currentText())
         except ValueError:
             pass
+        apply_enclosure_fields(enclosure.id, fields)
         cushion = enclosure.cushions[0] if enclosure.cushions else None
         if cushion is not None:
             cushion.name = self._cushion_name.text().strip()

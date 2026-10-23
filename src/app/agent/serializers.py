@@ -72,7 +72,14 @@ def element_detail_dict(element_id: int) -> dict:
     element = _element_or_raise(element_id)
     snapshot = unit_vm.element_snapshot(element_id) or {}
     pipes = [
-        {"id": pipe.id, "mat": pipe.mat, "dn": pipe.dn, "content": pipe.content, "t": pipe.t}
+        {
+            "id": pipe.id,
+            "mat": pipe.mat,
+            "cat": pipe.pipe_category,
+            "dn": pipe.dn,
+            "content": pipe.content,
+            "t": pipe.t,
+        }
         for pipe in element.pipes
     ]
     # param_rows 会过滤掉该类别不显示的图集残留行，按 id 对齐而不是 zip
@@ -372,6 +379,23 @@ def library_template_dict(category: str, unit: str, index: int, template) -> dic
         "depth": template.depth,
         "amount": template.amount,
         "source": template.source,
-        "pipes": [list(pipe) for pipe in template.pipes],
+        "pipes": [
+            {
+                "mat": pipe.mat,
+                "cat": pipe.cat,
+                "dn": pipe.dn,
+                "content": pipe.content,
+                "t": {str(angle): value for angle, value in pipe.thickness.items()},
+            }
+            for pipe in template.pipes
+        ],
         "params": [list(param) for param in template.params],
+        "atlas": {
+            key: (
+                {"a": row[0], "c1": row[1], "c2": row[2]}
+                if row is not None
+                else {"a": None, "c1": None, "c2": None}
+            )
+            for key, row in template.atlas.items()
+        },
     }

@@ -190,10 +190,10 @@ def cal_pipes(info, out: QDict, cat: str = "管材") -> None:
 
 
 def encased_pipe_deduction(info, out: QDict) -> None:
-    """包封混凝土扣管位（旧版 mcE2.cal_pipes 的负项：按每根管查图集取壁厚）。
+    """包封混凝土扣管位（旧版 mcE2.cal_pipes 的负项：按每根管取壁厚）。
 
-    每根管带详情面板的用户壁厚（PipeSpec.t，空 = 按图集自动），
-    临时按直埋管道类别查该管的壁厚（同旧版构造临时 mcE1）。
+    每根管带自己的管材类别与壁厚（构件库快照 / 详情面板用户值），壁厚为空时
+    才临时按直埋管道图集查（同旧版构造临时 mcE1）。
     """
     from app.services.atlas import PipeSpec, resolve_atlas
     from app.core.calc.engine import build_atlas_query
@@ -203,7 +203,7 @@ def encased_pipe_deduction(info, out: QDict) -> None:
             continue
         query = build_atlas_query(info, info.pe, info.pw)
         query.category = 1  # 直埋管道图集
-        query.pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn, t=pipe.t)]
+        query.pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn, t=pipe.t, cat=pipe.cat)]
         at = resolve_atlas(query)
         radius = (dim(pipe.dn) / 2 + dim(at.t)) / 1000
         out.add(

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from app.core.models.models import CATEGORY_CHOICES, CATEGORY_NAMES
+from app.core.pipe_category import PIPE_CATEGORIES, WIDTH_PIPE_TYPES
 
 #: 构件类别枚举（不含空类别）
 CATEGORY_ENUM: list[str] = [CATEGORY_NAMES[value] for value in CATEGORY_CHOICES]
@@ -42,15 +43,8 @@ PRECIPITATION_WELLS: tuple[str, ...] = (
     "深井",
 )
 
-#: 面宽原则的六类管材接口（宽度表行）
-WIDTH_PIPE_TYPES: tuple[str, ...] = (
-    "混凝土管-刚性接口",
-    "混凝土管-柔性接口",
-    "金属类管道",
-    "化学建材管道",
-    "包封埋管",
-    "箱涵-管廊",
-)
+#: 面宽原则的六类管材接口（宽度表行）——定义在 core.pipe_category，此处仅转出
+#: （前四类是管道行“管材”列的候选；包封埋管 / 箱涵-管廊由构件类别固定取）
 
 CONVENTIONS_TEXT = f"""\
 # Section 2.0 领域约定（AI 工具必读）
@@ -63,6 +57,24 @@ CONVENTIONS_TEXT = f"""\
   多围护时 main_pe_name 是主要围护原则（支撑 Z 量按它计算）。
 - 构件埋深(depth)/数量(amount)/参数值/管材含量都可写算式原文（如 "2.5+0.3"），
   工具按字符串原文接收，另返回 *_value 数值。
+
+## 管材与图集（v9）
+- 每根管材都有“类别” cat，取值只能是：{' / '.join(PIPE_CATEGORIES)}。
+  它是**计算的唯一依据**（面宽表行 / 图集表分流 / 断面图是否画砼基础 / 包封砼扣管位），
+  mat（材质文字，如“球墨铸铁管 K9”）只用于显示与规格，不参与计算。
+- 面宽匹配：只有直埋构件读类别与管径（取第一根管）；包封埋管固定取“包封埋管”行，
+  箱涵 / 管廊固定取“箱涵-管廊”行，不看 cat。
+- **候选参数列（v9）**：直埋构件的 工作面加宽 / 垫层厚 / 基础厚 来自
+  element_atlas_candidate 表的 8 组快照（采用/不采用混凝土基础 × 90/120/150/180，
+  混凝土管 8 组、其他管材 4 组值相同）。参数值按当前主围护原则的
+  con_found + found_angle 自动选组，**参数值列锁定不可手填**；候选本身是一次性
+  快照，用户可改，改完立即自动重匹配。围护原则 / 管材类别变化都会自动重匹配。
+- 图集事实：06MS201-1 砼管**砼基础表没有 150° 行**（砂基础有），所以
+  “采用混凝土基础-150°”的候选为空，匹配时按就近角度跳过空组；金属 / 化学建材
+  管材图集的 a / C1 列常为空（候选 None → 参数值空 = 引擎回退自动查表）。
+- 包封埋管 / 箱涵 / 管廊 / 顶管 / 牵引管没有候选列，参数值仍由用户自由编辑。
+- add_pipe / update_pipe 传 cat 会立即触发重匹配；不传则按 mat 折算。
+- resolve_atlas 工具仍可用于核对某个材质 + 管径的图集取值（单位 mm，groove_b 为 m）。
 
 ## 单位与格式
 - 图集查询（resolve_atlas）返回的 od/t/a/c1/c2/workwidth/groove_b 单位是 mm；

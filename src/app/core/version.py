@@ -22,7 +22,12 @@ APP_VERSION = "2.0.0.0"
 #:     （基础厚恒为 0，不显示、不可改），顶管 / 牵引管不显示
 #:     （见 param_naming.ATLAS_PARAM_CATEGORIES）
 #: v7：按类别再收敛一次（v6 的早期实现误删了直埋 / 箱涵 / 管廊上的图集行）
-SCHEMA_VERSION = 7
+#: v8：管道行加“管材类别”列（pipe.cat）：面宽匹配 / 图集分流 / 断面图砼判断 /
+#:     包封扣管位统一读它，不再按管材名称做字符串包含判断（见 core.pipe_category）
+#: v9：图集候选参数列（element_atlas_candidate 表）：直埋构件的 a/C1/C2 按
+#:     当前围护原则从 8 组快照（砼/非砼 × 90/120/150/180）自动选组，参数值列
+#:     锁定；候选是一次性快照、可手改（见 core.atlas_candidates）
+SCHEMA_VERSION = 9
 
 #: 新版工程文件
 PROJECT_SUFFIX = ".stn2"
