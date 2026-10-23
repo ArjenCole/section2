@@ -94,6 +94,18 @@ def element_detail_dict(element_id: int) -> dict:
         }
         for param in element.params
     ]
+    # 候选参数（v9，直埋构件）：参数值锁定时 AI 用 update_atlas_candidate 改这里
+    atlas_candidates = [
+        {
+            "candidate_id": row.id,
+            "con_found": row.con_found,
+            "angle": row.angle,
+            "a": row.a,
+            "c1": row.c1,
+            "c2": row.c2,
+        }
+        for row in element.atlas_candidates
+    ]
     quantities = [
         {"id": quantity.id, "category": quantity.category, "item": quantity.item,
          "unit": quantity.unit, "value": quantity.value}

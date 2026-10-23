@@ -105,6 +105,9 @@ def _query(category: int, pipes, params, enclosure, con_found: bool, angle: int)
         size_b=_size_b(category, pipes, params),
         widths=enclosure.widths,
         groove_bs=enclosure.groove_bs,
+        # 图集没有该角度的行（如砼基础表没有 150°）时记 null，不存兜底就近值：
+        # 否则候选表里会出现"150° 一列，数值其实是 120/180 的"的假数据。
+        strict_angle=True,
     )
 
 

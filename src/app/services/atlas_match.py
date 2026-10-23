@@ -11,7 +11,11 @@
 * 构件的围护原则切换（``update_element``）；
 * 围护原则本身修改（``principle_edit.apply_enclosure_fields`` →
   :func:`match_for_enclosure`，对引用该原则的直埋构件逐条重匹配）；
-* 管材类别修改（``update_pipe``，混凝土 ↔ 非混凝土会换候选组）。
+* 管材类别修改（``update_pipe``，混凝土 ↔ 非混凝土会换候选组）；
+* 候选格被手改（``update_atlas_candidate``）。
+
+每次触发都按"同组精确 → 同组就近 → 跨组精确 → 跨组就近"整组重算；四级
+都不命中就把参数行清空。任何情况下都不保留上一次匹配的旧值。
 
 独立成 services 层模块：``principle_edit``（services）与 ``unit_vm``
 （viewmodels）都要用，避免 viewmodels 反向依赖。
@@ -21,7 +25,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from app.core.atlas_candidates import CANDIDATE_ANGLES, nearest_candidate
+from app.core.atlas_candidates import CANDIDATE_ANGLES, combo_key, select_candidate
 from app.core.event_bus import bus
 from app.core.models import base as orm
 from app.core.models.models import (
@@ -51,7 +55,11 @@ def _principles(element: Element):
 
 
 def _bare_query(element: Element, pe: PcpEnclosure, pw):
-    """强制查表的图集查询：清掉参数覆盖值、管道壁厚留空（否则命中快照短路）。"""
+    """强制查表的图集查询：清掉参数覆盖值、管道壁厚留空（否则命中快照短路）。
+
+    ``strict_angle=True``：图集没有该角度的行时按"无数据"记空，不把兜底就
+    近值（如砼基础 150° 会落到 120/180）当成该角度的快照存下来。
+    """
     from app.core.calc.engine import build_atlas_query, build_element_input
     from app.services.atlas import PipeSpec
 
@@ -59,17 +67,54 @@ def _bare_query(element: Element, pe: PcpEnclosure, pw):
     query = build_atlas_query(info, pe, pw)
     query.a = query.c1 = query.c2 = None
     query.pipes = [type(p)(mat=p.mat, dn=p.dn, cat=p.cat) for p in info.pipes]
+    query.strict_angle = True
     return query
+
+
+def _match_con_found(element: Element, pe: PcpEnclosure) -> bool:
+    """参与匹配的砼基础开关。
+
+    非混凝土管（金属 / 化学建材）的图集查表不看砼基础开关，界面也只给
+    "不采用混凝土基础"的 4 列（见 ``atlas_candidates.columns_for``）。匹配
+    跟着显示组走 ``False``：否则会选中界面根本不显示的 con 组，参数值虽
+    相同，但高亮的那一格和用户能改的那一格对不上。
+    """
+    from app.core.pipe_category import is_concrete
+
+    if not element.pipes:
+        return bool(pe.con_found)
+    pipe = element.pipes[0]
+    return bool(pe.con_found) if is_concrete(pipe.cat, mat=pipe.mat) else False
+
+
+def _has_pipes(element: Element) -> bool:
+    """构件是否有管材行。
+
+    ``element.pipes`` 可能是本次改动前缓存的空集合（新建构件后刚插入第一根
+    管，关系还没过期），直接读它会误判"没有管道"而跳过补候选——候选一旦
+    缺失，参数值就永远是空的。这里先强制从库里重读一次再判断。
+    """
+    if element.pipes:
+        return True
+    try:
+        orm.session().expire(element, ["pipes"])
+    except Exception:  # 未入会话 / 已分离：只能信缓存
+        return False
+    return bool(element.pipes)
 
 
 def ensure_atlas_candidates(element: Element) -> bool:
     """直埋构件的候选行为空时，现场查图集补 8 组（一次性）。
 
     返回是否新建了候选行。候选一旦存在就不再动——它们归用户所有。
+    没有管道时不生成：空管道查出来的 8 组全是空值，而候选“存在就不再补”，
+    会让之后加的第一根管永远拿不到候选（等加管时再生成）。
     """
     from app.services.atlas import resolve_atlas
 
     if element.category != CATEGORY_BURIED or element.atlas_candidates:
+        return False
+    if not _has_pipes(element):
         return False
     pe, pw = _principles(element)
     if pe is None:
@@ -97,8 +142,13 @@ def match_atlas_candidates(element: Element, *, commit: bool = True) -> bool:
     """按当前主围护原则自动选组，把 a / C1 / C2 写进参数行。
 
     只对直埋构件生效（其他类别的参数值仍由用户自由编辑）；候选行缺失时先
-    补（见 :func:`ensure_atlas_candidates`）。图集没有的组合（如砼基础 150°）
-    按就近角度跳过。返回是否写入了参数。
+    补（见 :func:`ensure_atlas_candidates`）。选组顺序见
+    :func:`app.core.atlas_candidates.select_candidate`：同组精确 → 同组就近 →
+    跨组精确 → 跨组就近。
+
+    匹配条件一变就整组重算：四级都不命中时把三行参数**清空**（空 = 引擎按
+    图集自动），绝不保留上一次匹配的旧值——旧值会让计算静默按旧角度/旧基础
+    形式走。返回是否写入了参数。
     """
     if element.category != CATEGORY_BURIED:
         return False
@@ -106,16 +156,21 @@ def match_atlas_candidates(element: Element, *, commit: bool = True) -> bool:
     if pe is None:
         return False
     ensure_atlas_candidates(element)
-    row = nearest_candidate(element.atlas_candidates, bool(pe.con_found), int(pe.found_angle))
-    if row is None:
-        return False
-    values = {PARAM_A_NAME: row.a, PARAM_C1_NAME: row.c1, PARAM_C2_NAME: row.c2}
+    row, _level = select_candidate(
+        element.atlas_candidates, _match_con_found(element, pe), int(pe.found_angle)
+    )
+    values = (
+        {PARAM_A_NAME: None, PARAM_C1_NAME: None, PARAM_C2_NAME: None}
+        if row is None
+        else {PARAM_A_NAME: row.a, PARAM_C1_NAME: row.c1, PARAM_C2_NAME: row.c2}
+    )
     existing = {(param.key, param.unit): param for param in element.params}
     changed = False
     for name, unit in atlas_param_rows(element.category):
         value = values.get(name)
-        # 候选该字段为 None（图集无值，如金属管的 a / C1）→ 写空 = 引擎回退
-        # 自动按图集；候选有值 → 写值。保证参数行的值始终与选中组一致。
+        # 候选该字段为 None（图集无值，如金属管的 a / C1）或一级都没命中
+        # → 写空 = 引擎回退自动按图集；候选有值 → 写值。保证参数行的值
+        # 始终与"当前匹配到的组"一致。
         text = format_number(float(value)) if value is not None else ""
         param = existing.get((name, unit))
         if param is None:
@@ -128,6 +183,24 @@ def match_atlas_candidates(element: Element, *, commit: bool = True) -> bool:
         project_io.commit()
         _expire(element)
     return changed
+
+
+def selected_combo(element: Element) -> tuple[str | None, str | None]:
+    """当前匹配到的候选组合 ``(组合键, 层级)``，供界面标注；不补候选、不写库。
+
+    ``(None, None)`` = 四级都没命中（参数行应为空、计算按图集走）。
+    """
+    if element.category != CATEGORY_BURIED or not element.atlas_candidates:
+        return None, None
+    pe, _pw = _principles(element)
+    if pe is None:
+        return None, None
+    row, level = select_candidate(
+        element.atlas_candidates, _match_con_found(element, pe), int(pe.found_angle)
+    )
+    if row is None:
+        return None, None
+    return combo_key(row.con_found, row.angle), level
 
 
 def match_for_enclosure(enclosure_name: str) -> int:
@@ -173,4 +246,5 @@ __all__ = [
     "ensure_atlas_candidates",
     "match_atlas_candidates",
     "match_for_enclosure",
+    "selected_combo",
 ]

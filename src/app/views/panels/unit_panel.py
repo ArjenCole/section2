@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 
 from app.core.evaluator import EvalError, evaluate, format_number
 from app.core.event_bus import bus, connect_weak
-from app.core.atlas_candidates import columns_for
+from app.core.atlas_candidates import MATCH_LEVEL_LABELS, columns_for, is_cross_group
 from app.core.param_naming import (
     PARAM_A_NAME,
     PARAM_C1_NAME,
@@ -110,6 +110,19 @@ _PIPE_COL_CAT = 4
 _PARAM_ROLE = Qt.ItemDataRole.UserRole + 1
 #: 候选参数格携带 (候选行 id, 字段名 a/c1/c2)
 _CANDIDATE_ROLE = Qt.ItemDataRole.UserRole + 2
+#: 该组合还没有候选行（图集没这组数据）时空格携带 (构件 id, 列键, 字段名)；
+#: 手填即建行，见 unit_vm.set_atlas_candidate_value
+_CANDIDATE_NEW_ROLE = Qt.ItemDataRole.UserRole + 4
+#: 当前匹配到的候选格的底色标记（"same" / "cross"）。只存语义、不存颜色：
+#: 颜色在绘制代理里按当前主题现算，切换深浅主题时自动跟着变。必须走代理自绘：
+#: 全局 QSS 里 ``QTableWidget::item { background-color: transparent }`` 会让
+#: QStyleSheetStyle 接管单元格背景绘制、忽略 Qt.BackgroundRole 的刷子
+#: （``setBackground`` 静默无效，实测像素与相邻格完全一致）。
+_MATCH_BG_ROLE = Qt.ItemDataRole.UserRole + 3
+#: 同组命中（砼/非砼各自组内）
+_MATCH_BG_SAME = "same"
+#: 跨组借值（另一组的同角度值）
+_MATCH_BG_CROSS = "cross"
 #: 参数名 / 单位 / 参数值三列；直埋构件在"参数值"右侧追加候选参数列
 #: （砼基础/非砼基础 × 90/120/150/180，混凝土管 8 列、其他管材 4 列）。
 #: 锁定行（该类别显示的图集参数行、构筑物名称 / 单位行）参数名 / 单位只读，
@@ -160,6 +173,16 @@ class _FocusCellDelegate(TableEditDelegate):
             and view.currentIndex() == index
         )
         is_detail = is_table and getattr(view, _DETAIL_TABLE_ATTR, False)
+        # 底色先铺：QSS 的 ::item 背景是 transparent，样式表接管后不会画
+        # BackgroundRole，只能在这里自己填（见 _MATCH_BG_ROLE 的说明）
+        match_bg = index.data(_MATCH_BG_ROLE)
+        if match_bg:
+            painter.fillRect(
+                option.rect,
+                _candidate_borrowed_bg()
+                if match_bg == _MATCH_BG_CROSS
+                else _candidate_selected_bg(),
+            )
         # 去掉默认的虚线焦点框，统一用边框表示
         option.state &= ~QStyle.StateFlag.State_HasFocus
         super().paint(painter, option, index)
@@ -1195,7 +1218,12 @@ class UnitPanel(QWidget):
     ) -> None:
         if self._multi_detail:
             return  # 多选模式显示占位行，不显示具体条目
-        from app.viewmodels.unit_vm import _element, auto_atlas_params, auto_pipe_thicknesses
+        from app.viewmodels.unit_vm import (
+            _element,
+            auto_atlas_params,
+            auto_pipe_thicknesses,
+            selected_candidate_combo,
+        )
 
         self._loading = True
         try:
@@ -1260,6 +1288,15 @@ class UnitPanel(QWidget):
                 self._param_table.setColumnWidth(len(_PARAM_HEADERS) + offset, _CANDIDATE_WIDTH)
             self._param_table.setRowCount(len(params))
             auto_params = auto_atlas_params(element) if element is not None else {}
+            # 当前匹配到的候选组合（键 + 层级）：那一列的格子用浅底色标出来，
+            # 跨组借值时换警示浅色，让"这格不是本组的数"一眼可见。
+            selected_key, selected_level = (
+                selected_candidate_combo(element_id) if show_candidates else (None, None)
+            )
+            selected_column = next(
+                (c for c in self._candidate_columns if c.key == selected_key), None
+            )
+            level_label = MATCH_LEVEL_LABELS.get(selected_level or "", "")
             for index, param in enumerate(params):
                 key_item = QTableWidgetItem(param.key)
                 key_item.setData(_PARAM_ROLE, param.id)
@@ -1287,10 +1324,22 @@ class UnitPanel(QWidget):
                     unit_item.setFlags(unit_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 if value_locked:
                     value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    value_item.setToolTip(
-                        "参数值按当前围护原则（砼基础开关 + 基础角度）自动从候选参数里选，"
-                        "改候选列即可生效。"
-                    )
+                    if selected_column is None:
+                        value_tip = (
+                            "没有可用的候选参数（四级匹配都没命中）→ 参数值留空，"
+                            "计算按图集自动查表。"
+                        )
+                    else:
+                        value_tip = (
+                            f"参数值 = 当前匹配的候选「{selected_column.label}」"
+                            f"（{level_label}），改候选列即可生效。"
+                        )
+                        if is_cross_group(selected_level):
+                            value_tip += (
+                                "本组没有可用数据，借用了另一组（砼基础 ↔ 非砼基础）"
+                                "的角度对应值。"
+                            )
+                    value_item.setToolTip(value_tip)
                 self._param_table.setItem(index, 0, key_item)
                 self._param_table.setItem(index, 1, unit_item)
                 self._param_table.setItem(index, 2, value_item)
@@ -1298,16 +1347,39 @@ class UnitPanel(QWidget):
                     candidate_field = _CANDIDATE_FIELD_BY_PARAM.get(param.key)
                     for offset, column in enumerate(self._candidate_columns):
                         entry = param.candidates.get(column.key)
-                        if entry is None or candidate_field is None:
+                        if candidate_field is None:
                             cell = QTableWidgetItem("")
                             cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        elif entry is None:
+                            # 图集没这组数据（如 dn<600 的砂基础 90°）：留空格但
+                            # 允许手填，填了就建一行候选（见 set_atlas_candidate_value）
+                            cell = QTableWidgetItem("")
+                            cell.setData(
+                                _CANDIDATE_NEW_ROLE,
+                                (element_id, column.key, candidate_field),
+                            )
+                            cell.setToolTip(
+                                f"图集没有这一组（{column.label}）的数据，可直接填；"
+                                f"填了就作为该组的候选值参与自动匹配。{column.tooltip}"
+                            )
                         else:
                             cid, raw_value = entry
                             cell = QTableWidgetItem(
                                 "" if raw_value is None else format_number(raw_value)
                             )
                             cell.setData(_CANDIDATE_ROLE, (cid, candidate_field))
-                            cell.setToolTip(column.tooltip)
+                            if column.key == selected_key:
+                                cell.setData(
+                                    _MATCH_BG_ROLE,
+                                    _MATCH_BG_CROSS
+                                    if is_cross_group(selected_level)
+                                    else _MATCH_BG_SAME,
+                                )
+                                cell.setToolTip(
+                                    f"当前选中（{level_label}）：参数值取这一列。{column.tooltip}"
+                                )
+                            else:
+                                cell.setToolTip(column.tooltip)
                         self._param_table.setItem(index, len(_PARAM_HEADERS) + offset, cell)
 
             # 工程量表：仅附属构筑物可录入；其它类别显示占位说明
@@ -1391,15 +1463,22 @@ class UnitPanel(QWidget):
         if field is not None:
             self._vm.set_param_field(param_id, field, item.text())
             return
-        # 候选参数列：格子带着 (候选行 id, 字段 a/c1/c2)
+        # 候选参数列：格子带着 (候选行 id, 字段 a/c1/c2)；空格带的是
+        # (构件 id, 列键, 字段) —— 图集没这组数据，手填即建行。
         offset = item.column() - len(_PARAM_HEADERS)
         if not 0 <= offset < len(self._candidate_columns):
             return
         payload = item.data(_CANDIDATE_ROLE)
-        if payload is None:
+        if payload is not None:
+            candidate_id, candidate_field = payload
+            self._vm.update_atlas_candidate(candidate_id, candidate_field, item.text())
             return
-        candidate_id, candidate_field = payload
-        self._vm.update_atlas_candidate(candidate_id, candidate_field, item.text())
+        blank = item.data(_CANDIDATE_NEW_ROLE)
+        if blank is not None:
+            element_id, combo, candidate_field = blank
+            self._vm.set_atlas_candidate_value(
+                element_id, combo, candidate_field, item.text()
+            )
 
     def _on_qty_item_changed(self, item: QTableWidgetItem) -> None:
         if self._loading:
@@ -1532,3 +1611,25 @@ def _secondary_color() -> QColor:
 
 def _warning_color() -> QColor:
     return QColor(ThemeManager.instance().current().warning)
+
+
+def _mix(base: QColor, target: QColor, ratio: float) -> QColor:
+    """把 base 按 ratio 混向 target（ratio=0 → base，1 → target）。"""
+    ratio = max(0.0, min(1.0, float(ratio)))
+    return QColor(
+        round(base.red() + (target.red() - base.red()) * ratio),
+        round(base.green() + (target.green() - base.green()) * ratio),
+        round(base.blue() + (target.blue() - base.blue()) * ratio),
+    )
+
+
+def _candidate_selected_bg() -> QColor:
+    """当前匹配到的候选格底色：主题主色按 12% 混进卡片底色（很浅但可辨）。"""
+    theme = ThemeManager.instance().current()
+    return _mix(QColor(theme.bg_card), QColor(theme.primary), 0.12)
+
+
+def _candidate_borrowed_bg() -> QColor:
+    """跨组借值时的底色：警示色按 14% 混进卡片底色，仍是浅色但偏暖。"""
+    theme = ThemeManager.instance().current()
+    return _mix(QColor(theme.bg_card), QColor(theme.warning), 0.14)

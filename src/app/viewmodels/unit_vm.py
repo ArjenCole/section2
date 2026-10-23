@@ -234,6 +234,20 @@ def param_rows(element_id: int) -> list[ParamRow]:
     return rows
 
 
+def selected_candidate_combo(element_id: int) -> tuple[str | None, str | None]:
+    """当前匹配到的候选组合 ``(组合键, 层级)``——详情面板高亮当前列用。
+
+    ``(None, None)`` = 四级都没命中（参数行为空，计算按图集走）。只读查询，
+    不补候选行、不写库。
+    """
+    element = _element(element_id)
+    if element is None:
+        return None, None
+    from app.services.atlas_match import selected_combo
+
+    return selected_combo(element)
+
+
 def quantity_rows(element_id: int) -> list[QuantityRow]:
     """附属构筑物的工程量行（详情面板“工程量”页只对构筑物启用）。"""
     element = _element(element_id)
@@ -956,6 +970,7 @@ def create_pipe(
     element = _element(element_id)
     if element is None:
         return None
+    was_empty = not element.pipes
     pipe = Pipe(
         element_id=element_id,
         mat=mat,
@@ -966,6 +981,12 @@ def create_pipe(
     )
     orm.session().add(pipe)
     project_io.commit()
+    if was_empty and element.category == CATEGORY_BURIED:
+        # 第一根管决定面宽行 / 候选组：从无到有要自动选一次参数值
+        # （此时 ensure 才第一次真正生成候选——空管道时不生成）
+        from app.services.atlas_match import match_atlas_candidates
+
+        match_atlas_candidates(element)
     _expire_element(element)
     bus().unit_changed.emit(element.unit_id)
     return pipe
@@ -1006,9 +1027,16 @@ def delete_pipe(pipe_id: int) -> None:
     if pipe is None:
         return
     element = pipe.element
+    was_first = bool(element.pipes) and element.pipes[0].id == pipe.id
     unit_id = element.unit_id
     orm.session().delete(pipe)
     project_io.commit()
+    if was_first and element.category == CATEGORY_BURIED:
+        # 第一根管决定面宽行 / 候选组：删掉它（剩下一根类别不同的管）之后
+        # 要自动重选参数值；删到没管时 match 会自己跳过（不误清参数值）
+        from app.services.atlas_match import match_atlas_candidates
+
+        match_atlas_candidates(element)
     _expire_element(element)
     bus().unit_changed.emit(unit_id)
 
@@ -1052,11 +1080,22 @@ def update_param(param_id: int, **fields) -> ElementParam | None:
     return param
 
 
+def _candidate_number(value) -> tuple[bool, float | None]:
+    """候选格文本 → (是否合法, 数值)；空文本 = 清空（合法，值 None）。"""
+    text = str(value).strip()
+    if not text:
+        return True, None
+    try:
+        return True, float(text)
+    except ValueError:
+        return False, None
+
+
 def update_atlas_candidate(candidate_id: int, field: str, value) -> bool:
     """改一格候选参数（候选列）；空 = 清回图集无值。
 
     候选是用户可改的快照；改完立刻按当前围护原则重新自动匹配一次参数值
-    （改的可能正是当前匹配的那格）。
+    （改的可能正是当前匹配的那格）。非数字输入忽略并还原显示。
     """
     from app.core.models.models import ElementAtlasCandidate
     from app.services.atlas_match import match_atlas_candidates
@@ -1064,13 +1103,65 @@ def update_atlas_candidate(candidate_id: int, field: str, value) -> bool:
     row = orm.session().get(ElementAtlasCandidate, int(candidate_id)) if project_io.is_open() else None
     if row is None or field not in ("a", "c1", "c2"):
         return False
-    text = str(value).strip()
-    setattr(row, field, float(text) if text else None)
+    ok, number = _candidate_number(value)
+    if not ok:
+        bus().unit_changed.emit(row.element.unit_id)  # 还原显示
+        return False
+    setattr(row, field, number)
     project_io.commit()
     match_atlas_candidates(row.element, commit=False)
     project_io.commit()
     _expire_element(row.element)
     bus().unit_changed.emit(row.element.unit_id)
+    return True
+
+
+def set_atlas_candidate_value(element_id: int, combo: str, field: str, value) -> bool:
+    """写一格候选参数；该组合还没有候选行时**就地建行**（手填补图集缺口）。
+
+    图集没有的组合（如 dn<600 的砂基础 90°、砼基础 150°）在面板上是空格，
+    原来既不能选也不能填。这里让用户能直接敲一个值进去：没有行就建一行，
+    之后它和别的候选一样参与自动匹配（改完立刻重匹配一次）。
+    """
+    from app.core.atlas_candidates import parse_combo_key
+    from app.core.models.models import ElementAtlasCandidate
+    from app.services.atlas_match import match_atlas_candidates
+
+    if not project_io.is_open():
+        return False
+    element = _element(element_id)
+    parsed = parse_combo_key(combo)
+    if element is None or parsed is None or field not in ("a", "c1", "c2"):
+        return False
+    ok, number = _candidate_number(value)
+    if not ok:
+        bus().unit_changed.emit(element.unit_id)  # 还原显示
+        return False
+
+    con_found, angle = parsed
+    row = next(
+        (
+            candidate
+            for candidate in element.atlas_candidates
+            if bool(candidate.con_found) == con_found and int(candidate.angle) == int(angle)
+        ),
+        None,
+    )
+    if row is None:
+        if number is None:
+            return False  # 空格留空：不必建一行全空候选
+        row = ElementAtlasCandidate(
+            con_found=con_found,
+            angle=int(angle),
+            order_no=len(element.atlas_candidates),
+        )
+        element.atlas_candidates.append(row)
+    setattr(row, field, number)
+    project_io.commit()
+    match_atlas_candidates(element, commit=False)
+    project_io.commit()
+    _expire_element(element)
+    bus().unit_changed.emit(element.unit_id)
     return True
 
 
@@ -1362,6 +1453,13 @@ class UnitViewModel(QObject):
         """改一格候选参数（候选列）；改完自动重匹配当前构件的参数值。"""
         if not update_atlas_candidate(candidate_id, field, value):
             self.error_occurred.emit("候选参数行不存在。")
+
+    def set_atlas_candidate_value(
+        self, element_id: int, combo: str, field: str, value
+    ) -> None:
+        """手填补空白候选格；该组合没有候选行时自动建行。"""
+        if not set_atlas_candidate_value(element_id, combo, field, value):
+            self.error_occurred.emit("候选参数需为数字（可留空）。")
 
     def remove_param(self, param_id: int) -> None:
         message = delete_param(param_id)

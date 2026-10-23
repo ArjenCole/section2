@@ -105,6 +105,9 @@ class AtlasQuery:
     a: float | None = None
     c1: float | None = None
     c2: float | None = None
+    #: 角度必须精确命中（不做就近兜底）。候选快照生成用：图集没有该角度的
+    #: 行时按"无数据"记空，而不是把 120/180 的值当成 150° 存下来。
+    strict_angle: bool = False
 
 
 def _num(value) -> float:
@@ -191,6 +194,40 @@ class AtlasCatalog:
                 continue
             found = record
         return found
+
+    def find_nearest_angle(
+        self,
+        table_index: int,
+        dn: str,
+        angle: str,
+        level: str | None = None,
+    ) -> dict[str, str] | None:
+        """同一张表里按 (管径 ± 级别) 取角度最近的一行；等距取小角度。
+
+        用于"图集没有该角度的行"时的兜底（如砼基础表没有 150°，取 120°）——
+        旧版是丢掉角度条件取最后一条命中行，实际落到 180°，与"就近"无关。
+        """
+        try:
+            target = float(angle)
+        except (TypeError, ValueError):
+            return None
+        best: dict[str, str] | None = None
+        best_key: tuple[float, float] | None = None
+        for record in self._rows.get(table_index, []):
+            if record.get("D") != dn:
+                continue
+            if level is not None and record.get("level") != level:
+                continue
+            try:
+                value = float(record.get("angle"))
+            except (TypeError, ValueError):
+                continue
+            key = (abs(value - target), value)
+            # 同角度的重复行取最后一条（与 find 的"多条命中取最后一条"一致：
+            # 图集里同一 D+级别 会有小管径表和大管径表两处）
+            if best_key is None or key <= best_key:
+                best, best_key = record, key
+        return best
 
     @staticmethod
     def read(record: dict[str, str] | None) -> tuple[float, float, float, float, float, float]:
@@ -335,21 +372,28 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
                 level = "2"
             if ("Ⅲ" in mat) or ("三级" in mat):
                 level = "3"
-            od, t, a, c1, c2, q = cat.read(cat.find(0, dn_text, angle, level))
-            if t == 0:  # 该角度无此级别时退回不限角度（同旧版）
-                od, t, a, c1, c2, q = cat.read(cat.find(0, dn_text, level=level))
+            row = cat.find(0, dn_text, angle, level)
+            if row is None or _num(row.get("t")) == 0:
+                # 该角度图集没有这一行（06MS201-1 砼基础表只有 90/120/180）：
+                # 除非要求精确命中，否则取角度最近的一行（等距取小角度）。
+                # 旧版是丢掉角度条件取最后一条命中行，实际恒定落到 180°。
+                row = (
+                    None
+                    if query.strict_angle
+                    else cat.find_nearest_angle(0, dn_text, angle, level)
+                )
+            od, t, a, c1, c2, q = cat.read(row)
             workwidth = _width_of_dn(query.widths, pipe_cat, query.pipes[0].dn)
             groove_b = _groove_b_dn(query, pipe_cat, query.pipes[0].dn)
         elif is_con_pipe:
-            # 砂基础
+            # 砂基础：06MS201-1 页8~11 是非预应力（90/120/150/180°），
+            # 页12~14 是预应力（90/120/180°，**没有 150°**）
             tmp_level = "非预应力"
             if "预应力" in mat:
                 tmp_level = "预应力"
             if "非预应力" in mat:
                 tmp_level = "非预应力"
             tmp_angle = angle
-            if tmp_level == "预应力" and tmp_angle == "180":
-                tmp_angle = "150"
             if tmp_level == "预应力" and query.size_b < 0.6 and tmp_angle == "90":
                 tmp_angle = "120"
             od, t, a, c1, c2, q = cat.read(cat.find(1, dn_text, tmp_angle, tmp_level))

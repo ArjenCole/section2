@@ -199,7 +199,7 @@ def test_category_abbreviations():
 
 def test_param_table_columns_and_no_unit_placeholder(qapp, project):
     """构件参数表：单位列居中且加宽（参数名列相应变窄）；构筑物名称 / 单位行的单位列
-    显示 “-”；直埋管道显示三行图集参数（空值灰字显示图集自动值）。"""
+    显示 “-”；直埋管道显示三行图集参数与候选列（参数值由候选自动匹配、锁定）。"""
     from PySide6.QtCore import Qt
 
     from app.core.models.models import CATEGORY_STRUCTURE
@@ -243,7 +243,7 @@ def test_param_table_columns_and_no_unit_placeholder(qapp, project):
             ("单位", ""),
         ]
 
-        # 排管（直埋）：三行图集参数，单位列居中；空值格灰字显示图集自动值
+        # 排管（直埋）：三行图集参数，单位列居中；有候选后参数值由候选自动匹配
         panel._element_table.setCurrentCell(1, 0)
         qapp.processEvents()
         assert [table.item(row, 0).text() for row in range(table.rowCount())] == [
@@ -251,16 +251,166 @@ def test_param_table_columns_and_no_unit_placeholder(qapp, project):
             "垫层厚",
             "基础厚",
         ]
-        # Dn600 Ⅱ级混凝土管 120° 砼基础：a=130、C1=130、C2=182（灰字自动值）
+        # Dn600 Ⅱ级混凝土管 120° 砼基础：a=130、C1=130、C2=182（候选自动匹配写入）
         assert [table.item(row, 2).text() for row in range(table.rowCount())] == ["130", "130", "182"]
         for row in range(table.rowCount()):
             assert table.item(row, 1).text() == "mm"
             assert table.item(row, 1).textAlignment() == Qt.AlignmentFlag.AlignCenter
-            # 参数名 / 单位锁定，值可改
+            # 参数名 / 单位锁定；有候选 → 参数值也锁定（改候选列才有效）
             assert not table.item(row, 0).flags() & Qt.ItemFlag.ItemIsEditable
-            assert table.item(row, 2).flags() & Qt.ItemFlag.ItemIsEditable
+            assert not table.item(row, 2).flags() & Qt.ItemFlag.ItemIsEditable
+        # 直埋 + 有候选 → 参数值右侧追加候选参数列
+        assert table.columnCount() > 3
     finally:
         panel.close()
+
+
+def test_candidate_column_highlight_follows_match(qapp, project):
+    """构件参数面板：当前匹配到的候选列被标出来；换基础角度后标注跟着换列。"""
+    from sqlalchemy import select
+
+    from app.core.models import base as orm
+    from app.core.models.models import PcpEnclosure
+    from app.services import project_io
+    from app.services.principle_edit import apply_enclosure_fields
+    from app.viewmodels import unit_vm
+    from app.viewmodels.unit_vm import selected_candidate_combo
+    from app.views.panels.unit_panel import (
+        _MATCH_BG_ROLE,
+        _MATCH_BG_SAME,
+        UnitPanel,
+    )
+
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    element = unit_vm.create_element(unit.id, category=1, name="排管")
+    assert element is not None
+    unit_vm.create_pipe(element.id, mat="Ⅱ级混凝土管", dn=600, content="1")
+
+    panel = UnitPanel()
+    try:
+        panel._show_unit(unit.id)
+        qapp.processEvents()
+        panel._element_table.setCurrentCell(0, 0)
+        qapp.processEvents()
+        table = panel._param_table
+
+        def highlighted() -> list[int]:
+            return [
+                column
+                for column in range(3, table.columnCount())
+                if table.item(0, column) is not None
+                and table.item(0, column).data(_MATCH_BG_ROLE)
+            ]
+
+        keys = [column.key for column in panel._candidate_columns]
+        key, _level = selected_candidate_combo(element.id)
+        assert key is not None and key in keys, "直埋混凝土管应显示候选列且已匹配到一组"
+
+        selected = 3 + keys.index(key)
+        assert highlighted() == [selected], "只有当前匹配的那一列被标底色"
+        for row in range(3):
+            cell = table.item(row, selected)
+            assert cell is not None
+            assert cell.data(_MATCH_BG_ROLE) == _MATCH_BG_SAME
+            assert "当前选中" in cell.toolTip()
+
+        # 换围护原则的基础角度 → 匹配换组，高亮列跟着走
+        pe = orm.session().scalar(
+            select(PcpEnclosure).where(
+                PcpEnclosure.name == (element.main_pe_name or element.pe_name)
+            )
+        )
+        assert pe is not None
+        new_angle = 180 if int(pe.found_angle) != 180 else 90
+        apply_enclosure_fields(pe.id, {"found_angle": new_angle})
+        qapp.processEvents()
+        qapp.processEvents()
+
+        new_key, _new_level = selected_candidate_combo(element.id)
+        new_keys = [column.key for column in panel._candidate_columns]
+        assert new_key != key and new_key in new_keys
+        assert highlighted() == [3 + new_keys.index(new_key)]
+    finally:
+        panel.close()
+
+
+def test_blank_candidate_cell_can_be_filled_by_hand(qapp, project):
+    """图集没有的组合（砼基础 150°）在面板上是空格，但可手填——填了就建候选行。"""
+    from PySide6.QtCore import Qt
+
+    from app.services import project_io
+    from app.services.element_library import element_library
+    from app.viewmodels import unit_vm
+    from app.views.panels.unit_panel import _CANDIDATE_NEW_ROLE, UnitPanel
+
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    template = element_library().find("直埋混凝土管", "Ⅱ级混凝土管", 0)
+    element = unit_vm.insert_element_template(unit.id, template)
+    assert element is not None
+
+    panel = UnitPanel()
+    try:
+        panel._show_unit(unit.id)
+        qapp.processEvents()
+        panel._element_table.setCurrentCell(0, 0)
+        qapp.processEvents()
+        table = panel._param_table
+        keys = [column.key for column in panel._candidate_columns]
+        assert "con150" in keys
+
+        column = 3 + keys.index("con150")
+        cell = table.item(2, column)  # 第三行 = 基础厚
+        assert cell is not None and cell.text() == ""
+        assert cell.flags() & Qt.ItemFlag.ItemIsEditable
+        assert cell.data(_CANDIDATE_NEW_ROLE) == (element.id, "con150", "c2")
+
+        cell.setText("300")
+        qapp.processEvents()
+        qapp.processEvents()
+        rows = [
+            candidate
+            for candidate in unit_vm._element(element.id).atlas_candidates
+            if candidate.con_found and int(candidate.angle) == 150
+        ]
+        assert len(rows) == 1 and rows[0].c2 == 300
+    finally:
+        panel.close()
+
+
+def test_match_bg_paints_even_with_transparent_item_qss(qapp):
+    """候选格底色必须由绘制代理自绘。
+
+    回归：全局 QSS 的 ``QTableWidget::item { background-color: transparent }``
+    会让 QStyleSheetStyle 接管单元格背景、忽略 Qt.BackgroundRole，导致
+    ``item.setBackground()`` 静默无效（用户反馈"看不到颜色"）。
+    """
+    from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
+
+    from app.views.panels.unit_panel import (
+        _MATCH_BG_ROLE,
+        _MATCH_BG_SAME,
+        _FocusCellDelegate,
+        _candidate_selected_bg,
+    )
+
+    table = QTableWidget(1, 2)
+    table.setItemDelegate(_FocusCellDelegate(table))
+    table.setStyleSheet("QTableWidget::item { background-color: transparent; }")
+    marked = QTableWidgetItem("120")
+    marked.setData(_MATCH_BG_ROLE, _MATCH_BG_SAME)
+    table.setItem(0, 1, marked)
+    table.setItem(0, 0, QTableWidgetItem(""))
+    table.resize(200, 60)
+    table.show()
+    try:
+        qapp.processEvents()
+        image = table.viewport().grab().toImage()
+        marked_px = image.pixelColor(table.visualRect(table.model().index(0, 1)).center())
+        plain_px = image.pixelColor(table.visualRect(table.model().index(0, 0)).center())
+        assert marked_px.name() == _candidate_selected_bg().name()
+        assert marked_px.name() != plain_px.name()
+    finally:
+        table.close()
 
 
 def test_category_column_readonly(qapp, project):
