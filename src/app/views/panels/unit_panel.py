@@ -17,15 +17,12 @@ from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QHBoxLayout,
     QHeaderView,
     QLabel,
-    QPushButton,
     QStyle,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -70,6 +67,7 @@ from app.viewmodels.unit_vm import (
 from app.views.panels.multi_principle_tab import MultiPrincipleTab
 from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.views.widgets.panel_splitter import SPLITTER_HANDLE_WIDTH, LineSplitter
+from app.views.widgets.row_button_column import RowButtonColumn
 from app.views.widgets.table_edit_delegate import TableEditDelegate
 
 _ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -153,8 +151,9 @@ _NO_UNIT_PARAM_ROWS: tuple[tuple[str, str], ...] = (
     (STRUCTURE_UNIT_PARAM, ""),
 )
 _QTY_ROLE = Qt.ItemDataRole.UserRole + 1
-#: 附属构筑物的工程量行（类别|项目|单位 三段合一 + 值算式）
-_QTY_HEADERS = ["类别", "项目", "单位", "值"]
+#: 附属构筑物的工程量行（类别|项目|单位 三段合一 + 值算式）；末列空表头 = 按钮
+#: 列（「+」表头格 + 行尾「-」，见 RowButtonColumn）
+_QTY_HEADERS = ["类别", "项目", "单位", "值", ""]
 
 #: 共享单元格焦点的归属标记（挂在 QTableWidget 实例属性上，Quotor _GLOBAL_LATEST 同款）
 _FOCUS_OWNER_ATTR = "_unit_panel_focus_owner"
@@ -321,14 +320,6 @@ class UnitPanel(QWidget):
         layout.addWidget(self._placeholder, 1)
         self._placeholder.setVisible(False)
 
-    def _make_button(self, text: str, tooltip: str, slot) -> QToolButton:
-        button = QToolButton()
-        button.setText(text)
-        button.setToolTip(tooltip)
-        button.setProperty("role", "icon-btn")
-        button.clicked.connect(slot)
-        return button
-
     def _build_element_table(self) -> QTableWidget:
         self._element_table = self._make_table(_ELEMENT_HEADERS)
         for index, width in enumerate(_ELEMENT_WIDTHS[:-1]):
@@ -356,37 +347,48 @@ class UnitPanel(QWidget):
         detail.tabBar().setDrawBase(False)
         self._pipe_table = self._make_table(_PIPE_HEADERS)
         self._param_table = self._make_table(_PARAM_HEADERS)
-        # 手设列宽：类别列自动拉伸，前三列保持可读（管径/壁厚列常有四位数字）；
-        # 末列是每行行尾的「-」删行按钮（窄列，仅包封 / 箱涵 / 管廊显示）
-        self._pipe_table.horizontalHeader().setStretchLastSection(False)
-        self._pipe_table.horizontalHeader().setSectionResizeMode(
-            _PIPE_COL_CAT, QHeaderView.ResizeMode.Stretch
-        )
+        # 手设列宽：前三列保持可读（管径/壁厚列常有四位数字）；末列是按钮列
+        # （「+」表头格 + 每行行尾「-」，见 RowButtonColumn），类别列拉伸
         self._pipe_table.setColumnWidth(_PIPE_COL_MAT, 120)
         self._pipe_table.setColumnWidth(_PIPE_COL_DN, 72)
         self._pipe_table.setColumnWidth(_PIPE_COL_T, 96)
         self._pipe_table.setColumnWidth(_PIPE_COL_CONTENT, 66)
-        self._pipe_table.setColumnWidth(_PIPE_COL_DEL, 40)
         self._pipe_table.setColumnHidden(_PIPE_COL_DEL, True)
         self._pipe_table.setItemDelegate(_PipeCategoryDelegate(self._pipe_table))
-        # 「+」与行尾「-」同一列：+ 钉在删行列的表头格里（随列显隐、随横向
-        # 滚动对齐），每行行尾是「-」删行按钮；整列只在包封 / 箱涵 / 管廊显示
-        pipe_header = self._pipe_table.horizontalHeader()
-        self._btn_add_pipe = QPushButton("+", pipe_header)
-        self._btn_add_pipe.setProperty("role", "icon-btn")
-        self._btn_add_pipe.setToolTip("为选中构件新增一行管材")
-        self._btn_add_pipe.clicked.connect(self._add_pipe)
-        self._btn_add_pipe.hide()
-        pipe_header.geometriesChanged.connect(self._place_add_pipe_button)
-        self._pipe_table.horizontalScrollBar().valueChanged.connect(
-            self._place_add_pipe_button
-        )
         self._param_table.setColumnWidth(0, _PARAM_NAME_WIDTH)
         self._param_table.setColumnWidth(1, _PARAM_UNIT_WIDTH)
         self._qty_table = self._make_table(_QTY_HEADERS)
         self._qty_table.setColumnWidth(0, 110)
         self._qty_table.setColumnWidth(1, 140)
         self._qty_table.setColumnWidth(2, 56)
+        # 三张明细表的「+ / -」按钮列（管材面板同款）：+ 在按钮列表头格，
+        # 每行行尾「-」删该行；类别不允许时整列不显示（_update_pipe_buttons /
+        # _on_detail_loaded 控制显隐）。参数表列数随候选列变化，attach 在每次
+        # 重建表头后调用
+        self._pipe_buttons = RowButtonColumn(
+            self._pipe_table,
+            add_tooltip="为选中构件新增一行管材",
+            delete_tooltip="删除该管材行",
+        )
+        self._pipe_buttons.add_clicked.connect(self._add_pipe)
+        self._pipe_buttons.delete_clicked.connect(self._delete_pipe_row)
+        self._pipe_buttons.attach()
+        self._param_buttons = RowButtonColumn(
+            self._param_table,
+            add_tooltip="为选中构件新增一行参数",
+            delete_tooltip="删除该参数行",
+        )
+        self._param_buttons.add_clicked.connect(self._add_param)
+        self._param_buttons.delete_clicked.connect(self._delete_param_row)
+        self._qty_buttons = RowButtonColumn(
+            self._qty_table,
+            add_tooltip="为选中构筑物新增一行工程量",
+            delete_tooltip="删除该工程量行",
+        )
+        self._qty_buttons.add_clicked.connect(self._add_quantity)
+        self._qty_buttons.delete_clicked.connect(self._delete_qty_row)
+        self._qty_buttons.attach()
+        self._qty_buttons.set_visible(False)  # 仅附属构筑物显示，等明细加载定
 
         pipe_page = QWidget()
         # 页面背景与表格空白区同色（bg_card，浅色主题即白色），表格外区域不再发灰
@@ -401,11 +403,6 @@ class UnitPanel(QWidget):
         param_layout = QVBoxLayout(param_page)
         param_layout.setContentsMargins(6, 6, 6, 6)
         param_layout.setSpacing(4)
-        param_bar = QHBoxLayout()
-        param_bar.addWidget(self._make_button("＋参数", "为选中构件新增一行参数", self._add_param))
-        param_bar.addWidget(self._make_button("✕", "删除选中参数", self._delete_param))
-        param_bar.addStretch(1)
-        param_layout.addLayout(param_bar)
         param_layout.addWidget(self._param_table, 1)
 
         # 附属构筑物的工程量行（类别 / 项目 / 单位 三段合一的编辑界面）；
@@ -414,11 +411,6 @@ class UnitPanel(QWidget):
         qty_layout = QVBoxLayout(qty_page)
         qty_layout.setContentsMargins(6, 6, 6, 6)
         qty_layout.setSpacing(4)
-        qty_bar = QHBoxLayout()
-        qty_bar.addWidget(self._make_button("＋工程量", "为选中构筑物新增一行工程量", self._add_quantity))
-        qty_bar.addWidget(self._make_button("✕", "删除选中工程量行", self._delete_quantity))
-        qty_bar.addStretch(1)
-        qty_layout.addLayout(qty_bar)
         qty_layout.addWidget(self._qty_table, 1)
 
         detail.addTab(pipe_page, "管材")
@@ -653,7 +645,7 @@ class UnitPanel(QWidget):
         if not has_unit:
             self._vm.load_unit(None)
             self._element_table.setRowCount(0)
-            _clear_cell_widgets(self._pipe_table)  # 行尾「-」按钮显式销毁
+            self._pipe_buttons.clear_row_buttons()  # 行尾「-」按钮显式销毁
             self._pipe_table.setRowCount(0)
             self._param_table.setRowCount(0)
             self._qty_table.setRowCount(0)
@@ -1045,12 +1037,17 @@ class UnitPanel(QWidget):
 
     def _fill_multi_placeholders(self) -> None:
         """管材 / 构件参数 / 工程量三张表显示居中的“*多种…”占位行。"""
+        # 多选下增删没有明确目标行：行尾「-」全部销毁，按钮列整列隐藏
+        self._pipe_buttons.clear_row_buttons()
+        self._param_buttons.clear_row_buttons()
+        self._qty_buttons.clear_row_buttons()
+        self._param_buttons.set_visible(False)
+        self._qty_buttons.set_visible(False)
         for table, text in (
             (self._pipe_table, "*多种管材"),
             (self._param_table, "*多种参数"),
             (self._qty_table, "*多种工程量"),
         ):
-            _clear_cell_widgets(table)  # 管材表里残留的行尾「-」按钮要销毁
             table.clearSpans()
             table.setRowCount(1)
             placeholder = QTableWidgetItem(text)
@@ -1264,7 +1261,7 @@ class UnitPanel(QWidget):
             # 管材增删入口随类别显隐（直埋/非开挖一条、构筑物无管材时不显示）
             pipe_editable = self._update_pipe_buttons(element)
             # 管材表：管道壁厚列空 = 自动按图集（灰字显示图集值）
-            _clear_cell_widgets(self._pipe_table)  # 旧的行尾「-」按钮显式销毁
+            self._pipe_buttons.clear_row_buttons()  # 旧的行尾「-」按钮显式销毁
             self._pipe_table.clearSpans()
             self._pipe_table.setRowCount(len(pipes))
             auto_ts = auto_pipe_thicknesses(element) if (element is not None and pipes) else {}
@@ -1319,17 +1316,7 @@ class UnitPanel(QWidget):
                 self._pipe_table.setItem(index, _PIPE_COL_CAT, cat_item)
                 if pipe_editable:
                     # 行尾「-」删行按钮：与条目行对齐，一行一个（无行即无按钮）
-                    del_btn = QPushButton("-")
-                    del_btn.setProperty("role", "icon-btn")
-                    del_btn.setToolTip("删除该管材行")
-                    del_btn.clicked.connect(
-                        lambda _checked=False, pipe_id=pipe.id: self._vm.remove_pipe(pipe_id)
-                    )
-                    holder = QWidget()
-                    holder_layout = QHBoxLayout(holder)
-                    holder_layout.setContentsMargins(8, 4, 8, 4)
-                    holder_layout.addWidget(del_btn)
-                    self._pipe_table.setCellWidget(index, _PIPE_COL_DEL, holder)
+                    self._pipe_buttons.add_row_button(index)
 
             # 参数表：直埋构件且有候选时，"参数值"右侧追加候选参数列
             # （混凝土管 8 列 / 其他管材 4 列）；此时参数值列锁定（自动从
@@ -1350,12 +1337,17 @@ class UnitPanel(QWidget):
                 if show_candidates
                 else ()
             )
-            headers = list(_PARAM_HEADERS) + [c.label for c in self._candidate_columns]
+            headers = list(_PARAM_HEADERS) + [c.label for c in self._candidate_columns] + [""]
             self._param_table.clearSpans()
             self._param_table.setColumnCount(len(headers))
             self._param_table.setHorizontalHeaderLabels(headers)
             for offset in range(len(self._candidate_columns)):
                 self._param_table.setColumnWidth(len(_PARAM_HEADERS) + offset, _CANDIDATE_WIDTH)
+            # 按钮列重新附着到新末列（候选列数变化）；所有类别都可加自定义参数，
+            # 未选构件时整列不显示
+            self._param_buttons.attach()
+            self._param_buttons.set_visible(element is not None)
+            self._param_buttons.clear_row_buttons()
             self._param_table.setRowCount(len(params))
             auto_params = auto_atlas_params(element) if element is not None else {}
             # 当前匹配到的候选组合（键 + 层级）：那一列的格子用浅底色标出来，
@@ -1413,6 +1405,10 @@ class UnitPanel(QWidget):
                 self._param_table.setItem(index, 0, key_item)
                 self._param_table.setItem(index, 1, unit_item)
                 self._param_table.setItem(index, 2, value_item)
+                # 行尾「-」只装在可删行上：图集参数行与构筑物名称/单位行锁定，
+                # 删不掉就不给按钮（与数据层 delete_param 的限制一致）
+                if not param.lock_name:
+                    self._param_buttons.add_row_button(index)
                 if show_candidates:
                     candidate_field = _CANDIDATE_FIELD_BY_PARAM.get(param.key)
                     for offset, column in enumerate(self._candidate_columns):
@@ -1452,9 +1448,12 @@ class UnitPanel(QWidget):
                                 cell.setToolTip(column.tooltip)
                         self._param_table.setItem(index, len(_PARAM_HEADERS) + offset, cell)
 
-            # 工程量表：仅附属构筑物可录入；其它类别显示占位说明
+            # 工程量表：仅附属构筑物可录入；其它类别显示占位说明，
+            # 按钮列（+ 表头格 + 行尾「-」）只在构筑物下显示
             self._qty_table.clearSpans()
             is_structure = element is not None and element.category == CATEGORY_STRUCTURE
+            self._qty_buttons.set_visible(is_structure)
+            self._qty_buttons.clear_row_buttons()
             if is_structure:
                 self._qty_table.setRowCount(len(quantities))
                 for index, quantity in enumerate(quantities):
@@ -1464,6 +1463,7 @@ class UnitPanel(QWidget):
                     self._qty_table.setItem(index, 1, QTableWidgetItem(quantity.item))
                     self._qty_table.setItem(index, 2, QTableWidgetItem(quantity.unit))
                     self._qty_table.setItem(index, 3, QTableWidgetItem(quantity.value))
+                    self._qty_buttons.add_row_button(index)
             else:
                 self._qty_table.setRowCount(1)
                 hint = QTableWidgetItem("仅附属构筑物可录入工程量行（类别｜项目｜单位｜值算式）。")
@@ -1575,46 +1575,35 @@ class UnitPanel(QWidget):
     def _add_pipe(self) -> None:
         self._vm.add_pipe()
 
+    def _delete_pipe_row(self, row: int) -> None:
+        pipe_id = self._pipe_id_at(row)
+        if pipe_id is not None:
+            self._vm.remove_pipe(pipe_id)
+
     def _update_pipe_buttons(self, element) -> bool:
         """按构件类别显隐管材增删入口，返回是否可增删（决定是否建行尾「-」按钮）。
 
         直埋 / 顶管 / 牵引管恒为一条管材、附属构筑物不带管材——「+」和删行
         按钮列直接不显示（不做禁用态）；包封 / 箱涵 / 管廊可增删：「+」在
-        删行列的表头格里，每行行尾一个「-」（无管材行即无按钮）。
+        按钮列的表头格里，每行行尾一个「-」（无管材行即无按钮）。
         """
         editable = _pipe_panel_editable(element)
-        self._pipe_table.setColumnHidden(_PIPE_COL_DEL, not editable)
-        self._place_add_pipe_button()
+        self._pipe_buttons.set_visible(editable)
         return editable
-
-    def _place_add_pipe_button(self) -> None:
-        """把「+」按钮钉在删行列的表头格里：列宽/显隐/横向滚动变化都要重摆。"""
-        header = self._pipe_table.horizontalHeader()
-        if self._pipe_table.isColumnHidden(_PIPE_COL_DEL):
-            self._btn_add_pipe.hide()
-            return
-        button = self._btn_add_pipe
-        button.setGeometry(
-            header.sectionViewportPosition(_PIPE_COL_DEL) + 3,
-            3,
-            header.sectionSize(_PIPE_COL_DEL) - 6,
-            header.height() - 6,
-        )
-        button.show()
 
     def _add_param(self) -> None:
         self._vm.add_param()
 
-    def _delete_param(self) -> None:
-        param_id = self._param_id_at(self._param_table.currentRow())
+    def _delete_param_row(self, row: int) -> None:
+        param_id = self._param_id_at(row)
         if param_id is not None:
             self._vm.remove_param(param_id)
 
     def _add_quantity(self) -> None:
         self._vm.add_quantity()
 
-    def _delete_quantity(self) -> None:
-        quantity_id = self._qty_id_at(self._qty_table.currentRow())
+    def _delete_qty_row(self, row: int) -> None:
+        quantity_id = self._qty_id_at(row)
         if quantity_id is not None:
             self._vm.remove_quantity(quantity_id)
 

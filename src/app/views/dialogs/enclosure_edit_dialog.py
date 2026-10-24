@@ -45,6 +45,7 @@ from app.views.dialogs.principle_dialogs import (
 )
 from app.views.widgets.cell_fill_table import CellFillTable
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
+from app.views.widgets.row_button_column import RowButtonColumn
 
 _EXCVT_CHOICES = ("Ⅰ、Ⅱ类土", "Ⅲ类土", "Ⅳ类土", "松石", "次坚石", "普坚石", "特坚石")
 _DOCK_CHOICES = ("至管顶50cm", "至管顶标高", "至管中心标高", "至沟槽顶标高")
@@ -91,16 +92,18 @@ class EnclosureEditDialog(FramelessDialog):
         self._work_table.cellChanged.connect(self._on_cell_changed)
         self._work_table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         table_row.addWidget(self._work_table, 1)
-        # 「+」紧贴表格右侧（原版 BTNadd 在 止水形式描述 列右边，与首行同高）
-        add_column = QVBoxLayout()
-        self._btn_add = QPushButton("+")
-        self._btn_add.setProperty("role", "icon-btn")
-        self._btn_add.setFixedSize(28, 34)
-        self._btn_add.setToolTip("添加围护做法（Insert）")
-        self._btn_add.clicked.connect(lambda: self._insert_work())
-        add_column.addWidget(self._btn_add)
-        add_column.addStretch(1)
-        table_row.addLayout(add_column)
+        # 「+ / -」按钮列（管材面板同款）：+ 在按钮列表头格，每行行尾「-」
+        # 删该行（只剩一条做法时删除被禁 → 行尾不装「-」，见 _fill）
+        self._work_buttons = RowButtonColumn(
+            self._work_table,
+            add_tooltip="添加围护做法（Insert）",
+            delete_tooltip="删除该围护做法",
+        )
+        self._work_buttons.add_clicked.connect(lambda: self._insert_work())
+        self._work_buttons.delete_clicked.connect(
+            lambda row: self._delete_work_rows([row])
+        )
+        self._work_buttons.attach()
         root.addLayout(table_row, 1)
 
     def _build_excavation_box(self) -> QGroupBox:
@@ -196,6 +199,7 @@ class EnclosureEditDialog(FramelessDialog):
             works = enclosure.works_sorted() if enclosure else []
             library = project_io.component_library()
             table = self._work_table
+            self._work_buttons.clear_row_buttons()
             table.clearContents()
             table.setRowCount(len(works))
             for row_index, work in enumerate(works):
@@ -233,6 +237,10 @@ class EnclosureEditDialog(FramelessDialog):
                     lambda text, w=work: self._on_waterstop_changed(w, text)
                 )
                 table.setCellWidget(row_index, _COL_WS_CAT, ws_combo)
+
+                # 行尾「-」删行按钮：至少保留一种做法，只剩一行时不装
+                if len(works) > 1:
+                    self._work_buttons.add_row_button(row_index)
         finally:
             self._loading = False
         # 内嵌下拉框就位后重算内容列宽：setRowCount 触发的自动重算发生在控件
@@ -362,11 +370,13 @@ class EnclosureEditDialog(FramelessDialog):
         self._fill()
 
     def _delete_selected_works(self) -> None:
-        enclosure = self._enclosure()
-        if enclosure is None:
-            return
         rows = sorted({index.row() for index in self._work_table.selectedIndexes()}, reverse=True)
-        if not rows:
+        self._delete_work_rows(rows)
+
+    def _delete_work_rows(self, rows: list[int]) -> None:
+        """删指定行（行尾「-」单行 / Delete 键多行共用）；全删时提示保底一条。"""
+        enclosure = self._enclosure()
+        if enclosure is None or not rows:
             return
         works = enclosure.works_sorted()
         if len(rows) >= len(works):
@@ -463,9 +473,9 @@ class _WorkTable(CellFillTable):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setColumnCount(6)
+        self.setColumnCount(7)
         self.setHorizontalHeaderLabels(
-            ["埋深 m", "范围", "围护类型", "围护形式描述", "止水类型", "止水形式描述"]
+            ["埋深 m", "范围", "围护类型", "围护形式描述", "止水类型", "止水形式描述", ""]
         )
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)

@@ -273,8 +273,8 @@ def test_enclosure_dialog_no_precipitation_box_and_button_position(qapp, project
 
 
 def test_foundation_dialog_layout(qapp, project) -> None:
-    """地基原则编辑：换填层 3 行起滚动、加号对表头、构件类型行 2:1、
-    描述在框下方、底部 取消/确认（Apple HIG）。"""
+    """地基原则编辑：换填层 3 行起滚动、+/-按钮同列（+ 在按钮列表头格）、
+    构件类型行 2:1、描述在框下方、底部 取消/确认（Apple HIG）。"""
     from PySide6.QtWidgets import QPushButton, QVBoxLayout
 
     from app.core.models import base as orm
@@ -297,13 +297,18 @@ def test_foundation_dialog_layout(qapp, project) -> None:
         expected = table.horizontalHeader().height() + 3 * 32
         assert table.minimumHeight() == expected
         assert table.maximumHeight() == expected
-        # 「+」按钮顶格在表格右侧：按钮顶边与表格（表头行）顶边对齐
-        origin = dialog.mapFromGlobal(dialog._btn_add.mapToGlobal(dialog.rect().topLeft()))
-        table_origin = dialog.mapFromGlobal(
-            dialog._replace_table.mapToGlobal(dialog._replace_table.rect().topLeft())
-        )
-        assert origin.y() == table_origin.y()
-        assert origin.x() > table_origin.x() + dialog._replace_table.width() - 60
+        # 「+」钉在按钮列的表头格里（与行尾「-」同一列）
+        button_col = dialog._replace_buttons.column
+        header = table.horizontalHeader()
+        add_button = dialog._replace_buttons.add_button
+        assert add_button.isVisibleTo(dialog)
+        assert add_button.x() == header.sectionViewportPosition(button_col) + 3
+        assert add_button.y() + add_button.height() <= header.height()
+        # 每行行尾都有「-」
+        for row in range(table.rowCount()):
+            holder = table.cellWidget(row, button_col)
+            delete_button = holder.findChild(QPushButton)
+            assert delete_button is not None and delete_button.text() == "-"
         # 构件类型行：下拉与编辑按钮同行，宽度 2:1
         picker = dialog._component_picker
         edit_button = picker.parentWidget().layout().itemAt(1).widget()

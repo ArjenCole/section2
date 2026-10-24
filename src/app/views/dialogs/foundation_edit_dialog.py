@@ -38,6 +38,7 @@ from app.services import project_io
 from app.views.dialogs.principle_dialogs import ComponentEditDialog, describe_component
 from app.views.widgets.cell_fill_table import CellFillTable
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
+from app.views.widgets.row_button_column import RowButtonColumn
 
 _COL_MATERIAL, _COL_THICKNESS = 0, 1
 
@@ -81,23 +82,20 @@ class FoundationEditDialog(FramelessDialog):
 
         replace_box = QGroupBox("换填层")
         replace_layout = QVBoxLayout(replace_box)
-        table_row = QHBoxLayout()
         self._replace_table = _ReplaceTable()
         self._replace_table.insert_requested.connect(self._insert_replacement)
         self._replace_table.delete_requested.connect(self._delete_selected_replacements)
         self._replace_table.cellChanged.connect(self._on_cell_changed)
-        self._replace_table.horizontalHeader().setStretchLastSection(True)
-        table_row.addWidget(self._replace_table, 1)
-        # 「+」紧贴表格右侧、与表头行顶对齐（同围护原则编辑窗体做法表的「+」）
-        add_column = QVBoxLayout()
-        self._btn_add = QPushButton("+")
-        self._btn_add.setProperty("role", "icon-btn")
-        self._btn_add.setFixedSize(28, 34)
-        self._btn_add.clicked.connect(lambda: self._insert_replacement())
-        add_column.addWidget(self._btn_add)
-        add_column.addStretch(1)
-        table_row.addLayout(add_column)
-        replace_layout.addLayout(table_row)
+        replace_layout.addWidget(self._replace_table, 1)
+        # 「+ / -」按钮列（管材面板同款）：+ 在按钮列表头格，每行行尾「-」删该行
+        self._replace_buttons = RowButtonColumn(
+            self._replace_table,
+            add_tooltip="添加换填层（Insert）",
+            delete_tooltip="删除该换填层",
+        )
+        self._replace_buttons.add_clicked.connect(lambda: self._insert_replacement())
+        self._replace_buttons.delete_clicked.connect(self._delete_replacement_row)
+        self._replace_buttons.attach()
         root.addWidget(replace_box, 1)
 
         component_box = QGroupBox("特殊地基")
@@ -155,12 +153,15 @@ class FoundationEditDialog(FramelessDialog):
             orm.session().expire(foundation)  # 提交后强制重载 replacements/components
             self._name.setText(foundation.name)
             replacements = list(foundation.replacements)
+            self._replace_buttons.clear_row_buttons()
             self._replace_table.setRowCount(len(replacements))
             for row_index, replacement in enumerate(replacements):
                 name_item = QTableWidgetItem(replacement.name)
                 name_item.setData(Qt.ItemDataRole.UserRole, replacement.id)
                 self._replace_table.setItem(row_index, _COL_MATERIAL, name_item)
                 self._replace_table.setItem(row_index, _COL_THICKNESS, QTableWidgetItem(f"{replacement.h:g}"))
+                # 行尾「-」删行按钮：一行一个（无行即无按钮，删除无最少条数限制）
+                self._replace_buttons.add_row_button(row_index)
             component = foundation.components[0] if foundation.components else None
             self._component_picker.blockSignals(True)
             if component is not None:
@@ -249,15 +250,21 @@ class FoundationEditDialog(FramelessDialog):
         self._fill()
 
     def _delete_selected_replacements(self) -> None:
-        foundation = self._foundation()
-        if foundation is None:
-            return
         rows = sorted({index.row() for index in self._replace_table.selectedIndexes()}, reverse=True)
-        if not rows:
+        self._delete_replacements(rows)
+
+    def _delete_replacement_row(self, row: int) -> None:
+        """行尾「-」：删该行换填层（无最少条数限制，删空即不换填）。"""
+        self._delete_replacements([row])
+
+    def _delete_replacements(self, rows: list[int]) -> None:
+        foundation = self._foundation()
+        if foundation is None or not rows:
             return
+        replacements = list(foundation.replacements)
         for row in rows:
-            if row < len(foundation.replacements):
-                orm.session().delete(foundation.replacements[row])
+            if row < len(replacements):
+                orm.session().delete(replacements[row])
         orm.session().flush()
         orm.session().expire(foundation)  # 集合里还留着已删对象，强制重载
         for index, item in enumerate(foundation.replacements):
@@ -292,14 +299,14 @@ class FoundationEditDialog(FramelessDialog):
 
 
 class _ReplaceTable(CellFillTable):
-    """换填层表：Insert 插入 / Delete 删除选中行（原版 dGVR_KeyUp）。"""
+    """换填层表：Insert 插入 / Delete 删除选中行（原版 dGVR_KeyUp）；末列空表头 = 按钮列。"""
 
     insert_requested = Signal(int)
     delete_requested = Signal()
 
     def __init__(self) -> None:
-        super().__init__(0, 2)
-        self.setHorizontalHeaderLabels(["换填材质", "厚度 mm"])
+        super().__init__(0, 3)
+        self.setHorizontalHeaderLabels(["换填材质", "厚度 mm", ""])
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.verticalHeader().setVisible(False)

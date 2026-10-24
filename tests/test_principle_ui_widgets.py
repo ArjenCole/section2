@@ -539,26 +539,36 @@ def test_pipe_add_delete_buttons_follow_category(qapp, project):
             panel._element_table.setCurrentCell(row, 0)
             qapp.processEvents()
 
-        # 直埋：「+」不显示，删行列整列隐藏
+        # 直埋：「+」不显示，删行列整列隐藏；参数表按钮列可用（可加自定义参数），
+        # 但参数行全是图集行（锁定）→ 行尾没有「-」；工程量按钮列不显示
         select_row(0)
-        assert not panel._btn_add_pipe.isVisibleTo(panel)
+        assert not panel._pipe_buttons.add_button.isVisibleTo(panel._pipe_table)
         assert panel._pipe_table.isColumnHidden(_PIPE_COL_DEL)
+        assert panel._param_buttons.add_button.isVisibleTo(panel._param_table)
+        assert not panel._qty_buttons.add_button.isVisibleTo(panel._qty_table)
+        for row in range(panel._param_table.rowCount()):
+            assert panel._param_table.cellWidget(row, panel._param_buttons.column) is None
         # 顶管 / 牵引管：同直埋
         select_row(1)
-        assert not panel._btn_add_pipe.isVisibleTo(panel)
+        assert not panel._pipe_buttons.add_button.isVisibleTo(panel._pipe_table)
         assert panel._pipe_table.isColumnHidden(_PIPE_COL_DEL)
         select_row(2)
-        assert not panel._btn_add_pipe.isVisibleTo(panel)
-        # 构筑物：同直埋（本来也没有管材行）
+        assert not panel._pipe_buttons.add_button.isVisibleTo(panel._pipe_table)
+        # 构筑物：同直埋（本来也没有管材行）；工程量按钮列只在构筑物下显示，
+        # 且每行行尾都有「-」
         select_row(3)
-        assert not panel._btn_add_pipe.isVisibleTo(panel)
+        assert not panel._pipe_buttons.add_button.isVisibleTo(panel._pipe_table)
         assert panel._pipe_table.isColumnHidden(_PIPE_COL_DEL)
+        assert panel._qty_buttons.add_button.isVisibleTo(panel._qty_table)
+        for row in range(panel._qty_table.rowCount()):
+            holder = panel._qty_table.cellWidget(row, panel._qty_buttons.column)
+            assert holder is not None and holder.findChild(QPushButton) is not None
         # 箱涵：「+」显示且钉在删行列的表头格里（与行尾「-」同一列）
         select_row(4)
-        assert panel._btn_add_pipe.isVisibleTo(panel)
+        assert panel._pipe_buttons.add_button.isVisibleTo(panel._pipe_table)
         assert not panel._pipe_table.isColumnHidden(_PIPE_COL_DEL)
         header = panel._pipe_table.horizontalHeader()
-        assert panel._btn_add_pipe.x() == header.sectionViewportPosition(_PIPE_COL_DEL) + 3
+        assert panel._pipe_buttons.add_button.x() == header.sectionViewportPosition(_PIPE_COL_DEL) + 3
         holder = panel._pipe_table.cellWidget(0, _PIPE_COL_DEL)
         assert holder is not None
         delete_button = holder.findChild(QPushButton)
@@ -574,7 +584,7 @@ def test_pipe_add_delete_buttons_follow_category(qapp, project):
         qapp.processEvents()
         assert not box.pipes
         assert panel._pipe_table.cellWidget(0, _PIPE_COL_DEL) is None
-        assert panel._btn_add_pipe.isVisibleTo(panel)  # 「+」仍在，可重新加行
+        assert panel._pipe_buttons.add_button.isVisibleTo(panel._pipe_table)  # 「+」仍在，可重新加行
     finally:
         panel.close()
 
