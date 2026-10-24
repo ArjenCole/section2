@@ -101,17 +101,19 @@ def test_reopen_keeps_everything(tmp_path: Path) -> None:
     pipes = unit_vm.pipe_rows(element.id)
     assert [(pipe.mat, pipe.dn, pipe.content) for pipe in pipes] == [("HDPE", 600, "1")]
     params = unit_vm.param_rows(element.id)
-    # 直埋构件带三行图集参数；有管材后参数值由候选自动匹配写入（HDPE 图集表
-    # 没有 a / C1 列 → 两行为空 = 引擎回退自动，C2 有值），重开后保持一致
+    # 直埋构件带四行图集参数（管道壁厚在最前）；有管材后参数值由候选自动匹配
+    # 写入（HDPE 图集表没有 a / C1 列 → 两行为空 = 引擎回退自动），重开后保持一致
     assert [(param.key, param.unit) for param in params] == [
+        ("管道壁厚", "mm"),
         ("工作面加宽", "mm"),
         ("垫层厚", "mm"),
         ("基础厚", "mm"),
         ("含钢量", ""),
     ]
-    assert params[0].value == "" and params[1].value == ""
-    assert params[2].value == "155"
-    assert params[3].value == "35"
+    assert params[0].value == "10"  # HDPE Dn600 120° 图集壁厚
+    assert params[1].value == "" and params[2].value == ""
+    assert params[3].value == "155"
+    assert params[4].value == "35"
 
 
 def test_commit_is_autosave(tmp_path: Path) -> None:
@@ -354,12 +356,14 @@ def test_v6_project_gets_buried_atlas_params_back(tmp_path: Path) -> None:
     try:
         assert orm.get_meta("schema_version") == str(SCHEMA_VERSION)
         rows = [(param.key, param.unit, param.value) for param in unit_vm.param_rows(buried.id)]
-        # 补的三行排在原有行之后（按 id 排序）
+        # 直埋的图集参数行排在最前（管道壁厚 / 工作面加宽 / 垫层厚 / 基础厚），
+        # 其它参数按原有 id 次序跟在后面
         assert rows == [
-            ("含钢量", "kg/m3", "35"),
+            ("管道壁厚", "mm", ""),
             ("工作面加宽", "mm", ""),
             ("垫层厚", "mm", ""),
             ("基础厚", "mm", ""),
+            ("含钢量", "kg/m3", "35"),
         ]
     finally:
         project_io.close_project()

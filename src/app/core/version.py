@@ -27,7 +27,9 @@ APP_VERSION = "2.0.0.0"
 #: v9：图集候选参数列（element_atlas_candidate 表）：直埋构件的 a/C1/C2 按
 #:     当前围护原则从 8 组快照（砼/非砼 × 90/120/150/180）自动选组，参数值列
 #:     锁定；候选是一次性快照、可手改（见 core.atlas_candidates）
-SCHEMA_VERSION = 9
+#: v10：管道壁厚并入构件参数行（"管道壁厚" mm，直埋第一行，候选同 a/C1/C2）；
+#:      候选表加 t 列；管材面板的壁厚列改为只读引用。v9 → v10 迁移按首根管壁厚回填
+SCHEMA_VERSION = 10
 
 #: 新版工程文件
 PROJECT_SUFFIX = ".stn2"

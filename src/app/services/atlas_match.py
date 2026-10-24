@@ -40,6 +40,7 @@ from app.core.param_naming import (
     PARAM_A_NAME,
     PARAM_C1_NAME,
     PARAM_C2_NAME,
+    PARAM_T_NAME,
     atlas_param_rows,
 )
 from app.core.evaluator import format_number
@@ -129,6 +130,7 @@ def ensure_atlas_candidates(element: Element) -> bool:
                 ElementAtlasCandidate(
                     con_found=con_found,
                     angle=angle,
+                    t=at.t if at.t else None,
                     a=at.a if at.a else None,
                     c1=at.c1 if at.c1 else None,
                     c2=at.c2 if at.c2 else None,
@@ -160,9 +162,14 @@ def match_atlas_candidates(element: Element, *, commit: bool = True) -> bool:
         element.atlas_candidates, _match_con_found(element, pe), int(pe.found_angle)
     )
     values = (
-        {PARAM_A_NAME: None, PARAM_C1_NAME: None, PARAM_C2_NAME: None}
+        {PARAM_T_NAME: None, PARAM_A_NAME: None, PARAM_C1_NAME: None, PARAM_C2_NAME: None}
         if row is None
-        else {PARAM_A_NAME: row.a, PARAM_C1_NAME: row.c1, PARAM_C2_NAME: row.c2}
+        else {
+            PARAM_T_NAME: row.t,
+            PARAM_A_NAME: row.a,
+            PARAM_C1_NAME: row.c1,
+            PARAM_C2_NAME: row.c2,
+        }
     )
     existing = {(param.key, param.unit): param for param in element.params}
     changed = False
@@ -179,10 +186,26 @@ def match_atlas_candidates(element: Element, *, commit: bool = True) -> bool:
         elif param.value != text:
             param.value = text
             changed = True
+    # 管道壁厚以参数行为准：同步回首根管的 t（引擎 / 断面 / 包封扣管位都读它）
+    if _sync_pipe_thickness(element, values.get(PARAM_T_NAME)):
+        changed = True
     if changed and commit:
         project_io.commit()
         _expire(element)
     return changed
+
+
+def _sync_pipe_thickness(element: Element, value: float | None) -> bool:
+    """把参数行的管道壁厚写回首根管；无管或值未变返回 False。"""
+    pipes = list(element.pipes)
+    if not pipes:
+        return False
+    head = pipes[0]
+    target = float(value) if value is not None else None
+    if head.t == target:
+        return False
+    head.t = target
+    return True
 
 
 def selected_combo(element: Element) -> tuple[str | None, str | None]:

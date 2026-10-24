@@ -408,6 +408,67 @@ def _migrate_v8_atlas_candidates(engine: Engine) -> None:
     ElementAtlasCandidate.__table__.create(engine, checkfirst=True)
 
 
+def _migrate_v9_pipe_thickness_param(engine: Engine) -> None:
+    """v9 → v10：管道壁厚并入构件参数行（直埋第一行），候选表加 t 列。
+
+    * ``element_atlas_candidate`` 加 ``t`` 列，按该构件首根管的壁厚回填：
+      v9 之前壁厚只存在管材行上，不随 (基础形式, 角度) 变；回填后候选列的
+      "管道壁厚"一行才有值，否则升级后的老工程会看到一整列空格。
+    * 直埋构件补一行 ``管道壁厚 mm`` 参数（值取首根管当前壁厚，空 = 按图集），
+      顺序放在最前，和其它图集参数行一样由候选自动选组。
+    """
+    from sqlalchemy import inspect as sqla_inspect
+
+    inspection = sqla_inspect(engine)
+    tables = set(inspection.get_table_names())
+    columns = {column["name"] for column in inspection.get_columns("element_atlas_candidate")}
+    with engine.begin() as connection:
+        if "t" not in columns:
+            connection.execute(
+                text("ALTER TABLE element_atlas_candidate ADD COLUMN t FLOAT")
+            )
+        if "pipe" in tables and "element" in tables:
+            connection.execute(
+                text(
+                    "UPDATE element_atlas_candidate SET t = ("
+                    " SELECT p.t FROM pipe p WHERE p.element_id = element_atlas_candidate.element_id"
+                    " ORDER BY p.id LIMIT 1) WHERE t IS NULL"
+                )
+            )
+        if "element_param" in tables and "element" in tables:
+            # 直埋管道（category = 1）补"管道壁厚"参数行，值 = 首根管壁厚
+            rows = connection.execute(
+                text(
+                    "SELECT e.id, (SELECT p.t FROM pipe p WHERE p.element_id = e.id"
+                    " ORDER BY p.id LIMIT 1) AS t FROM element e"
+                    " WHERE e.category = 1"
+                )
+            ).fetchall()
+            for element_id, thickness in rows:
+                exists = connection.execute(
+                    text(
+                        "SELECT id, value FROM element_param"
+                        " WHERE element_id = :id AND key = '管道壁厚' AND unit = 'mm'"
+                    ),
+                    {"id": element_id},
+                ).first()
+                value = "" if thickness is None else f"{float(thickness):g}"
+                if exists is None:
+                    connection.execute(
+                        text(
+                            "INSERT INTO element_param (element_id, key, unit, value)"
+                            " VALUES (:id, '管道壁厚', 'mm', :value)"
+                        ),
+                        {"id": element_id, "value": value},
+                    )
+                elif not str(exists[1] or "").strip() and value:
+                    # 更早的迁移可能已插了空行：把首根管壁厚补进去
+                    connection.execute(
+                        text("UPDATE element_param SET value = :value WHERE id = :id"),
+                        {"value": value, "id": exists[0]},
+                    )
+
+
 #: 结构迁移入口。键为源版本号，值为“从该版本迁到 +1 版本”的函数。
 _MIGRATIONS: dict[int, "callable"] = {
     1: _migrate_v1_add_element_source,
@@ -418,6 +479,7 @@ _MIGRATIONS: dict[int, "callable"] = {
     6: _migrate_v6_scope_atlas_params,
     7: _migrate_v7_pipe_category,
     8: _migrate_v8_atlas_candidates,
+    9: _migrate_v9_pipe_thickness_param,
 }
 
 

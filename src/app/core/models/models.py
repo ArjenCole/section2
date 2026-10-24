@@ -431,6 +431,8 @@ class ElementAtlasCandidate(Base):
     con_found: Mapped[bool] = mapped_column(Boolean, default=True)
     #: 基础角度 °（90 / 120 / 150 / 180）
     angle: Mapped[int] = mapped_column(Integer, default=120)
+    #: 管道壁厚 mm（图集 t 列）；None = 图集该组合无值
+    t: Mapped[float | None] = mapped_column(Float, nullable=True)
     #: 工作面加宽 mm；None = 图集该组合无值
     a: Mapped[float | None] = mapped_column(Float, nullable=True)
     #: 垫层厚 mm；None = 图集该组合无值

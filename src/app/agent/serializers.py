@@ -100,6 +100,7 @@ def element_detail_dict(element_id: int) -> dict:
             "candidate_id": row.id,
             "con_found": row.con_found,
             "angle": row.angle,
+            "t": row.t,
             "a": row.a,
             "c1": row.c1,
             "c2": row.c2,

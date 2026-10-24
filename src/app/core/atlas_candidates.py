@@ -30,6 +30,9 @@ from dataclasses import dataclass
 #: 围护原则基础角度的四种取值
 CANDIDATE_ANGLES: tuple[int, ...] = (90, 120, 150, 180)
 
+#: 候选行里的数值字段（顺序 = 参数面板的图集参数行顺序）
+CANDIDATE_FIELDS: tuple[str, ...] = ("t", "a", "c1", "c2")
+
 
 def combo_key(con_found: bool, angle: int) -> str:
     """候选组合键：``con90``（采用砼基础 90°）… ``plain180``（不采用 180°）。"""
@@ -125,12 +128,12 @@ def is_cross_group(level: str | None) -> bool:
 
 
 def _usable_rows(rows, con_found: bool):
-    """该组里有数据的候选行；a / C1 / C2 全 None = 图集无此组合，剔除。"""
+    """该组里有数据的候选行；t / a / C1 / C2 全 None = 图集无此组合，剔除。"""
     return [
         row
         for row in rows
         if bool(row.con_found) == bool(con_found)
-        and (row.a is not None or row.c1 is not None or row.c2 is not None)
+        and any(getattr(row, field, None) is not None for field in CANDIDATE_FIELDS)
     ]
 
 

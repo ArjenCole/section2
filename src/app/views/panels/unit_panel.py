@@ -36,6 +36,7 @@ from app.core.param_naming import (
     PARAM_A_NAME,
     PARAM_C1_NAME,
     PARAM_C2_NAME,
+    PARAM_T_NAME,
     STRUCTURE_NAME_PARAM,
     STRUCTURE_UNIT_PARAM,
 )
@@ -97,11 +98,12 @@ _QCOL_AMOUNT = 5
 _QUANTITY_WIDTHS = [77, 66, 193, 48, 434, 135]
 
 _PIPE_ROLE = Qt.ItemDataRole.UserRole + 1
-#: 管材表 5 列：管材（材质文字）/ 管径 / 管道壁厚 / 含量 / 类别。
-#: 壁厚空 = 自动按图集（灰字显示图集值），可手填；"类别"是计算唯一依据
-#: （面宽表行、图集分流、断面图砼判断都读它），默认由构件库快照写入；
+#: 管材表 5 列：管材（材质文字）/ 管径 / 壁厚 / 含量 / 类别。
+#: 直埋管道的壁厚只读——由构件参数行「管道壁厚」自动带出（候选值驱动）；
+#: 其他类别壁厚空 = 自动按图集（灰字显示图集值），可手填。"类别"是计算唯一
+#: 依据（面宽表行、图集分流、断面图砼判断都读它），默认由构件库快照写入；
 #: "管材"是材质描述文字（规格与设备材料表用），不参与计算。
-_PIPE_HEADERS = ["管材", "管径(mm)", "管道壁厚(mm)", "含量", "类别"]
+_PIPE_HEADERS = ["管材", "管径mm", "壁厚mm", "含量", "类别"]
 _PIPE_COL_MAT = 0
 _PIPE_COL_DN = 1
 _PIPE_COL_T = 2
@@ -129,7 +131,12 @@ _MATCH_BG_CROSS = "cross"
 #: 单位列居中，构筑物名称 / 单位行的单位列显示 “-”
 _PARAM_HEADERS = ["参数名", "单位", "参数值"]
 #: 直埋 + 有候选时参数值列锁定（自动从候选里选），候选列可编辑
-_CANDIDATE_FIELD_BY_PARAM = {PARAM_A_NAME: "a", PARAM_C1_NAME: "c1", PARAM_C2_NAME: "c2"}
+_CANDIDATE_FIELD_BY_PARAM = {
+    PARAM_T_NAME: "t",
+    PARAM_A_NAME: "a",
+    PARAM_C1_NAME: "c1",
+    PARAM_C2_NAME: "c2",
+}
 _CANDIDATE_WIDTH = 56
 #: 参数表列宽：参数名列窄、单位列宽（单位内容居中显示）
 _PARAM_NAME_WIDTH = 90
@@ -1239,7 +1246,28 @@ class UnitPanel(QWidget):
                 self._pipe_table.setItem(index, _PIPE_COL_MAT, mat_item)
                 self._pipe_table.setItem(index, _PIPE_COL_DN, QTableWidgetItem(str(pipe.dn)))
                 auto_t = auto_ts.get(pipe.id)
-                if pipe.t is None:
+                # 直埋管道的壁厚由构件参数行「管道壁厚」自动带出（候选值驱动），
+                # 管材行不再手填；多管构件只有首根管跟参数行走，其余仍可手填
+                from_param = (
+                    element is not None
+                    and element.category == CATEGORY_BURIED
+                    and index == 0
+                )
+                if from_param:
+                    param_value = next(
+                        (row.value for row in params if row.key == PARAM_T_NAME), ""
+                    ).strip()
+                    text = param_value or ("" if not auto_t else format_number(auto_t))
+                    t_item = QTableWidgetItem(text)
+                    t_item.setFlags(t_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    if param_value:
+                        t_item.setToolTip(
+                            "壁厚由构件参数「管道壁厚」自动带出（改候选值即可）。"
+                        )
+                    else:
+                        t_item.setForeground(QBrush(_secondary_color()))
+                        t_item.setToolTip("壁厚：暂无匹配的候选值，按图集自动。")
+                elif pipe.t is None:
                     t_item = QTableWidgetItem("" if auto_t is None else format_number(auto_t))
                     t_item.setForeground(QBrush(_secondary_color()))
                     t_item.setToolTip(

@@ -197,6 +197,48 @@ def test_category_abbreviations():
     assert _category_abbr(CATEGORY_NONE) == ""
 
 
+def test_pipe_table_headers_and_readonly_thickness(qapp, project):
+    """管材表：表头改为"管径mm / 壁厚mm"（全部构件）；直埋的壁厚格只读，引用参数行。"""
+    from PySide6.QtCore import Qt
+
+    from app.core.models.models import CATEGORY_ENCASED
+    from app.services import project_io
+    from app.viewmodels import unit_vm
+    from app.views.panels.unit_panel import _PIPE_HEADERS, UnitPanel
+
+    assert _PIPE_HEADERS == ["管材", "管径mm", "壁厚mm", "含量", "类别"]
+
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    buried = unit_vm.create_element(unit.id, category=1, name="直埋")
+    unit_vm.create_pipe(buried.id, mat="Ⅱ级混凝土管", dn=600, content="1")
+    encased = unit_vm.create_element(unit.id, category=CATEGORY_ENCASED, name="包封")
+    unit_vm.create_pipe(encased.id, mat="Ⅱ级混凝土管", dn=600, content="1")
+
+    panel = UnitPanel()
+    try:
+        panel._show_unit(unit.id)
+        qapp.processEvents()
+        table = panel._pipe_table
+        assert [table.horizontalHeaderItem(c).text() for c in range(table.columnCount())] == (
+            _PIPE_HEADERS
+        )
+
+        # 直埋：壁厚格只读，值来自参数行「管道壁厚」
+        panel._element_table.setCurrentCell(0, 0)
+        qapp.processEvents()
+        cell = table.item(0, 2)
+        assert cell.text() == "65"
+        assert not cell.flags() & Qt.ItemFlag.ItemIsEditable
+
+        # 包封：没有候选列，壁厚仍可手填
+        panel._element_table.setCurrentCell(1, 0)
+        qapp.processEvents()
+        cell = table.item(0, 2)
+        assert cell.flags() & Qt.ItemFlag.ItemIsEditable
+    finally:
+        panel.close()
+
+
 def test_param_table_columns_and_no_unit_placeholder(qapp, project):
     """构件参数表：单位列居中且加宽（参数名列相应变窄）；构筑物名称 / 单位行的单位列
     显示 “-”；直埋管道显示三行图集参数与候选列（参数值由候选自动匹配、锁定）。"""
@@ -243,16 +285,23 @@ def test_param_table_columns_and_no_unit_placeholder(qapp, project):
             ("单位", ""),
         ]
 
-        # 排管（直埋）：三行图集参数，单位列居中；有候选后参数值由候选自动匹配
+        # 排管（直埋）：四行图集参数（管道壁厚在最前），单位列居中；
+        # 有候选后参数值由候选自动匹配
         panel._element_table.setCurrentCell(1, 0)
         qapp.processEvents()
         assert [table.item(row, 0).text() for row in range(table.rowCount())] == [
+            "管道壁厚",
             "工作面加宽",
             "垫层厚",
             "基础厚",
         ]
-        # Dn600 Ⅱ级混凝土管 120° 砼基础：a=130、C1=130、C2=182（候选自动匹配写入）
-        assert [table.item(row, 2).text() for row in range(table.rowCount())] == ["130", "130", "182"]
+        # Dn600 Ⅱ级混凝土管 120° 砼基础：t=65、a=130、C1=130、C2=182（候选自动匹配写入）
+        assert [table.item(row, 2).text() for row in range(table.rowCount())] == [
+            "65",
+            "130",
+            "130",
+            "182",
+        ]
         for row in range(table.rowCount()):
             assert table.item(row, 1).text() == "mm"
             assert table.item(row, 1).textAlignment() == Qt.AlignmentFlag.AlignCenter
@@ -359,7 +408,7 @@ def test_blank_candidate_cell_can_be_filled_by_hand(qapp, project):
         assert "con150" in keys
 
         column = 3 + keys.index("con150")
-        cell = table.item(2, column)  # 第三行 = 基础厚
+        cell = table.item(3, column)  # 第四行 = 基础厚（第一行是管道壁厚）
         assert cell is not None and cell.text() == ""
         assert cell.flags() & Qt.ItemFlag.ItemIsEditable
         assert cell.data(_CANDIDATE_NEW_ROLE) == (element.id, "con150", "c2")

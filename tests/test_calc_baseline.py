@@ -301,15 +301,21 @@ def test_trenchless_only_pipes(project) -> None:
 
 
 def test_buried_atlas_param_rows_show_atlas_defaults_and_apply(project) -> None:
-    """直埋管道显示工作面加宽 / 垫层厚 / 基础厚：默认按图集（空 = 自动），改值生效。"""
+    """直埋管道显示管道壁厚 / 工作面加宽 / 垫层厚 / 基础厚：默认按图集，改值生效。"""
     from app.core.models.models import ElementParam
 
     unit = project
     element = {item.name: item for item in _elements(unit)}["混凝土管"]
     rows = [(param.key, param.unit, param.lock_name) for param in unit_vm.param_rows(element.id)]
-    assert rows == [("工作面加宽", "mm", True), ("垫层厚", "mm", True), ("基础厚", "mm", True)]
-    # 空值行 = 自动按图集：灰字显示的自动值就是图集行（Dn600 Ⅱ级 120°）的 a / C1 / C2
+    assert rows == [
+        ("管道壁厚", "mm", True),
+        ("工作面加宽", "mm", True),
+        ("垫层厚", "mm", True),
+        ("基础厚", "mm", True),
+    ]
+    # 空值行 = 自动按图集：灰字显示的自动值就是图集行（Dn600 Ⅱ级 120°）
     assert unit_vm.auto_atlas_params(element) == {
+        "管道壁厚": 65.0,
         "工作面加宽": 130.0,
         "垫层厚": 130.0,
         "基础厚": 182.0,
@@ -429,6 +435,7 @@ def test_category_switch_reconciles_atlas_rows(project) -> None:
     unit = project
     element = {item.name: item for item in _elements(unit)}["混凝土管"]
     assert [param.key for param in unit_vm.param_rows(element.id)] == [
+        "管道壁厚",
         "工作面加宽",
         "垫层厚",
         "基础厚",
@@ -445,7 +452,7 @@ def test_category_switch_reconciles_atlas_rows(project) -> None:
     # 箱涵 → 直埋：基础厚行补回，且按 v9 自动匹配写值（现场查图集补候选一次）
     unit_vm.update_element(element.id, category=1)
     rows = [(param.key, param.value) for param in unit_vm.param_rows(element.id)]
-    assert [key for key, _value in rows] == ["工作面加宽", "垫层厚", "基础厚"]
+    assert [key for key, _value in rows] == ["管道壁厚", "工作面加宽", "垫层厚", "基础厚"]
     refreshed = {
         param.key: param.value for param in unit_vm.param_rows(element.id)
     }

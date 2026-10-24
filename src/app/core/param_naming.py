@@ -34,6 +34,8 @@ from app.core.models.models import (
     CATEGORY_GALLERY,
 )
 
+#: 管道壁厚（图集 t 列）：管子本身的属性，候选按 基础形式×角度 存，参数值自动选组
+PARAM_T_NAME = "管道壁厚"
 #: 管道工作面加宽（图集工作面宽度表 a 列），单位 mm
 PARAM_A_NAME = "工作面加宽"
 #: 管道垫层厚（图集 C1 列：管底以下的基础垫层），单位 mm
@@ -41,8 +43,10 @@ PARAM_C1_NAME = "垫层厚"
 #: 管道（管）基厚（图集 C2 列：管底以上包裹管道的基础），单位 mm
 PARAM_C2_NAME = "基础厚"
 
-#: 图集约定参数 → 单位；这三行参数名/单位固定（锁定），只允许改值
+#: 图集约定参数 → 单位；这些参数行名称/单位固定（锁定），只允许改值。
+#: 顺序即界面显示顺序（管道壁厚在最前，直埋管道才有）
 ATLAS_PARAM_NAMES: tuple[tuple[str, str], ...] = (
+    (PARAM_T_NAME, "mm"),
     (PARAM_A_NAME, "mm"),
     (PARAM_C1_NAME, "mm"),
     (PARAM_C2_NAME, "mm"),
@@ -50,14 +54,14 @@ ATLAS_PARAM_NAMES: tuple[tuple[str, str], ...] = (
 
 #: 各类别显示（并允许用户改值）的图集参数行（按 图集参数名 排列）：
 #:
-#: * **直埋管道**：工作面加宽 / 垫层厚 / 基础厚 三行都显示，默认值按图集
-#:   （空值 = 自动按图集，界面灰字显示图集值），用户可改；
+#: * **直埋管道**：管道壁厚 / 工作面加宽 / 垫层厚 / 基础厚 四行都显示，默认值
+#:   按图集（空值 = 自动按图集，界面灰字显示图集值）；
 #: * **包封埋管 / 箱涵 / 管廊**：垫层以上没有包角管座基础，基础厚恒为 0
 #:   （不显示、不可改），只显示工作面加宽 / 垫层厚（默认按软件约定
-#:   a=100、C1=100，用户可改）；
+#:   a=100、C1=100，用户可改）；壁厚仍写在管材行上（这些类别没有候选列）；
 #: * **顶管 / 牵引管**：只算管材，三行都不显示。
 ATLAS_PARAM_CATEGORIES: dict[int, tuple[str, ...]] = {
-    CATEGORY_BURIED: (PARAM_A_NAME, PARAM_C1_NAME, PARAM_C2_NAME),
+    CATEGORY_BURIED: (PARAM_T_NAME, PARAM_A_NAME, PARAM_C1_NAME, PARAM_C2_NAME),
     CATEGORY_ENCASED: (PARAM_A_NAME, PARAM_C1_NAME),
     CATEGORY_BOX_CULVERT: (PARAM_A_NAME, PARAM_C1_NAME),
     CATEGORY_GALLERY: (PARAM_A_NAME, PARAM_C1_NAME),

@@ -314,7 +314,7 @@ def test_match_clears_params_when_no_candidate_usable(project) -> None:
             param.value = "999"
     # 候选全部改成空 = 四级都不命中（候选行仍在，ensure 不会重建）
     for candidate in element.atlas_candidates:
-        candidate.a = candidate.c1 = candidate.c2 = None
+        candidate.t = candidate.a = candidate.c1 = candidate.c2 = None
     project_io.commit()
 
     match_atlas_candidates(element)
@@ -340,7 +340,7 @@ def test_match_borrows_other_group_when_same_group_empty(project) -> None:
     # 本组（砼基础）全部改空 → 只剩另一组（砂基础）有数据
     for candidate in element.atlas_candidates:
         if candidate.con_found:
-            candidate.a = candidate.c1 = candidate.c2 = None
+            candidate.t = candidate.a = candidate.c1 = candidate.c2 = None
     project_io.commit()
 
     match_atlas_candidates(element)
@@ -520,6 +520,41 @@ def test_thickness_falls_back_to_concrete_table_for_sand_foundation(project) -> 
     inserted = unit_vm._element(inserted.id)
     assert inserted.pipes[0].t == 25.0
     assert template.pipes[0].thickness_at(False, 120) == 25.0
+
+
+def test_pipe_thickness_is_first_param_and_drives_pipe(project) -> None:
+    """管道壁厚并入参数行（直埋第一行）：候选驱动、参数值锁定、同步到管材行。"""
+    from app.services.principle_edit import apply_enclosure_fields
+
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    template = element_library().find("直埋混凝土管", "Ⅱ级混凝土管", 8)  # Dn600
+    element = unit_vm.insert_element_template(unit.id, template)
+    assert element is not None
+
+    rows = unit_vm.param_rows(element.id)
+    assert [(row.key, row.unit) for row in rows][:4] == [
+        ("管道壁厚", "mm"),
+        ("工作面加宽", "mm"),
+        ("垫层厚", "mm"),
+        ("基础厚", "mm"),
+    ]
+    assert rows[0].value == "65"  # 图集页21/22 Ⅱ级 Dn600
+    assert rows[0].lock_name is True
+    assert len(rows[0].candidates) == 7  # 8 组里 150° 图集没有
+    assert unit_vm._element(element.id).pipes[0].t == 65.0
+
+    # 候选格可改 → 参数值 + 管材行一起变
+    candidate_id = rows[0].candidates["con120"][0]
+    assert unit_vm.update_atlas_candidate(candidate_id, "t", "70")
+    assert unit_vm.param_rows(element.id)[0].value == "70"
+    assert unit_vm._element(element.id).pipes[0].t == 70.0
+
+    # 换角度 → 参数值跟着候选组走（con180 仍是图集值 65）
+    pe = _main_pe(element)
+    assert pe is not None
+    apply_enclosure_fields(pe.id, {"found_angle": 180})
+    assert unit_vm.param_rows(element.id)[0].value == "65"
+    assert unit_vm._element(element.id).pipes[0].t == 65.0
 
 
 def test_editing_pipe_category_is_normalized(project) -> None:
