@@ -614,6 +614,9 @@ def create_element(
     from app.core.calc.engine import _DEFAULT_PARAMS
 
     if pipes and category != CATEGORY_STRUCTURE:
+        if category in SINGLE_PIPE_CATEGORIES and len(pipes) > 1:
+            # 直埋 / 非开挖只允许一条管材：多根输入取首根（面宽 / 候选也只认首根）
+            pipes = pipes[:1]
         for pipe_data in pipes:
             mat, cat, dn, content, t = _pipe_fields(pipe_data)
             element.pipes.append(
@@ -993,6 +996,33 @@ def move_element(element_id: int, delta: int) -> None:
     bus().unit_changed.emit(element.unit_id)
 
 
+#: 管材行数固定的类别：直埋 / 顶管 / 牵引管恒为一条管材（不能增删）；
+#: 构筑物不带管材（也不能加）。只有包封 / 箱涵 / 管廊可以增删管材行。
+SINGLE_PIPE_CATEGORIES = (CATEGORY_BURIED, CATEGORY_JACKING, CATEGORY_PULLING)
+
+
+def pipe_add_error(element: Element | None) -> str | None:
+    """当前构件能否新增管材行；返回提示文案，None = 允许。"""
+    if element is None:
+        return "请先在上表选择构件条目。"
+    if element.category == CATEGORY_STRUCTURE:
+        return "附属构筑物不带管材，不能添加管材。"
+    if element.category in SINGLE_PIPE_CATEGORIES and element.pipes:
+        return "直埋 / 非开挖管道只允许一条管材，不能新增。"
+    return None
+
+
+def pipe_delete_error(element: Element | None) -> str | None:
+    """当前构件能否删除管材行；返回提示文案，None = 允许。"""
+    if element is None:
+        return "请先在上表选择构件条目。"
+    if element.category == CATEGORY_STRUCTURE:
+        return "附属构筑物不带管材。"
+    if element.category in SINGLE_PIPE_CATEGORIES:
+        return "直埋 / 非开挖管道只允许一条管材，不能删除。"
+    return None
+
+
 def create_pipe(
     element_id: int,
     mat: str = "Ⅱ级混凝土管",
@@ -1005,6 +1035,8 @@ def create_pipe(
 
     element = _element(element_id)
     if element is None:
+        return None
+    if pipe_add_error(element) is not None:
         return None
     was_empty = not element.pipes
     pipe = Pipe(
@@ -1061,6 +1093,8 @@ def update_pipe(pipe_id: int, **fields) -> Pipe | None:
 def delete_pipe(pipe_id: int) -> None:
     pipe = _pipe(pipe_id)
     if pipe is None:
+        return
+    if pipe_delete_error(pipe.element) is not None:
         return
     element = pipe.element
     was_first = bool(element.pipes) and element.pipes[0].id == pipe.id
@@ -1464,8 +1498,10 @@ class UnitViewModel(QObject):
 
     # --- 明细操作 ---
     def add_pipe(self) -> None:
-        if self._element_id is None:
-            self.error_occurred.emit("请先在上表选择构件条目。")
+        element = _element(self._element_id) if self._element_id is not None else None
+        message = pipe_add_error(element)
+        if message:
+            self.error_occurred.emit(message)
             return
         create_pipe(self._element_id)
 
@@ -1473,6 +1509,11 @@ class UnitViewModel(QObject):
         update_pipe(pipe_id, **{field: value})
 
     def remove_pipe(self, pipe_id: int) -> None:
+        pipe = _pipe(pipe_id)
+        message = pipe_delete_error(pipe.element if pipe is not None else None)
+        if message:
+            self.error_occurred.emit(message)
+            return
         delete_pipe(pipe_id)
 
     def add_param(self) -> None:

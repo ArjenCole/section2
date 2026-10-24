@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QPushButton,
     QStyle,
     QTabWidget,
     QTableWidget,
@@ -63,6 +64,7 @@ from app.viewmodels.unit_vm import (
     ParamRow,
     PipeRow,
     QuantityRow,
+    SINGLE_PIPE_CATEGORIES,
     UnitViewModel,
 )
 from app.views.panels.multi_principle_tab import MultiPrincipleTab
@@ -368,12 +370,26 @@ class UnitPanel(QWidget):
         pipe_layout = QVBoxLayout(pipe_page)
         pipe_layout.setContentsMargins(6, 6, 6, 6)
         pipe_layout.setSpacing(4)
-        pipe_bar = QHBoxLayout()
-        pipe_bar.addWidget(self._make_button("＋管材", "为选中构件新增一行管材", self._add_pipe))
-        pipe_bar.addWidget(self._make_button("✕", "删除选中管材", self._delete_pipe))
-        pipe_bar.addStretch(1)
-        pipe_layout.addLayout(pipe_bar)
-        pipe_layout.addWidget(self._pipe_table, 1)
+        pipe_row = QHBoxLayout()
+        pipe_row.addWidget(self._pipe_table, 1)
+        # 「+」紧贴表格右侧表头行（与围护原则窗体的 BTNadd 同款同位），
+        # 「✕」删行按钮排在它下面；直埋 / 非开挖 / 构筑物下两个按钮按类别禁用
+        add_column = QVBoxLayout()
+        self._btn_add_pipe = QPushButton("+")
+        self._btn_add_pipe.setProperty("role", "icon-btn")
+        self._btn_add_pipe.setFixedSize(28, 34)
+        self._btn_add_pipe.setToolTip("为选中构件新增一行管材")
+        self._btn_add_pipe.clicked.connect(self._add_pipe)
+        add_column.addWidget(self._btn_add_pipe)
+        self._btn_delete_pipe = QPushButton("✕")
+        self._btn_delete_pipe.setProperty("role", "icon-btn")
+        self._btn_delete_pipe.setFixedSize(28, 34)
+        self._btn_delete_pipe.setToolTip("删除选中管材")
+        self._btn_delete_pipe.clicked.connect(self._delete_pipe)
+        add_column.addWidget(self._btn_delete_pipe)
+        add_column.addStretch(1)
+        pipe_row.addLayout(add_column)
+        pipe_layout.addLayout(pipe_row)
 
         param_page = QWidget()
         param_layout = QVBoxLayout(param_page)
@@ -1013,6 +1029,8 @@ class UnitPanel(QWidget):
         self._current_detail_id = None
         self._multi_pe_tab.set_element(None)
         self._multi_pf_tab.set_element(None)
+        # 多选显示占位行：增删没有明确目标构件，按钮一律禁用
+        self._update_pipe_buttons(None)
         self._fill_multi_placeholders()
         self._section_view.show_multi()
         self._fill_quantities()
@@ -1235,6 +1253,8 @@ class UnitPanel(QWidget):
         self._loading = True
         try:
             element = _element(element_id)
+            # 管材增删按钮随类别联动（直埋/非开挖一条、构筑物无管材）
+            self._update_pipe_buttons(element)
             # 管材表：管道壁厚列空 = 自动按图集（灰字显示图集值）
             self._pipe_table.clearSpans()
             self._pipe_table.setRowCount(len(pipes))
@@ -1537,6 +1557,38 @@ class UnitPanel(QWidget):
         pipe_id = self._pipe_id_at(self._pipe_table.currentRow())
         if pipe_id is not None:
             self._vm.remove_pipe(pipe_id)
+
+    def _update_pipe_buttons(self, element) -> None:
+        """按构件类别启用/禁用管材增删按钮：
+
+        直埋 / 顶管 / 牵引管恒为一条管材（已有一条就不能再加，也一律不能删）；
+        附属构筑物不带管材（不能加，也没有行可删）。禁用格的 tooltip 说明原因。
+        """
+        if element is None:
+            self._btn_add_pipe.setEnabled(False)
+            self._btn_delete_pipe.setEnabled(False)
+            self._btn_add_pipe.setToolTip("请先在上表选择构件条目。")
+            self._btn_delete_pipe.setToolTip("请先在上表选择构件条目。")
+            return
+        if element.category == CATEGORY_STRUCTURE:
+            self._btn_add_pipe.setEnabled(False)
+            self._btn_add_pipe.setToolTip("附属构筑物不带管材，不能添加管材。")
+            self._btn_delete_pipe.setEnabled(False)
+            self._btn_delete_pipe.setToolTip("附属构筑物不带管材。")
+            return
+        if element.category in SINGLE_PIPE_CATEGORIES:
+            has_pipe = bool(element.pipes)
+            self._btn_add_pipe.setEnabled(not has_pipe)
+            self._btn_add_pipe.setToolTip(
+                "直埋 / 非开挖管道只允许一条管材。" if has_pipe else "为选中构件新增一行管材"
+            )
+            self._btn_delete_pipe.setEnabled(False)
+            self._btn_delete_pipe.setToolTip("直埋 / 非开挖管道只允许一条管材，不能删除。")
+            return
+        self._btn_add_pipe.setEnabled(True)
+        self._btn_add_pipe.setToolTip("为选中构件新增一行管材")
+        self._btn_delete_pipe.setEnabled(bool(element.pipes))
+        self._btn_delete_pipe.setToolTip("删除选中管材")
 
     def _add_param(self) -> None:
         self._vm.add_param()

@@ -497,3 +497,72 @@ def test_category_column_readonly(qapp, project):
         assert cell.toolTip() == category_name(row.category) == "直埋管道"
     finally:
         window.close()
+
+
+def test_pipe_add_delete_buttons_follow_category(qapp, project):
+    """管材增删按钮随构件类别联动：直埋/顶管/牵引管一条管材（禁增禁删）、
+    构筑物不带管材（禁增）、包封/箱涵/管廊仍可增删。「+」按钮与围护原则
+    窗体同款（表头行右侧、28x34）。"""
+    from app.core.models.models import (
+        CATEGORY_BOX_CULVERT,
+        CATEGORY_BURIED,
+        CATEGORY_JACKING,
+        CATEGORY_PULLING,
+        CATEGORY_STRUCTURE,
+    )
+    from app.services import project_io
+    from app.viewmodels import unit_vm
+    from app.views.panels.unit_panel import UnitPanel
+
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    buried = unit_vm.create_element(unit.id, category=CATEGORY_BURIED, name="直埋")
+    unit_vm.create_pipe(buried.id, mat="Ⅱ级混凝土管", dn=600, content="1")
+    jacking = unit_vm.create_element(unit.id, category=CATEGORY_JACKING, name="顶管")
+    unit_vm.create_pipe(jacking.id, mat="钢筋混凝土钢承口管 顶管", dn=1000, content="1")
+    pulling = unit_vm.create_element(unit.id, category=CATEGORY_PULLING, name="牵引管")
+    unit_vm.create_pipe(pulling.id, mat="PE给水管", dn=400, content="1")
+    structure = unit_vm.create_element(unit.id, category=CATEGORY_STRUCTURE, name="检查井")
+    box = unit_vm.create_element(unit.id, category=CATEGORY_BOX_CULVERT, name="箱涵")
+    unit_vm.create_pipe(box.id, mat="Ⅱ级混凝土管", dn=600, content="1")
+
+    panel = UnitPanel()
+    try:
+        panel._show_unit(unit.id)
+        qapp.processEvents()
+        # 单位加载后自动选中第一行（直埋）：按钮已是“一条管材”状态
+        assert panel._current_element_id() == buried.id
+
+        def select_row(row: int) -> None:
+            panel._element_table.setCurrentCell(row, 0)
+            qapp.processEvents()
+
+        # 直埋（已有一条）：不能加、不能删
+        select_row(0)
+        assert not panel._btn_add_pipe.isEnabled()
+        assert "只允许一条管材" in panel._btn_add_pipe.toolTip()
+        assert not panel._btn_delete_pipe.isEnabled()
+        assert "不能删除" in panel._btn_delete_pipe.toolTip()
+        # 顶管 / 牵引管：同直埋
+        select_row(1)
+        assert not panel._btn_add_pipe.isEnabled()
+        select_row(2)
+        assert not panel._btn_add_pipe.isEnabled()
+        # 构筑物：不带管材，两个按钮都禁用
+        select_row(3)
+        assert not panel._btn_add_pipe.isEnabled()
+        assert "附属构筑物不带管材" in panel._btn_add_pipe.toolTip()
+        assert not panel._btn_delete_pipe.isEnabled()
+        # 箱涵：可加可删（按钮可用）
+        select_row(4)
+        assert panel._btn_add_pipe.isEnabled()
+        assert panel._btn_delete_pipe.isEnabled()
+    finally:
+        panel.close()
+
+    # VM 层同样拦截（AI 工具同路）：直埋加第二根 / 删除唯一一根都无效
+    assert unit_vm.create_pipe(buried.id, mat="钢管", dn=200) is None
+    only_pipe = buried.pipes[0]
+    unit_vm.delete_pipe(only_pipe.id)
+    assert buried.pipes
+    # 构筑物加管材被拒
+    assert unit_vm.create_pipe(structure.id, mat="钢管", dn=200) is None

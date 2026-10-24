@@ -17,6 +17,9 @@ from app.viewmodels import unit_vm
 def tool_add_pipe(arguments: dict) -> dict:
     require_open()
     element_id = resolve_element_id(arguments)
+    message = unit_vm.pipe_add_error(unit_vm._element(element_id))
+    if message:
+        raise ToolError(message)
     try:
         dn = int(arguments.get("dn") or 600)
     except (TypeError, ValueError) as error:
@@ -62,6 +65,12 @@ def tool_delete_pipe(arguments: dict) -> dict:
     pipe_id = arguments.get("pipe_id")
     if pipe_id in (None, ""):
         raise ToolError("请提供 pipe_id。")
+    pipe = unit_vm._pipe(int(pipe_id))
+    if pipe is None:
+        raise ToolError(f"找不到 pipe_id={pipe_id}。请先调 get_element_detail。")
+    message = unit_vm.pipe_delete_error(pipe.element)
+    if message:
+        raise ToolError(message)
     unit_vm.delete_pipe(int(pipe_id))
     return {"ok": True, "data": {"pipe_id": int(pipe_id)}}
 
@@ -240,7 +249,9 @@ def register(registry: ToolRegistry) -> None:
     }
     registry.register(
         Tool(
-            "add_pipe", "为构件新增一根管材（t 留空=自动按图集）。写操作。",
+            "add_pipe",
+            "为构件新增一根管材（t 留空=自动按图集）。"
+            "直埋/顶管/牵引管只允许一条管材（已有则拒绝），构筑物不带管材。写操作。",
             {"type": "object", "properties": {
                 "element_id": element_id_schema, "mat": {"type": "string"},
                 "cat": cat_schema,
@@ -264,7 +275,7 @@ def register(registry: ToolRegistry) -> None:
     )
     registry.register(
         Tool(
-            "delete_pipe", "删除管材行。写操作。",
+            "delete_pipe", "删除管材行（直埋/顶管/牵引管的管材行不可删）。写操作。",
             {"type": "object", "properties": {"pipe_id": {"type": "integer"}},
              "required": ["pipe_id"]},
             tool_delete_pipe,

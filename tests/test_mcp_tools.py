@@ -85,7 +85,19 @@ def test_element_lifecycle_and_parts(project) -> None:
     assert detail["principle_refs"]["pe"]
     pipe_id = detail["pipes"][0]["id"]
 
-    assert REG.execute("add_pipe", {"element_id": element_id, "mat": "钢管", "dn": 200})["ok"]
+    # 直埋管道只允许一条管材：再加 / 删除都被拒（构筑物同理不带管材）
+    refused = REG.execute("add_pipe", {"element_id": element_id, "mat": "钢管", "dn": 200})
+    assert not refused.get("ok") and "只允许一条管材" in refused.get("error", "")
+    refused_delete = REG.execute("delete_pipe", {"pipe_id": pipe_id})
+    assert not refused_delete.get("ok") and "不能删除" in refused_delete.get("error", "")
+    # 包封 / 箱涵 / 管廊仍可增删管材行
+    box_id = REG.execute(
+        "add_element",
+        {"unit_id": unit_id, "name": "箱涵", "category": "箱涵", "depth": "3", "amount": "40"},
+    )["data"]["element_id"]
+    added = REG.execute("add_pipe", {"element_id": box_id, "mat": "钢管", "dn": 200})
+    assert added["ok"], added
+    assert REG.execute("delete_pipe", {"pipe_id": added["data"]["pipe_id"]})["ok"]
     assert REG.execute("update_pipe", {"pipe_id": pipe_id, "content": "2"})["ok"]
     assert REG.execute("add_param", {"element_id": element_id, "key": "含钢量", "unit": "kg/m3", "value": "150"})["ok"]
 
@@ -99,8 +111,9 @@ def test_element_lifecycle_and_parts(project) -> None:
 
     duplicate = REG.execute("duplicate_element", {"element_id": element_id})
     assert duplicate["ok"], duplicate
-    assert REG.execute("list_elements", {"unit_id": unit_id})["data"]["count"] == 2
+    assert REG.execute("list_elements", {"unit_id": unit_id})["data"]["count"] == 3
     assert REG.execute("delete_element", {"element_id": duplicate["data"]["element_id"]})["ok"]
+    assert REG.execute("delete_element", {"element_id": box_id})["ok"]
     assert REG.execute("list_elements", {"unit_id": unit_id})["data"]["count"] == 1
     assert REG.execute("move_element", {"element_id": element_id, "delta": 1})["ok"]
 
