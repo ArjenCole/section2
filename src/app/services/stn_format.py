@@ -122,7 +122,7 @@ def load_stn(path: str | Path) -> StnDocument:
         if root.tag == "Root" and header_version and not header_version.startswith("2"):
             raise NotAProjectFileError(
                 f"这是 1.0 旧版程序保存的工程文件（版本 {header_version}），"
-                "请用「文件 → 导入旧版工程(.stn)…」迁移后打开。"
+                "打开时将自动转译为 2.0 格式，原文件自动备份。"
             )
         raise NotAProjectFileError(f"不是有效的工程文件（缺少 JSON 数据体）：{source}")
     try:
@@ -148,6 +148,24 @@ def _check_file_version(file_version, source: Path) -> None:
             f"工程文件数据结构版本为 {file_version}，低于本程序支持的 {STN_FILE_VERSION}；"
             "该文件出自内部预览版，请用保存它的版本打开。"
         )
+
+
+def looks_like_legacy_file(path: str | Path) -> bool:
+    """是否为 1.0 旧版程序保存的 `.stn`（整体是 XML：Root + Assembly/Version，无 JSON 体）。
+
+    2.0 文件一定带 `Section2` 数据体；头是 2.x 却没有数据体的视为损坏文件，
+    不算旧版。供 project_io 在打开失败时决定是否走旧版自动转译。
+    """
+    try:
+        root = ET.parse(Path(path)).getroot()
+    except (ET.ParseError, OSError, ValueError):
+        return False
+    if root.tag != "Root":
+        return False
+    assembly = root.find("Assembly")
+    version_node = assembly.find("Version") if assembly is not None else None
+    version = (version_node.text or "").strip() if version_node is not None else ""
+    return bool(version) and not version.startswith("2") and root.find(_BODY_TAG) is None
 
 
 def _xml_escape(text: str) -> str:

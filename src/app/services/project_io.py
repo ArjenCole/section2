@@ -5,7 +5,10 @@
 内存里的工作载体是临时 SQLite 工作库（见 core.models.base），保存 = 把工作库
 整体写出为 `.stn`。业务代码不直接建连接，统一走这里。
 
-本模块刻意不依赖 Qt，方便直接跑测试；界面层的刷新由调用方通过 EventBus 广播。
+打开 1.0 旧版文件时自动转译（brackets 同款，见 open_legacy_project）：
+原文件备份到软件数据目录的 migration_backup 后原样保留，转译结果处于
+“尚未保存”的临时工程状态。本模块刻意不依赖 Qt，方便直接跑测试；
+界面层的刷新由调用方通过 EventBus 广播。
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ from xml.etree.ElementTree import SubElement
 
 from sqlalchemy import func, select
 
-from app.services import stn_codec, stn_format
+from app.services import stn_codec, stn_format, stn_migration
 from app.core.version import (
     APP_VERSION,
     BACKUP_DIR_NAME,
@@ -101,8 +104,11 @@ class NewProjectSpec:
 
 # 最近一次“首次修改备份”是否已做过：每打开一个工程重置一次
 _backup_done_for_session = False
-# 工程原文件路径；None 表示临时工程（尚未保存到文件，数据库在临时目录）
+# 工程原文件路径；None 表示临时工程（尚未保存到文件，数据库在临时目录）。
+# 打开 1.0 旧版文件自动转译后同样处于临时状态（原文件不覆盖）。
 _original_path: Path | None = None
+# 打开旧版文件转译后给界面的提示文案（brackets2 同款 last_migration_notice）
+_last_migration_notice = ""
 
 
 # --------------------------------------------------------------------------- #
@@ -272,18 +278,30 @@ def _seed_new_project(spec: NewProjectSpec) -> None:
     orm.commit()
 
 
-def open_project(path: str | Path) -> Path:
-    """打开工程：抢锁 → 解析 `.stn`（版本校验）→ 由 JSON 重建工作库。"""
-    global _original_path, _backup_done_for_session
+def open_project(path: str | Path) -> Path | None:
+    """打开工程，返回工程文件路径。
+
+    2.0 文件：抢锁 → 解析 → 由 JSON 重建工作库，返回文件路径。
+    1.0 旧版文件：自动转译（brackets 同款，见 :func:`open_legacy_project`），
+    工程进入“尚未保存”的临时状态，返回 None；提示文案见
+    :func:`last_migration_notice`。
+    """
+    global _last_migration_notice
 
     ensure_main_thread("打开工程")
     target = Path(path)
     close_project()
     if not target.exists():
         raise ProjectIoError(f"工程文件不存在：{target}")
-    acquire_lock(target)
+    _last_migration_notice = ""
     try:
         document = stn_format.load_stn(target)
+    except orm.NotAProjectFileError:
+        if stn_format.looks_like_legacy_file(target):
+            return open_legacy_project(target)
+        raise
+    acquire_lock(target)
+    try:
         orm.create_working_database()
         stn_codec.load_database(document.data)
         _ensure_basic_info()
@@ -296,6 +314,48 @@ def open_project(path: str | Path) -> Path:
     _original_path = target
     _backup_done_for_session = False
     return target
+
+
+def open_legacy_project(path: str | Path) -> None:
+    """打开 1.0 旧版文件并自动转译（brackets2 open_file 的迁移提示同款）。
+
+    转译结果只进临时工作库：工程处于“尚未保存”的临时状态，首次保存走
+    另存为选择新路径，用户打开的原文件任何情况下不被覆盖；原文件先备份
+    到软件数据目录的 migration_backup（备份失败只降级提示、不阻断打开）。
+    转译完成后处于打开状态，返回 None（临时工程没有文件路径）。
+    """
+    global _original_path, _backup_done_for_session, _last_migration_notice
+
+    ensure_main_thread("打开旧版工程")
+    source = Path(path)
+    try:
+        report = stn_migration.build_legacy_database(source)
+    except Exception as error:
+        orm.close_database()
+        if isinstance(error, orm.ProjectFileError):
+            raise
+        raise ProjectIoError(f"打开旧版工程失败：{error}") from error
+    _original_path = None
+    _backup_done_for_session = False
+    try:
+        backup = stn_migration.backup_legacy_file(source, report.schema_version)
+        backup_note = f"原文件已备份至：{backup}"
+    except OSError:
+        backup_note = "原文件备份失败，请手动留存原文件。"
+    _last_migration_notice = (
+        f"打开的是老版本（{report.schema_version or '版本未知'}）文件，"
+        "已自动转译为 2.0 格式。\n"
+        f"{backup_note}\n"
+        "当前工程尚未保存到文件，原文件不会被覆盖；请用「另存为」保存为新的 .stn 工程。"
+    )
+
+
+def last_migration_notice() -> str:
+    """最近一次打开工程若发生旧版文件转译，这里给出界面要弹的提示文案；否则为空。
+
+    每次打开工程开始时清空（brackets2 同名属性的模块级等价物）。
+    """
+    return _last_migration_notice
 
 
 def save() -> Path | None:
@@ -344,14 +404,15 @@ def save_as(path: str | Path) -> Path:
 
 
 def close_project() -> Path | None:
-    """关闭工程：落盘 → 关会话（删除临时工作库）→ 释放锁。"""
-    global _original_path, _backup_done_for_session
+    """关闭工程：落盘 → 关会话（删除临时工作库）→ 释放锁；转译提示一并清空。"""
+    global _original_path, _backup_done_for_session, _last_migration_notice
 
     ensure_main_thread("关闭工程")
     path = _original_path
     if not orm.is_open():
         _original_path = None
         _backup_done_for_session = False
+        _last_migration_notice = ""
         return None
     try:
         orm.commit()
@@ -361,6 +422,7 @@ def close_project() -> Path | None:
             release_lock(path)
     _original_path = None
     _backup_done_for_session = False
+    _last_migration_notice = ""
     return path
 
 

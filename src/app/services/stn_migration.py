@@ -1,6 +1,14 @@
-"""旧 `.stn`(XML) → 新 `.stn`(头 + JSON) 一次性迁移工具。
+"""旧 1.0 `.stn`(XML) → 新 2.0 `.stn`(头 + JSON) 的转译。
 
-定位：**单向只读迁移工具**——老工程的 1.0 `.stn` 文件任何情况下只读；
+两个入口共用同一套解析与建库逻辑（:func:`build_legacy_database`）：
+
+* **打开旧文件自动转译**（brackets 同款）：`project_io.open_legacy_project`
+  把转译结果直接放进临时工作库（临时工程、未保存状态），原文件先经
+  :func:`backup_legacy_file` 备份到软件数据目录的 migration_backup，不写回；
+* **导入向导**（`文件 → 导入旧版工程(.stn)…`）：选择目标路径后由
+  :func:`migrate` 写出新 `.stn` 文件。
+
+定位：**单向只读转译**——老工程的 1.0 `.stn` 文件任何情况下只写备份副本；
 不追求 100% 还原，追求“数据不丢、能继续算”。
 
 * 兼容 1.0.x ~ 1.2.2.x（`<1.2.1.1` 补箱涵含钢量参数；`<1.2.2.1`
@@ -17,13 +25,18 @@
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from lxml import etree
 
 from app.services import stn_codec, stn_format
 from app.core.models import base as orm
+
+#: 打开旧版文件自动转译时，原文件的备份文件夹（软件数据目录下，brackets 同款）
+MIGRATION_BACKUP_DIR_NAME = "migration_backup"
 from app.core.models.models import (
     CATEGORY_NAMES,
     CATEGORY_STRUCTURE,
@@ -402,8 +415,16 @@ def migrate(source: str | Path, target: str | Path) -> MigrationReport:
     """解析旧工程并写出新的 .stn；失败时删除半成品文件后抛出。"""
     target_path = Path(target)
     try:
-        report = _migrate_inner(Path(source), target_path)
+        report = build_legacy_database(source)
+        report.target = str(target_path)
+        if target_path.exists():
+            target_path.unlink()
+        try:
+            stn_format.write_stn(target_path, stn_codec.dump_database())
+        finally:
+            orm.close_database()
     except Exception:
+        orm.close_database()
         if target_path.exists():
             try:
                 target_path.unlink()
@@ -413,17 +434,20 @@ def migrate(source: str | Path, target: str | Path) -> MigrationReport:
     return report
 
 
-def _migrate_inner(source: Path, target: Path) -> MigrationReport:
+def build_legacy_database(source: str | Path) -> MigrationReport:
+    """解析旧工程并写入新建的临时工作库，返回迁移报告。
+
+    打开旧版文件自动转译（project_io.open_legacy_project）与导出迁移
+    （migrate）共用：只建库不写 `.stn` 文件、转译后保持打开（工作库里的
+    数据就是转译结果）。失败时抛异常，工作库由调用方负责关闭。
+    """
     from app.services.atlas import component_library
 
-    legacy = parse_legacy(source)
+    source_path = Path(source)
+    legacy = parse_legacy(source_path)
     library = component_library()
-    report = MigrationReport(
-        source=str(source), target=str(target), schema_version=legacy.version
-    )
+    report = MigrationReport(source=str(source_path), schema_version=legacy.version)
 
-    if target.exists():
-        target.unlink()
     orm.create_working_database()
     session = orm.session()
 
@@ -575,10 +599,24 @@ def _migrate_inner(source: Path, target: Path) -> MigrationReport:
         report.prices += 1
 
     orm.commit()
-    stn_format.write_stn(target, stn_codec.dump_database())
-    orm.close_database()
     report.warnings = _dedupe(report.warnings)
     return report
+
+
+def backup_legacy_file(path: str | Path, version: str) -> Path:
+    """把旧版文件复制到软件数据目录的迁移备份文件夹，返回备份路径（brackets 同款）。
+
+    备份文件名带旧版程序版本号与时间戳，原文件任何情况下不被修改。
+    """
+    from app.core.paths import ensure_app_data_dir
+
+    source = Path(path)
+    folder = ensure_app_data_dir() / MIGRATION_BACKUP_DIR_NAME
+    folder.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = folder / f"{source.stem}_v{version}_{stamp}{source.suffix}"
+    shutil.copy2(source, target)
+    return target
 
 
 def _dedupe(items: list[str]) -> list[str]:

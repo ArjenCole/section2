@@ -340,8 +340,8 @@ def test_file_version_too_old_is_rejected(tmp_path: Path) -> None:
 def test_not_a_project_file_is_rejected(tmp_path: Path) -> None:
     bogus = tmp_path / "随便一个文件.stn"
     bogus.write_text(
-        '<?xml version="1.0" encoding="utf-8"?><Root><Assembly>'
-        "<Version>1.2.2.1</Version></Assembly></Root>",
+        '<?xml version="1.0" encoding="utf-8"?><Root><Other>既不是 2.0 格式'
+        "（没有 Assembly 头与 JSON 体），也不构成 1.0 工程（没有可识别内容）</Other></Root>",
         encoding="utf-8",
     )
 
@@ -363,20 +363,67 @@ def test_not_a_project_file_is_rejected(tmp_path: Path) -> None:
     assert not project_io.is_open()
 
 
-def test_legacy_1_0_file_gets_migration_hint(tmp_path: Path) -> None:
-    """2.0 直接打开 1.0 旧文件：明确提示走导入向导，而不是泛泛的格式错误。"""
-    legacy = tmp_path / "旧工程.stn"
-    legacy.write_text(
-        '<?xml version="1.0" encoding="utf-8" standalone="yes"?>'
-        "<Root><Assembly><Version>1.2.2.1</Version></Assembly>"
-        "<mcBasicInfo><ProjectName>老工程</ProjectName>"
-        "<ProjectIndex>001</ProjectIndex></mcBasicInfo></Root>",
-        encoding="utf-8",
-    )
+def test_open_legacy_file_converts_to_transient(tmp_path: Path) -> None:
+    """打开 1.0 旧文件（brackets 同款）：自动转译成临时工程，原文件只备份、不覆盖。
 
-    with pytest.raises(orm.NotAProjectFileError, match="导入旧版工程"):
-        project_io.open_project(legacy)
-    assert not project_io.is_open()
+    * 工程处于"尚未保存"的临时状态（首次保存走另存为，绝不动原文件）；
+    * 原文件字节不变，且备份到软件数据目录的 migration_backup；
+    * last_migration_notice 给出界面要弹的转译 + 备份提示。
+    """
+    import shutil
+
+    from app.core.paths import app_data_dir
+
+    sample = next(iter(sorted((Path(__file__).parent / "fixtures" / "legacy").glob("*.stn"))))
+    legacy = tmp_path / "转译源工程.stn"
+    shutil.copy2(sample, legacy)
+    before = legacy.read_bytes()
+
+    opened = project_io.open_project(legacy)
+
+    assert opened is None  # 转译结果在临时工作库里，没有文件路径
+    assert project_io.is_open()
+    assert project_io.is_transient()
+    assert project_io.current_path() is None
+    assert not lock_path(legacy).exists()  # 旧文件不是我们的工程文件，不加锁
+    assert legacy.read_bytes() == before  # 原文件未被修改
+    assert project_io.segments()  # 转译数据可读
+
+    backup_dir = app_data_dir() / "migration_backup"
+    backups = list(backup_dir.glob("转译源工程_v*.stn"))
+    assert len(backups) == 1
+    notice = project_io.last_migration_notice()
+    assert "转译" in notice
+    assert str(backups[0]) in notice
+    assert "另存为" in notice
+
+    # 未保存状态下首次保存 → 另存为新路径，数据完整；原 1.0 文件依旧未动
+    target = tmp_path / "转译后保存.stn"
+    project_io.save_as(target)
+    assert project_io.current_path() == target
+    project_io.close_project()
+    assert legacy.read_bytes() == before
+    project_io.open_project(target)
+    try:
+        assert project_io.project_name()
+        assert project_io.segments()
+    finally:
+        project_io.close_project()
+
+
+def test_migration_notice_resets_on_next_open(tmp_path: Path) -> None:
+    """转译提示只在本次打开有效：再打开普通 2.0 工程后清空。"""
+    import shutil
+
+    sample = next(iter(sorted((Path(__file__).parent / "fixtures" / "legacy").glob("*.stn"))))
+    legacy = tmp_path / "提示重置工程.stn"
+    shutil.copy2(sample, legacy)
+    project_io.open_project(legacy)
+    assert project_io.last_migration_notice()
+
+    project_io.close_project()
+    _make_project(tmp_path)
+    assert project_io.last_migration_notice() == ""
 
 
 def test_garbage_file_is_rejected(tmp_path: Path) -> None:

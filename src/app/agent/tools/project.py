@@ -86,11 +86,20 @@ def tool_open_project(arguments: dict) -> dict:
     if project_io.is_open() and project_io.is_transient():
         raise ToolError("当前是尚未保存的临时工程：请先在界面保存或关闭后再切换工程。")
     opened = project_io.open_project(target)
-    bus().project_opened.emit(str(opened))
+    bus().project_opened.emit(str(opened) if opened else "")
+    notice = project_io.last_migration_notice()
+    if opened is not None:
+        summary = f"已打开工程：{opened}"
+    else:
+        summary = (
+            f"已打开旧版工程并自动转译（临时工程，尚未保存，原文件已备份）：{target}"
+            if notice
+            else "已打开临时工程"
+        )
     return {
         "ok": True,
-        "data": _project_info(),
-        "summary": f"已打开工程：{opened}",
+        "data": {**_project_info(), "migration_notice": notice},
+        "summary": summary,
     }
 
 
@@ -173,7 +182,7 @@ def register(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
             "open_project",
-            "打开 .stn 工程文件（抢锁、版本校验、重建工作库）。写操作（会话）。",
+            "打开 .stn 工程文件（2.0 文件抢锁重建工作库；1.0 旧文件自动转译为临时工程并备份原文件）。写操作（会话）。",
             {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
             tool_open_project,
         )

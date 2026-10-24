@@ -931,8 +931,15 @@ class MainWindow(QMainWindow):
         except ProjectFileError as error:
             self._error("打开工程失败", str(error))
             return
-        bus().project_opened.emit(str(opened))
+        bus().project_opened.emit(str(opened) if opened else "")
         self._tree_panel.vm.load()
+        self._show_migration_notice()
+
+    def _show_migration_notice(self) -> None:
+        """打开 1.0 旧版文件自动转译后的提示（brackets 同款：last_migration_notice）。"""
+        notice = project_io.last_migration_notice()
+        if notice:
+            FramelessMessageBox.information(self, "已转译旧版工程", notice)
 
     def _save_project(self) -> None:
         if project_io.is_transient():

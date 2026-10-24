@@ -57,6 +57,12 @@ JSON 数据结构变更时：改 `services/stn_codec.py`（与涉及的模型）
 `core/version.py` 的 `STN_FILE_VERSION` +1。2.0 未发布，不做旧文件迁移：
 `file_version` 与代码不一致即拒绝打开（高版本提示升级程序，低版本出自内部预览版）。
 
+打开 1.0 旧版文件走自动转译（brackets 同款，`services/stn_migration.py` +
+`project_io.open_legacy_project`）：识别（`stn_format.looks_like_legacy_file`）→
+转译进临时工作库（工程处于“尚未保存”的临时状态）→ 原文件备份到软件数据目录
+`migration_backup` → 界面经 `project_io.last_migration_notice()` 弹提示。
+导入向导（`migrate`）按所选路径写出新文件，两者共用 `build_legacy_database`。
+
 ## 计算表达式：不做预运算
 
 每个工程量除数值外还输出一条“数值代入”的算式（表格表达式列 / 详情弹窗），
