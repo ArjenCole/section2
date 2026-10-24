@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -18,7 +17,7 @@ import pytest
 from app.core.version import SCHEMA_VERSION
 from app.core.models import base as orm
 from app.core.models.models import BasicInfo, Element, Pipe, Segment, Unit
-from app.services import project_io
+from app.services import project_io, stn_format
 from app.services.project_io import (
     NewProjectSpec,
     ProjectLockedError,
@@ -31,7 +30,7 @@ from app.viewmodels import unit_vm
 
 def _make_project(tmp_path: Path, name: str = "测试工程") -> Path:
     spec = NewProjectSpec(
-        path=tmp_path / f"{name}.stn2",
+        path=tmp_path / f"{name}.stn",
         project_name=name,
         project_index="T-001",
         author="测试员",
@@ -117,17 +116,14 @@ def test_reopen_keeps_everything(tmp_path: Path) -> None:
 
 
 def test_commit_is_autosave(tmp_path: Path) -> None:
-    """每次修改都 commit 落盘：另开连接应能读到。"""
+    """每次修改都 commit 落盘：工程文件（.stn JSON）里应能读到最新数据。"""
     path = _make_project(tmp_path)
     unit = project_io.units(project_io.segments()[0].id)[0]
     unit_vm.create_element(unit.id, name="落盘检查")
 
-    connection = sqlite3.connect(path)
-    try:
-        count = connection.execute("SELECT COUNT(*) FROM element").fetchone()[0]
-    finally:
-        connection.close()
-    assert count == 1
+    data = stn_format.load_stn(path).data
+    elements = data["segments"][0]["units"][0]["elements"]
+    assert [item["name"] for item in elements] == ["落盘检查"]
 
 
 def test_cascade_delete(tmp_path: Path) -> None:
@@ -199,18 +195,18 @@ def test_backup_on_first_change_and_on_save(tmp_path: Path) -> None:
     folder = backup_dir(path)
     unit = project_io.units(project_io.segments()[0].id)[0]
 
-    assert not list(folder.glob("*.stn2"))
+    assert not list(folder.glob("*.stn"))
 
     unit_vm.create_element(unit.id, name="第一次修改")  # 本次打开后的首次修改 → 备份 1 份
-    first = list(folder.glob("*.stn2"))
+    first = list(folder.glob("*.stn"))
     assert len(first) == 1
     assert first[0].name.startswith(f"{path.stem}_")
 
     unit_vm.create_element(unit.id, name="第二次修改")  # 不再重复备份
-    assert len(list(folder.glob("*.stn2"))) == 1
+    assert len(list(folder.glob("*.stn"))) == 1
 
     project_io.save()  # 显式保存 → 再备份一份
-    assert len(list(folder.glob("*.stn2"))) == 2
+    assert len(list(folder.glob("*.stn"))) == 2
 
 
 def test_backup_keeps_only_n(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -221,10 +217,10 @@ def test_backup_keeps_only_n(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     for index in range(5):
         project_io.create_backup()
         # 文件名带秒级时间戳，避免同名覆盖影响计数
-        target = sorted(folder.glob("*.stn2"))[-1]
+        target = sorted(folder.glob("*.stn"))[-1]
         target.rename(folder / f"{path.stem}_250101_00000{index}{path.suffix}")
 
-    remaining = sorted(folder.glob("*.stn2"))
+    remaining = sorted(folder.glob("*.stn"))
     assert len(remaining) == 3
     assert [item.name for item in remaining] == [
         f"{path.stem}_250101_000002{path.suffix}",
@@ -237,7 +233,7 @@ def test_backup_content_is_readable_project(tmp_path: Path) -> None:
     path = _make_project(tmp_path)
     unit = project_io.units(project_io.segments()[0].id)[0]
     unit_vm.create_element(unit.id, name="备份内容")
-    backup = sorted(backup_dir(path).glob("*.stn2"))[0]
+    backup = sorted(backup_dir(path).glob("*.stn"))[0]
 
     project_io.close_project()
     project_io.open_project(backup)
@@ -253,7 +249,7 @@ def test_save_as_moves_lock_and_keeps_data(tmp_path: Path) -> None:
     unit = project_io.units(project_io.segments()[0].id)[0]
     unit_vm.create_element(unit.id, name="另存前")
 
-    target = tmp_path / "另存为" / "副本.stn2"
+    target = tmp_path / "另存为" / "副本.stn"
     saved = project_io.save_as(target)
 
     assert saved == target
@@ -269,137 +265,123 @@ def test_save_as_moves_lock_and_keeps_data(tmp_path: Path) -> None:
     assert unit_vm.element_rows(unit.id)[0].name == "另存前"
 
 
-def test_v5_project_scopes_atlas_params(tmp_path: Path) -> None:
-    """v5 → v7：三行图集参数按类别收敛（直埋保三行，包封 / 箱涵 / 管廊去基础厚，顶管全去）。"""
+def test_stn_header_is_1_0_compatible(tmp_path: Path) -> None:
+    """文件头沿用 1.0 格式：老软件误打开时能读出高版本号并提醒，而不是崩溃。"""
+    path = _make_project(tmp_path)
+    project_io.close_project()
+
+    import xml.etree.ElementTree as ET
+
+    from app.core.version import APP_VERSION, STN_FILE_VERSION
+
+    root = ET.parse(path).getroot()
+    assert root.tag == "Root"
+    # 1.0 的 mcDataCarrier 读 Assembly/Version 做字符串比较 → 必须是程序版本
+    assert root.find("Assembly/Version").text == APP_VERSION
+    # 1.0 的 mcBasicInfo 构造函数对 ProjectName / ProjectIndex 不判空 → 必须存在
+    info = root.find("mcBasicInfo")
+    assert info is not None
+    assert info.find("ProjectName").text == "测试工程"
+    assert info.find("ProjectIndex").text == "T-001"
+    # 1.0 只认 mcPcpEnclosure / mcSegment 等元素，Section2 会被它忽略
+    assert root.find("Section2") is not None
+    # 数据体是 JSON
+    data = json.loads(root.find("Section2").text)
+    assert data["format"] == "Section2"
+    assert data["file_version"] == STN_FILE_VERSION
+    assert data["basic_info"]["project_name"] == "测试工程"
+
+
+def test_json_body_survives_cdata_breakers(tmp_path: Path) -> None:
+    """参数值里出现 CDATA 终止序列 `]]>` 也能完整往返（信封保持合法 XML）。"""
     path = _make_project(tmp_path)
     unit = project_io.units(project_io.segments()[0].id)[0]
-    from app.core.models.models import (
-        CATEGORY_BOX_CULVERT,
-        CATEGORY_ENCASED,
-        CATEGORY_JACKING,
-        ElementParam,
-    )
-
-    buried = unit_vm.create_element(unit.id, category=1, name="排管")
-    encased = unit_vm.create_element(unit.id, category=CATEGORY_ENCASED, name="包封管")
-    box = unit_vm.create_element(unit.id, category=CATEGORY_BOX_CULVERT, name="箱涵")
-    jacking = unit_vm.create_element(unit.id, category=CATEGORY_JACKING, name="顶管")
-    def set_param(element, name: str, value: str) -> None:
-        """按 v5 的形态写入某行（没有就新增，模拟六个类别都带三行）。"""
-        row = next((param for param in element.params if param.key == name), None)
-        if row is None:
-            orm.session().add(ElementParam(element_id=element.id, key=name, unit="mm", value=value))
-        else:
-            row.value = value
-
-    for key in ("工作面加宽", "垫层厚", "基础厚"):
-        # v5 的形态：六个管道类别都带三行，且可能预填了图集 / 用户值
-        for element, value in ((buried, "999"), (jacking, "999"), (box, "200")):
-            set_param(element, key, value)
-    for key in ("工作面加宽", "垫层厚", "基础厚"):
-        set_param(encased, key, "200")
-    # 直埋构件先删掉基础厚行（模拟老库里被删过的三行），迁移要补回空值行
-    orm.session().delete(next(param for param in buried.params if param.key == "基础厚"))
+    element = unit_vm.create_element(unit.id, name="特殊字符")
+    unit_vm.create_param(element.id, key="备注", value="含]]>的值")
     project_io.commit()
     project_io.close_project()
 
-    connection = sqlite3.connect(path)
-    try:
-        connection.execute("UPDATE meta SET value = '5' WHERE key = 'schema_version'")
-        connection.commit()
-    finally:
-        connection.close()
+    import xml.etree.ElementTree as ET
 
+    root = ET.parse(path).getroot()  # 整个文件仍是合法 XML
     project_io.open_project(path)
-    try:
-        assert orm.get_meta("schema_version") == str(SCHEMA_VERSION)
-
-        def rows(element):
-            return [
-                (param.key, param.value)
-                for param in unit_vm.param_rows(element.id)
-                if param.key in ("工作面加宽", "垫层厚", "基础厚")
-            ]
-
-        # 直埋：三行都在，用户填的值保留，缺失的基础厚补空值行
-        assert rows(buried) == [("工作面加宽", "999"), ("垫层厚", "999"), ("基础厚", "")]
-        # 包封 / 箱涵：只留工作面加宽 / 垫层厚（基础厚行删除，值不再有意义）
-        assert rows(encased) == [("工作面加宽", "200"), ("垫层厚", "200")]
-        assert rows(box) == [("工作面加宽", "200"), ("垫层厚", "200")]
-        # 顶管：三行全删
-        assert rows(jacking) == []
-    finally:
-        project_io.close_project()
-
-
-def test_v6_project_gets_buried_atlas_params_back(tmp_path: Path) -> None:
-    """v6 → v7：v6 曾把直埋 / 箱涵 / 管廊上的三行删掉，迁移按新规则补回。"""
-    path = _make_project(tmp_path)
-    unit = project_io.units(project_io.segments()[0].id)[0]
-    from app.core.models.models import ElementParam
-
-    buried = unit_vm.create_element(unit.id, category=1, name="排管")
-    for param in list(buried.params):
-        orm.session().delete(param)  # v6 早期实现：直埋上的三行被删光
-    orm.session().add(ElementParam(element_id=buried.id, key="含钢量", unit="kg/m3", value="35"))
-    project_io.commit()
-    project_io.close_project()
-
-    connection = sqlite3.connect(path)
-    try:
-        connection.execute("UPDATE meta SET value = '6' WHERE key = 'schema_version'")
-        connection.commit()
-    finally:
-        connection.close()
-
-    project_io.open_project(path)
-    try:
-        assert orm.get_meta("schema_version") == str(SCHEMA_VERSION)
-        rows = [(param.key, param.unit, param.value) for param in unit_vm.param_rows(buried.id)]
-        # 直埋的图集参数行排在最前（管道壁厚 / 工作面加宽 / 垫层厚 / 基础厚），
-        # 其它参数按原有 id 次序跟在后面
-        assert rows == [
-            ("管道壁厚", "mm", ""),
-            ("工作面加宽", "mm", ""),
-            ("垫层厚", "mm", ""),
-            ("基础厚", "mm", ""),
-            ("含钢量", "kg/m3", "35"),
-        ]
-    finally:
-        project_io.close_project()
+    params = unit_vm.param_rows(element.id)
+    assert any(param.key == "备注" and param.value == "含]]>的值" for param in params)
 
 
 def test_schema_too_new_is_rejected(tmp_path: Path) -> None:
+    """文件由更新版本的程序保存（file_version 更高）→ 拒绝打开。"""
     path = _make_project(tmp_path)
     project_io.close_project()
 
-    connection = sqlite3.connect(path)
-    try:
-        connection.execute("UPDATE meta SET value = '99' WHERE key = 'schema_version'")
-        connection.commit()
-    finally:
-        connection.close()
+    data = stn_format.load_stn(path).data
+    data["file_version"] = 99
+    stn_format.write_stn(path, data)
 
     with pytest.raises(orm.SchemaTooNewError):
         project_io.open_project(path)
     assert not project_io.is_open()
 
 
+def test_file_version_too_old_is_rejected(tmp_path: Path) -> None:
+    """file_version 更低的文件出自未发布预览版，不提供迁移、明确拒绝。"""
+    path = _make_project(tmp_path)
+    project_io.close_project()
+
+    data = stn_format.load_stn(path).data
+    data["file_version"] = 0
+    stn_format.write_stn(path, data)
+
+    with pytest.raises(orm.ProjectFileError):
+        project_io.open_project(path)
+    assert not project_io.is_open()
+
+
 def test_not_a_project_file_is_rejected(tmp_path: Path) -> None:
-    bogus = tmp_path / "随便一个文件.stn2"
-    connection = sqlite3.connect(bogus)
-    connection.execute("CREATE TABLE other (id INTEGER)")
-    connection.commit()
-    connection.close()
+    bogus = tmp_path / "随便一个文件.stn"
+    bogus.write_text(
+        '<?xml version="1.0" encoding="utf-8"?><Root><Assembly>'
+        "<Version>1.2.2.1</Version></Assembly></Root>",
+        encoding="utf-8",
+    )
 
     with pytest.raises(orm.NotAProjectFileError):
         project_io.open_project(bogus)
     assert not project_io.is_open()
 
+    # 伪装成 .stn 的 SQLite 库（旧 stn2 时代的文件）也不是有效工程文件
+    import sqlite3
+
+    fake = tmp_path / "旧版库.stn"
+    connection = sqlite3.connect(fake)
+    connection.execute("CREATE TABLE other (id INTEGER)")
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(orm.NotAProjectFileError):
+        project_io.open_project(fake)
+    assert not project_io.is_open()
+
+
+def test_legacy_1_0_file_gets_migration_hint(tmp_path: Path) -> None:
+    """2.0 直接打开 1.0 旧文件：明确提示走导入向导，而不是泛泛的格式错误。"""
+    legacy = tmp_path / "旧工程.stn"
+    legacy.write_text(
+        '<?xml version="1.0" encoding="utf-8" standalone="yes"?>'
+        "<Root><Assembly><Version>1.2.2.1</Version></Assembly>"
+        "<mcBasicInfo><ProjectName>老工程</ProjectName>"
+        "<ProjectIndex>001</ProjectIndex></mcBasicInfo></Root>",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(orm.NotAProjectFileError, match="导入旧版工程"):
+        project_io.open_project(legacy)
+    assert not project_io.is_open()
+
 
 def test_garbage_file_is_rejected(tmp_path: Path) -> None:
-    """把普通文本改名成 .stn2 也要给出明确提示，不能抛底层数据库异常。"""
-    bogus = tmp_path / "伪装成工程.txt.stn2"
+    """把普通文本改名成 .stn 也要给出明确提示，不能抛底层数据库异常。"""
+    bogus = tmp_path / "伪装成工程.txt.stn"
     bogus.write_text("这不是一个 SQLite 库", encoding="utf-8")
 
     with pytest.raises(orm.NotAProjectFileError):
@@ -410,7 +392,7 @@ def test_garbage_file_is_rejected(tmp_path: Path) -> None:
 
 def test_open_missing_file(tmp_path: Path) -> None:
     with pytest.raises(ProjectIoError):
-        project_io.open_project(tmp_path / "不存在.stn2")
+        project_io.open_project(tmp_path / "不存在.stn")
 
 
 def test_new_project_overwrites_existing(tmp_path: Path) -> None:
@@ -450,10 +432,10 @@ def test_transient_save_requires_path_first(tmp_path: Path) -> None:
 def test_transient_first_save_promotes_to_real_file(tmp_path: Path) -> None:
     spec = NewProjectSpec(project_name="首次保存")
     project_io.new_project(spec)
-    temp_path = orm.database_path()
+    temp_path = orm.working_path()
     assert temp_path is not None and temp_path.exists()
 
-    target = tmp_path / "首次保存.stn2"
+    target = tmp_path / "首次保存.stn"
     saved = project_io.save_as(target)
 
     assert saved == target
@@ -461,7 +443,7 @@ def test_transient_first_save_promotes_to_real_file(tmp_path: Path) -> None:
     assert not project_io.is_transient()
     assert project_io.current_path() == target
     assert lock_path(target).exists()  # 首次保存后才有文件锁
-    assert not temp_path.exists()  # 临时库用完即删
+    assert temp_path.exists()  # 工作库继续使用（另存为只写文件，不重开库）
     # 保存后的工程数据完整
     assert project_io.project_name() == "首次保存"
 
@@ -469,7 +451,7 @@ def test_transient_first_save_promotes_to_real_file(tmp_path: Path) -> None:
 def test_transient_close_discards_temp_database(tmp_path: Path) -> None:
     spec = NewProjectSpec(project_name="关闭即弃")
     project_io.new_project(spec)
-    temp_path = orm.database_path()
+    temp_path = orm.working_path()
 
     project_io.close_project()
 
@@ -484,9 +466,9 @@ def test_transient_switching_to_open_keeps_data(tmp_path: Path) -> None:
     unit = project_io.units(project_io.segments()[0].id)[0]
     element = unit_vm.create_element(unit.id, category=1, name="雨水管 D800")
     assert element is not None
-    temp_path = orm.database_path()
+    temp_path = orm.working_path()
 
-    target = tmp_path / "带数据临时工程.stn2"
+    target = tmp_path / "带数据临时工程.stn"
     project_io.save_as(target)
     project_io.close_project()
     project_io.open_project(target)

@@ -12,7 +12,7 @@
     section2-mcp --connect http://127.0.0.1:8765/mcp [--token <t>]
 
     # headless 只读：无界面打开工程，只暴露只读工具
-    section2-mcp --project <path.stn2>
+    section2-mcp --project <path.stn>
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--token", default=None, help="HTTP Bearer token")
     parser.add_argument("--read-only", action="store_true", help="只暴露只读工具")
     parser.add_argument("--connect", default=None, help="stdio 桥：转发到运行中应用的 HTTP MCP 端点")
-    parser.add_argument("--project", default=None, help="headless：无界面打开 .stn2（强制只读）")
+    parser.add_argument("--project", default=None, help="headless：无界面打开 .stn（强制只读）")
     args = parser.parse_args(argv)
 
     opened = False

@@ -1093,7 +1093,7 @@ class MainWindow(QMainWindow):
             "关于 Section",
             f"{APP_DISPLAY_NAME}　版本 {APP_VERSION}<br><br>"
             "线性工程（市政管道）工程量计算软件，Python + PySide6 重写版。<br>"
-            "工程文件：.stn2（单文件 SQLite）<br><br>"
+            "工程文件：.stn（1.0 兼容头 + JSON 数据体）<br><br>"
             "参考初代 C# 版 section 1.2.2.171220_beta。",
         )
 

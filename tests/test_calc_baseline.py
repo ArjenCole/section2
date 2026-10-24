@@ -35,7 +35,7 @@ def project(tmp_path: Path):
     """一个标准算例工程：混凝土管 / 包封 / 箱涵 各一条，默认放坡原则。"""
     path = project_io.new_project(
         NewProjectSpec(
-            path=tmp_path / "对拍.stn2",
+            path=tmp_path / "对拍.stn",
             project_name="对拍工程",
             segment_names=["标段一"],
             unit_names=["雨水工程"],

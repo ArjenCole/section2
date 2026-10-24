@@ -2,9 +2,9 @@
 
 用法：
 
-    .venv\\Scripts\\python.exe src\\app\\main.py [工程文件.stn2]
+    .venv\\Scripts\\python.exe src\\app\\main.py [工程文件.stn]
 
-启动参数可带一个 .stn2 路径，直接打开该工程。
+启动参数可带一个 .stn 路径，直接打开该工程。
 """
 
 from __future__ import annotations

@@ -1,7 +1,9 @@
 """工程文件生命周期。
 
-新建 / 打开 / 保存 / 另存为 / 关闭、``.lock`` 文件锁防双开、Backup 自动备份、
-结构版本校验。业务代码不直接建连接，统一走这里。
+新建 / 打开 / 保存 / 另存为 / 关闭、``.lock`` 文件锁防双开、Backup 自动备份。
+工程文件是 `.stn`（1.0 风格 XML 头 + JSON 数据体，见 stn_format / stn_codec）；
+内存里的工作载体是临时 SQLite 工作库（见 core.models.base），保存 = 把工作库
+整体写出为 `.stn`。业务代码不直接建连接，统一走这里。
 
 本模块刻意不依赖 Qt，方便直接跑测试；界面层的刷新由调用方通过 EventBus 广播。
 """
@@ -13,7 +15,6 @@ import errno
 import json
 import os
 import shutil
-import tempfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -22,6 +23,7 @@ from xml.etree.ElementTree import SubElement
 
 from sqlalchemy import func, select
 
+from app.services import stn_codec, stn_format
 from app.core.version import (
     APP_VERSION,
     BACKUP_DIR_NAME,
@@ -72,9 +74,8 @@ class ProjectLockedError(ProjectIoError):
 class NewProjectSpec:
     """新建向导收集到的信息。
 
-    ``path`` 为 ``None`` 时新建"临时工程"：数据库建在系统临时目录，
-    不要求用户立即选择保存位置，首次保存（另存为）时才确定文件路径
-    （与 Quotor 的临时项目机制一致）。
+    ``path`` 为 ``None`` 时新建"临时工程"：尚未有工程文件，首次保存
+    （另存为）时才确定文件路径（与 Quotor 的临时项目机制一致）。
     """
 
     path: Path | None = None
@@ -212,43 +213,34 @@ def release_lock(path: str | Path | None) -> None:
 # --------------------------------------------------------------------------- #
 # 新建 / 打开 / 保存 / 关闭
 # --------------------------------------------------------------------------- #
-def new_project(spec: NewProjectSpec) -> Path:
+def new_project(spec: NewProjectSpec) -> Path | None:
     """按向导收集的信息建工程并打开。
 
-    ``spec.path`` 为 ``None`` 时新建临时工程：数据库建在系统临时目录、
-    不加文件锁、不进最近列表，首次保存（save_as）时才确定正式路径。
-    指定路径时同路径已存在的旧文件会被覆盖。
+    ``spec.path`` 为 ``None`` 时新建临时工程：还没有工程文件，首次保存
+    （save_as）时才确定正式路径。指定路径时立即写出 `.stn` 文件，
+    同路径已存在的旧文件会被覆盖。返回工程文件路径（临时工程为 None）。
     """
     global _original_path, _backup_done_for_session
 
     ensure_main_thread("新建工程")
     path = Path(spec.path) if spec.path is not None else None
     close_project()
+    orm.create_working_database()
+    try:
+        _seed_new_project(spec)
+    except Exception:
+        orm.close_database()
+        raise
     if path is None:
-        # 临时工程：临时目录里建唯一文件（Quotor create_transient_project_db 同款）
-        handle, temp_name = tempfile.mkstemp(prefix="section2_", suffix=PROJECT_SUFFIX)
-        os.close(handle)
-        path = Path(temp_name)
         _original_path = None
-        try:
-            orm.create_database(path)
-            _seed_new_project(spec)
-        except Exception:
-            orm.close_database()
-            path.unlink(missing_ok=True)
-            raise
         _backup_done_for_session = False
-        return path
-
+        return None
     if path.suffix.lower() != PROJECT_SUFFIX:
         path = path.with_suffix(PROJECT_SUFFIX)
-    if path.exists():
-        release_lock(path)
-        path.unlink()
-    acquire_lock(path)
     try:
-        orm.create_database(path)
-        _seed_new_project(spec)
+        release_lock(path)
+        _write_project_file(path)
+        acquire_lock(path)
     except Exception:
         orm.close_database()
         release_lock(path)
@@ -281,7 +273,7 @@ def _seed_new_project(spec: NewProjectSpec) -> None:
 
 
 def open_project(path: str | Path) -> Path:
-    """打开工程：抢锁 → 校验结构版本 → 绑定会话。"""
+    """打开工程：抢锁 → 解析 `.stn`（版本校验）→ 由 JSON 重建工作库。"""
     global _original_path, _backup_done_for_session
 
     ensure_main_thread("打开工程")
@@ -291,7 +283,9 @@ def open_project(path: str | Path) -> Path:
         raise ProjectIoError(f"工程文件不存在：{target}")
     acquire_lock(target)
     try:
-        orm.open_database(target)
+        document = stn_format.load_stn(target)
+        orm.create_working_database()
+        stn_codec.load_database(document.data)
         _ensure_basic_info()
     except Exception as error:
         orm.close_database()
@@ -305,7 +299,7 @@ def open_project(path: str | Path) -> Path:
 
 
 def save() -> Path | None:
-    """显式保存：落盘 + 备份一份。
+    """显式保存：把工作库整体写出为 `.stn` + 备份一份。
 
     临时工程（尚未保存过）没有可保存的文件，由界面层引导用户
     走另存为流程选择保存位置。
@@ -313,67 +307,58 @@ def save() -> Path | None:
     ensure_main_thread("保存工程")
     if _original_path is None:
         raise ProjectIoError("工程尚未保存过，请先选择保存位置。")
-    path = orm.database_path()
-    if path is None:
+    if not orm.is_open():
         return None
-    _commit_and_backup(force_backup=True)
-    return path
+    orm.commit()
+    _write_project_file()
+    create_backup()
+    _backup_done_for_session = True
+    return _original_path
 
 
 def save_as(path: str | Path) -> Path:
-    """另存为（也承担临时工程的首次保存）：把当前内容整体复制到新路径，
-    之后继续在新文件上工作；临时工程的临时库随手删除。"""
+    """另存为（也承担临时工程的首次保存）：把当前内容整体写到新路径，
+    之后继续在新文件上工作；工作库保持不变，无需重开。"""
     global _original_path, _backup_done_for_session
 
     ensure_main_thread("另存工程")
-    old_path = orm.database_path()
-    was_transient = _original_path is None
+    if not orm.is_open():
+        raise ProjectIoError("尚未打开工程，无法另存为。")
+    old_path = _original_path
+    was_transient = old_path is None
     target = Path(path)
     if target.suffix.lower() != PROJECT_SUFFIX:
         target = target.with_suffix(PROJECT_SUFFIX)
-    if old_path is None:
-        raise ProjectIoError("尚未打开工程，无法另存为。")
     if not was_transient and target.resolve() == Path(old_path).resolve():
         return _original_path
-    if target.exists():
-        release_lock(target)
-        target.unlink()
+    _reject_foreign_lock(target)
 
-    orm.commit()  # 先落盘，保证复制出来的文件是最新的
+    orm.commit()  # 先落盘，保证写出的是最新内容
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(old_path, target)
-    orm.close_database()
+    _write_project_file(target)
     release_lock(old_path)
-    if was_transient:
-        old_path.unlink(missing_ok=True)  # 临时库不再需要
-    acquire_lock(target)
-    try:
-        orm.open_database(target)
-    except Exception:
-        orm.close_database()
-        release_lock(target)
-        raise
     _original_path = target
+    acquire_lock(target)
     _backup_done_for_session = False
     return target
 
 
 def close_project() -> Path | None:
-    """关闭工程：落盘 → 关会话 → 释放锁；临时工程随手删掉临时库。"""
+    """关闭工程：落盘 → 关会话（删除临时工作库）→ 释放锁。"""
     global _original_path, _backup_done_for_session
 
     ensure_main_thread("关闭工程")
-    path = orm.database_path()
-    if path is None:
+    path = _original_path
+    if not orm.is_open():
+        _original_path = None
+        _backup_done_for_session = False
         return None
-    was_transient = _original_path is None
     try:
         orm.commit()
     finally:
         orm.close_database()
-        release_lock(path)
-    if was_transient:
-        path.unlink(missing_ok=True)
+        if path is not None:
+            release_lock(path)
     _original_path = None
     _backup_done_for_session = False
     return path
@@ -381,21 +366,44 @@ def close_project() -> Path | None:
 
 def commit() -> None:
     """一次修改落盘（自动保存）；本次打开后的第一次修改会顺手备份一份。"""
-    ensure_main_thread("保存工程数据")
-    _commit_and_backup(force_backup=False)
-
-
-def _commit_and_backup(*, force_backup: bool) -> None:
     global _backup_done_for_session
 
+    ensure_main_thread("保存工程数据")
     if not orm.is_open():
         return
     orm.commit()
     if _original_path is None:
-        return  # 临时工程没有原文件，备份到临时目录没有意义
-    if force_backup or not _backup_done_for_session:
+        return  # 临时工程没有正式文件，写出留到首次另存为
+    _write_project_file()
+    if not _backup_done_for_session:
         create_backup()
         _backup_done_for_session = True
+
+
+def _write_project_file(path: Path | None = None) -> Path:
+    """把当前工作库整体写出为 `.stn` 工程文件（保存 / 另存为 / 新建共用）。"""
+    target = Path(path) if path is not None else _original_path
+    if target is None:
+        raise ProjectIoError("尚未确定工程文件路径。")
+    stn_format.write_stn(target, stn_codec.dump_database())
+    return target
+
+
+def _reject_foreign_lock(path: Path) -> None:
+    """path 已被其他存活进程加锁时拒绝覆盖（另存为 / 新建防误覆盖）。"""
+    lock = lock_path(path)
+    if not lock.exists():
+        return
+    pid: int | None = None
+    opened_at = ""
+    try:
+        data = json.loads(lock.read_text(encoding="utf-8"))
+        pid = int(data.get("pid", 0)) or None
+        opened_at = str(data.get("opened_at", ""))
+    except (OSError, ValueError, TypeError):
+        pass
+    if pid and pid != os.getpid() and _process_alive(pid):
+        raise ProjectLockedError(Path(path), pid, opened_at)
 
 
 def current_path() -> Path | None:
@@ -1032,14 +1040,14 @@ def _number_text(value) -> str:
 # 备份
 # --------------------------------------------------------------------------- #
 def create_backup() -> Path | None:
-    """把当前工程文件复制到 工程同级\\Backup\\<工程名>_yyMMdd_HHmmss.stn2，并只保留最近 20 份。"""
-    path = orm.database_path()
-    if path is None or not Path(path).exists():
+    """把当前工程文件复制到 工程同级\\Backup\\<工程名>_yyMMdd_HHmmss.stn，并只保留最近 20 份。"""
+    path = _original_path
+    if path is None or not path.exists():
         return None
-    target = _next_backup_path(Path(path))
+    target = _next_backup_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(path, target)
-    _prune_backups(Path(path))
+    _prune_backups(path)
     return target
 
 

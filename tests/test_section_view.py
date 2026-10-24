@@ -17,7 +17,7 @@ from app.services.project_io import NewProjectSpec
 def project_with_element(tmp_path):
     """一个带默认围护/地基原则的工程 + 一条 Dn1200 直埋混凝土管。"""
     spec = NewProjectSpec(
-        path=tmp_path / "断面工程.stn2",
+        path=tmp_path / "断面工程.stn",
         project_name="断面工程",
         unit_names=["雨水工程"],
     )
@@ -38,7 +38,7 @@ def multi_pe_element(tmp_path):
     from app.core.models.models import MULTI_PE_TEXT
     from app.viewmodels import unit_vm
 
-    spec = NewProjectSpec(path=tmp_path / "多围护断面.stn2", unit_names=["雨水工程"])
+    spec = NewProjectSpec(path=tmp_path / "多围护断面.stn", unit_names=["雨水工程"])
     project_io.new_project(spec)
 
     steep = project_io.create_enclosure("陡坡")
@@ -101,7 +101,7 @@ def test_view_renders_offscreen(qapp, project_with_element) -> None:
 
 
 def test_scene_without_principle(qapp, tmp_path) -> None:
-    spec = NewProjectSpec(path=tmp_path / "无原则.stn2", unit_names=["雨水工程"])
+    spec = NewProjectSpec(path=tmp_path / "无原则.stn", unit_names=["雨水工程"])
     project_io.new_project(spec)
     from app.viewmodels import unit_vm
 
@@ -151,7 +151,7 @@ def test_multi_pf_scene_uses_first_ref(qapp, tmp_path) -> None:
     from app.views.panels.section_view import _build_scene
     from app.viewmodels import unit_vm
 
-    spec = NewProjectSpec(path=tmp_path / "多地基断面.stn2", unit_names=["雨水工程"])
+    spec = NewProjectSpec(path=tmp_path / "多地基断面.stn", unit_names=["雨水工程"])
     project_io.new_project(spec)
     filled = project_io.create_foundation("换填地基")
     orm.session().add(FoundationReplacement(foundation_id=filled.id, name="碎石", h=300.0))

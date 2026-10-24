@@ -4,7 +4,7 @@ Section 2.0 是 PySide6 单窗体桌面应用，分层与 Quotor 一致：
 
 ```
 views/  ──►  viewmodels/  ──►  services/  ──►  core/models/
-（控件）      （状态与信号）      （业务逻辑）      （.stn2 数据）
+（控件）      （状态与信号）      （业务逻辑）      （工作库/文件数据）
                     ▲                              │
                     └──────── core/event_bus ──────┘
 ```
@@ -16,7 +16,7 @@ views/  ──►  viewmodels/  ──►  services/  ──►  core/models/
 | `views/` | 只画界面、把用户操作转成 VM 调用、渲染 VM 发来的数据 | 不碰数据库、不写业务规则 |
 | `viewmodels/` | 持有当前选中状态，调用 services，用 Signal 广播结果 | 不引用 Qt 控件 |
 | `services/` | 工程文件读写、计算引擎、图集、旧档迁移、AI（纯 Python，不依赖 Qt） | 不管界面 |
-| `core/models/` | `.stn2` 表结构与连接生命周期 | 不含业务规则 |
+| `core/models/` | 临时工作库（SQLite）表结构与连接生命周期 | 不含业务规则 |
 
 面板之间不互相持有引用：跨面板通知走 `core/event_bus.py` 的全局 Signal 总线
 （`project_opened` / `tree_structure_changed` / `node_selected` / `unit_changed` / `status_message`）。
@@ -37,12 +37,25 @@ AI 工具（M8）走同一条 3~6，因此界面与 AI 改数据不会出现两�
 
 ## 工程文件
 
-`.stn2` = 单个 SQLite 库，表结构以 `core/models/models.py` 为权威定义。
-`core/models/base.py` 负责引擎/会话与 `meta` 表（`schema_version` / `app_version` / `created_at` / `updated_at`），
-`services/project_io.py` 负责新建/打开/保存/另存/关闭、`.lock` 防双开、Backup 备份与结构版本校验。
+`.stn` = **1.0 风格 XML 头 + CDATA 包裹的 JSON 数据体**（单文本文件）：
 
-结构变更时：改 `core/models/models.py` → `core/version.py` 的 `SCHEMA_VERSION` +1 →
-在 `core/models/base.py` 的 `_MIGRATIONS` 里登记 `{旧版本号: 迁移函数}`。
+* XML 头沿用 1.0 格式（`Assembly/Version` + `mcBasicInfo`），唯一目的是让旧 1.0 软件
+  误打开 2.0 文件时能读出高版本号弹提醒，而不是崩溃；1.0 不认识的 `Section2`
+  元素会被它忽略；
+* JSON 数据体是 2.0 的正式数据，层级结构（工程 → 标段 → 单位工程 → 构件 → 明细，
+  原则独立成节），不含库里的 `id` / 外键 / `order_no`，顺序由数组次序表达；
+  结构版本记录在 JSON 的 `file_version`（`core/version.py` 的 `STN_FILE_VERSION`）。
+
+信封读写：`services/stn_format.py`；JSON ↔ 数据库编解码：`services/stn_codec.py`。
+运行时数据载体是**临时目录里的 SQLite 工作库**（`core/models/base.py` 的
+`create_working_database`）：打开工程时由 JSON 重建、保存时整体写出为 `.stn`、
+关闭即删除。`meta` 表（`schema_version` / `app_version` / `created_at` / `updated_at`）
+只作库内诊断记录；`services/project_io.py` 负责新建/打开/保存/另存/关闭、
+`.lock` 防双开与 Backup 备份。
+
+JSON 数据结构变更时：改 `services/stn_codec.py`（与涉及的模型）→
+`core/version.py` 的 `STN_FILE_VERSION` +1。2.0 未发布，不做旧文件迁移：
+`file_version` 与代码不一致即拒绝打开（高版本提示升级程序，低版本出自内部预览版）。
 
 ## 计算表达式：不做预运算
 

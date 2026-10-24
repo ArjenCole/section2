@@ -18,19 +18,17 @@ from app.services.project_io import NewProjectSpec
 def _project_info() -> dict:
     info = project_io.basic_info()
     path = project_io.current_path()
-    database_path = orm.database_path()
     backups = 0
-    if database_path is not None:
-        folder = project_io.backup_dir(database_path)
+    if path is not None:
+        folder = project_io.backup_dir(path)
         if folder.exists():
-            backups = len(list(folder.glob(f"{Path(database_path).stem}_*{Path(database_path).suffix}")))
+            backups = len(list(folder.glob(f"{Path(path).stem}_*{Path(path).suffix}")))
     return {
         "project_name": info.project_name if info else project_io.project_name(),
         "project_index": info.project_index if info else "",
         "author": info.author if info else "",
         "atlas_name": info.atlas_name if info else "",
         "path": str(path) if path else "",
-        "database_path": str(database_path) if database_path else "",
         "transient": project_io.is_transient(),
         "schema_version": orm.get_meta("schema_version", ""),
         "backup_dir": str(project_io.backup_dir(path)) if path else "",
@@ -68,7 +66,7 @@ def tool_create_project(arguments: dict) -> dict:
     return {
         "ok": True,
         "data": {
-            "path": str(path),
+            "path": str(path) if path else "",
             "transient": project_io.is_transient(),
             "info": _project_info(),
             "tree": tree_dict(),
@@ -80,7 +78,7 @@ def tool_create_project(arguments: dict) -> dict:
 def tool_open_project(arguments: dict) -> dict:
     path_text = str(arguments.get("path") or "").strip()
     if not path_text:
-        raise ToolError("请提供工程文件路径 path（.stn2）。")
+        raise ToolError("请提供工程文件路径 path（.stn）。")
     target = Path(path_text)
     current = project_io.current_path()
     if current is not None and target.resolve() == Path(current).resolve():
@@ -147,7 +145,7 @@ def register(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
             "create_project",
-            "新建工程（临时工程或指定 .stn2 路径），自动创建标段/单位工程与四类默认原则。写操作。",
+            "新建工程（临时工程或指定 .stn 路径），自动创建标段/单位工程与四类默认原则。写操作。",
             {
                 "type": "object",
                 "properties": {
@@ -175,7 +173,7 @@ def register(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
             "open_project",
-            "打开 .stn2 工程文件（抢锁、结构版本迁移）。写操作（会话）。",
+            "打开 .stn 工程文件（抢锁、版本校验、重建工作库）。写操作（会话）。",
             {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
             tool_open_project,
         )

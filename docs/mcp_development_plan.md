@@ -19,7 +19,7 @@
 
 ## 1. 背景与目标
 
-Section 2.0 是市政管道工程量计算软件（PySide6 单窗体桌面应用，工程文件 `.stn2` = 单文件 SQLite）。
+Section 2.0 是市政管道工程量计算软件（PySide6 单窗体桌面应用，工程文件 `.stn` = 1.0 兼容头 + JSON 数据体）。
 它已经内置一个小规模 AI 助手（右栏面板，OpenAI 兼容 SSE 对话 + 4 个构件增删改查工具，M7/M8 里程碑），
 但 AI 只能在 GUI 内部、以"当前选中单位工程"为上下文使用这些能力。
 
@@ -193,7 +193,7 @@ Quotor（`F:\GithubRepos\ArjenCole\Quotor`，只读参照）已把同样的"MCP 
 ② 本地 HTTP：   section2-mcp --transport http [--port 8765 --token <t>]
 ③ stdio 桥：    section2-mcp --connect http://127.0.0.1:8765/mcp [--token <t>]
                 # stdio MCP ↔ 运行中桌面应用的 HTTP 端点转发（照顾只支持 stdio 的客户端）
-④ headless：    section2-mcp --project <path.stn2>    # 无 GUI 打开工程，强制只读
+④ headless：    section2-mcp --project <path.stn>     # 无 GUI 打开工程，强制只读
 ```
 
 - ①②供测试与特殊部署；③是外部 stdio-only 客户端操作**运行中桌面应用**的通道；
@@ -407,14 +407,14 @@ streamable_http_client` + `ClientSession`（`async with`）连接运行中桌面
 ### 6.6 CLI（`section2-mcp`，参数对齐 Quotor）
 
 `--transport {stdio,http}`、`--host`（仅回环）、`--port`、`--token`、`--read-only`、
-`--connect <url>`、`--project <path.stn2>`；`--project` 成功打开后强制只读。
+`--connect <url>`、`--project <path.stn>`；`--project` 成功打开后强制只读。
 
 ---
 
 ## 7. MCP 能力清单（74 工具全量规格 = 统一注册表内容）
 
 > 通用约定：
-> - "写操作" = 修改 `.stn2` 或文件系统，均即时 commit 落盘（自动保存语义）；
+> - "写操作" = 修改 `.stn` 或文件系统，均即时 commit 落盘（自动保存语义）；
 > - **id 参数全部可省略**：内嵌模式缺省取 GUI 当前选中（4.3）；独立模式必须显式；
 > - 埋深/数量/参数值/含量等"算式列"参数为 **string 原文**（如 `"2.5+0.3"`），允许纯数字；
 > - 构件类别枚举：`"直埋管道" "包封" "箱涵" "顶管" "牵引管" "管廊" "构筑物"`
@@ -570,7 +570,7 @@ streamable_http_client` + `ClientSession`（`async with`）连接运行中桌面
 | ID | 工具 | 读写 | 关键参数 | 返回 | 复用 |
 |---|---|---|---|---|---|
 | T67 | `inspect_legacy_project` | 读 | `path*`(.stn) | 预览报告：版本/各对象计数/警告列表（**不写任何文件**；headless 可用） | `stn_migration.parse_legacy` |
-| T68 | `migrate_legacy_project` | 写 | `source_path*`、`target_path*`(.stn2) | 迁移报告全文（计数/warnings/skipped/原则补齐） | `stn_migration.migrate(source, target)` |
+| T68 | `migrate_legacy_project` | 写 | `source_path*`、`target_path*`(.stn) | 迁移报告全文（计数/warnings/skipped/原则补齐） | `stn_migration.migrate(source, target)` |
 
 ### 7.8 H 组：汇总与导出（T69~T72，P5，**与 M5 协同**）
 
@@ -841,7 +841,7 @@ isError/allow_actions 过滤/headless 守卫）通过。
 测试：适配层契约（正/反路径）；HTTP 协议闭环（initialize→list_tools→call_tool；无/错
 token → 401；对 token → 200；仅回环可达）；E2E：临时工程 → 建树 → 加构件（含管道/
 参数/引用）→ list/get → update → delete；写操作弹确认卡、拒绝返回 cancelled 且循环终止；
-写后 `.stn2` 落盘且 `Backup\` 出现备份。
+写后 `.stn` 落盘且 `Backup\` 出现备份。
 
 **验收**：`curl` 带 token 能 list_tools；Codex 或 Claude Desktop 配置后能 `get_project_info`
 读回工程名；GUI 界面在 AI/MCP 写操作后实时刷新（EventBus）。
@@ -946,12 +946,12 @@ headers = { Authorization = "Bearer <MCP 设置对话框生成的 token>" }
 //                  "args": ["--connect", "http://127.0.0.1:8765/mcp", "--token", "<token>"] }
 // headless 只读（无 GUI、脚本化）：
 //   "section2": { "command": "<venv>\\Scripts\\section2-mcp.exe",
-//                  "args": ["--project", "D:\\工程\\某项目.stn2"] }
+//                  "args": ["--project", "D:\\工程\\某项目.stn"] }
 ```
 
 > 具体字段名以各客户端官方文档为准；MCP 设置对话框提供可直接粘贴的片段（5.2）。
 
-### B. 数据模型速查（.stn2 表 → 关键字段）
+### B. 数据模型速查（工作库表 → 关键字段）
 
 `basic_info`（工程名/编号/编制人/图集名）→ `segment` → `unit` → `element`
 （category 0~7、depth/amount 算式原文、pe/pf/pp/pw_name、main_pe_name、source、order_no）
@@ -1026,7 +1026,7 @@ headers = { Authorization = "Bearer <MCP 设置对话框生成的 token>" }
 
 | 术语 | 含义 |
 |---|---|
-| `.stn2` | 单文件 SQLite 工程文件；commit 即落盘 |
+| `.stn` | 工程文件：1.0 兼容 XML 头 + CDATA JSON 数据体；commit 即落盘 |
 | `.spcp` | 单原则导出 XML（围护/地基/降水/面宽四类） |
 | QDict / Quantity / steps | 工程量字典；单项量=键(类别\|项目\|单位)+数值+表达式+中间步骤 |
 | Ei/WSi/Fi | 构件公式库三组：围护/止水/特殊地基模板 |

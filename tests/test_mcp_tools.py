@@ -42,7 +42,7 @@ def _add_pipe_element(unit_id: int, name: str = "雨水管") -> int:
 # 工程 / 树 / 构件
 # --------------------------------------------------------------------------- #
 def test_project_lifecycle(tmp_path: Path) -> None:
-    target = tmp_path / "生命周期.stn2"
+    target = tmp_path / "生命周期.stn"
     result = REG.execute(
         "create_project",
         {"project_name": "生命周期", "path": str(target), "unit_names": ["雨水工程"]},
@@ -53,7 +53,7 @@ def test_project_lifecycle(tmp_path: Path) -> None:
     assert REG.execute("save_project", {})["ok"]
     assert REG.execute("close_project", {})["ok"]
     assert REG.execute("open_project", {"path": str(target)})["ok"]
-    another = tmp_path / "生命周期-副本.stn2"
+    another = tmp_path / "生命周期-副本.stn"
     assert REG.execute("save_project_as", {"path": str(another)})["ok"]
     assert another.exists()
 
@@ -337,7 +337,7 @@ def test_legacy_inspect_and_migrate(tmp_path: Path) -> None:
     inspected = REG.execute("inspect_legacy_project", {"path": str(source)})
     assert inspected["ok"], inspected
     assert inspected["data"]["elements"] > 0
-    target = tmp_path / "迁移结果.stn2"
+    target = tmp_path / "迁移结果.stn"
     migrated = REG.execute(
         "migrate_legacy_project", {"source_path": str(source), "target_path": str(target)}
     )

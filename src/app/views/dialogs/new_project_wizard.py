@@ -206,8 +206,10 @@ class NewProjectWizard(FramelessDialog):
 
 def suggested_file_name(project_name: str) -> str:
     """按项目名称给出建议文件名（去掉路径非法字符）。"""
+    from app.core.version import PROJECT_SUFFIX
+
     safe = "".join(ch for ch in (project_name or "新建项目") if ch not in '\\/:*?"<>|').strip()
-    return f"{safe or '新建项目'}.stn2"
+    return f"{safe or '新建项目'}{PROJECT_SUFFIX}"
 
 
 def suggested_dir() -> Path:

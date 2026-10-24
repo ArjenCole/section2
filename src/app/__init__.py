@@ -3,7 +3,7 @@
 包结构（src 布局）：
 
     src/app/core          版本、路径、配置、事件总线、算式求值
-    src/app/core/models   .stn2 工程文件的 SQLAlchemy 表结构
+    src/app/core/models   临时工作库（SQLite）表结构，工程文件为 .stn
     src/app/core/calc     计算引擎（沟槽土方、管道基础、降水）
     src/app/services      工程文件读写、图集、导出、旧档迁移、AI
     src/app/viewmodels    MVVM 视图模型

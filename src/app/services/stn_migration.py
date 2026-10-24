@@ -1,6 +1,6 @@
-"""旧 `.stn`(XML) → `.stn2` 一次性迁移（M6）。
+"""旧 `.stn`(XML) → 新 `.stn`(头 + JSON) 一次性迁移工具。
 
-定位：**单向只读迁移工具**——老工程的 `.stn` 文件任何情况下只读；
+定位：**单向只读迁移工具**——老工程的 1.0 `.stn` 文件任何情况下只读；
 不追求 100% 还原，追求“数据不丢、能继续算”。
 
 * 兼容 1.0.x ~ 1.2.2.x（`<1.2.1.1` 补箱涵含钢量参数；`<1.2.2.1`
@@ -8,7 +8,11 @@
 * 原则按名称匹配到新库，匹配不到的构件引用记入报告 warning，
   绝不静默丢数据或静默替换；
 * 单个节点解析失败 → 跳过并记入报告；整体失败 → 抛出异常，由调用方
-  删除半成品 `.stn2`。
+  删除半成品 `.stn`。
+
+注意与 :mod:`app.services.stn_format` 的区别：老 1.0 文件与新 2.0 文件
+扩展名相同（都是 `.stn`），靠内容区分——2.0 文件带 `Assembly/Version` 头
+（版本号 ≥ 2.0.0.0）和 `Section2` JSON 数据体。
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from pathlib import Path
 
 from lxml import etree
 
+from app.services import stn_codec, stn_format
 from app.core.models import base as orm
 from app.core.models.models import (
     CATEGORY_NAMES,
@@ -394,7 +399,7 @@ def _version_tuple(version: str) -> tuple[int, ...]:
 # 写入新库
 # --------------------------------------------------------------------------- #
 def migrate(source: str | Path, target: str | Path) -> MigrationReport:
-    """解析旧工程并写入新的 .stn2；失败时删除半成品文件后抛出。"""
+    """解析旧工程并写出新的 .stn；失败时删除半成品文件后抛出。"""
     target_path = Path(target)
     try:
         report = _migrate_inner(Path(source), target_path)
@@ -419,7 +424,7 @@ def _migrate_inner(source: Path, target: Path) -> MigrationReport:
 
     if target.exists():
         target.unlink()
-    orm.create_database(target)
+    orm.create_working_database()
     session = orm.session()
 
     session.add(
@@ -570,8 +575,9 @@ def _migrate_inner(source: Path, target: Path) -> MigrationReport:
         report.prices += 1
 
     orm.commit()
+    stn_format.write_stn(target, stn_codec.dump_database())
     orm.close_database()
-    report.warnings.extend(_dedupe(report.warnings))
+    report.warnings = _dedupe(report.warnings)
     return report
 
 

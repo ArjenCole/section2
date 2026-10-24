@@ -40,7 +40,7 @@ def _source_counts(path: Path) -> dict[str, int]:
 
 @pytest.mark.parametrize("source", _available_samples(), ids=lambda path: path.stem)
 def test_migrate_sample(tmp_path: Path, source: Path) -> None:
-    target = tmp_path / f"{source.stem}.stn2"
+    target = tmp_path / f"{source.stem}.stn"
     report = stn_migration.migrate(source, target)
 
     assert target.exists()
@@ -98,7 +98,7 @@ def test_migrate_preserves_expressions_and_params(tmp_path: Path) -> None:
         (node.findtext("Depth") or "", node.findtext("Amount") or "")
         for node in tree.getroot().findall(".//mcSegment/mcUnit/mcElement")
     ]
-    target = tmp_path / "copy.stn2"
+    target = tmp_path / "copy.stn"
     stn_migration.migrate(source, target)
     project_io.open_project(target)
     try:
@@ -130,7 +130,7 @@ def test_migrate_gets_category_atlas_params(tmp_path: Path) -> None:
     patched = tmp_path / "包封样例.stn"
     tree.write(str(patched), encoding="utf-8", xml_declaration=True)
 
-    target = tmp_path / "out.stn2"
+    target = tmp_path / "out.stn"
     stn_migration.migrate(patched, target)
     project_io.open_project(target)
     try:
@@ -152,7 +152,7 @@ def test_migrate_gets_category_atlas_params(tmp_path: Path) -> None:
         buried_element.find("Category").text = "直埋管道"
         buried_path = tmp_path / "直埋样例.stn"
         tree.write(str(buried_path), encoding="utf-8", xml_declaration=True)
-        buried_target = tmp_path / "buried.stn2"
+        buried_target = tmp_path / "buried.stn"
         stn_migration.migrate(buried_path, buried_target)
         orm.close_database()
         project_io.open_project(buried_target)
@@ -173,7 +173,7 @@ def test_migrate_readonly_source(tmp_path: Path) -> None:
     """迁移绝不修改原 .stn。"""
     source = _available_samples()[0]
     before = source.read_bytes()
-    stn_migration.migrate(source, tmp_path / "out.stn2")
+    stn_migration.migrate(source, tmp_path / "out.stn")
     assert source.read_bytes() == before
 
 
@@ -181,8 +181,8 @@ def test_migrate_bad_file_aborts(tmp_path: Path) -> None:
     bogus = tmp_path / "bad.stn"
     bogus.write_text("不是 XML", encoding="utf-8")
     with pytest.raises(stn_migration.MigrationError):
-        stn_migration.migrate(bogus, tmp_path / "out.stn2")
-    assert not (tmp_path / "out.stn2").exists()
+        stn_migration.migrate(bogus, tmp_path / "out.stn")
+    assert not (tmp_path / "out.stn").exists()
 
 
 def test_migrate_report_lists_warnings(tmp_path: Path) -> None:
@@ -201,6 +201,6 @@ def test_migrate_report_lists_warnings(tmp_path: Path) -> None:
     broken = tmp_path / "broken.stn"
     tree.write(str(broken), encoding="utf-8", xml_declaration=True)
 
-    report = stn_migration.migrate(broken, tmp_path / "out.stn2")
+    report = stn_migration.migrate(broken, tmp_path / "out.stn")
     assert any("不存在的围护原则" in warning for warning in report.warnings)
 

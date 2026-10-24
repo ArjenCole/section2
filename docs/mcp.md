@@ -86,7 +86,7 @@ section2-mcp --transport http --port 8765 --token <token>
 section2-mcp --connect http://127.0.0.1:8765/mcp --token <token>
 
 # 4) headless 只读：无界面打开工程（脚本化 / CI 查询计算）
-section2-mcp --project "D:\工程\某项目.stn2"
+section2-mcp --project "D:\工程\某项目.stn"
 ```
 
 - 模式 4 会抢 `.lock`（与桌面版互斥、先后接管，进程退出自动释放），

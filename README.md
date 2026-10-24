@@ -12,17 +12,20 @@
   悬停/双击表达式可看**中间步骤**（每步说明 + 该步算式，各步拼起来就是完整算式）；
 - **AI 助手面板**（`Ctrl+L`）：流式对话 + 工具调用（一期为构件条目增删改查 4 个工具，
   写操作一律弹确认窗），支持任意 OpenAI 兼容端点（DeepSeek / OpenAI / Ollama / vLLM / 通义…）；
-- **旧工程一次性迁移**：`文件 → 导入旧版工程(.stn)…`，把老 `.stn` 数据单向导入 `.stn2`，
+- **旧工程一次性迁移**：`文件 → 导入旧版工程(.stn)…`，把老 1.0 `.stn` 数据单向导入新版 `.stn`，
   带解析摘要、原则补齐警告与可复制的迁移报告。
 
-新版工程文件为单文件 SQLite：**`.stn2`**（提交即落盘 = 自动保存，带 `.lock` 防双开与 Backup 自动备份）。
+新版工程文件扩展名沿用 **`.stn`**：开头是 1.0 风格的 XML 头（老软件误打开时能识别出
+“高版本文件”并提醒，而不是崩溃），其后是 CDATA 包裹的 JSON 数据体（正式数据，
+见 `src/app/services/stn_format.py` / `stn_codec.py`）。提交即落盘 = 自动保存，
+带 `.lock` 防双开与 Backup 自动备份。
 
 ## 功能总览（里程碑 M1~M10）
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
 | M1 骨架 | 三栏单窗体（无边框自绘标题栏）、light/dark 主题 | ✅ |
-| M2 数据层 | `.stn2`（单文件 SQLite）、自动保存、锁、备份、新建向导、项目树、录入表格（算式求值） | ✅ |
+| M2 数据层 | `.stn`（1.0 兼容头 + JSON）、自动保存、锁、备份、新建向导、项目树、录入表格（算式求值） | ✅ |
 | M3 原则与图集 | 图集 xlsx 加载查询、构件库、6 个原则编辑器（围护/地基/做法/构件公式/工作面宽度/降水）、多围护/多地基原则引用（按比例） | ✅ |
 | M4 计算引擎 | 沟槽土方/回填、管道基础、降水、围护与特殊地基公式、表达式记录器、对拍测试 | ✅ |
 | M5 导出与汇总 | 汇总面板（量×单价=合价、单价可编辑、批量载价）、定额/清单双表 Excel 导出（含表达式列） | ⏳ 曾随旧版界面实现，未接入现行界面，已移除待重做 |
@@ -39,7 +42,7 @@
 | Python | 3.12+（项目内 `.venv`） |
 | 界面 | PySide6 (Qt6)，MVVM + EventBus，无边框自绘标题栏 |
 | 架构 | `views/ → viewmodels/ → services/ → core/models/`（src 布局） |
-| 工程文件 | `.stn2` 单文件 SQLite（SQLAlchemy 2.0 ORM） |
+| 工程文件 | `.stn`：XML 头 + JSON 数据体（`services/stn_format` 信封 + `stn_codec` 编解码）；运行时用临时 SQLite 工作库（SQLAlchemy 2.0 ORM） |
 | 算式求值 | simpleeval（白名单运算符与 abs/round/sqrt/power/sin/cos，禁任意函数调用） |
 | 图集 | xlsx + openpyxl（只读，随程序分发于 `src/app/resources/atlas/`）；元素模板库为 XML（`inventory/EleInventory.stn`） |
 | 旧档迁移 | lxml（只读解析旧 `.stn` XML） |
@@ -53,7 +56,7 @@
 src/app/
 ├── main.py            入口：QApplication、主题、中文翻译、主窗体、启动参数
 ├── core/              版本、路径、配置、事件总线、算式求值
-│   ├── models/        .stn2 表结构（base.py 管连接与 meta，models.py 管表）
+│   ├── models/        临时工作库表结构（base.py 管连接与 meta，models.py 管表）
 │   └── calc/          计算引擎：groove / foundation / precipitation / engine / tracer
 ├── services/          工程文件读写、图集与构件库、旧档迁移
 │   └── ai/            ai_provider（SSE 流式）、ai_keychain（keyring）
@@ -79,7 +82,7 @@ py -3.12 -m venv .venv
 # 3. 启动
 .venv/Scripts/python.exe src/app/main.py
 # 也可直接带工程文件启动
-.venv/Scripts/python.exe src/app/main.py "D:\工程\某项目.stn2"
+.venv/Scripts/python.exe src/app/main.py "D:\工程\某项目.stn"
 
 # 4. 跑测试
 .venv/Scripts/python.exe -m pytest
@@ -110,7 +113,7 @@ py -3.12 -m venv .venv
   “构筑物|井筒|m3”；参数行可增删改（“-名称 / -单位”两个键锁定）；
 - **构件库**：已随 section-master 更新到 1.3.2.7 版，新增“附属构筑物”分类
   （24 座检查井 + 单篦/双篦雨水口 + 排放口 + 自定义构筑物，共 27 个模板）；
-  工程文件结构版本升至 v3（旧 .stn2 打开时自动迁移：单原则引用补成比例 1 的引用行）。
+  （2.0 未发布、无旧文件兼容负担；JSON 数据体结构版本见 `core/version.py` 的 `STN_FILE_VERSION`。）
 
 ## 与旧版的偏差（修正旧版缺陷）
 
@@ -131,11 +134,14 @@ py -3.12 -m venv .venv
 
 ## 工程文件
 
-- 扩展名 `.stn2`，本质是一个 SQLite 库；保存 = `commit`，无需手动存盘；
+- 扩展名 `.stn`：1.0 风格 XML 头 + `Section2` CDATA 包裹的 JSON 数据体；
+  保存 = `commit`（把临时工作库整体写出为 `.stn`），无需手动存盘；
 - 打开工程后首次修改、以及每次显式保存时，在工程同级 `Backup\` 下备份
-  `<工程名>_yyMMdd_HHmmss.stn2`，保留最近 20 份；
+  `<工程名>_yyMMdd_HHmmss.stn`，保留最近 20 份；
 - 同一工程不允许双开（`<工程文件>.lock` 记录 pid 与时间，进程已退出时自动接管）；
-- 旧 `.stn` 只在 `文件 → 导入旧版工程(.stn)…` 时被读取一次，绝不写回旧格式。
+- 旧 1.0 `.stn` 只在 `文件 → 导入旧版工程(.stn)…` 时被读取一次，绝不写回旧格式；
+  1.0 软件误打开 2.0 保存的 `.stn` 时，会读到头部的 `Assembly/Version`（2.0.0.0）
+  并弹“正在打开的是高版本文件”提醒，不会崩溃。
 
 ## AI 助手
 

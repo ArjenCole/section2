@@ -108,9 +108,9 @@ def test_config_keeps_only_user_settings(qapp, tmp_path, monkeypatch):
     wizard.restart()
     assert wizard.values()["foundation_name"] == "默认地基原则"
 
-    add_recent_project(tmp_path / "某工程.stn2")
+    add_recent_project(tmp_path / "某工程.stn")
     path = tmp_path / "config.toml"
     assert path.exists()
     text = path.read_text(encoding="utf-8")
-    assert "某工程.stn2" in text  # 用户数据在
+    assert "某工程.stn" in text  # 用户数据在
     assert "new_project" not in text and "默认地基原则" not in text  # 默认值不在

@@ -1,8 +1,8 @@
 """旧版工程导入向导（M6）。
 
-流程：选择 .stn → 选择 .stn2 保存路径 → 解析摘要预览 → 确认写库并打开 →
+流程：选择旧版 .stn → 选择新版 .stn 保存路径 → 解析摘要预览 → 确认写库并打开 →
 结束报告（成功计数 + 警告/跳过明细，支持复制文本）。
-原 .stn 文件任何情况下只读。
+旧版 .stn 文件任何情况下只读。
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.config import update_config
+from app.core.version import PROJECT_FILE_FILTER, PROJECT_SUFFIX
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 from app.core.event_bus import bus
 from app.services import stn_migration
@@ -42,8 +43,8 @@ class LegacyImportDialog(FramelessDialog):
         layout.setContentsMargins(14, 10, 14, 12)
         layout.setSpacing(8)
         hint = QLabel(
-            "把 2017 年老软件（C# 版）的 .stn 工程一次性迁移为 .stn2。\n"
-            "原 .stn 文件只读，不会被修改；原则引用匹配不到的会按默认值补齐并列出警告。"
+            "把 2017 年老软件（C# 版）的 .stn 工程一次性迁移为 2.0 的 .stn 格式。\n"
+            "原文件只读，不会被修改；原则引用匹配不到的会按默认值补齐并列出警告。"
         )
         hint.setProperty("role", "hint")
         hint.setWordWrap(True)
@@ -110,7 +111,7 @@ class LegacyImportDialog(FramelessDialog):
             f"{sum(len(unit.elements) for segment in legacy.segments for unit in segment.units)} 条\n"
             f"围护原则 {len(legacy.enclosures)} 条，地基原则 {len(legacy.foundations)} 条\n"
             f"涉及原则：{'、'.join(names) if names else '（无）'}\n\n"
-            "确认后选择 .stn2 保存路径并开始迁移。"
+            "确认后选择 .stn 保存路径并开始迁移。"
         )
 
     def _pick_target(self) -> None:
@@ -119,8 +120,8 @@ class LegacyImportDialog(FramelessDialog):
         target, _filter = QFileDialog.getSaveFileName(
             self,
             "保存新工程",
-            str(suggested_dir() / f"{self._source.stem}.stn2"),
-            "Section 工程 (*.stn2)",
+            str(suggested_dir() / f"{self._source.stem}{PROJECT_SUFFIX}"),
+            PROJECT_FILE_FILTER,
         )
         if not target:
             return

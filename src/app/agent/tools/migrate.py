@@ -8,6 +8,7 @@ from app.agent.errors import ToolError
 from app.agent.tool_registry import Tool, ToolRegistry
 from app.agent.tools._common import check_write_path
 from app.core.event_bus import bus
+from app.core.version import PROJECT_SUFFIX
 from app.services import project_io, stn_migration
 
 
@@ -57,7 +58,7 @@ def tool_migrate_legacy_project(arguments: dict) -> dict:
         raise ToolError("请提供 source_path（旧 .stn）。")
     target = str(arguments.get("target_path") or "").strip()
     if not target:
-        target = str(Path(source).with_suffix(".stn2"))
+        target = str(Path(source).with_suffix(PROJECT_SUFFIX))
     check_write_path(target)
     if project_io.is_open():
         raise ToolError(
@@ -99,10 +100,10 @@ def register(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
             "migrate_legacy_project",
-            "把旧 .stn 迁移为 .stn2（需先关闭当前工程；返回迁移报告）。写操作。",
+            "把旧版 1.0 .stn 工程迁移为 2.0 的 .stn 格式（需先关闭当前工程；返回迁移报告）。写操作。",
             {"type": "object", "properties": {
                 "source_path": {"type": "string"},
-                "target_path": {"type": "string", "description": "默认与源文件同名 .stn2"}},
+                "target_path": {"type": "string", "description": "默认与源文件同名 .stn"}},
              "required": ["source_path"]},
             tool_migrate_legacy_project,
         )

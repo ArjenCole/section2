@@ -99,7 +99,7 @@ def test_database_operations_rejected_from_worker_thread() -> None:
             operations = (
                 ("session", orm.session, ()),
                 ("commit", project_io.commit, ()),
-                ("open", project_io.open_project, ("not-there.stn2",)),
+                ("open", project_io.open_project, ("not-there.stn",)),
             )
             for _name, operation, arguments in operations:
                 try:

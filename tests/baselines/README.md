@@ -1,7 +1,7 @@
 # 计算基准（对拍工程.json）
 
 `对拍工程.json` 是 `tests/test_calc_baseline.py` 的黄金文件：记录「对拍工程」算例
-（在测试代码里用 `NewProjectSpec` 现场构建，fixtures 里没有对应 .stn2）的全部
+（在测试代码里用 `NewProjectSpec` 现场构建，fixtures 里没有对应 .stn）的全部
 工程量结果与算式，算法改动引起数值变化都会被 `test_baseline_file` 拦下。
 
 - 首次运行时若文件不存在，测试会自动生成并 skip，人工确认数值后重跑即冻结；

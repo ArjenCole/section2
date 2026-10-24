@@ -33,7 +33,7 @@ def test_connect_weak_passes_extra_args_and_ignores_signal_args(qapp) -> None:
     signal_bus = EventBus()
     receiver = _Receiver()
     connect_weak(signal_bus.project_opened, receiver, "handle", 7, flag=True)
-    signal_bus.project_opened.emit("工程路径.stn2")
+    signal_bus.project_opened.emit("工程路径.stn")
     assert receiver.calls == [((7,), {"flag": True})]
 
 

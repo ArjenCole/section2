@@ -229,7 +229,7 @@ def test_migrate_multi_principle_and_structure(tmp_path) -> None:
     from app.viewmodels import unit_vm
 
     source = Path(__file__).parent / "fixtures" / "legacy" / "样例-多原则与构筑物.stn"
-    target = tmp_path / "migrated.stn2"
+    target = tmp_path / "migrated.stn"
     report = stn_migration.migrate(source, target)
     # 样例的钢板桩构件参数不全，按构件库默认值补齐的提示属正常行为；
     # 不允许出现原则悬空 / 跳过类警告

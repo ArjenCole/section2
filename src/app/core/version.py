@@ -11,29 +11,19 @@ APP_ORG_DOMAIN = "section.local"
 #: 程序版本号，与旧版 C# 程序集版本号衔接（旧版 1.2.2.x → 新版 2.0.0.0）
 APP_VERSION = "2.0.0.0"
 
-#: .stn2 库结构版本。结构变更时 +1，并在 core/models/base.py 的 _MIGRATIONS 中登记迁移函数。
-#: v3：附属构筑物（mcE7，category=7）+ 多原则引用（element_principle 表、element.main_pe_name 列）
-#: v4：降水原则 / 面宽原则独立（principle_precipitation / principle_width /
-#:     principle_width_item 表、element.pp_name / pw_name 列；围护原则不再携带这两项）
-#: v5：构件参数拆“参数名 / 单位”（element_param.unit 列、pipe.t 管道壁厚列）；
-#:     附属构筑物工程量独立成表（element_quantity，“类别|项目|单位”三段参数迁走）
-#: v6：工作面加宽 / 垫层厚 / 基础厚 三行按构件类别收敛：直埋管道三行都显示
-#:     （默认按图集、可改），包封埋管 / 箱涵 / 管廊只显示工作面加宽 / 垫层厚
-#:     （基础厚恒为 0，不显示、不可改），顶管 / 牵引管不显示
-#:     （见 param_naming.ATLAS_PARAM_CATEGORIES）
-#: v7：按类别再收敛一次（v6 的早期实现误删了直埋 / 箱涵 / 管廊上的图集行）
-#: v8：管道行加“管材类别”列（pipe.cat）：面宽匹配 / 图集分流 / 断面图砼判断 /
-#:     包封扣管位统一读它，不再按管材名称做字符串包含判断（见 core.pipe_category）
-#: v9：图集候选参数列（element_atlas_candidate 表）：直埋构件的 a/C1/C2 按
-#:     当前围护原则从 8 组快照（砼/非砼 × 90/120/150/180）自动选组，参数值列
-#:     锁定；候选是一次性快照、可手改（见 core.atlas_candidates）
-#: v10：管道壁厚并入构件参数行（"管道壁厚" mm，直埋第一行，候选同 a/C1/C2）；
-#:      候选表加 t 列；管材面板的壁厚列改为只读引用。v9 → v10 迁移按首根管壁厚回填
-SCHEMA_VERSION = 10
+#: 内部工作库（临时 SQLite）结构版本。业务数据以 .stn 文件的 JSON 体为准，
+#: 工作库每次打开都按当前代码结构重建，这里只作库内 meta 诊断记录。
+SCHEMA_VERSION = 1
 
-#: 新版工程文件
-PROJECT_SUFFIX = ".stn2"
-PROJECT_FILE_FILTER = "Section 工程 (*.stn2)"
+#: `.stn` 文件 JSON 数据体的结构版本（见 services/stn_format.py）。
+#: 数据结构变更时 +1；打开时与代码不一致即拒绝（高版本提示升级，
+#: 低版本文件出自未发布预览版，不提供迁移）。
+STN_FILE_VERSION = 1
+
+#: 新版工程文件：1.0 风格的 XML 头（供 1.0 软件识别“高版本文件”并提醒）
+#: + CDATA 包裹的 JSON 数据体（services/stn_format.py）。
+PROJECT_SUFFIX = ".stn"
+PROJECT_FILE_FILTER = "Section 工程 (*.stn)"
 
 #: 锁文件 = 工程文件全路径 + LOCK_SUFFIX
 LOCK_SUFFIX = ".lock"

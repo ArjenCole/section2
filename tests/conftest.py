@@ -42,6 +42,6 @@ def _closed_project():
 @pytest.fixture()
 def project(tmp_path):
     """默认配置的临时工程（单个单位工程「雨水工程」），返回工程文件路径。"""
-    path = tmp_path / "测试工程.stn2"
+    path = tmp_path / "测试工程.stn"
     project_io.new_project(NewProjectSpec(path=path, unit_names=["雨水工程"]))
     return path
