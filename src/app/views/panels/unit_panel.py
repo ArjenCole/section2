@@ -100,17 +100,20 @@ _QCOL_AMOUNT = 5
 _QUANTITY_WIDTHS = [77, 66, 193, 48, 434, 135]
 
 _PIPE_ROLE = Qt.ItemDataRole.UserRole + 1
-#: 管材表 5 列：管材（材质文字）/ 管径 / 壁厚 / 含量 / 类别。
+#: 管材表 6 列：管材（材质文字）/ 管径 / 壁厚 / 含量 / 类别 / 行尾「-」删行按钮。
 #: 直埋管道的壁厚只读——由构件参数行「管道壁厚」自动带出（候选值驱动）；
 #: 其他类别壁厚空 = 自动按图集（灰字显示图集值），可手填。"类别"是计算唯一
 #: 依据（面宽表行、图集分流、断面图砼判断都读它），默认由构件库快照写入；
 #: "管材"是材质描述文字（规格与设备材料表用），不参与计算。
-_PIPE_HEADERS = ["管材", "管径mm", "壁厚mm", "含量", "类别"]
+#: 删行按钮列只在包封 / 箱涵 / 管廊显示（直埋 / 非开挖恒一条管材、构筑物
+#: 不带管材，增删入口整列隐藏，见 _pipe_panel_editable）。
+_PIPE_HEADERS = ["管材", "管径mm", "壁厚mm", "含量", "类别", ""]
 _PIPE_COL_MAT = 0
 _PIPE_COL_DN = 1
 _PIPE_COL_T = 2
 _PIPE_COL_CONTENT = 3
 _PIPE_COL_CAT = 4
+_PIPE_COL_DEL = 5
 _PARAM_ROLE = Qt.ItemDataRole.UserRole + 1
 #: 候选参数格携带 (候选行 id, 字段名 a/c1/c2)
 _CANDIDATE_ROLE = Qt.ItemDataRole.UserRole + 2
@@ -353,12 +356,31 @@ class UnitPanel(QWidget):
         detail.tabBar().setDrawBase(False)
         self._pipe_table = self._make_table(_PIPE_HEADERS)
         self._param_table = self._make_table(_PARAM_HEADERS)
-        # 手设列宽：末列（管材）自动拉伸，前三列保持可读（管径/壁厚列常有四位数字）
+        # 手设列宽：类别列自动拉伸，前三列保持可读（管径/壁厚列常有四位数字）；
+        # 末列是每行行尾的「-」删行按钮（窄列，仅包封 / 箱涵 / 管廊显示）
+        self._pipe_table.horizontalHeader().setStretchLastSection(False)
+        self._pipe_table.horizontalHeader().setSectionResizeMode(
+            _PIPE_COL_CAT, QHeaderView.ResizeMode.Stretch
+        )
         self._pipe_table.setColumnWidth(_PIPE_COL_MAT, 120)
         self._pipe_table.setColumnWidth(_PIPE_COL_DN, 72)
         self._pipe_table.setColumnWidth(_PIPE_COL_T, 96)
         self._pipe_table.setColumnWidth(_PIPE_COL_CONTENT, 66)
+        self._pipe_table.setColumnWidth(_PIPE_COL_DEL, 40)
+        self._pipe_table.setColumnHidden(_PIPE_COL_DEL, True)
         self._pipe_table.setItemDelegate(_PipeCategoryDelegate(self._pipe_table))
+        # 「+」与行尾「-」同一列：+ 钉在删行列的表头格里（随列显隐、随横向
+        # 滚动对齐），每行行尾是「-」删行按钮；整列只在包封 / 箱涵 / 管廊显示
+        pipe_header = self._pipe_table.horizontalHeader()
+        self._btn_add_pipe = QPushButton("+", pipe_header)
+        self._btn_add_pipe.setProperty("role", "icon-btn")
+        self._btn_add_pipe.setToolTip("为选中构件新增一行管材")
+        self._btn_add_pipe.clicked.connect(self._add_pipe)
+        self._btn_add_pipe.hide()
+        pipe_header.geometriesChanged.connect(self._place_add_pipe_button)
+        self._pipe_table.horizontalScrollBar().valueChanged.connect(
+            self._place_add_pipe_button
+        )
         self._param_table.setColumnWidth(0, _PARAM_NAME_WIDTH)
         self._param_table.setColumnWidth(1, _PARAM_UNIT_WIDTH)
         self._qty_table = self._make_table(_QTY_HEADERS)
@@ -367,29 +389,13 @@ class UnitPanel(QWidget):
         self._qty_table.setColumnWidth(2, 56)
 
         pipe_page = QWidget()
+        # 页面背景与表格空白区同色（bg_card，浅色主题即白色），表格外区域不再发灰
+        pipe_page.setProperty("role", "panel")
+        pipe_page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         pipe_layout = QVBoxLayout(pipe_page)
         pipe_layout.setContentsMargins(6, 6, 6, 6)
         pipe_layout.setSpacing(4)
-        pipe_row = QHBoxLayout()
-        pipe_row.addWidget(self._pipe_table, 1)
-        # 「+」紧贴表格右侧表头行（与围护原则窗体的 BTNadd 同款同位），
-        # 「✕」删行按钮排在它下面；直埋 / 非开挖 / 构筑物下两个按钮按类别禁用
-        add_column = QVBoxLayout()
-        self._btn_add_pipe = QPushButton("+")
-        self._btn_add_pipe.setProperty("role", "icon-btn")
-        self._btn_add_pipe.setFixedSize(28, 34)
-        self._btn_add_pipe.setToolTip("为选中构件新增一行管材")
-        self._btn_add_pipe.clicked.connect(self._add_pipe)
-        add_column.addWidget(self._btn_add_pipe)
-        self._btn_delete_pipe = QPushButton("✕")
-        self._btn_delete_pipe.setProperty("role", "icon-btn")
-        self._btn_delete_pipe.setFixedSize(28, 34)
-        self._btn_delete_pipe.setToolTip("删除选中管材")
-        self._btn_delete_pipe.clicked.connect(self._delete_pipe)
-        add_column.addWidget(self._btn_delete_pipe)
-        add_column.addStretch(1)
-        pipe_row.addLayout(add_column)
-        pipe_layout.addLayout(pipe_row)
+        pipe_layout.addWidget(self._pipe_table, 1)
 
         param_page = QWidget()
         param_layout = QVBoxLayout(param_page)
@@ -647,6 +653,7 @@ class UnitPanel(QWidget):
         if not has_unit:
             self._vm.load_unit(None)
             self._element_table.setRowCount(0)
+            _clear_cell_widgets(self._pipe_table)  # 行尾「-」按钮显式销毁
             self._pipe_table.setRowCount(0)
             self._param_table.setRowCount(0)
             self._qty_table.setRowCount(0)
@@ -1043,6 +1050,7 @@ class UnitPanel(QWidget):
             (self._param_table, "*多种参数"),
             (self._qty_table, "*多种工程量"),
         ):
+            _clear_cell_widgets(table)  # 管材表里残留的行尾「-」按钮要销毁
             table.clearSpans()
             table.setRowCount(1)
             placeholder = QTableWidgetItem(text)
@@ -1253,9 +1261,10 @@ class UnitPanel(QWidget):
         self._loading = True
         try:
             element = _element(element_id)
-            # 管材增删按钮随类别联动（直埋/非开挖一条、构筑物无管材）
-            self._update_pipe_buttons(element)
+            # 管材增删入口随类别显隐（直埋/非开挖一条、构筑物无管材时不显示）
+            pipe_editable = self._update_pipe_buttons(element)
             # 管材表：管道壁厚列空 = 自动按图集（灰字显示图集值）
+            _clear_cell_widgets(self._pipe_table)  # 旧的行尾「-」按钮显式销毁
             self._pipe_table.clearSpans()
             self._pipe_table.setRowCount(len(pipes))
             auto_ts = auto_pipe_thicknesses(element) if (element is not None and pipes) else {}
@@ -1308,6 +1317,19 @@ class UnitPanel(QWidget):
                     "包封砼扣管位取壁厚。默认由构件库快照写入，可改。"
                 )
                 self._pipe_table.setItem(index, _PIPE_COL_CAT, cat_item)
+                if pipe_editable:
+                    # 行尾「-」删行按钮：与条目行对齐，一行一个（无行即无按钮）
+                    del_btn = QPushButton("-")
+                    del_btn.setProperty("role", "icon-btn")
+                    del_btn.setToolTip("删除该管材行")
+                    del_btn.clicked.connect(
+                        lambda _checked=False, pipe_id=pipe.id: self._vm.remove_pipe(pipe_id)
+                    )
+                    holder = QWidget()
+                    holder_layout = QHBoxLayout(holder)
+                    holder_layout.setContentsMargins(8, 4, 8, 4)
+                    holder_layout.addWidget(del_btn)
+                    self._pipe_table.setCellWidget(index, _PIPE_COL_DEL, holder)
 
             # 参数表：直埋构件且有候选时，"参数值"右侧追加候选参数列
             # （混凝土管 8 列 / 其他管材 4 列）；此时参数值列锁定（自动从
@@ -1553,42 +1575,32 @@ class UnitPanel(QWidget):
     def _add_pipe(self) -> None:
         self._vm.add_pipe()
 
-    def _delete_pipe(self) -> None:
-        pipe_id = self._pipe_id_at(self._pipe_table.currentRow())
-        if pipe_id is not None:
-            self._vm.remove_pipe(pipe_id)
+    def _update_pipe_buttons(self, element) -> bool:
+        """按构件类别显隐管材增删入口，返回是否可增删（决定是否建行尾「-」按钮）。
 
-    def _update_pipe_buttons(self, element) -> None:
-        """按构件类别启用/禁用管材增删按钮：
-
-        直埋 / 顶管 / 牵引管恒为一条管材（已有一条就不能再加，也一律不能删）；
-        附属构筑物不带管材（不能加，也没有行可删）。禁用格的 tooltip 说明原因。
+        直埋 / 顶管 / 牵引管恒为一条管材、附属构筑物不带管材——「+」和删行
+        按钮列直接不显示（不做禁用态）；包封 / 箱涵 / 管廊可增删：「+」在
+        删行列的表头格里，每行行尾一个「-」（无管材行即无按钮）。
         """
-        if element is None:
-            self._btn_add_pipe.setEnabled(False)
-            self._btn_delete_pipe.setEnabled(False)
-            self._btn_add_pipe.setToolTip("请先在上表选择构件条目。")
-            self._btn_delete_pipe.setToolTip("请先在上表选择构件条目。")
+        editable = _pipe_panel_editable(element)
+        self._pipe_table.setColumnHidden(_PIPE_COL_DEL, not editable)
+        self._place_add_pipe_button()
+        return editable
+
+    def _place_add_pipe_button(self) -> None:
+        """把「+」按钮钉在删行列的表头格里：列宽/显隐/横向滚动变化都要重摆。"""
+        header = self._pipe_table.horizontalHeader()
+        if self._pipe_table.isColumnHidden(_PIPE_COL_DEL):
+            self._btn_add_pipe.hide()
             return
-        if element.category == CATEGORY_STRUCTURE:
-            self._btn_add_pipe.setEnabled(False)
-            self._btn_add_pipe.setToolTip("附属构筑物不带管材，不能添加管材。")
-            self._btn_delete_pipe.setEnabled(False)
-            self._btn_delete_pipe.setToolTip("附属构筑物不带管材。")
-            return
-        if element.category in SINGLE_PIPE_CATEGORIES:
-            has_pipe = bool(element.pipes)
-            self._btn_add_pipe.setEnabled(not has_pipe)
-            self._btn_add_pipe.setToolTip(
-                "直埋 / 非开挖管道只允许一条管材。" if has_pipe else "为选中构件新增一行管材"
-            )
-            self._btn_delete_pipe.setEnabled(False)
-            self._btn_delete_pipe.setToolTip("直埋 / 非开挖管道只允许一条管材，不能删除。")
-            return
-        self._btn_add_pipe.setEnabled(True)
-        self._btn_add_pipe.setToolTip("为选中构件新增一行管材")
-        self._btn_delete_pipe.setEnabled(bool(element.pipes))
-        self._btn_delete_pipe.setToolTip("删除选中管材")
+        button = self._btn_add_pipe
+        button.setGeometry(
+            header.sectionViewportPosition(_PIPE_COL_DEL) + 3,
+            3,
+            header.sectionSize(_PIPE_COL_DEL) - 6,
+            header.height() - 6,
+        )
+        button.show()
 
     def _add_param(self) -> None:
         self._vm.add_param()
@@ -1624,6 +1636,18 @@ def _clear_cell_widgets(table: QTableWidget) -> None:
 def _category_abbr(category: int) -> str:
     """类型列显示文本：类别简称（仅显示层）；不在简称表里的类别回退完整名。"""
     return _CATEGORY_ABBRS.get(int(category or 0)) or category_name(category)
+
+
+def _pipe_panel_editable(element) -> bool:
+    """管材增删入口是否显示：只有包封 / 箱涵 / 管廊可增删管材行。
+
+    直埋 / 顶管 / 牵引管恒为一条管材、附属构筑物不带管材——增删按钮直接
+    不显示（数据层的拦截见 unit_vm.pipe_add_error / pipe_delete_error）。
+    """
+    return element is not None and element.category not in (
+        CATEGORY_STRUCTURE,
+        *SINGLE_PIPE_CATEGORIES,
+    )
 
 
 def _combo_names(names: list[str], rows: list[ElementRow], field: str) -> list[str]:

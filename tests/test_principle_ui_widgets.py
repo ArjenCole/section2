@@ -206,7 +206,7 @@ def test_pipe_table_headers_and_readonly_thickness(qapp, project):
     from app.viewmodels import unit_vm
     from app.views.panels.unit_panel import _PIPE_HEADERS, UnitPanel
 
-    assert _PIPE_HEADERS == ["管材", "管径mm", "壁厚mm", "含量", "类别"]
+    assert _PIPE_HEADERS == ["管材", "管径mm", "壁厚mm", "含量", "类别", ""]
 
     unit = project_io.units(project_io.segments()[0].id)[0]
     buried = unit_vm.create_element(unit.id, category=1, name="直埋")
@@ -500,9 +500,11 @@ def test_category_column_readonly(qapp, project):
 
 
 def test_pipe_add_delete_buttons_follow_category(qapp, project):
-    """管材增删按钮随构件类别联动：直埋/顶管/牵引管一条管材（禁增禁删）、
-    构筑物不带管材（禁增）、包封/箱涵/管廊仍可增删。「+」按钮与围护原则
-    窗体同款（表头行右侧、28x34）。"""
+    """管材增删入口随构件类别显隐（不做禁用态）：直埋/顶管/牵引管与构筑物
+    不显示「+」和删行按钮列；包封/箱涵/管廊的「+」钉在删行列的表头格里
+    （与行尾「-」同一列），每行行尾一个「-」（无管材行即无按钮）。"""
+    from PySide6.QtWidgets import QPushButton
+
     from app.core.models.models import (
         CATEGORY_BOX_CULVERT,
         CATEGORY_BURIED,
@@ -512,7 +514,7 @@ def test_pipe_add_delete_buttons_follow_category(qapp, project):
     )
     from app.services import project_io
     from app.viewmodels import unit_vm
-    from app.views.panels.unit_panel import UnitPanel
+    from app.views.panels.unit_panel import _PIPE_COL_DEL, UnitPanel
 
     unit = project_io.units(project_io.segments()[0].id)[0]
     buried = unit_vm.create_element(unit.id, category=CATEGORY_BURIED, name="直埋")
@@ -524,38 +526,55 @@ def test_pipe_add_delete_buttons_follow_category(qapp, project):
     structure = unit_vm.create_element(unit.id, category=CATEGORY_STRUCTURE, name="检查井")
     box = unit_vm.create_element(unit.id, category=CATEGORY_BOX_CULVERT, name="箱涵")
     unit_vm.create_pipe(box.id, mat="Ⅱ级混凝土管", dn=600, content="1")
+    unit_vm.create_pipe(box.id, mat="Ⅱ级混凝土管", dn=800, content="1")
 
     panel = UnitPanel()
     try:
         panel._show_unit(unit.id)
         qapp.processEvents()
-        # 单位加载后自动选中第一行（直埋）：按钮已是“一条管材”状态
+        # 单位加载后自动选中第一行（直埋）：增删入口都不显示
         assert panel._current_element_id() == buried.id
 
         def select_row(row: int) -> None:
             panel._element_table.setCurrentCell(row, 0)
             qapp.processEvents()
 
-        # 直埋（已有一条）：不能加、不能删
+        # 直埋：「+」不显示，删行列整列隐藏
         select_row(0)
-        assert not panel._btn_add_pipe.isEnabled()
-        assert "只允许一条管材" in panel._btn_add_pipe.toolTip()
-        assert not panel._btn_delete_pipe.isEnabled()
-        assert "不能删除" in panel._btn_delete_pipe.toolTip()
+        assert not panel._btn_add_pipe.isVisibleTo(panel)
+        assert panel._pipe_table.isColumnHidden(_PIPE_COL_DEL)
         # 顶管 / 牵引管：同直埋
         select_row(1)
-        assert not panel._btn_add_pipe.isEnabled()
+        assert not panel._btn_add_pipe.isVisibleTo(panel)
+        assert panel._pipe_table.isColumnHidden(_PIPE_COL_DEL)
         select_row(2)
-        assert not panel._btn_add_pipe.isEnabled()
-        # 构筑物：不带管材，两个按钮都禁用
+        assert not panel._btn_add_pipe.isVisibleTo(panel)
+        # 构筑物：同直埋（本来也没有管材行）
         select_row(3)
-        assert not panel._btn_add_pipe.isEnabled()
-        assert "附属构筑物不带管材" in panel._btn_add_pipe.toolTip()
-        assert not panel._btn_delete_pipe.isEnabled()
-        # 箱涵：可加可删（按钮可用）
+        assert not panel._btn_add_pipe.isVisibleTo(panel)
+        assert panel._pipe_table.isColumnHidden(_PIPE_COL_DEL)
+        # 箱涵：「+」显示且钉在删行列的表头格里（与行尾「-」同一列）
         select_row(4)
-        assert panel._btn_add_pipe.isEnabled()
-        assert panel._btn_delete_pipe.isEnabled()
+        assert panel._btn_add_pipe.isVisibleTo(panel)
+        assert not panel._pipe_table.isColumnHidden(_PIPE_COL_DEL)
+        header = panel._pipe_table.horizontalHeader()
+        assert panel._btn_add_pipe.x() == header.sectionViewportPosition(_PIPE_COL_DEL) + 3
+        holder = panel._pipe_table.cellWidget(0, _PIPE_COL_DEL)
+        assert holder is not None
+        delete_button = holder.findChild(QPushButton)
+        assert delete_button is not None and delete_button.text() == "-"
+
+        # 点行尾「-」：该行管材被删除，其余行各自仍有按钮；删到没有行即没有按钮
+        pipe_count = len(box.pipes)
+        delete_button.click()
+        qapp.processEvents()
+        assert len(box.pipes) == pipe_count - 1
+        assert panel._pipe_table.rowCount() == pipe_count - 1
+        panel._pipe_table.cellWidget(0, _PIPE_COL_DEL).findChild(QPushButton).click()
+        qapp.processEvents()
+        assert not box.pipes
+        assert panel._pipe_table.cellWidget(0, _PIPE_COL_DEL) is None
+        assert panel._btn_add_pipe.isVisibleTo(panel)  # 「+」仍在，可重新加行
     finally:
         panel.close()
 
