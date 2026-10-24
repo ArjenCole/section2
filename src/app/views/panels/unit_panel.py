@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, Qt
+from PySide6.QtCore import QItemSelectionModel, QRect, Qt
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -161,6 +161,22 @@ _FOCUS_OWNER_ATTR = "_unit_panel_focus_owner"
 _DETAIL_TABLE_ATTR = "_unit_panel_detail_table"
 
 
+def _select_row(table: QTableWidget, row: int, column: int) -> None:
+    """把主表格的当前单元格与选中行设到 (row, column)，**清除其余选中**。
+
+    必须走显式 ``ClearAndSelect | Rows`` 命令而不是 ``setCurrentCell``：
+    撤销 / 重做在 Ctrl+Z / Ctrl+Y 按键处理过程中同步执行，Ctrl 修饰键还
+    按着，QAbstractItemView 的 selectionCommand 会把 setCurrentCell 推断成
+    "追加选择"——重做的每一步都把新行加进选区，最终整表被持续选中。
+    显式命令不受修饰键影响。
+    """
+    table.selectionModel().setCurrentIndex(
+        table.model().index(row, column),
+        QItemSelectionModel.SelectionFlag.ClearAndSelect
+        | QItemSelectionModel.SelectionFlag.Rows,
+    )
+
+
 class _FocusCellDelegate(TableEditDelegate):
     """当前单元格用加粗边框表示（Quotor FullCellDelegate 同款）。
 
@@ -290,6 +306,9 @@ class UnitPanel(QWidget):
         # 明细面板跟随主表格选中行：多选时左右中三块都显示占位/合计
         self._multi_detail = False
         self._current_detail_id: int | None = None
+        # 撤销 / 重做重建工作库后置位：表格行上的构件 id 已失效，
+        # 下一次 _on_unit_loaded 不再按 id 恢复选中（见 mark_ids_stale）
+        self._ids_stale = False
         #: 参数表当前显示的候选列（直埋构件有候选时非空，见 _on_detail_loaded）
         self._candidate_columns: list = []
         self._build_ui()
@@ -593,6 +612,9 @@ class UnitPanel(QWidget):
         self._detail_tabs.currentChanged.connect(self._on_detail_tab_changed)
         self._quantity_tabs.currentChanged.connect(self._on_detail_tab_changed)
         bus().node_selected.connect(self._on_node_selected)
+        # 新增构件获得焦点：面板在延后的表格重装落地后选中新行
+        # （"新增构件条目"按钮、构件库插入、AI/MCP 新增共用一条路径）
+        bus().element_focused.connect(self._on_element_focused)
         # 换成连接时先清空选中：夹带常量 None，走弱引用连接
         connect_weak(bus().project_closed, self, "_show_unit", None)
         connect_weak(bus().project_opened, self, "_show_unit", None)
@@ -606,6 +628,11 @@ class UnitPanel(QWidget):
         if node is not None and node.is_unit:
             self._show_unit(node.id, node.name)
         # 选中其它节点时保留当前内容，切回来不用重新加载
+
+    def _on_element_focused(self, unit_id: int, element_id: int) -> None:
+        """新增构件获得焦点：记下待选中 id，表格延后重装落地后选中新行。"""
+        if unit_id == self._unit_id:
+            self._pending_select_id = element_id
 
     def _on_principle_changed(self) -> None:
         """原则窗体点击确认修改后：工程量与断面图按确认后的原则重算重绘。"""
@@ -660,6 +687,12 @@ class UnitPanel(QWidget):
             return
         keep_element = self._current_element_id()
         keep_column = self._element_table.currentColumn()
+        if self._ids_stale:
+            # 撤销 / 重做重建了工作库：旧 id 在新库里要么缺失（_restore_current_element
+            # 会回落第 0 行）要么撞到别的构件（选中跳到毫不相干的行）——一律不信，
+            # 选中由撤销快照按行号恢复（restore_ui_state 紧随其后）
+            keep_element = None
+            self._ids_stale = False
         pending = self._pending_select_id
         self._pending_select_id = None
         self._loading = True
@@ -1073,13 +1106,13 @@ class UnitPanel(QWidget):
         if self._element_table.rowCount() == 0:
             return
         if element_id is None:
-            self._element_table.setCurrentCell(0, max(0, column))
+            _select_row(self._element_table, 0, max(0, column))
             return
         for row in range(self._element_table.rowCount()):
             if self._element_id_at(row) == element_id:
-                self._element_table.setCurrentCell(row, max(0, column))
+                _select_row(self._element_table, row, max(0, column))
                 return
-        self._element_table.setCurrentCell(0, max(0, column))
+        _select_row(self._element_table, 0, max(0, column))
 
     def _add_element(self) -> None:
         self._vm.add_element()
@@ -1110,7 +1143,8 @@ class UnitPanel(QWidget):
     def restore_ui_state(self, state) -> None:
         """撤销 / 重做后恢复工作台状态（须在主表格按新数据装填后调用）。
 
-        行号越界（如撤销"新增构件条目"后该行已不存在）时恢复成不选中。
+        行号越界（如重做落到内容更少的快照）时收敛到相邻行；-1 表示快照
+        里本来就没有选中，保持不选中。
         """
         if not isinstance(state, dict) or self._unit_id is None:
             return
@@ -1122,13 +1156,16 @@ class UnitPanel(QWidget):
             self._quantity_tabs.setCurrentIndex(index)
         table = self._element_table
         cell = state.get("cell")
-        if isinstance(cell, (tuple, list)) and len(cell) == 2:
+        if isinstance(cell, (tuple, list)) and len(cell) == 2 and table.rowCount() > 0:
             try:
                 row, column = int(cell[0]), int(cell[1])
             except (TypeError, ValueError):
-                row, column = -1, -1
-            if 0 <= row < table.rowCount() and 0 <= column < table.columnCount():
-                table.setCurrentCell(row, column)
+                return
+            if row < 0 or column < 0:
+                return  # 快照记录的就是"无选中"
+            row = min(row, table.rowCount() - 1)
+            column = min(column, table.columnCount() - 1)
+            _select_row(table, row, column)
         scroll = state.get("scroll")
         if isinstance(scroll, (tuple, list)) and len(scroll) == 2:
             try:
@@ -1136,6 +1173,14 @@ class UnitPanel(QWidget):
                 table.verticalScrollBar().setValue(int(scroll[1]))
             except (TypeError, ValueError):
                 pass
+
+    def mark_ids_stale(self) -> None:
+        """撤销 / 重做重建工作库后调用：表格行上的构件 id 已全部失效。
+
+        重建后的库按位置重新编号，旧 id 要么缺失、要么撞到别的构件；
+        随后的重载不再按 id 恢复选中（选中由撤销快照按行号恢复）。
+        """
+        self._ids_stale = True
 
     def _delete_element(self) -> None:
         element_id = self._current_element_id()

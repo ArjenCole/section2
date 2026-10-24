@@ -49,11 +49,39 @@ AI 工具（M8）走同一条 3~6，因此界面与 AI 改数据不会出现两�
 选中/焦点）；200ms 时间窗内的连续提交合并为一步（吸收"一次操作内部多次
 commit"的中间态，如改一格候选参数触发重匹配）。
 
+**界面状态的两段式捕获**（与 brackets2 的关键差异）：commit 发生在界面刷新
+之前（`unit_changed` → QTimer 延后重装表格），所以 record() 里捕获的选中/焦点
+是"变更前"的视图——撤销用它正好，**重做到栈顶却会指向已删除/已移位的行**。
+因此主窗体订阅 `unit_changed` / `tree_structure_changed` / `principle_changed` /
+`project_opened`，在广播落定（延后的表格重装执行完）后经
+`UndoStack.patch_top_ui` 回填栈顶快照的界面状态——每个快照最终携带的都是
+用户当时实际看到的视图，撤销与重做两个方向恢复的选中一致。
+
 界面状态的携带与恢复按**位置**而不是 id（恢复会重建工作库，id 全变，只有
 行序稳定）：树选中 = `TreePanel.selection_path()` 的（标段序号, 单位工程序号），
 工作台 = `UnitPanel.ui_state()` 的主表格焦点/滚动与页签。主窗体经
 `undo.set_ui_provider` / `undo.set_listener` 注入捕获回调与按钮刷新
-（弱引用持有，避免钉住窗体，与 `connect_weak` 同理）。
+（弱引用持有，避免钉住窗体，与 `connect_weak` 同理）。重建后的库按位置重新
+编号构件 id，`UnitPanel.mark_ids_stale()` 让重载期间不再按旧 id 恢复选中
+（按 id 恢复会撞到别的构件或回落第 0 行——重做选中错乱的第二个病根）。
+
+**每一步只选中该步修改的条目（数据对比驱动）**：撤销 / 重做恢复选中时，
+把相邻两份快照的构件清单做对比（`undo._diff_focus`），定位该步新增 / 改值 /
+删除的条目位置——撤销与重做都只落在这一条上（删除方向没有该行，收敛到
+原位置的相邻行）。快照携带的视图选中只作兜底：构件清单无差异（原则 / 单价 /
+工程结构变化）或多个单位工程同时变化（原则保存触发的批量重匹配）时退回
+视图位置。之所以不直接信视图：提交会用"当前视图"刷新"变更前"快照
+（brackets2 语义），操作之间一旦浏览过别的行，视图选中就与步骤脱节，
+重做会恢复出错误的条目。新增构件（按钮 / 构件库插入 / AI 共用
+`create_element`）提交后广播 `EventBus.element_focused`，面板选中新行，
+保证插入路径的视图同样跟随每一步。
+
+**恢复选中必须用显式选择命令**（`UnitPanel._select_row`，
+`ClearAndSelect | Rows`）：撤销 / 重做在 Ctrl+Z / Ctrl+Y 按键处理过程中同步
+执行，Ctrl 修饰键还按着，`QAbstractItemView::selectionCommand` 会把
+`setCurrentCell` 推断成"追加选择"——重做的每一步都把新行加进选区，最终
+整表被持续选中（表格增长方向累积、收缩方向因旧行截断而不可见）。
+显式命令不受修饰键影响。
 
 注意：数据操作里"改数据 + 自动重匹配 + 落盘"应当**一次 commit 完成**
 （参见 `unit_vm.create_pipe` / `delete_pipe` / `update_atlas_candidate`），

@@ -14,6 +14,9 @@
 * 内容未变的重复提交只更新快照的界面状态，不占用撤销步数（界面浏览不占步数）；
 * 写入前先用当前界面状态刷新"变更前"快照：撤销回到上一步时恢复的是用户
   操作时刻的选中 / 焦点，界面状态不单独占步数；
+* section2 特有：commit 时刻界面还没按新数据刷新（EventBus 广播 → QTimer
+  延后重装表格），栈顶快照的界面状态由视图刷新完成后经 :meth:`UndoStack.patch_top_ui`
+  回填——否则重做到栈顶时快照里的选中行指向已删除/已移位的行，恢复即错乱；
 * 新变更清除重做分支；
 * 时间窗合并（200ms）：一次用户操作内部可能连续提交多次（如候选参数改一格
   会连着落盘两次），窗口内的提交合并为一步，Ctrl+Z 一次回到操作前。
@@ -39,6 +42,8 @@ __all__ = [
     "can_redo",
     "can_undo",
     "clear",
+    "last_focus",
+    "patch_top_ui",
     "record",
     "redo",
     "reset",
@@ -96,11 +101,64 @@ def _weak_callback(callback):
     return _call
 
 
+def _diff_focus(previous: dict, target: dict) -> tuple[tuple[int, int], int | None] | None:
+    """对比相邻两份快照的构件清单，定位该步修改的条目。
+
+    返回 ``((标段序号, 单位工程序号), 行号或 None)``——行号是目标快照里被
+    修改条目的位置（删除方向没有该行，收敛到原位置的相邻行；单位工程被
+    清空时为 None）。构件清单无差异（原则 / 单价 / 工程结构变化）或多个
+    单位工程同时变化（如原则保存触发的批量重匹配）时返回 None，选中交给
+    快照携带的界面状态兜底。
+
+    撤销 / 重做按这条规则恢复选中：每一步只落在该步实际修改的那一条上，
+    不受操作间浏览（视图选中与步骤脱节）影响。
+    """
+    prev_segs = previous.get("segments") or []
+    target_segs = target.get("segments") or []
+    if len(prev_segs) != len(target_segs):
+        return None  # 标段级变化：位置语义不稳
+    focus: tuple[tuple[int, int], int | None] | None = None
+    for seg_index, (prev_seg, target_seg) in enumerate(zip(prev_segs, target_segs)):
+        if prev_seg.get("name") != target_seg.get("name"):
+            return None
+        prev_units = prev_seg.get("units") or []
+        target_units = target_seg.get("units") or []
+        if len(prev_units) != len(target_units):
+            return None
+        for unit_index, (prev_unit, target_unit) in enumerate(zip(prev_units, target_units)):
+            if prev_unit.get("name") != target_unit.get("name"):
+                return None
+            prev_elements = prev_unit.get("elements") or []
+            target_elements = target_unit.get("elements") or []
+            if prev_elements == target_elements:
+                continue
+            if focus is not None:
+                return None  # 多个单位工程同时变化：不猜测，交给界面状态
+            prefix = 0
+            while (
+                prefix < len(prev_elements)
+                and prefix < len(target_elements)
+                and prev_elements[prefix] == target_elements[prefix]
+            ):
+                prefix += 1
+            if len(prev_elements) == len(target_elements):
+                if prefix >= len(prev_elements):
+                    continue  # 内容相同（不应发生），跳过
+                row: int | None = prefix  # 同长：改值 → 第一个差异行
+            elif len(prev_elements) < len(target_elements):
+                row = prefix if prefix < len(target_elements) else None  # 新增位置
+            else:
+                row = min(prefix, len(target_elements) - 1) if target_elements else None
+            focus = ((seg_index, unit_index), row)
+    return focus
+
+
 class UndoStack:
     def __init__(self) -> None:
         self._snaps: list[_Snapshot] = []
         self._pos: int = -1  # 当前快照下标
         self._last_push: float | None = None  # 最近一次记录时刻，时间窗合并用
+        self._last_focus: tuple[tuple[int, int], int | None] | None = None
         self._ui_provider = None  # 由视图注入：捕获界面状态的回调
         self._listener = None  # 由视图注入：栈变化后刷新撤销/重做按钮
 
@@ -138,11 +196,21 @@ class UndoStack:
     def can_redo(self) -> bool:
         return 0 <= self._pos < len(self._snaps) - 1
 
+    @property
+    def last_focus(self) -> tuple[tuple[int, int], int | None] | None:
+        """最近一次 undo()/redo() 对比相邻快照得出的焦点（(单位位置), 行号）。
+
+        撤销 / 重做恢复选中用：每一步只落在该步实际修改的那一条上；None =
+        步骤没有构件级差异（原则 / 单价 / 结构变化），选中由快照界面状态兜底。
+        """
+        return self._last_focus
+
     # ------------------------------------------------------------ 生命周期
     def clear(self) -> None:
         """清空栈（关闭工程）。"""
         self._snaps = []
         self._pos = -1
+        self._last_focus = None
         self._notify()
 
     def reset(self, data: dict) -> None:
@@ -151,6 +219,7 @@ class UndoStack:
         self._snaps = [_Snapshot(text, None, size)]
         self._pos = 0
         self._last_push = None
+        self._last_focus = None
         self._notify()
 
     def record(self, data: dict) -> None:
@@ -158,6 +227,8 @@ class UndoStack:
 
         写入前先用当前界面状态刷新"变更前"快照，保证撤销回到上一步时
         恢复的是用户操作时刻看到的选中/焦点（界面浏览不单独占步数）。
+        此刻的界面还没按新数据刷新（unit_changed → QTimer 延后重装表格），
+        栈顶快照的界面状态由 :meth:`patch_top_ui` 在刷新完成后回填。
         """
         text, size = _serialize(data)
         ui = self._capture_ui()
@@ -177,26 +248,51 @@ class UndoStack:
             self._snaps.append(_Snapshot(text, ui, size))
             self._pos = len(self._snaps) - 1
         self._last_push = now
+        self._last_focus = None
         self._trim()
         self._notify()
 
+    def patch_top_ui(self, ui: dict | None) -> None:
+        """界面按最新数据装填完成后，回填栈顶快照的界面状态。
+
+        record() 发生在界面刷新之前，捕获的选中/焦点是"变更前"的视图——
+        撤销用它正好，重做到栈顶却会指向已删除/已移位的行，选中恢复就会
+        错乱。视图刷新完成后（EventBus 广播 → QTimer 延后重装表格之后）
+        回填一次，栈顶快照携带的即是用户实际看到的选中/焦点。
+        """
+        if 0 <= self._pos < len(self._snaps):
+            self._snaps[self._pos].ui = ui
+
     def undo(self) -> tuple[dict, dict | None] | None:
-        """回退一步，返回 (工程 JSON 数据体, 界面状态)；无可撤销返回 None。"""
+        """回退一步，返回 (工程 JSON 数据体, 界面状态)；无可撤销返回 None。
+
+        同时把相邻快照对比得出的焦点（该步修改的条目位置）存入
+        :attr:`last_focus`，供视图恢复选中。
+        """
         if not self.can_undo:
             return None
         self._pos -= 1
         self._last_push = None  # 撤销后的新变更不与撤销前的提交合并
         snap = self._snaps[self._pos]
+        self._last_focus = _diff_focus(
+            json.loads(self._snaps[self._pos + 1].text), json.loads(snap.text)
+        )
         self._notify()
         return json.loads(snap.text), snap.ui
 
     def redo(self) -> tuple[dict, dict | None] | None:
-        """前进一步，返回 (工程 JSON 数据体, 界面状态)；无可重做返回 None。"""
+        """前进一步，返回 (工程 JSON 数据体, 界面状态)；无可重做返回 None。
+
+        焦点语义同 :meth:`undo`。
+        """
         if not self.can_redo:
             return None
         self._pos += 1
         self._last_push = None
         snap = self._snaps[self._pos]
+        self._last_focus = _diff_focus(
+            json.loads(self._snaps[self._pos - 1].text), json.loads(snap.text)
+        )
         self._notify()
         return json.loads(snap.text), snap.ui
 
@@ -241,12 +337,20 @@ def record(data: dict) -> None:
     _stack.record(data)
 
 
+def patch_top_ui(ui: dict | None) -> None:
+    _stack.patch_top_ui(ui)
+
+
 def undo() -> tuple[dict, dict | None] | None:
     return _stack.undo()
 
 
 def redo() -> tuple[dict, dict | None] | None:
     return _stack.redo()
+
+
+def last_focus() -> tuple[tuple[int, int], int | None] | None:
+    return _stack.last_focus
 
 
 def clear() -> None:

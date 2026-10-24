@@ -100,6 +100,31 @@ def test_ui_state_carried_and_refreshed() -> None:
     assert ui == {"sel": 5}
 
 
+def test_patch_top_ui_after_view_settles() -> None:
+    """界面落定后回填栈顶快照：重做恢复的是用户实际看到的选中。"""
+    undo_stack.reset({"v": 0})
+    undo_stack.record({"v": 1})
+    undo_stack.record({"v": 2})  # record 时视图未刷新，栈顶 ui 还是提交前的
+    undo_stack.patch_top_ui({"cell": (2, 2)})
+    data, ui = undo_stack.undo()
+    assert data == {"v": 1}
+    assert ui is None  # 变更前快照未被 patch 触碰
+    _data, ui = undo_stack.redo()
+    assert ui == {"cell": (2, 2)}  # 栈顶是回填后的真实视图
+
+    # 撤销到中间快照后回填：落在当前指向的快照上（而不是栈顶）
+    undo_stack.undo()  # pos=0
+    undo_stack.patch_top_ui({"cell": (1, 1)})  # 回填 S0（当前快照）
+    _data, ui = undo_stack.redo()
+    assert ui == {"cell": (2, 2)}  # S1 不受影响
+    _data, ui = undo_stack.undo()
+    assert ui == {"cell": (1, 1)}  # S0 是回填后的内容
+
+    # 空栈时回填是空操作
+    undo_stack.clear()
+    undo_stack.patch_top_ui({"cell": (0, 0)})  # 不应抛异常
+
+
 def test_ui_provider_exception_is_ignored() -> None:
     def _broken() -> dict:
         raise RuntimeError("界面状态不应阻断撤销流程")
@@ -308,6 +333,299 @@ def test_main_window_undo_redo_flow(qapp, project) -> None:
         qapp.processEvents()
         assert table.rowCount() == 1
         assert window._act_redo.isEnabled() is False
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+def test_undo_redo_selection_follows_snapshot(qapp, project) -> None:
+    """撤销 / 重做后主表格选中行不得错乱（回归：重做后选中跳到别的构件）。
+
+    两个病根（均已修复）：
+    1. commit 时刻界面还没按新数据刷新，栈顶快照的选中行指向已删除的行，
+       重做恢复时越界被跳过；现在界面落定后回填栈顶快照（patch_top_ui），
+       重做恢复的是用户当时真实看到的选中；
+    2. 重建后的库按位置重新编号构件 id，重载按旧 id 恢复选中会撞到别的
+       构件（或回落第 0 行）；现在重建后禁用按 id 恢复（mark_ids_stale）。
+    """
+    from app.views.main_window import MainWindow
+    from app.views.panels.unit_panel import _COL_NAME
+
+    window = MainWindow(str(project))
+    qapp.processEvents()
+    try:
+        unit_item = window._tree_panel._tree.topLevelItem(0).child(0).child(0)
+        window._tree_panel._tree.setCurrentItem(unit_item)
+        qapp.processEvents()
+        unit_id = project_io.units(project_io.segments()[0].id)[0].id
+        for name in ("构件A", "构件B", "构件C", "构件D"):
+            unit_vm.create_element(unit_id, category=1, name=name)
+        qapp.processEvents()
+        table = window._unit_panel._element_table
+        panel = window._unit_panel
+
+        def _current_name() -> str | None:
+            row = table.currentRow()
+            return table.item(row, _COL_NAME).text() if row >= 0 else None
+
+        def _detail_matches_selection() -> bool:
+            element_id = panel._element_id_at(table.currentRow())
+            return panel._current_detail_id == element_id
+
+        def _check_invariants(expected: str) -> None:
+            assert _current_name() == expected
+            assert _detail_matches_selection()
+
+        # 选中 B（第 1 行）并删除：删除行后选中收敛到第 0 行（软件既有行为），
+        # 栈顶快照在界面落定后回填的正是这个位置
+        table.setCurrentCell(1, _COL_NAME)
+        unit_vm.delete_element(panel._element_id_at(1))
+        qapp.processEvents()
+        assert table.rowCount() == 3
+        _check_invariants("构件A")
+
+        # 撤销：B 恢复，选中落回操作前的位置（B）
+        window._undo()
+        qapp.processEvents()
+        assert table.rowCount() == 4
+        _check_invariants("构件B")
+
+        # 重做（回归点）：B 再删。选中按相邻快照对比落在被删位置（现在是 C），
+        # 不受视图 / 浏览影响
+        window._redo()
+        qapp.processEvents()
+        assert table.rowCount() == 3
+        _check_invariants("构件C")
+
+        # 撤销 / 重做再走一轮，选中始终确定
+        window._undo()
+        qapp.processEvents()
+        _check_invariants("构件B")
+        window._redo()
+        qapp.processEvents()
+        _check_invariants("构件C")
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+def test_redo_selects_each_step_modified_element(qapp, project) -> None:
+    """回归（用户报告）：连续添加 → 连续撤销 → 连续重做，每一步都只选中
+    该步骤修改的那一条构件。
+
+    此前"新增构件条目"按钮不选中新行，快照视图停在第一行——重做时选中
+    完全不动，每步重做出来的条目没有被选中。现在新增（按钮/构件库插入/
+    AI 共用 create_element）广播 element_focused，面板选中新行，快照视图
+    跟着每一步走。
+    """
+    from app.views.main_window import MainWindow
+
+    window = MainWindow(str(project))
+    qapp.processEvents()
+    try:
+        unit_item = window._tree_panel._tree.topLevelItem(0).child(0).child(0)
+        window._tree_panel._tree.setCurrentItem(unit_item)
+        qapp.processEvents()
+        panel = window._unit_panel
+        table = panel._element_table
+
+        # 连续添加 3 条（"新增构件条目"按钮路径）：每一步选中新条目
+        for _ in range(3):
+            panel.add_element()
+            qapp.processEvents()
+            qapp.processEvents()
+        assert table.rowCount() == 3
+        assert table.currentRow() == 2  # 最新一条被选中
+
+        # 连续撤销：选中逐步回退，每一步落在上一步新增的那条上
+        window._undo()
+        qapp.processEvents()
+        qapp.processEvents()
+        assert table.rowCount() == 2
+        assert table.currentRow() == 1
+        window._undo()
+        qapp.processEvents()
+        qapp.processEvents()
+        assert table.rowCount() == 1
+        assert table.currentRow() == 0
+        window._undo()
+        qapp.processEvents()
+        qapp.processEvents()
+        assert table.rowCount() == 0
+        assert table.currentRow() == -1
+
+        # 连续重做（回归点）：每一步只选中该步重做出来的那一条
+        for row in range(3):
+            window._redo()
+            qapp.processEvents()
+            qapp.processEvents()
+            assert table.rowCount() == row + 1
+            assert table.currentRow() == row
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+def test_last_focus_diff_across_snapshots() -> None:
+    """撤销 / 重做的焦点由相邻快照对比得出：每一步落在该步修改的条目上。"""
+
+    def _data(names: list[str]) -> dict:
+        return {
+            "segments": [
+                {
+                    "name": "标段",
+                    "units": [
+                        {"name": "雨水工程", "elements": [{"name": n} for n in names]}
+                    ],
+                }
+            ]
+        }
+
+    undo_stack.reset(_data([]))
+    undo_stack.record(_data(["A"]))
+    undo_stack.record(_data(["A", "B"]))
+    undo_stack.record(_data(["A", "B", "C"]))
+
+    # 撤销：目标快照相对来路少一条 → 收敛到被删位置
+    undo_stack.undo()
+    assert undo_stack.last_focus() == ((0, 0), 1)
+    undo_stack.undo()
+    assert undo_stack.last_focus() == ((0, 0), 0)
+    undo_stack.undo()  # 基线：清单清空
+    assert undo_stack.last_focus() == ((0, 0), None)
+
+    # 重做：目标快照相对来路多一条 → 正是重新出现的那条
+    undo_stack.redo()
+    assert undo_stack.last_focus() == ((0, 0), 0)
+    undo_stack.redo()
+    assert undo_stack.last_focus() == ((0, 0), 1)
+    undo_stack.redo()
+    assert undo_stack.last_focus() == ((0, 0), 2)
+
+    # 同长（改值步骤）：第一个差异行
+    undo_stack.record(_data(["A", "B改", "C"]))
+    undo_stack.undo()
+    assert undo_stack.last_focus() == ((0, 0), 1)
+
+    # 原则 / 单价类步骤（构件清单无差异）：无焦点，选中由快照视图兜底
+    undo_stack.record({"segments": [], "prices": [{"key": "k", "value": 1.0}]})
+    undo_stack.undo()
+    assert undo_stack.last_focus() is None
+
+    # 新提交清掉过期的焦点
+    undo_stack.record(_data(["A", "B改", "C"]))
+    assert undo_stack.last_focus() is None
+
+
+def test_redo_after_browsing_selects_step_entry(qapp, project) -> None:
+    """回归（用户报告）：重做的选中由数据对比决定，不受操作间浏览影响。
+
+    插入 T1、T2 后浏览到第 0 行再插入 T3：下一步快照携带的视图是浏览后的
+    第 0 行——重做若按视图恢复，T2 那一步会错选 T1。按数据对比，每一步
+    重做只选中该步插入的那条。
+    """
+    from app.views.main_window import MainWindow
+    from app.views.panels.unit_panel import _COL_NAME
+
+    window = MainWindow(str(project))
+    qapp.processEvents()
+    try:
+        unit_item = window._tree_panel._tree.topLevelItem(0).child(0).child(0)
+        window._tree_panel._tree.setCurrentItem(unit_item)
+        qapp.processEvents()
+        panel = window._unit_panel
+        table = panel._element_table
+        unit_id = project_io.units(project_io.segments()[0].id)[0].id
+        for name in ("T1", "T2"):
+            unit_vm.create_element(unit_id, category=1, name=name)
+        qapp.processEvents()
+        qapp.processEvents()
+
+        # 浏览到第 0 行（视图选中与步骤脱节），再插入 T3
+        table.setCurrentCell(0, _COL_NAME)
+        unit_vm.create_element(unit_id, category=1, name="T3")
+        qapp.processEvents()
+        qapp.processEvents()
+        assert table.rowCount() == 3
+        assert [table.item(r, _COL_NAME).text() for r in range(3)] == ["T1", "T2", "T3"]
+
+        window._undo()
+        qapp.processEvents()
+        qapp.processEvents()
+        window._undo()
+        qapp.processEvents()
+        qapp.processEvents()
+        window._undo()
+        qapp.processEvents()
+        qapp.processEvents()
+        assert table.rowCount() == 0
+
+        # 重做两步：无论中途浏览到哪，每一步都只选中该步插入的那条
+        window._redo()
+        qapp.processEvents()
+        qapp.processEvents()
+        assert table.rowCount() == 1
+        assert table.currentRow() == 0
+        assert table.item(0, _COL_NAME).text() == "T1"
+        window._redo()
+        qapp.processEvents()
+        qapp.processEvents()
+        assert table.rowCount() == 2
+        assert table.currentRow() == 1
+        assert table.item(1, _COL_NAME).text() == "T2"
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+def test_redo_with_ctrl_key_does_not_accumulate_selection(qapp, project) -> None:
+    """回归（用户报告）：Ctrl+Z / Ctrl+Y 连续撤销重做，选中不得累积。
+
+    撤销 / 重做在按键处理过程中同步执行，Ctrl 修饰键还按着，QAbstractItemView
+    的 selectionCommand 会把 setCurrentCell 推断成"追加选择"——重做的每一步都
+    把新行加进选区，最终整表被持续选中（用户实测 6 条同时被选中）。恢复选中
+    必须用显式 ClearAndSelect 命令，不受修饰键影响。
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from app.views.main_window import MainWindow
+
+    window = MainWindow(str(project))
+    window.show()
+    qapp.processEvents()
+    try:
+        unit_item = window._tree_panel._tree.topLevelItem(0).child(0).child(0)
+        window._tree_panel._tree.setCurrentItem(unit_item)
+        qapp.processEvents()
+        panel = window._unit_panel
+        table = panel._element_table
+
+        def _selected_rows() -> list[int]:
+            return sorted(i.row() for i in table.selectionModel().selectedRows())
+
+        for _ in range(3):
+            panel.add_element()
+            qapp.processEvents()
+            qapp.processEvents()
+        assert table.rowCount() == 3
+
+        # 连续撤销（真实按键，Ctrl 修饰键在处理过程中处于按下状态）
+        for _ in range(4):
+            QTest.keyClick(window, Qt.Key_Z, Qt.KeyboardModifier.ControlModifier)
+            qapp.processEvents()
+            qapp.processEvents()
+        assert table.rowCount() == 0
+        assert _selected_rows() == []
+
+        # 连续重做（回归点）：每一步只有该步重做出来的那一条被选中
+        for row in range(3):
+            QTest.keyClick(window, Qt.Key_Y, Qt.KeyboardModifier.ControlModifier)
+            qapp.processEvents()
+            qapp.processEvents()
+            assert table.rowCount() == row + 1
+            assert table.currentRow() == row
+            assert _selected_rows() == [row]
     finally:
         window.close()
         qapp.processEvents()

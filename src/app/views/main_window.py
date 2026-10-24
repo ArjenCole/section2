@@ -774,6 +774,15 @@ class MainWindow(QMainWindow):
         # 撤销快照的界面状态由主窗体提供，栈变化后刷新按钮可用态（brackets2 同款注入）
         undo_stack.set_ui_provider(self._capture_ui_state)
         undo_stack.set_listener(self._update_undo_actions)
+        # commit 时刻界面还没按新数据刷新（unit_changed → QTimer 延后重装表格），
+        # 广播落定后再回填栈顶快照的界面状态，撤销/重做恢复的选中才与用户所见一致
+        for signal in (
+            bus().unit_changed,
+            bus().tree_structure_changed,
+            bus().principle_changed,
+            bus().project_opened,
+        ):
+            signal.connect(self._schedule_ui_patch)
         # 主题切换按钮文字与图标随当前主题变化：暗色 → 太阳「切换亮色…」、亮色 → 月亮「切换暗色…」
         self._act_theme.setText("切换亮色主题" if ThemeManager.instance().is_dark() else "切换暗色主题")
         self._set_theme_action_icon()
@@ -1024,6 +1033,14 @@ class MainWindow(QMainWindow):
             "element": self._unit_panel.ui_state(),
         }
 
+    def _schedule_ui_patch(self, *_args) -> None:
+        """提交广播落定后（延后的表格重装执行完）回填栈顶快照的界面状态。"""
+        QTimer.singleShot(0, self._patch_top_ui)
+
+    def _patch_top_ui(self) -> None:
+        if project_io.is_open():
+            undo_stack.patch_top_ui(self._capture_ui_state())
+
     def _update_undo_actions(self) -> None:
         self._act_undo.setEnabled(project_io.is_open() and undo_stack.can_undo())
         self._act_redo.setEnabled(project_io.is_open() and undo_stack.can_redo())
@@ -1051,11 +1068,32 @@ class MainWindow(QMainWindow):
             self._error(f"{verb}失败", str(error))
             return
         state = ui if isinstance(ui, dict) else {}
+        tree_path = state.get("tree")
+        # 撤销 / 重做的选中以"该步修改的条目"为准（相邻快照对比得出，
+        # 不受操作间浏览影响）；无构件级差异时退回快照携带的视图
+        focus = undo_stack.last_focus()
+        if focus is not None:
+            (seg_index, unit_index), row = focus
+            tree_path = (seg_index, unit_index)
+            element_state = state.get("element")
+            if not isinstance(element_state, dict):
+                element_state = {}
+                state["element"] = element_state
+            prev_cell = element_state.get("cell")
+            column = (
+                int(prev_cell[1])
+                if isinstance(prev_cell, (tuple, list)) and len(prev_cell) == 2
+                else 0
+            )
+            element_state["cell"] = (-1, -1) if row is None else (row, column)
+        # 重建后的库里构件 id 按位置重新编号：表格行上的旧 id 全部作废，
+        # 重载期间不得再按 id 恢复选中（否则会跳到任意行），选中由快照恢复
+        self._unit_panel.mark_ids_stale()
         # 先重建树并广播结构变化（原则横条重载、旧单位工程引用作废），
         # 再恢复树选中（联动单位工程面板装填），最后恢复表格焦点与页签
         self._tree_panel.vm.load()
         bus().tree_structure_changed.emit()
-        self._tree_panel.select_by_path(state.get("tree"))
+        self._tree_panel.select_by_path(tree_path)
         self._unit_panel.restore_ui_state(state.get("element"))
         self._update_undo_actions()
 

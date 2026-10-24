@@ -35,6 +35,9 @@ class EventBus(QObject):
     tree_structure_changed = Signal()  # 标段/单位工程增删改
     node_selected = Signal(object)  # viewmodels.project_vm.TreeNode | None
     unit_changed = Signal(int)  # 单位工程 id：构件/管道/参数变更
+    #: 新增构件获得焦点（单位工程 id, 构件 id）：面板选中新行，撤销/重做恢复的
+    #: 选中也随之落在每一步新增的条目上
+    element_focused = Signal(int, int)
     principle_changed = Signal()  # 围护/地基原则内容变更：工程量与断面图需重算
     #: AI 上下文变化（当前选中单位工程/构件）；载荷 dict，见 app.agent.context
     ai_context_changed = Signal(object)

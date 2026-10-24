@@ -675,6 +675,9 @@ def create_element(
         _seed_atlas_defaults(element)
     project_io.commit()
     bus().unit_changed.emit(unit_id)
+    # 新条目获得焦点：面板选中新行（构件库插入与"新增构件条目"按钮行为一致），
+    # 撤销/重做恢复的选中也随之落在每一步新增的条目上
+    bus().element_focused.emit(unit_id, element.id)
     return element
 
 
