@@ -1093,6 +1093,50 @@ class UnitPanel(QWidget):
         if self._unit_id is not None:
             self._vm.load_unit(self._unit_id)
 
+    def ui_state(self) -> dict:
+        """撤销快照携带的工作台状态：主表格焦点/滚动 + 明细与工程量页签。
+
+        与项目树一样按位置记录——撤销恢复会重建工作库，构件 id 全部改变，
+        只有行序跨快照稳定（brackets2 快照携带焦点单元格/滚动位置同款）。
+        """
+        table = self._element_table
+        return {
+            "cell": (table.currentRow(), table.currentColumn()),
+            "scroll": (table.horizontalScrollBar().value(), table.verticalScrollBar().value()),
+            "detail_tab": self._detail_tabs.currentIndex(),
+            "qty_tab": self._quantity_tabs.currentIndex(),
+        }
+
+    def restore_ui_state(self, state) -> None:
+        """撤销 / 重做后恢复工作台状态（须在主表格按新数据装填后调用）。
+
+        行号越界（如撤销"新增构件条目"后该行已不存在）时恢复成不选中。
+        """
+        if not isinstance(state, dict) or self._unit_id is None:
+            return
+        index = state.get("detail_tab")
+        if isinstance(index, int) and 0 <= index < self._detail_tabs.count():
+            self._detail_tabs.setCurrentIndex(index)
+        index = state.get("qty_tab")
+        if isinstance(index, int) and 0 <= index < self._quantity_tabs.count():
+            self._quantity_tabs.setCurrentIndex(index)
+        table = self._element_table
+        cell = state.get("cell")
+        if isinstance(cell, (tuple, list)) and len(cell) == 2:
+            try:
+                row, column = int(cell[0]), int(cell[1])
+            except (TypeError, ValueError):
+                row, column = -1, -1
+            if 0 <= row < table.rowCount() and 0 <= column < table.columnCount():
+                table.setCurrentCell(row, column)
+        scroll = state.get("scroll")
+        if isinstance(scroll, (tuple, list)) and len(scroll) == 2:
+            try:
+                table.horizontalScrollBar().setValue(int(scroll[0]))
+                table.verticalScrollBar().setValue(int(scroll[1]))
+            except (TypeError, ValueError):
+                pass
+
     def _delete_element(self) -> None:
         element_id = self._current_element_id()
         if element_id is None:

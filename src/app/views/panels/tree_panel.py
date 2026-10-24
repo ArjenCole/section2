@@ -216,6 +216,52 @@ class TreePanel(QWidget):
     def current_node(self) -> TreeNode | None:
         return self._current_node()
 
+    def selection_path(self) -> tuple[int, int | None] | None:
+        """当前选中节点的位置：（标段序号，标段内单位工程序号或 None）。
+
+        撤销快照用位置而不是 id：撤销恢复会重建工作库，所有 id 都会变，
+        只有顺序（order_no，树的排列次序）跨快照稳定。选中工程根或未
+        选中时返回 None。
+        """
+        item = self._tree.currentItem()
+        root = self._tree.topLevelItem(0)
+        if item is None or root is None:
+            return None
+        parent = item.parent()
+        if parent is root:
+            return (root.indexOfChild(item), None)
+        if parent is None:
+            return None
+        return (root.indexOfChild(parent), parent.indexOfChild(item))
+
+    def select_by_path(self, path) -> bool:
+        """按快照位置恢复树选中（联动 node_selected 广播）；失败返回 False。
+
+        单位工程序号越界（如撤销"新增单位工程"后该行已不存在）时回落到
+        所属标段；标段序号越界则不动选中。
+        """
+        if not isinstance(path, (tuple, list)) or len(path) != 2:
+            return False
+        root = self._tree.topLevelItem(0)
+        if root is None:
+            return False
+        try:
+            segment_index, unit_index = int(path[0]), path[1]
+        except (TypeError, ValueError):
+            return False
+        if not 0 <= segment_index < root.childCount():
+            return False
+        target = root.child(segment_index)
+        if unit_index is not None:
+            try:
+                unit_index = int(unit_index)
+            except (TypeError, ValueError):
+                unit_index = None
+            if unit_index is not None and 0 <= unit_index < target.childCount():
+                target = target.child(unit_index)
+        self._tree.setCurrentItem(target)
+        return True
+
     # ------------------------------------------------------------------ 界面
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)

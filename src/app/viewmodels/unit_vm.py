@@ -1048,13 +1048,14 @@ def create_pipe(
         t=t,
     )
     orm.session().add(pipe)
-    project_io.commit()
+    orm.session().flush()  # 让 element.pipes 看到新管（match 按首根管材质选组）
     if was_empty and element.category == CATEGORY_BURIED:
         # 第一根管决定面宽行 / 候选组：从无到有要自动选一次参数值
         # （此时 ensure 才第一次真正生成候选——空管道时不生成）
         from app.services.atlas_match import match_atlas_candidates
 
-        match_atlas_candidates(element)
+        match_atlas_candidates(element, commit=False)
+    project_io.commit()
     _expire_element(element)
     bus().unit_changed.emit(element.unit_id)
     return pipe
@@ -1084,7 +1085,7 @@ def update_pipe(pipe_id: int, **fields) -> Pipe | None:
         # 类别变化（混凝土 ↔ 非混凝土）会换候选组：直埋构件自动重选参数值
         from app.services.atlas_match import match_atlas_candidates
 
-        match_atlas_candidates(pipe.element)
+        match_atlas_candidates(pipe.element, commit=False)
     project_io.commit()
     bus().unit_changed.emit(pipe.element.unit_id)
     return pipe
@@ -1099,14 +1100,16 @@ def delete_pipe(pipe_id: int) -> None:
     element = pipe.element
     was_first = bool(element.pipes) and element.pipes[0].id == pipe.id
     unit_id = element.unit_id
-    orm.session().delete(pipe)
-    project_io.commit()
+    # 从集合移除（delete-orphan 级联成 DELETE，集合即时同步——match 按
+    # 剩余首根管材质选组），再与匹配结果一次 commit 落盘（撤销一个快照）
+    element.pipes.remove(pipe)
     if was_first and element.category == CATEGORY_BURIED:
         # 第一根管决定面宽行 / 候选组：删掉它（剩下一根类别不同的管）之后
         # 要自动重选参数值；删到没管时 match 会自己跳过（不误清参数值）
         from app.services.atlas_match import match_atlas_candidates
 
-        match_atlas_candidates(element)
+        match_atlas_candidates(element, commit=False)
+    project_io.commit()
     _expire_element(element)
     bus().unit_changed.emit(unit_id)
 
@@ -1179,7 +1182,6 @@ def update_atlas_candidate(candidate_id: int, field: str, value) -> bool:
         bus().unit_changed.emit(row.element.unit_id)  # 还原显示
         return False
     setattr(row, field, number)
-    project_io.commit()
     match_atlas_candidates(row.element, commit=False)
     project_io.commit()
     _expire_element(row.element)
@@ -1228,7 +1230,6 @@ def set_atlas_candidate_value(element_id: int, combo: str, field: str, value) ->
         )
         element.atlas_candidates.append(row)
     setattr(row, field, number)
-    project_io.commit()
     match_atlas_candidates(element, commit=False)
     project_io.commit()
     _expire_element(element)

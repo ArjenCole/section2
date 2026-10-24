@@ -35,6 +35,30 @@ views/  ──►  viewmodels/  ──►  services/  ──►  core/models/
 
 AI 工具（M8）走同一条 3~6，因此界面与 AI 改数据不会出现两套逻辑。
 
+## 撤销 / 重做（快照式，brackets 同款）
+
+`services/undo.py` 保存**整工程快照**而不是操作反演：`project_io.commit()` 是
+所有修改的唯一漏斗，落盘的同时把 `stn_codec.dump_database()` 的 JSON 数据体
+（剔除每次提交都变的 `saved_at`，保证"内容未变"可判定）连同界面状态压进撤销栈。
+撤销 / 重做就是用快照重建临时工作库（`project_io.restore_snapshot`，期间
+`_restoring_snapshot` 抑制重复记录），再按"提交即落盘"语义重写 `.stn` 文件。
+
+原则（与 brackets2 的 `services/undo.py` 一致）：最多 25 步且快照总字节 ≤ 10 MB
+双上限淘汰最旧；内容未变的重复提交只刷新界面状态、不占步数；新变更清除重做
+分支；写入前先用当前界面状态刷新"变更前"快照（撤销回来时恢复操作时刻的
+选中/焦点）；200ms 时间窗内的连续提交合并为一步（吸收"一次操作内部多次
+commit"的中间态，如改一格候选参数触发重匹配）。
+
+界面状态的携带与恢复按**位置**而不是 id（恢复会重建工作库，id 全变，只有
+行序稳定）：树选中 = `TreePanel.selection_path()` 的（标段序号, 单位工程序号），
+工作台 = `UnitPanel.ui_state()` 的主表格焦点/滚动与页签。主窗体经
+`undo.set_ui_provider` / `undo.set_listener` 注入捕获回调与按钮刷新
+（弱引用持有，避免钉住窗体，与 `connect_weak` 同理）。
+
+注意：数据操作里"改数据 + 自动重匹配 + 落盘"应当**一次 commit 完成**
+（参见 `unit_vm.create_pipe` / `delete_pipe` / `update_atlas_candidate`），
+多次 commit 会产生中间态快照——时间窗合并是兜底，不是替代。
+
 ## 工程文件
 
 `.stn` = **1.0 风格 XML 头 + CDATA 包裹的 JSON 数据体**（单文本文件）：

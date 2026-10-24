@@ -48,6 +48,7 @@ from app.core.models.base import NotAProjectFileError, ProjectFileError, SchemaT
 from app.core.paths import resources_dir
 from app.resources.qss.theme import ThemeManager
 from app.services import project_io
+from app.services import undo as undo_stack
 from app.services.project_io import ProjectIoError, ProjectLockedError, NewProjectSpec
 from app.viewmodels.project_vm import KIND_UNIT, TreeNode
 from app.views.panels.ai_panel import AiPanel
@@ -582,6 +583,8 @@ class MainWindow(QMainWindow):
         "act_new": "file-plus",
         "act_open": "folder-open",
         "act_save": "save",
+        "act_undo": "undo",
+        "act_redo": "redo",
         "act_add_segment": "folder-plus",
         "act_add_unit": "file-text",
         "act_add_element": "plus",
@@ -595,6 +598,8 @@ class MainWindow(QMainWindow):
         self._act_open = self._action("打开工程(&O)…", self._open_project, "Ctrl+O")
         self._act_save = self._action("保存(&S)", self._save_project, "Ctrl+S")
         self._act_save_as = self._action("另存为(&A)…", self._save_project_as, "Ctrl+Shift+S")
+        self._act_undo = self._action("撤销(&U)", self._undo, "Ctrl+Z")
+        self._act_redo = self._action("重做(&R)", self._redo, "Ctrl+Y")
         self._act_close = self._action("关闭工程(&C)", self._close_project)
         self._act_import_legacy = self._action("导入旧版工程(.stn)…", self._import_legacy)
         self._act_exit = self._action("退出(&Q)", self.close, "Ctrl+Q")
@@ -622,6 +627,8 @@ class MainWindow(QMainWindow):
             self._act_save,
             self._act_save_as,
             self._act_close,
+            self._act_undo,
+            self._act_redo,
             self._act_add_segment,
             self._act_add_unit,
             self._act_add_element,
@@ -632,6 +639,8 @@ class MainWindow(QMainWindow):
             self._act_save,
             self._act_save_as,
             self._act_close,
+            self._act_undo,
+            self._act_redo,
             self._act_add_segment,
             self._act_add_unit,
             self._act_add_element,
@@ -695,6 +704,11 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self._act_exit)
 
+        # 撤销 / 重做（brackets2 同款：编辑菜单 + Ctrl+Z / Ctrl+Y）
+        edit_menu = menubar.addMenu("编辑(&E)")
+        edit_menu.addAction(self._act_undo)
+        edit_menu.addAction(self._act_redo)
+
         project_menu = menubar.addMenu("项目(&P)")
         project_menu.addAction(self._act_add_segment)
         project_menu.addAction(self._act_add_unit)
@@ -731,6 +745,8 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self._act_new)
         toolbar.addAction(self._act_open)
         toolbar.addAction(self._act_save)
+        toolbar.addAction(self._act_undo)
+        toolbar.addAction(self._act_redo)
         toolbar.addSeparator()
         toolbar.addAction(self._act_add_segment)
         toolbar.addAction(self._act_add_unit)
@@ -755,6 +771,9 @@ class MainWindow(QMainWindow):
         bus().ai_context_changed.connect(self._on_ai_context_changed)
         bus().status_message.connect(self._set_status)
         ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
+        # 撤销快照的界面状态由主窗体提供，栈变化后刷新按钮可用态（brackets2 同款注入）
+        undo_stack.set_ui_provider(self._capture_ui_state)
+        undo_stack.set_listener(self._update_undo_actions)
         # 主题切换按钮文字与图标随当前主题变化：暗色 → 太阳「切换亮色…」、亮色 → 月亮「切换暗色…」
         self._act_theme.setText("切换亮色主题" if ThemeManager.instance().is_dark() else "切换暗色主题")
         self._set_theme_action_icon()
@@ -772,6 +791,7 @@ class MainWindow(QMainWindow):
         if project_io.is_transient():
             # 临时工程：临时路径不进最近列表，浮层提示尚未保存
             self._set_project_actions(True)
+            self._update_undo_actions()
             self._update_title()
             self._set_status("已创建临时工程（尚未保存），点击「保存」选择文件位置", 5000)
             return
@@ -779,6 +799,7 @@ class MainWindow(QMainWindow):
         update_config({"ui": {"last_dir": str(Path(path).parent)}})
         self._refresh_recent_menu()
         self._set_project_actions(True)
+        self._update_undo_actions()
         self._update_title()
         self._set_status(f"已打开工程：{path}")
 
@@ -789,6 +810,7 @@ class MainWindow(QMainWindow):
     def _on_project_closed(self) -> None:
         agent_context.reset_context()
         self._set_project_actions(False)
+        self._update_undo_actions()
         self._update_title()
         self._center_stack.setCurrentIndex(0)
 
@@ -993,6 +1015,49 @@ class MainWindow(QMainWindow):
             return
         project_io.close_project()
         bus().project_closed.emit()
+
+    # ------------------------------------------------------------------ 撤销 / 重做
+    def _capture_ui_state(self) -> dict:
+        """撤销快照携带的界面状态：树选中位置 + 工作台焦点（brackets2 同款）。"""
+        return {
+            "tree": self._tree_panel.selection_path(),
+            "element": self._unit_panel.ui_state(),
+        }
+
+    def _update_undo_actions(self) -> None:
+        self._act_undo.setEnabled(project_io.is_open() and undo_stack.can_undo())
+        self._act_redo.setEnabled(project_io.is_open() and undo_stack.can_redo())
+
+    def _undo(self) -> None:
+        self._restore_from_stack(undo_stack.undo(), "撤销")
+
+    def _redo(self) -> None:
+        self._restore_from_stack(undo_stack.redo(), "重做")
+
+    def _restore_from_stack(self, result, verb: str) -> None:
+        """撤销 / 重做：重建工作库 → 重建树与原则横条 → 恢复选中与焦点。
+
+        树面板按新库重建后 id 全部改变，树选中、主表格焦点都按快照里的
+        位置恢复；位置失效（如撤销"新增"后该行已不存在）时逐级回落。
+        """
+        if result is None:
+            return
+        data, ui = result
+        try:
+            project_io.restore_snapshot(data)
+        except ProjectIoError as error:
+            if not project_io.is_open():
+                bus().project_closed.emit()
+            self._error(f"{verb}失败", str(error))
+            return
+        state = ui if isinstance(ui, dict) else {}
+        # 先重建树并广播结构变化（原则横条重载、旧单位工程引用作废），
+        # 再恢复树选中（联动单位工程面板装填），最后恢复表格焦点与页签
+        self._tree_panel.vm.load()
+        bus().tree_structure_changed.emit()
+        self._tree_panel.select_by_path(state.get("tree"))
+        self._unit_panel.restore_ui_state(state.get("element"))
+        self._update_undo_actions()
 
     def _import_legacy(self) -> None:
         """旧 .stn 单向迁移导入（M6）。"""

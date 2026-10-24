@@ -26,7 +26,7 @@ from xml.etree.ElementTree import SubElement
 
 from sqlalchemy import func, select
 
-from app.services import stn_codec, stn_format, stn_migration
+from app.services import stn_codec, stn_format, stn_migration, undo as undo_stack
 from app.core.version import (
     APP_VERSION,
     BACKUP_DIR_NAME,
@@ -109,6 +109,9 @@ _backup_done_for_session = False
 _original_path: Path | None = None
 # 打开旧版文件转译后给界面的提示文案（brackets2 同款 last_migration_notice）
 _last_migration_notice = ""
+# 撤销 / 重做恢复工作库期间为 True：commit 只落盘不再压撤销快照
+# （brackets2 reload_from_doc(snapshot=False) 的同款语义）
+_restoring_snapshot = False
 
 
 # --------------------------------------------------------------------------- #
@@ -240,6 +243,7 @@ def new_project(spec: NewProjectSpec) -> Path | None:
     if path is None:
         _original_path = None
         _backup_done_for_session = False
+        undo_stack.reset(stn_codec.dump_database())
         return None
     if path.suffix.lower() != PROJECT_SUFFIX:
         path = path.with_suffix(PROJECT_SUFFIX)
@@ -253,6 +257,7 @@ def new_project(spec: NewProjectSpec) -> Path | None:
         raise
     _original_path = path
     _backup_done_for_session = False
+    undo_stack.reset(stn_codec.dump_database())
     return path
 
 
@@ -286,7 +291,7 @@ def open_project(path: str | Path) -> Path | None:
     工程进入“尚未保存”的临时状态，返回 None；提示文案见
     :func:`last_migration_notice`。
     """
-    global _last_migration_notice
+    global _original_path, _backup_done_for_session, _last_migration_notice
 
     ensure_main_thread("打开工程")
     target = Path(path)
@@ -313,6 +318,7 @@ def open_project(path: str | Path) -> Path | None:
         raise ProjectIoError(f"打开工程失败：{error}") from error
     _original_path = target
     _backup_done_for_session = False
+    undo_stack.reset(stn_codec.dump_database())
     return target
 
 
@@ -348,6 +354,7 @@ def open_legacy_project(path: str | Path) -> None:
         f"{backup_note}\n"
         "当前工程尚未保存到文件，原文件不会被覆盖；请用「另存为」保存为新的 .stn 工程。"
     )
+    undo_stack.reset(stn_codec.dump_database())
 
 
 def last_migration_notice() -> str:
@@ -413,6 +420,7 @@ def close_project() -> Path | None:
         _original_path = None
         _backup_done_for_session = False
         _last_migration_notice = ""
+        undo_stack.clear()
         return None
     try:
         orm.commit()
@@ -420,6 +428,7 @@ def close_project() -> Path | None:
         orm.close_database()
         if path is not None:
             release_lock(path)
+    undo_stack.clear()
     _original_path = None
     _backup_done_for_session = False
     _last_migration_notice = ""
@@ -427,27 +436,65 @@ def close_project() -> Path | None:
 
 
 def commit() -> None:
-    """一次修改落盘（自动保存）；本次打开后的第一次修改会顺手备份一份。"""
+    """一次修改落盘（自动保存）；本次打开后的第一次修改会顺手备份一份。
+
+    业务侧的所有修改都汇聚到本函数，因此这里同时是撤销快照的唯一入口：
+    整库导出一份 JSON，既写出 `.stn` 又压进撤销栈（brackets2 的快照式
+    撤销，见 services.undo）。撤销 / 重做恢复期间（``_restoring_snapshot``）
+    不记录。
+    """
     global _backup_done_for_session
 
     ensure_main_thread("保存工程数据")
     if not orm.is_open():
         return
     orm.commit()
+    data = stn_codec.dump_database()
+    if not _restoring_snapshot:
+        undo_stack.record(data)
     if _original_path is None:
         return  # 临时工程没有正式文件，写出留到首次另存为
-    _write_project_file()
+    _write_project_file(data=data)
     if not _backup_done_for_session:
         create_backup()
         _backup_done_for_session = True
 
 
-def _write_project_file(path: Path | None = None) -> Path:
-    """把当前工作库整体写出为 `.stn` 工程文件（保存 / 另存为 / 新建共用）。"""
+def restore_snapshot(data: dict) -> None:
+    """撤销 / 重做：用快照 JSON 重建临时工作库（工程路径与锁保持不变）。
+
+    恢复本身也是一次内容变更：重建后经 :func:`commit` 落盘（自动保存语义
+    不变），期间 ``_restoring_snapshot`` 抑制撤销栈记录；界面刷新由调用方
+    通过 EventBus 广播。失败时关闭工程并抛出（转 ProjectIoError）。
+    """
+    global _restoring_snapshot
+
+    ensure_main_thread("撤销 / 重做")
+    _restoring_snapshot = True
+    try:
+        orm.create_working_database()
+        stn_codec.load_database(data)
+        commit()
+    except Exception as error:
+        orm.close_database()
+        undo_stack.clear()
+        if isinstance(error, orm.ProjectFileError):
+            raise
+        raise ProjectIoError(f"撤销 / 重做失败：{error}") from error
+    finally:
+        _restoring_snapshot = False
+
+
+def _write_project_file(path: Path | None = None, *, data: dict | None = None) -> Path:
+    """把当前工作库整体写出为 `.stn` 工程文件（保存 / 另存为 / 新建共用）。
+
+    ``data`` 传入已导出的 JSON 数据体时直接使用：commit 的导出结果同时
+    供撤销快照复用，避免整库导出两遍。
+    """
     target = Path(path) if path is not None else _original_path
     if target is None:
         raise ProjectIoError("尚未确定工程文件路径。")
-    stn_format.write_stn(target, stn_codec.dump_database())
+    stn_format.write_stn(target, data if data is not None else stn_codec.dump_database())
     return target
 
 
