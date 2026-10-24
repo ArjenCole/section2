@@ -59,13 +59,30 @@ def test_enclosure_dialog_insert_rules(qapp, project, monkeypatch):
     assert [work.min_depth for work in dialog._enclosure().works_sorted()] == [0.0, 1.75, 3.5, 7.0]
     # 删除部分行（前两行）→ 剩余首行埋深归 0
     dialog._work_table.setCurrentCell(0, 0)
-    from PySide6.QtCore import QItemSelectionModel
+    from PySide6.QtCore import QItemSelectionModel, Qt
 
     model = dialog._work_table.selectionModel()
     model.select(dialog._work_table.model().index(0, 0), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
     model.select(dialog._work_table.model().index(1, 0), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
     dialog._delete_selected_works()
     assert [work.min_depth for work in dialog._enclosure().works_sorted()] == [0.0, 7.0]
+    # 按钮列固定 40px（Interactive，不被 ResizeToContents 覆盖），每行行尾「-」
+    from PySide6.QtWidgets import QHeaderView
+
+    buttons = dialog._work_buttons
+    assert dialog._work_table.columnWidth(buttons.column) == 40
+    assert (
+        dialog._work_table.horizontalHeader().sectionResizeMode(buttons.column)
+        == QHeaderView.ResizeMode.Interactive
+    )
+    for row in range(dialog._work_table.rowCount()):
+        assert dialog._work_table.cellWidget(row, buttons.column) is not None
+    # 删到只剩一行：行尾没有「-」，空格子是只读
+    dialog._delete_work_rows([0])
+    assert dialog._work_table.rowCount() == 1
+    assert dialog._work_table.cellWidget(0, buttons.column) is None
+    cell = dialog._work_table.item(0, buttons.column)
+    assert cell is not None and not cell.flags() & Qt.ItemFlag.ItemIsEditable
     dialog.close()
 
 
@@ -503,6 +520,7 @@ def test_pipe_add_delete_buttons_follow_category(qapp, project):
     """管材增删入口随构件类别显隐（不做禁用态）：直埋/顶管/牵引管与构筑物
     不显示「+」和删行按钮列；包封/箱涵/管廊的「+」钉在删行列的表头格里
     （与行尾「-」同一列），每行行尾一个「-」（无管材行即无按钮）。"""
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QPushButton
 
     from app.core.models.models import (
@@ -548,6 +566,8 @@ def test_pipe_add_delete_buttons_follow_category(qapp, project):
         assert not panel._qty_buttons.add_button.isVisibleTo(panel._qty_table)
         for row in range(panel._param_table.rowCount()):
             assert panel._param_table.cellWidget(row, panel._param_buttons.column) is None
+            cell = panel._param_table.item(row, panel._param_buttons.column)
+            assert cell is not None and not cell.flags() & Qt.ItemFlag.ItemIsEditable
         # 顶管 / 牵引管：同直埋
         select_row(1)
         assert not panel._pipe_buttons.add_button.isVisibleTo(panel._pipe_table)

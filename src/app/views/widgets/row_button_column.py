@@ -10,12 +10,13 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QPushButton,
     QTableWidget,
+    QTableWidgetItem,
     QWidget,
 )
 
@@ -68,6 +69,10 @@ class RowButtonColumn(QObject):
                     self._prev_stretch_col, QHeaderView.ResizeMode.Interactive
                 )
         self._col = new_col
+        # 钉成固定宽度：整表 ResizeToContents 的表格（如围护窗体做法表）里
+        # setColumnWidth 会被内容宽度覆盖，按钮列必须显式 Interactive，
+        # 否则按钮列宽随内容漂移、按钮被压扁
+        header.setSectionResizeMode(new_col, QHeaderView.ResizeMode.Interactive)
         self._table.setColumnWidth(self._col, self._width)
         self._prev_stretch_col = new_col - 1 if new_col > 0 else None
         if self._prev_stretch_col is not None:
@@ -106,7 +111,20 @@ class RowButtonColumn(QObject):
         layout = QHBoxLayout(holder)
         layout.setContentsMargins(8, 4, 8, 4)
         layout.addWidget(button)
+        self._set_readonly_cell(row)
         self._table.setCellWidget(row, self._col, holder)
+
+    def set_row_undeletable(self, row: int) -> None:
+        """该行不可删（没有行尾「-」）：按钮列空格设为只读，防止误编辑出杂散内容。"""
+        self._set_readonly_cell(row)
+
+    def _set_readonly_cell(self, row: int) -> None:
+        """按钮列该行格子里放一个只读空 item（有「-」的行由按钮盖住，看不见）。"""
+        item = self._table.item(row, self._col)
+        if item is None:
+            item = QTableWidgetItem("")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._table.setItem(row, self._col, item)
 
     def clear_row_buttons(self) -> None:
         """显式销毁所有行尾「-」（整表重建前调用，防旧控件残留叠加）。"""

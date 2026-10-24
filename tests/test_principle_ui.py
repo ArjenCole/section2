@@ -297,9 +297,13 @@ def test_foundation_dialog_layout(qapp, project) -> None:
         expected = table.horizontalHeader().height() + 3 * 32
         assert table.minimumHeight() == expected
         assert table.maximumHeight() == expected
-        # 「+」钉在按钮列的表头格里（与行尾「-」同一列）
+        # 「+」钉在按钮列的表头格里（与行尾「-」同一列）；按钮列固定 40px
         button_col = dialog._replace_buttons.column
         header = table.horizontalHeader()
+        from PySide6.QtWidgets import QHeaderView
+
+        assert table.columnWidth(button_col) == 40
+        assert header.sectionResizeMode(button_col) == QHeaderView.ResizeMode.Interactive
         add_button = dialog._replace_buttons.add_button
         assert add_button.isVisibleTo(dialog)
         assert add_button.x() == header.sectionViewportPosition(button_col) + 3

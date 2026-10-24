@@ -5,7 +5,8 @@
 * 顶部「原则名称」；GroupBox「挖填类型」（开挖类型 / 坞塝材质 / 坞塝回填 / 顶部回填）、
   「管道基础」（混凝土基础 / 基础角度 / 垫层材质 / 厚度 mm）；右侧竖排
   「确认修改 / 取消修改」（v4 起降水/面宽已独立成原则，原「降水措施」板块取消）；
-* 主表格 6 列：埋深 / 范围 / 围护类型 / 围护形式描述 / 止水类型 / 止水形式描述，
+* 主表格 7 列：埋深 / 范围 / 围护类型 / 围护形式描述 / 止水类型 / 止水形式描述 /
+  按钮列（「+」在按钮列表头格，每行行尾「-」删该行，见 RowButtonColumn），
   首行埋深恒 0 且只读，Insert 插入做法（埋深取值规则与旧版一致），
   Delete 删除（全删时提示“至少需要一种围护做法。”）；
 * 双击“围护形式描述”：多级围护 → 做法编辑（FormEcls），单构件 → 构件公式编辑
@@ -239,8 +240,11 @@ class EnclosureEditDialog(FramelessDialog):
                 table.setCellWidget(row_index, _COL_WS_CAT, ws_combo)
 
                 # 行尾「-」删行按钮：至少保留一种做法，只剩一行时不装
+                # （空格子设为只读，防误编辑）
                 if len(works) > 1:
                     self._work_buttons.add_row_button(row_index)
+                else:
+                    self._work_buttons.set_row_undeletable(row_index)
         finally:
             self._loading = False
         # 内嵌下拉框就位后重算内容列宽：setRowCount 触发的自动重算发生在控件

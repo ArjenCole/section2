@@ -1406,9 +1406,11 @@ class UnitPanel(QWidget):
                 self._param_table.setItem(index, 1, unit_item)
                 self._param_table.setItem(index, 2, value_item)
                 # 行尾「-」只装在可删行上：图集参数行与构筑物名称/单位行锁定，
-                # 删不掉就不给按钮（与数据层 delete_param 的限制一致）
+                # 删不掉就不给按钮（空格子设为只读），与数据层 delete_param 一致
                 if not param.lock_name:
                     self._param_buttons.add_row_button(index)
+                else:
+                    self._param_buttons.set_row_undeletable(index)
                 if show_candidates:
                     candidate_field = _CANDIDATE_FIELD_BY_PARAM.get(param.key)
                     for offset, column in enumerate(self._candidate_columns):
