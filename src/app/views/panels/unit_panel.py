@@ -743,6 +743,11 @@ class UnitPanel(QWidget):
         self._restore_current_element(
             pending if pending is not None else keep_element, keep_column
         )
+        if self._current_element_id() is None:
+            # 表格空（撤销 / 重做到没有构件的状态，或构件被删光）：明细面板
+            # 不能停留在上一个构件的内容上
+            self._clear_detail()
+            return
         self._fill_quantities()
         self._section_view.set_element(self._current_element_id())
 
@@ -1038,6 +1043,8 @@ class UnitPanel(QWidget):
             return
         element_id = ids[0] if ids else self._current_element_id()
         if element_id is None:
+            if self._current_detail_id is not None or self._multi_detail:
+                self._clear_detail()
             return
         if self._multi_detail or element_id != self._current_detail_id:
             self._show_single_detail(element_id)
@@ -1118,6 +1125,36 @@ class UnitPanel(QWidget):
             placeholder.setForeground(QBrush(_secondary_color()))
             table.setItem(0, 0, placeholder)
             table.setSpan(0, 0, 1, table.columnCount())
+
+    def _clear_detail(self) -> None:
+        """主表格没有选中行（表格空 / 撤销回到没有构件的状态）：清空明细面板。
+
+        此前无选中时各路径直接返回，管材 / 构件参数表会残留上一个构件的
+        内容——撤销 / 重做到某单位工程没有构件的状态时，下方面板显示的
+        还是撤销前的过期参数。工程量与断面图随之清空，多原则页签、AI
+        上下文一并复位。
+        """
+        self._multi_detail = False
+        self._current_detail_id = None
+        self._pipe_buttons.clear_row_buttons()
+        self._pipe_buttons.set_visible(False)
+        self._pipe_table.setRowCount(0)
+        self._param_table.clearSpans()
+        # 候选参数列是按上一个构件动态追加的，一并撤掉（回到三列基础布局）
+        self._param_table.setColumnCount(len(_PARAM_HEADERS))
+        self._param_table.setHorizontalHeaderLabels(list(_PARAM_HEADERS))
+        self._param_table.setRowCount(0)
+        self._qty_buttons.clear_row_buttons()
+        self._qty_buttons.set_visible(False)
+        self._qty_table.clearSpans()
+        self._qty_table.setRowCount(0)
+        self._qty_table.setVisible(False)
+        self._qty_placeholder.setVisible(True)
+        self._multi_pe_tab.set_element(None)
+        self._multi_pf_tab.set_element(None)
+        self._section_view.set_element(None)
+        self._fill_quantities()
+        bus().ai_context_changed.emit({"element_id": None, "element_name": ""})
 
     def _current_element_id(self) -> int | None:
         return self._element_id_at(self._element_table.currentRow())
