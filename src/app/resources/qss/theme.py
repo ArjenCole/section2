@@ -152,6 +152,8 @@ _QSS = Template(
 QWidget { background-color: $bg_window; }
 QMainWindow, QDialog { background-color: $bg_window; }
 QWidget[role="panel"] { background-color: $bg_card; }
+/* 白底页面里的辅助行/容器：让页面底色透出来（否则全局 QWidget 灰底显成灰条） */
+QWidget[role="ghost"] { background: transparent; }
 QWidget[role="card"], QFrame[role="card"] {
     background-color: $bg_card;
     border: 1px solid $border;
@@ -480,10 +482,10 @@ QHeaderView::section {
 QHeaderView::section:last { border-right: none; }
 QHeaderView::section:hover { background-color: $bg_hover; }
 QTableCornerButton::section { background-color: $bg_window; border: none; }
-/* 管材面板（PipeTable）：行头 / 列头 / 左上角块底色与管材 TAB 页面同色
-   （该页 role="panel" 底为 bg_card），避免白底页面配一圈灰底表头 */
-QTableWidget#PipeTable QHeaderView::section { background-color: $bg_card; }
-QTableWidget#PipeTable QTableCornerButton::section { background-color: $bg_card; border: none; }
+/* 明细面板页签里的表格（cardHeader=true）：行头 / 列头 / 左上角块底色与
+   页签页面同色（各页 role="panel" 底为 bg_card），避免白底页面配灰底表头 */
+QTableWidget[cardHeader="true"] QHeaderView::section { background-color: $bg_card; }
+QTableWidget[cardHeader="true"] QTableCornerButton::section { background-color: $bg_card; border: none; }
 /* 表格单元格内嵌的下拉框：纵向内边距压小，行高才能收回到 32px 且文字完整 */
 QTableWidget QComboBox, QTableView QComboBox {
     padding-top: 2px;

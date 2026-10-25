@@ -65,6 +65,10 @@ class MultiPrincipleTab(QWidget):
 
     def __init__(self, kind: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        # 页面底色与其他明细页签一致（bg_card）。QWidget 子类必须显式开
+        # WA_StyledBackground，QSS 背景规则才会绘制（unit_panel pipe_page 同款）
+        self.setProperty("role", "panel")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._kind = kind
         self._element_id: int | None = None
         self._loading = False
@@ -83,6 +87,8 @@ class MultiPrincipleTab(QWidget):
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self._main_row = QWidget()
+        # 白底页签上，全局 QWidget 规则的灰底会显成灰条：辅助行一律透明
+        self._main_row.setProperty("role", "ghost")
         main_layout = QHBoxLayout(self._main_row)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(QLabel("主要原则:"))
@@ -92,6 +98,8 @@ class MultiPrincipleTab(QWidget):
 
         self._table = QTableWidget(0, 2)
         self._table.setHorizontalHeaderLabels(["原则名称", "比例"])
+        # 行头底色与页签页面同色（bg_card），同明细面板其余表格
+        self._table.setProperty("cardHeader", True)
         # 选中单元格时对应列的列头不再加粗重绘（同 CellFillTable，见其注释）
         self._table.horizontalHeader().setHighlightSections(False)
         self._table.verticalHeader().setVisible(False)
@@ -107,6 +115,7 @@ class MultiPrincipleTab(QWidget):
         self._table.itemChanged.connect(self._on_item_changed)
 
         self._btn_host = QWidget()
+        self._btn_host.setProperty("role", "ghost")
         button_bar = QHBoxLayout(self._btn_host)
         button_bar.setContentsMargins(0, 0, 0, 0)
         button_bar.addWidget(self._make_button("＋原则", "添加一条原则引用", self._add_ref))
@@ -114,6 +123,8 @@ class MultiPrincipleTab(QWidget):
         button_bar.addStretch(1)
 
         self._content = QWidget()
+        # 包住标题/表格/按钮条的整块内容：不透明会盖掉页面的白底
+        self._content.setProperty("role", "ghost")
         content_layout = QVBoxLayout(self._content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(4)

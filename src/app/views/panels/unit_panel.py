@@ -366,11 +366,8 @@ class UnitPanel(QWidget):
         if not is_mac():
             detail.setDocumentMode(True)
         detail.tabBar().setDrawBase(False)
-        self._pipe_table = self._make_table(_PIPE_HEADERS)
-        # 行头 / 列头底色要与管材 TAB 页面同色：QSS 按 objectName 定向改
-        # （该页 role="panel" 底为 bg_card，全局表头却是 bg_window，上下两截色）
-        self._pipe_table.setObjectName("PipeTable")
-        self._param_table = self._make_table(_PARAM_HEADERS)
+        self._pipe_table = self._make_table(_PIPE_HEADERS, card_header=True)
+        self._param_table = self._make_table(_PARAM_HEADERS, card_header=True)
         # 手设列宽：前三列保持可读（管径/壁厚列常有四位数字）；末列是按钮列
         # （「+」表头格 + 每行行尾「-」，见 RowButtonColumn），类别列固定宽
         self._pipe_table.setColumnWidth(_PIPE_COL_MAT, 120)
@@ -383,7 +380,7 @@ class UnitPanel(QWidget):
         self._param_table.setColumnWidth(0, _PARAM_NAME_WIDTH)
         self._param_table.setColumnWidth(1, _PARAM_UNIT_WIDTH)
         self._param_table.setColumnWidth(2, 110)
-        self._qty_table = self._make_table(_QTY_HEADERS)
+        self._qty_table = self._make_table(_QTY_HEADERS, card_header=True)
         self._qty_table.setColumnWidth(0, 110)
         self._qty_table.setColumnWidth(1, 140)
         self._qty_table.setColumnWidth(2, 56)
@@ -427,6 +424,9 @@ class UnitPanel(QWidget):
         pipe_layout.addWidget(self._pipe_table, 1)
 
         param_page = QWidget()
+        # 页面底色与管材页一致（bg_card，role="panel" + WA_StyledBackground 同款）
+        param_page.setProperty("role", "panel")
+        param_page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         param_layout = QVBoxLayout(param_page)
         param_layout.setContentsMargins(6, 6, 6, 6)
         param_layout.setSpacing(4)
@@ -435,6 +435,8 @@ class UnitPanel(QWidget):
         # 附属构筑物的工程量行（类别 / 项目 / 单位 三段合一的编辑界面）；
         # 其它类别显示占位说明，仅构筑物可录入
         qty_page = QWidget()
+        qty_page.setProperty("role", "panel")
+        qty_page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         qty_layout = QVBoxLayout(qty_page)
         qty_layout.setContentsMargins(6, 6, 6, 6)
         qty_layout.setSpacing(4)
@@ -493,10 +495,12 @@ class UnitPanel(QWidget):
         self._quantity_tables: dict[str, QTableWidget] = {}
         for name in ("定额工程量", "清单工程量"):
             page = QWidget()
+            page.setProperty("role", "panel")
+            page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
             page_layout = QVBoxLayout(page)
             page_layout.setContentsMargins(6, 6, 6, 6)
             page_layout.setSpacing(4)
-            table = self._make_table(_QUANTITY_HEADERS)
+            table = self._make_table(_QUANTITY_HEADERS, card_header=True)
             table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
             table.setWordWrap(False)
             table.itemDoubleClicked.connect(self._show_expression_detail)
@@ -510,9 +514,13 @@ class UnitPanel(QWidget):
         return tabs
 
     @staticmethod
-    def _make_table(headers: list[str]) -> QTableWidget:
+    def _make_table(headers: list[str], *, card_header: bool = False) -> QTableWidget:
         table = QTableWidget(0, len(headers))
         table.setHorizontalHeaderLabels(headers)
+        if card_header:
+            # 明细面板页签里的表格：行头 / 列头底色与页签页面同色（bg_card），
+            # 否则白底页面配一圈灰底表头（QSS 按 [cardHeader="true"] 命中）
+            table.setProperty("cardHeader", True)
         table.setAlternatingRowColors(True)
         # 固定列宽（可拖动调整）：表格不随父控件拉伸，父控件宽时右侧留白、
         # 窄时出横向滚动条（全项目约定，见 table_width.fixed_width_behavior）
