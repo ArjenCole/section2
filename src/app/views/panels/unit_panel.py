@@ -91,11 +91,11 @@ _CATEGORY_ABBRS = {
     CATEGORY_STRUCTURE: "井",
 }
 
-_QUANTITY_HEADERS = ["编号", "类别", "项目", "单位", "计算表达式", "工程量"]
-_QCOL_EXPRESSION = 4
-_QCOL_AMOUNT = 5
+_QUANTITY_HEADERS = ["编号", "类别", "项目", "单位", "工程量", "计算表达式"]
+_QCOL_EXPRESSION = 5
+_QCOL_AMOUNT = 4
 #: 定额/清单表格列宽默认值（取自运行实例实测；末列不拉伸，保持实测宽度）
-_QUANTITY_WIDTHS = [77, 66, 193, 48, 434, 135]
+_QUANTITY_WIDTHS = [77, 66, 193, 48, 135, 434]
 
 _PIPE_ROLE = Qt.ItemDataRole.UserRole + 1
 #: 管材表 6 列：管材（材质文字）/ 管径 / 壁厚 / 含量 / 类别 / 行尾「-」删行按钮。
@@ -432,7 +432,7 @@ class UnitPanel(QWidget):
         param_layout.addWidget(self._param_table, 1)
 
         # 附属构筑物的工程量行（类别 / 项目 / 单位 三段合一的编辑界面）；
-        # 其它类别显示占位说明，仅构筑物可录入
+        # 其它类别不显示表格，空面板居中提示（多原则 Tab 的 placeholder 同款）
         qty_page = QWidget()
         qty_page.setProperty("role", "panel")
         qty_page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -440,6 +440,15 @@ class UnitPanel(QWidget):
         qty_layout.setContentsMargins(6, 6, 6, 6)
         qty_layout.setSpacing(4)
         qty_layout.addWidget(self._qty_table, 1)
+        self._qty_placeholder = QLabel(
+            "仅附属构筑物可录入工程量行。\n"
+            "选中附属构筑物后在此逐行录入类别｜项目｜单位｜值算式。"
+        )
+        self._qty_placeholder.setProperty("role", "placeholder")
+        self._qty_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._qty_placeholder.setWordWrap(True)
+        self._qty_placeholder.setVisible(False)
+        qty_layout.addWidget(self._qty_placeholder, 1)
 
         detail.addTab(pipe_page, "管材")
         detail.addTab(param_page, "构件参数")
@@ -691,6 +700,9 @@ class UnitPanel(QWidget):
             self._pipe_table.setRowCount(0)
             self._param_table.setRowCount(0)
             self._qty_table.setRowCount(0)
+            # 未选中单位工程：工程量页签同样显示空面板提示
+            self._qty_table.setVisible(False)
+            self._qty_placeholder.setVisible(True)
             self._section_view.set_element(None)
             bus().ai_context_changed.emit({"element_id": None, "element_name": ""})
             return
@@ -817,15 +829,15 @@ class UnitPanel(QWidget):
 
         for element_row, dq in chosen:
             # 清单项目行（浅蓝标记行）：类别 / 项目（规格）/ 单位 /
-            # 计算表达式 = 用户输入的数量算式 / 工程量 = 算式的计算结果
+            # 工程量 = 用户输入的数量算式的计算结果 / 计算表达式 = 该算式
             listing.setRowCount(row_index + 1)
             header_cells = (
                 "清单项目",
                 category_name(element_row.category),
                 element_row.spec or element_row.name,
                 element_row.unit,
-                element_row.amount,
                 calc_fmt(element_row.amount_value),
+                element_row.amount,
             )
             for offset, text in enumerate(header_cells):
                 item = QTableWidgetItem(text)
@@ -843,8 +855,8 @@ class UnitPanel(QWidget):
                     parts[0] if parts else "",
                     parts[1] if len(parts) > 1 else "",
                     parts[2] if len(parts) > 2 else "",
-                    quantity.expression,
                     calc_fmt(quantity.value),
+                    quantity.expression,
                 )
                 for column, text in enumerate(cells):
                     item = QTableWidgetItem(text)
@@ -1090,6 +1102,9 @@ class UnitPanel(QWidget):
         self._pipe_buttons.clear_row_buttons()
         self._qty_buttons.clear_row_buttons()
         self._qty_buttons.set_visible(False)
+        # 多选恢复显示工程量表（非构筑物选中态把它换成了空面板提示）
+        self._qty_table.setVisible(True)
+        self._qty_placeholder.setVisible(False)
         for table, text in (
             (self._pipe_table, "*多种管材"),
             (self._param_table, "*多种参数"),
@@ -1556,6 +1571,9 @@ class UnitPanel(QWidget):
             is_structure = element is not None and element.category == CATEGORY_STRUCTURE
             self._qty_buttons.set_visible(is_structure)
             self._qty_buttons.clear_row_buttons()
+            # 非附属构筑物不显示表格，空面板居中提示（多原则 Tab 同款）
+            self._qty_table.setVisible(is_structure)
+            self._qty_placeholder.setVisible(not is_structure)
             if is_structure:
                 self._qty_table.setRowCount(len(quantities))
                 for index, quantity in enumerate(quantities):
@@ -1567,13 +1585,7 @@ class UnitPanel(QWidget):
                     self._qty_table.setItem(index, 3, QTableWidgetItem(quantity.value))
                     self._qty_buttons.add_row_button(index)
             else:
-                self._qty_table.setRowCount(1)
-                hint = QTableWidgetItem("仅附属构筑物可录入工程量行（类别｜项目｜单位｜值算式）。")
-                hint.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                hint.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                hint.setForeground(QBrush(_secondary_color()))
-                self._qty_table.setItem(0, 0, hint)
-                self._qty_table.setSpan(0, 0, 1, self._qty_table.columnCount())
+                self._qty_table.setRowCount(0)
         finally:
             self._loading = False
         # 管径/壁厚/参数/工程量都影响断面几何与工程量结果，明细变化后重绘
