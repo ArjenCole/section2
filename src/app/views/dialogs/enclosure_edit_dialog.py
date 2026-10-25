@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -55,6 +55,8 @@ _CONFOUND_CHOICES = ("采用混凝土基础", "不采用混凝土基础")
 _ANGLE_CHOICES = ("90", "120", "150", "180")
 
 _COL_DEPTH, _COL_RANGE, _COL_ECLS_CAT, _COL_ECLS_DIS, _COL_WS_CAT, _COL_WS_DIS = range(6)
+#: 止水形式描述列的下限：可视区减其余列不足这么多时钳回来（宁出横向滚动条）
+_DESC_MIN_WIDTH = 80
 
 
 class EnclosureEditDialog(FramelessDialog):
@@ -258,9 +260,33 @@ class EnclosureEditDialog(FramelessDialog):
         # 创建之前，会把下拉列压窄、表头文字整体移位，视觉上字体忽粗忽细
         for column in (_COL_DEPTH, _COL_RANGE, _COL_ECLS_CAT, _COL_WS_CAT):
             table.resizeColumnToContents(column)
-        # 描述列固定宽（可拖动调整）：不再吸收剩余宽度，总宽超出窗体出横向滚动条
+        # 围护形式描述固定宽（可拖动调整）；止水形式描述初始同宽，窗体可见时
+        # 再按可视区收窄（_fit_desc_column），总宽刚好不出横向滚动条
         for column in (_COL_ECLS_DIS, _COL_WS_DIS):
             table.setColumnWidth(column, 150)
+        if self.isVisible():
+            self._fit_desc_column()
+
+    def _fit_desc_column(self) -> None:
+        """止水形式描述列收窄到总宽刚好塞满表格可视区：不出横向滚动条。
+
+        其余列各有定宽（内容列按内容、围护形式描述 150、按钮列 40），可视区
+        减去它们就是该列的宽；可视区过窄时钳到最小可读宽度（_DESC_MIN_WIDTH），
+        那时宁可出横向滚动条也不把文字压没。
+        """
+        table = self._work_table
+        others = sum(
+            table.columnWidth(column)
+            for column in range(table.columnCount())
+            if column != _COL_WS_DIS
+        )
+        remaining = table.viewport().width() - others
+        table.setColumnWidth(_COL_WS_DIS, max(_DESC_MIN_WIDTH, remaining))
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        # 布局落地后再量可视区：showEvent 时子控件几何还没定
+        QTimer.singleShot(0, self._fit_desc_column)
 
     @staticmethod
     def _readonly_item(text: str) -> QTableWidgetItem:
@@ -499,7 +525,8 @@ class _WorkTable(CellFillTable):
         # 行高与主表格一致（32px）；单元格内下拉框的纵向内边距已由 QSS 压小
         self.verticalHeader().setDefaultSectionSize(32)
         # 固定列宽（可拖动）：埋深、范围、两个下拉列初始按内容自适应（_fill 里
-        # 每次装填后重算），两个描述列固定宽；表格总宽超出窗体即出横向滚动条
+        # 每次装填后重算），围护形式描述固定宽、止水形式描述按可视区收窄
+        # （_fit_desc_column），总宽刚好不出横向滚动条
         fixed_width_behavior(self)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802

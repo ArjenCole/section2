@@ -557,17 +557,18 @@ def test_pipe_add_delete_buttons_follow_category(qapp, project):
             panel._element_table.setCurrentCell(row, 0)
             qapp.processEvents()
 
-        # 直埋：「+」不显示，删行列整列隐藏；参数表按钮列可用（可加自定义参数），
-        # 但参数行全是图集行（锁定）→ 行尾没有「-」；工程量按钮列不显示
+        # 直埋：「+」不显示，删行列整列隐藏；参数表没有增删入口（参数行由
+        # 图集/构件库带出，不允许用户增删，末列就是最后一个候选列，没有空
+        # 按钮列）；工程量按钮列不显示
         select_row(0)
         assert not panel._pipe_buttons.add_button.isVisibleTo(panel._pipe_table)
         assert panel._pipe_table.isColumnHidden(_PIPE_COL_DEL)
-        assert panel._param_buttons.add_button.isVisibleTo(panel._param_table)
+        last_param_col = panel._param_table.columnCount() - 1
+        assert panel._param_table.horizontalHeaderItem(last_param_col).text() != ""
         assert not panel._qty_buttons.add_button.isVisibleTo(panel._qty_table)
         for row in range(panel._param_table.rowCount()):
-            assert panel._param_table.cellWidget(row, panel._param_buttons.column) is None
-            cell = panel._param_table.item(row, panel._param_buttons.column)
-            assert cell is not None and not cell.flags() & Qt.ItemFlag.ItemIsEditable
+            for column in range(panel._param_table.columnCount()):
+                assert panel._param_table.cellWidget(row, column) is None
         # 顶管 / 牵引管：同直埋
         select_row(1)
         assert not panel._pipe_buttons.add_button.isVisibleTo(panel._pipe_table)

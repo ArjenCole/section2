@@ -1520,13 +1520,6 @@ class UnitViewModel(QObject):
             return
         delete_pipe(pipe_id)
 
-    def add_param(self) -> None:
-        if self._element_id is None:
-            self.error_occurred.emit("请先在上表选择构件条目。")
-            return
-        if create_param(self._element_id) is None:
-            self.error_occurred.emit(_ATLAS_PARAM_LOCKED_HINT)
-
     def set_param_field(self, param_id: int, field: str, value) -> None:
         if update_param(param_id, **{field: value}) is None:
             self.error_occurred.emit(_ATLAS_PARAM_LOCKED_HINT)
@@ -1542,11 +1535,6 @@ class UnitViewModel(QObject):
         """手填补空白候选格；该组合没有候选行时自动建行。"""
         if not set_atlas_candidate_value(element_id, combo, field, value):
             self.error_occurred.emit("候选参数需为数字（可留空）。")
-
-    def remove_param(self, param_id: int) -> None:
-        message = delete_param(param_id)
-        if message:
-            self.error_occurred.emit(message)
 
     # --- 工程量行（构筑物） ---
     def add_quantity(self) -> None:

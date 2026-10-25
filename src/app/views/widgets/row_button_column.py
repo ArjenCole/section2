@@ -62,6 +62,11 @@ class RowButtonColumn(QObject):
         """按钮列 = 当前最后一列：钉成固定宽度，其余列宽不动。"""
         header = self._table.horizontalHeader()
         new_col = self._table.columnCount() - 1
+        if 0 <= self._col < new_col:
+            # 按钮列挪位后旧列必须恢复可见：整列显隐是这里唯一的隐藏来源，
+            # 不恢复的话，接管旧列的新数据会被上一次 set_visible(False) 的
+            # 隐藏吞掉（参数表候选列接管旧按钮列时，砼90° 列整个消失）
+            self._table.setColumnHidden(self._col, False)
         self._col = new_col
         # 钉成固定宽度：整表 ResizeToContents 的表格（如围护窗体做法表）里
         # setColumnWidth 会被内容宽度覆盖，按钮列必须显式 Interactive，
