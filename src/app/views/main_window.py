@@ -587,7 +587,6 @@ class MainWindow(QMainWindow):
         "act_redo": "redo",
         "act_add_segment": "folder-plus",
         "act_add_unit": "file-text",
-        "act_add_element": "plus",
         "act_theme": "moon",
         "act_ai_panel": "panel-right",
     }
@@ -608,7 +607,6 @@ class MainWindow(QMainWindow):
         # （close() 只是隐藏）。见 2026-10-22 的崩溃排查记录。
         self._act_add_segment = self._action("新增标段", self._tree_panel.add_segment)
         self._act_add_unit = self._action("新增单位工程", self._tree_panel.add_unit)
-        self._act_add_element = self._action("新增构件条目", self._add_element)
         self._act_theme = self._action("切换暗色主题", self._toggle_theme, "Ctrl+Shift+T")
         self._act_ai_panel = self._action("AI 助手", self._toggle_ai_panel, "Ctrl+L")
         self._act_ai_settings = self._action("AI 设置…", self._ai_settings)
@@ -629,7 +627,6 @@ class MainWindow(QMainWindow):
             self._act_redo,
             self._act_add_segment,
             self._act_add_unit,
-            self._act_add_element,
         ):
             action.setEnabled(False)
         self._project_actions = (
@@ -640,7 +637,6 @@ class MainWindow(QMainWindow):
             self._act_redo,
             self._act_add_segment,
             self._act_add_unit,
-            self._act_add_element,
         )
 
     def _action(self, text: str, slot, shortcut: str | None = None) -> QAction:
@@ -735,7 +731,6 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         toolbar.addAction(self._act_add_segment)
         toolbar.addAction(self._act_add_unit)
-        toolbar.addAction(self._act_add_element)
         toolbar.addSeparator()
         toolbar.addAction(self._act_theme)
         toolbar.addAction(self._act_ai_panel)
@@ -1087,13 +1082,6 @@ class MainWindow(QMainWindow):
 
         self._legacy_import = LegacyImportDialog(self)
         self._legacy_import.show()
-
-    def _add_element(self) -> None:
-        node = self._tree_panel.vm.current()
-        if node is None or not node.is_unit:
-            self._set_status("请先在左侧选择单位工程。", 4000)
-            return
-        self._unit_panel.add_element()
 
     def _toggle_theme(self) -> None:
         name = ThemeManager.instance().toggle(QApplication.instance())

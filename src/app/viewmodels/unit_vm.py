@@ -675,7 +675,7 @@ def create_element(
         _seed_atlas_defaults(element)
     project_io.commit()
     bus().unit_changed.emit(unit_id)
-    # 新条目获得焦点：面板选中新行（构件库插入与"新增构件条目"按钮行为一致），
+    # 新条目获得焦点：面板选中新行（构件库双击插入、AI 新增共用此行为），
     # 撤销/重做恢复的选中也随之落在每一步新增的条目上
     bus().element_focused.emit(unit_id, element.id)
     return element
@@ -860,7 +860,7 @@ def insert_element_template(unit_id: int, template, before_element_id: int | Non
 
 
 def insert_blank_element(unit_id: int, before_element_id: int | None = None) -> Element | None:
-    """插入一条空白构件（主表格 Insert 键 / “新增构件条目”按钮）。
+    """插入一条空白构件（程序化入口；界面上的构件只能从构件库双击插入）。
 
     也补图集快照（seed_atlas_defaults=True）：保证任何入口建出的条目都自带
     图集值，计算侧不再依赖现场查表。
@@ -1480,15 +1480,6 @@ class UnitViewModel(QObject):
             )
 
     # --- 构件操作 ---
-    def add_element(self, category: int = CATEGORY_BURIED, name: str = "新建构件") -> None:
-        if self._unit_id is None:
-            self.error_occurred.emit("请先在左侧选择单位工程。")
-            return
-        element = create_element(self._unit_id, category=category, name=name)
-        if element is not None:
-            self._element_id = element.id
-            self.load_detail(element.id)
-
     def set_element_field(self, element_id: int, field: str, value) -> None:
         update_element(element_id, **{field: value})
 

@@ -637,7 +637,7 @@ class UnitPanel(QWidget):
         self._quantity_tabs.currentChanged.connect(self._on_detail_tab_changed)
         bus().node_selected.connect(self._on_node_selected)
         # 新增构件获得焦点：面板在延后的表格重装落地后选中新行
-        # （"新增构件条目"按钮、构件库插入、AI/MCP 新增共用一条路径）
+        # （构件库插入、AI/MCP 新增共用一条路径）
         bus().element_focused.connect(self._on_element_focused)
         # 换成连接时先清空选中：夹带常量 None，走弱引用连接
         connect_weak(bus().project_closed, self, "_show_unit", None)
@@ -1143,13 +1143,6 @@ class UnitPanel(QWidget):
                 return
         _select_row(self._element_table, 0, max(0, column))
 
-    def _add_element(self) -> None:
-        self._vm.add_element()
-
-    def add_element(self) -> None:
-        """主窗体“新增构件条目”入口。"""
-        self._vm.add_element()
-
     def refresh(self) -> None:
         """重新加载当前单位工程（主题切换、树结构变化时用）。"""
         if self._unit_id is not None:
@@ -1237,9 +1230,6 @@ class UnitPanel(QWidget):
 
         if source is self._element_table and event.type() == QEvent.Type.KeyPress:
             assert isinstance(event, QKeyEvent)
-            if event.key() == Qt.Key.Key_Insert:
-                self._insert_blank_before_current()
-                return True
             if event.key() == Qt.Key.Key_Delete:
                 self._delete_selected_elements()
                 return True
@@ -1250,13 +1240,6 @@ class UnitPanel(QWidget):
         rows = sorted({index.row() for index in self._element_table.selectedIndexes()})
         return [element_id for element_id in (self._element_id_at(row) for row in rows) if element_id]
 
-    def _insert_blank_before_current(self) -> None:
-        if self._unit_id is None:
-            return
-        from app.viewmodels.unit_vm import insert_blank_element
-
-        insert_blank_element(self._unit_id, self._current_element_id())
-
     def _delete_selected_elements(self) -> None:
         """Delete 键：直接删除选中行（与原版一致，不经确认）。"""
         for element_id in self._selected_element_ids():
@@ -1266,7 +1249,6 @@ class UnitPanel(QWidget):
         from PySide6.QtWidgets import QMenu
 
         menu = QMenu(self)
-        menu.addAction("添加构件", self._add_element)
         menu.addAction("删除选中构件", self._delete_selected_elements)
         menu.addSeparator()
         menu.addAction("复制", self._copy_elements)

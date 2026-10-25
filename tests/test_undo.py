@@ -413,11 +413,12 @@ def test_redo_selects_each_step_modified_element(qapp, project) -> None:
     """回归（用户报告）：连续添加 → 连续撤销 → 连续重做，每一步都只选中
     该步骤修改的那一条构件。
 
-    此前"新增构件条目"按钮不选中新行，快照视图停在第一行——重做时选中
-    完全不动，每步重做出来的条目没有被选中。现在新增（按钮/构件库插入/
+    此前新增操作不选中新行，快照视图停在第一行——重做时选中
+    完全不动，每步重做出来的条目没有被选中。现在新增（构件库插入/
     AI 共用 create_element）广播 element_focused，面板选中新行，快照视图
     跟着每一步走。
     """
+    from app.services.element_library import element_library
     from app.views.main_window import MainWindow
 
     window = MainWindow(str(project))
@@ -429,9 +430,10 @@ def test_redo_selects_each_step_modified_element(qapp, project) -> None:
         panel = window._unit_panel
         table = panel._element_table
 
-        # 连续添加 3 条（"新增构件条目"按钮路径）：每一步选中新条目
+        # 连续插入 3 条（构件库双击路径）：每一步选中新条目
+        template = element_library().find("直埋混凝土管", "Ⅱ级混凝土管", 0)
         for _ in range(3):
-            panel.add_element()
+            panel.insert_template(template)
             qapp.processEvents()
             qapp.processEvents()
         assert table.rowCount() == 3
@@ -604,8 +606,11 @@ def test_redo_with_ctrl_key_does_not_accumulate_selection(qapp, project) -> None
         def _selected_rows() -> list[int]:
             return sorted(i.row() for i in table.selectionModel().selectedRows())
 
+        from app.services.element_library import element_library
+
+        template = element_library().find("直埋混凝土管", "Ⅱ级混凝土管", 0)
         for _ in range(3):
-            panel.add_element()
+            panel.insert_template(template)
             qapp.processEvents()
             qapp.processEvents()
         assert table.rowCount() == 3
