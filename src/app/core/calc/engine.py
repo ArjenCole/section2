@@ -680,7 +680,8 @@ def resolve_element_principles(element: Element, session):
     def _by_name(model, name: str):
         if not name:
             return None
-        return session.get(model, session.scalar(select(model.id).where(model.name == name)))
+        found_id = session.scalar(select(model.id).where(model.name == name))
+        return session.get(model, found_id) if found_id is not None else None
 
     def _first(model):
         return session.scalar(select(model).order_by(model.order_no, model.id))

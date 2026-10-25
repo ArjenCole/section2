@@ -323,8 +323,12 @@ def test_schema_too_new_is_rejected(tmp_path: Path) -> None:
     assert not project_io.is_open()
 
 
-def test_file_version_too_old_is_rejected(tmp_path: Path) -> None:
-    """file_version 更低的文件出自未发布预览版，不提供迁移、明确拒绝。"""
+def test_file_version_older_is_upgraded(tmp_path: Path) -> None:
+    """file_version 更低的文件（早期发布版结构）接受并就地升级，打开时给出提示。
+
+    v1 文件可能带多原则引用（该功能已取消），stn_codec 按主原则降级读取，
+    提示文案经 last_migration_notice 交给界面弹出。
+    """
     path = _make_project(tmp_path)
     project_io.close_project()
 
@@ -332,9 +336,13 @@ def test_file_version_too_old_is_rejected(tmp_path: Path) -> None:
     data["file_version"] = 0
     stn_format.write_stn(path, data)
 
-    with pytest.raises(orm.ProjectFileError):
-        project_io.open_project(path)
-    assert not project_io.is_open()
+    project_io.open_project(path)
+    try:
+        assert project_io.is_open()
+        assert "旧结构" in project_io.last_migration_notice()
+        assert "多围护" in project_io.last_migration_notice()
+    finally:
+        project_io.close_project()
 
 
 def test_not_a_project_file_is_rejected(tmp_path: Path) -> None:

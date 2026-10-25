@@ -4,7 +4,14 @@ import pytest
 from PySide6.QtCore import Qt
 
 from app.views.widgets.frameless_dialog import FramelessMessageBox
+from app.views.widgets.mac_window import is_mac
 from app.views.widgets.rounded_window import _RingWidget, _ShadowWindow, _SHADOW_MARGIN
+
+# 自绘圆角 / 阴影 / 描边圈助手只在 Windows/Linux 安装（mac 保留原生标题栏，
+# FramelessDialog 不装 RoundedWindowHelper，没有 _rounded / _RingWidget）
+_requires_rounded_helper = pytest.mark.skipif(
+    is_mac(), reason="mac 保留原生标题栏，不安装自绘圆角助手"
+)
 
 
 @pytest.fixture()
@@ -18,6 +25,7 @@ def message_box(qapp):
     box.deleteLater()
 
 
+@_requires_rounded_helper
 def test_dialog_gets_translucent_background_and_ring(message_box):
     """安装助手后：半透明窗口 + 描边圈 overlay 存在且置顶。"""
     message_box.show()
@@ -77,6 +85,7 @@ def test_shadow_hidden_when_maximized(qapp):
     dialog.close()
 
 
+@_requires_rounded_helper
 def test_ring_follows_theme(message_box):
     """主题切换后描边圈重绘（不抛异常即为连通）。"""
     from app.resources.qss.theme import ThemeManager
@@ -106,6 +115,7 @@ def _shadow_of(message_box):
     return message_box._rounded._shadow
 
 
+@_requires_rounded_helper
 def test_shadow_follows_host(qapp, message_box):
     """影子窗口随宿主显示/隐藏，几何 = 宿主 frameGeometry 向四周扩阴影边距。"""
     shadow = _shadow_of(message_box)
@@ -123,6 +133,7 @@ def test_shadow_follows_host(qapp, message_box):
     assert not shadow.isVisible()
 
 
+@_requires_rounded_helper
 def test_shadow_gradient_faces_outward_on_all_sides(qapp, message_box):
     """回归防护：画布 = 影子窗口本身；四边都是“贴边深、向外渐隐”。"""
     shadow = _shadow_of(message_box)
@@ -269,7 +280,6 @@ def test_tables_disable_highlight_sections(qapp, project):
 
     from app.services import project_io
     from app.views.dialogs.foundation_edit_dialog import FoundationEditDialog
-    from app.views.panels.multi_principle_tab import MultiPrincipleTab
     from app.views.panels.unit_panel import UnitPanel
     from app.views.widgets.cell_fill_table import CellFillTable
 
@@ -296,13 +306,10 @@ def test_tables_disable_highlight_sections(qapp, project):
         qapp.processEvents()
 
     foundation = FoundationEditDialog(project_io.foundations()[0].id)
-    multi = MultiPrincipleTab("pe")
     try:
         assert foundation._replace_table.horizontalHeader().highlightSections() is False
-        assert multi._table.horizontalHeader().highlightSections() is False
     finally:
         foundation.close()
         foundation.deleteLater()
-        multi.deleteLater()
         qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         qapp.processEvents()
