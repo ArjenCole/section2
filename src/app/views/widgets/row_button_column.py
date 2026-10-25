@@ -50,6 +50,10 @@ class RowButtonColumn(QObject):
         self.add_button.hide()
         self.add_button.clicked.connect(self.add_clicked.emit)
         header.geometriesChanged.connect(self.place)
+        # 单列宽度变化（setColumnWidth / 拖动列边界）不重发 geometriesChanged，
+        # 只发 sectionResized——不跟的话「+」会停在旧坐标、悬到表格外
+        # （围护窗体做法表按可视区收窄止水描述列后，按钮就丢在收窄前的位置）
+        header.sectionResized.connect(self.place)
         table.horizontalScrollBar().valueChanged.connect(self.place)
 
     # ------------------------------------------------------------------ 列
