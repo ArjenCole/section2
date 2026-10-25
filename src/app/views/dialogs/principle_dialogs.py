@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QDialogButtonBox,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -506,19 +507,27 @@ class _LevelTable(CellFillTable):
         super().keyPressEvent(event)
 
 
+def _separator(vertical: bool) -> QFrame:
+    """1px 面板分割线（theme QSS 的 role="hline"/"vline"，颜色随主题边框色）。"""
+    line = QFrame()
+    line.setFrameShape(QFrame.Shape.VLine if vertical else QFrame.Shape.HLine)
+    line.setProperty("role", "vline" if vertical else "hline")
+    return line
+
+
 class ComponentEditDialog(PrincipleSubDialog):
     """构件编辑器（旧版 FormCpntEdit）：左参数表（A~Z），右上围护公式（FA~FZ）、
-    右下支撑公式（ZA~ZZ），底部确认/取消修改。
+    右下支撑公式（ZA~ZZ），面板之间画分割线，底部确认/取消修改。
 
     行头显示参数键；表格只列构件已有的参数行（旧版不提供增删行，参数集
     来自构件库模板）；描述公式为库数据，不在本窗体编辑。
     """
 
     _GROUPS = (
-        # (键前缀, 表头, 网格位置)
-        ("", "参数名称", "参数值", 0, 0),
-        ("F", "围护工程量", "计算公式", 0, 1),
-        ("Z", "支撑工程量", "计算公式", 1, 1),
+        # (键前缀, 参数名列表头, 取值/公式列表头)；网格摆放见 _build
+        ("", "参数名称", "参数值"),
+        ("F", "围护工程量", "计算公式"),
+        ("Z", "支撑工程量", "计算公式"),
     )
 
     def __init__(self, component: Component, parent: QWidget | None = None) -> None:
@@ -532,21 +541,32 @@ class ComponentEditDialog(PrincipleSubDialog):
     def _build(self) -> None:
         grid = QGridLayout()
         grid.setSpacing(6)
-        for prefix, header_key, header_value, row, column in self._GROUPS:
+        for prefix, header_key, header_value in self._GROUPS:
             table = CellFillTable(0, 2)
             table.setHorizontalHeaderLabels([header_key, header_value])
-            # 固定列宽（可拖动）：不随窗体拉伸（全项目约定，见 table_width 模块）
+            # 键名列固定宽（可拖动），末列撑满所在面板：本窗体是全项目
+            # 「表格不随父控件拉伸」约定（table_width 模块）的例外——三面板
+            # 必须铺满窗体，末列不拉伸就会在右侧留出整块空白
             fixed_width_behavior(table)
+            table.horizontalHeader().setStretchLastSection(True)
             table.setColumnWidth(0, 120)
-            table.setColumnWidth(1, 260)
             table.verticalHeader().setDefaultSectionSize(28)
-            grid.addWidget(table, row, column)
             self._tables[prefix] = table
-        grid.addWidget(self._tables[""], 0, 0, 2, 1)  # 参数表跨两行（左列上下满高）
+
+        # 左：参数表跨全部行（上下撑满窗体）；右：围护公式（上）、支撑公式
+        # （下）；面板之间画 1px 分割线（theme QSS 的 role="hline"/"vline"）：
+        # 竖线隔开左面板与右列，横线隔开右上与右下
+        grid.addWidget(self._tables[""], 0, 0, 3, 1)
+        grid.addWidget(_separator(True), 0, 1, 3, 1)
+        grid.addWidget(self._tables["F"], 0, 2)
+        grid.addWidget(_separator(False), 1, 2)
+        grid.addWidget(self._tables["Z"], 2, 2)
         grid.setColumnStretch(0, 2)
-        grid.setColumnStretch(1, 3)
+        grid.setColumnStretch(1, 0)  # 分割线列不参与拉伸
+        grid.setColumnStretch(2, 3)
         grid.setRowStretch(0, 1)
-        grid.setRowStretch(1, 1)
+        grid.setRowStretch(1, 0)  # 分割线行不参与拉伸
+        grid.setRowStretch(2, 1)
         self._body.addLayout(grid, 1)
 
     def _fill(self) -> None:

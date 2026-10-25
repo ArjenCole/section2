@@ -479,3 +479,44 @@ def test_enclosure_work_dialog_cancel_restores_levels(qapp, project) -> None:
         assert len(levels_snapshot()) == len(before) + 1
     finally:
         confirmed.close()
+
+
+def test_component_editor_layout_fills_and_separators(qapp, project) -> None:
+    """构件编辑器：左参数表上下撑满整窗、右侧围护/支撑表向右撑满、
+    三面板之间画分割线（左右之间竖线、围护与支撑之间横线）。"""
+    from PySide6.QtWidgets import QFrame
+
+    from app.views.dialogs.principle_dialogs import ComponentEditDialog
+
+    component = project_io.enclosures()[0].works_sorted()[0].levels[0].components[0]
+    dialog = ComponentEditDialog(component)
+    try:
+        dialog.show()
+        qapp.processEvents()
+        param = dialog._tables[""]
+        enclosure_table = dialog._tables["F"]
+        support_table = dialog._tables["Z"]
+        # 左参数表跨满右侧两行：顶对齐围护表、底对齐支撑表（上下撑满）
+        assert param.geometry().top() == enclosure_table.geometry().top()
+        assert param.geometry().bottom() == support_table.geometry().bottom()
+        # 右侧两表右缘一致，末列被拉伸到面板宽（右侧不留整块空白）
+        assert enclosure_table.geometry().right() == support_table.geometry().right()
+        for table in (param, enclosure_table, support_table):
+            assert table.horizontalHeader().stretchLastSection()
+        # 分割线：竖线在左面板与右列之间，横线在围护与支撑表之间
+        lines = [
+            frame
+            for frame in dialog.findChildren(QFrame)
+            if frame.property("role") in ("hline", "vline")
+        ]
+        assert len(lines) == 2
+        vline = next(line for line in lines if line.property("role") == "vline")
+        hline = next(line for line in lines if line.property("role") == "hline")
+        assert param.geometry().right() < vline.geometry().x() < enclosure_table.geometry().x()
+        assert (
+            enclosure_table.geometry().bottom()
+            < hline.geometry().y()
+            < support_table.geometry().y()
+        )
+    finally:
+        dialog.close()

@@ -530,6 +530,7 @@ QToolTip {
     padding: 5px 8px;
 }
 QFrame[role="hline"] { background-color: $border; max-height: 1px; border: none; }
+QFrame[role="vline"] { background-color: $border; max-width: 1px; border: none; }
 QMessageBox { background-color: $bg_dialog; }
 QMessageBox QLabel { color: $text_primary; }
 QMessageBox QPushButton { min-width: 72px; padding: 6px 16px; }
