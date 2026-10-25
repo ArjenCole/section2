@@ -1,4 +1,4 @@
-"""C 组扩展：管材 / 构件参数 / 工程量行 / 多原则引用（T22~T35）。"""
+"""C 组扩展：管材 / 构件参数 / 工程量行（T22~T35）。"""
 
 from __future__ import annotations
 
@@ -6,8 +6,6 @@ from app.agent.context import resolve_element_id
 from app.agent.errors import ToolError
 from app.agent.tool_registry import Tool, ToolRegistry
 from app.agent.tools._common import require_open
-from app.core.event_bus import bus
-from app.services import project_io
 from app.viewmodels import unit_vm
 
 
@@ -165,79 +163,6 @@ def tool_delete_quantity(arguments: dict) -> dict:
     return {"ok": True, "data": {"quantity_id": int(quantity_id)}}
 
 
-# --------------------------------------------------------------------------- #
-# 多原则引用
-# --------------------------------------------------------------------------- #
-def tool_list_principle_refs(arguments: dict) -> dict:
-    require_open()
-    element_id = resolve_element_id(arguments)
-    return {
-        "ok": True,
-        "data": {
-            kind: [
-                {"ref_id": row.id, "name": row.name, "ratio": row.ratio,
-                 "order_no": row.order_no, "is_main": row.is_main}
-                for row in unit_vm.principle_ref_rows(element_id, kind)
-            ]
-            for kind in ("pe", "pf")
-        },
-    }
-
-
-def tool_add_principle_ref(arguments: dict) -> dict:
-    require_open()
-    element_id = resolve_element_id(arguments)
-    kind = str(arguments.get("kind") or "")
-    if kind not in ("pe", "pf"):
-        raise ToolError("kind 只能是 pe（围护）或 pf（地基）。")
-    name = str(arguments.get("name") or "").strip()
-    names = project_io.enclosure_names() if kind == "pe" else project_io.foundation_names()
-    if name not in names:
-        raise ToolError(f"原则“{name}”不存在。可用：{'、'.join(names)}")
-    ref = unit_vm.add_principle_ref(
-        element_id, kind, name, float(arguments.get("ratio", 1.0) or 1.0)
-    )
-    if ref is None:
-        raise ToolError("新增失败：构件不存在，或同名原则已在引用列表中。")
-    return {"ok": True, "data": {"ref_id": ref.id}}
-
-
-def tool_update_principle_ref(arguments: dict) -> dict:
-    require_open()
-    ref_id = arguments.get("ref_id")
-    if ref_id in (None, ""):
-        raise ToolError("请提供 ref_id。")
-    ref = unit_vm.update_principle_ref(
-        int(ref_id),
-        name=str(arguments["name"]) if arguments.get("name") is not None else None,
-        ratio=float(arguments["ratio"]) if arguments.get("ratio") is not None else None,
-    )
-    if ref is None:
-        raise ToolError("修改失败：引用不存在，或同名原则已在列表中。")
-    return {"ok": True, "data": {"ref_id": ref.id, "name": ref.name, "ratio": ref.ratio}}
-
-
-def tool_remove_principle_ref(arguments: dict) -> dict:
-    require_open()
-    ref_id = arguments.get("ref_id")
-    if ref_id in (None, ""):
-        raise ToolError("请提供 ref_id。")
-    message = unit_vm.remove_principle_ref(int(ref_id))
-    if message:
-        raise ToolError(message)
-    return {"ok": True, "data": {"ref_id": int(ref_id)}}
-
-
-def tool_set_main_pe(arguments: dict) -> dict:
-    require_open()
-    element_id = resolve_element_id(arguments)
-    name = str(arguments.get("name") or "").strip()
-    element = unit_vm.set_main_pe(element_id, name)
-    if element is None:
-        raise ToolError(f"找不到 id={element_id} 的构件。")
-    return {"ok": True, "data": {"element_id": element_id, "main_pe_name": element.main_pe_name}}
-
-
 def register(registry: ToolRegistry) -> None:
     from app.core.pipe_category import PIPE_CATEGORIES
 
@@ -340,47 +265,30 @@ def register(registry: ToolRegistry) -> None:
     )
     registry.register(
         Tool(
-            "list_principle_refs", "读取构件的多围护/多地基引用（含比例与主原则）。只读。",
-            {"type": "object", "properties": {"element_id": element_id_schema}},
-            tool_list_principle_refs,
-            read_only=True,
-        )
-    )
-    registry.register(
-        Tool(
-            "add_principle_ref", "新增一条多原则引用（ratio 为占比）。写操作。",
+            "add_quantity", "为构筑物新增工程量行（值可写算式）。写操作。",
             {"type": "object", "properties": {
-                "element_id": element_id_schema,
-                "kind": {"type": "string", "enum": ["pe", "pf"]},
-                "name": {"type": "string"}, "ratio": {"type": "number", "default": 1.0}},
-             "required": ["element_id", "kind", "name"]},
-            tool_add_principle_ref,
+                "element_id": element_id_schema, "category": {"type": "string"},
+                "item": {"type": "string"}, "unit": {"type": "string"},
+                "value": {"type": "string"}}},
+            tool_add_quantity,
         )
     )
     registry.register(
         Tool(
-            "update_principle_ref", "修改引用行的原则名/比例。写操作。",
+            "update_quantity", "修改构筑物工程量行。写操作。",
             {"type": "object", "properties": {
-                "ref_id": {"type": "integer"}, "name": {"type": "string"},
-                "ratio": {"type": "number"}},
-             "required": ["ref_id"]},
-            tool_update_principle_ref,
+                "quantity_id": {"type": "integer"}, "category": {"type": "string"},
+                "item": {"type": "string"}, "unit": {"type": "string"},
+                "value": {"type": "string"}},
+             "required": ["quantity_id"]},
+            tool_update_quantity,
         )
     )
     registry.register(
         Tool(
-            "remove_principle_ref", "删除引用行（至少保留一条）。写操作。",
-            {"type": "object", "properties": {"ref_id": {"type": "integer"}},
-             "required": ["ref_id"]},
-            tool_remove_principle_ref,
-        )
-    )
-    registry.register(
-        Tool(
-            "set_main_pe", "设置多围护原则下的主围护原则。写操作。",
-            {"type": "object", "properties": {
-                "element_id": element_id_schema, "name": {"type": "string"}},
-             "required": ["element_id", "name"]},
-            tool_set_main_pe,
+            "delete_quantity", "删除构筑物工程量行。写操作。",
+            {"type": "object", "properties": {"quantity_id": {"type": "integer"}},
+             "required": ["quantity_id"]},
+            tool_delete_quantity,
         )
     )

@@ -34,6 +34,7 @@ from app.core.version import (
     DEFAULT_ATLAS_NAME,
     LOCK_SUFFIX,
     PROJECT_SUFFIX,
+    STN_FILE_VERSION,
 )
 from app.core.main_thread import ensure_main_thread
 from app.core.models import base as orm
@@ -305,6 +306,14 @@ def open_project(path: str | Path) -> Path | None:
         if stn_format.looks_like_legacy_file(target):
             return open_legacy_project(target)
         raise
+    if int(document.data.get("file_version") or 0) < STN_FILE_VERSION:
+        # 旧结构版本：stn_codec 已兼容读取；多原则引用（v1）按主原则降级
+        _last_migration_notice = (
+            f"工程文件是旧结构（file_version {document.data.get('file_version')}）保存的，"
+            "已升级到当前结构。\n"
+            "多围护/多地基原则引用（2.0 已取消该功能）已按主要原则降级为单原则，"
+            "占比信息见迁移备份或原文件。"
+        )
     acquire_lock(target)
     try:
         orm.create_working_database()
@@ -815,20 +824,10 @@ def rename_width(width_id: int, name: str) -> None:
 
 
 def _rename_principle_reference(session, field: str, old: str, new: str) -> None:
-    from app.core.models.models import Element, ElementPrinciple
+    from app.core.models.models import Element
 
     for element in session.scalars(select(Element).where(getattr(Element, field) == old)):
         setattr(element, field, new)
-    if field == "pe_name":
-        # 主原则与多原则引用行同步改名（旧版 mscCtrl.Set 会同步引用字典的键）
-        for element in session.scalars(select(Element).where(Element.main_pe_name == old)):
-            element.main_pe_name = new
-    kind = {"pe_name": "pe", "pf_name": "pf"}.get(field)
-    if kind is None:
-        return  # 降水/面宽原则没有多原则引用行
-    for ref in session.scalars(select(ElementPrinciple).where(ElementPrinciple.kind == kind)):
-        if ref.name == old:
-            ref.name = new
 
 
 def merge_target_enclosure(name: str) -> str | None:

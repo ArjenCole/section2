@@ -473,5 +473,5 @@ def _input_of(element):
     session = orm.session()
     pe = session.scalar(select(PcpEnclosure).where(PcpEnclosure.name == element.pe_name))
     pf = session.scalar(select(PcpFoundation).where(PcpFoundation.name == element.pf_name))
-    _pe, _pf, pp, pw, _pe_refs, _pf_refs = resolve_element_principles(element, session)
+    _pe, _pf, pp, pw = resolve_element_principles(element, session)
     return build_element_input(element, pe, pf, pp=pp, pw=pw)

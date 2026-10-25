@@ -18,7 +18,6 @@ from app.core.models import base as orm
 from app.core.models.models import (
     Component,
     Element,
-    ElementPrinciple,
     PcpEnclosure,
     PcpFoundation,
     PcpPrecipitation,
@@ -66,7 +65,7 @@ def _element_or_raise(element_id: int) -> Element:
 
 
 def element_detail_dict(element_id: int) -> dict:
-    """构件完整详情（含管材 / 参数 / 工程量 / 多原则引用 / 图集自动值预览）。"""
+    """构件完整详情（含管材 / 参数 / 工程量 / 图集自动值预览）。"""
     from app.viewmodels import unit_vm
 
     element = _element_or_raise(element_id)
@@ -112,14 +111,6 @@ def element_detail_dict(element_id: int) -> dict:
          "unit": quantity.unit, "value": quantity.value}
         for quantity in element.quantities
     ]
-    refs = {
-        kind: [
-            {"ref_id": row.id, "name": row.name, "ratio": row.ratio,
-             "order_no": row.order_no, "is_main": row.is_main}
-            for row in unit_vm.principle_ref_rows(element_id, kind)
-        ]
-        for kind in ("pe", "pf")
-    }
     try:
         auto_atlas = unit_vm.auto_atlas_params(element)
     except Exception:
@@ -141,13 +132,11 @@ def element_detail_dict(element_id: int) -> dict:
         "pf_name": element.pf_name,
         "pp_name": element.pp_name,
         "pw_name": element.pw_name,
-        "main_pe_name": element.main_pe_name,
         "source": element.source,
         "order_no": element.order_no,
         "pipes": pipes,
         "params": params,
         "quantities": quantities,
-        "principle_refs": refs,
         "auto": {
             "atlas_params": auto_atlas,
             "pipe_thicknesses": {
@@ -364,16 +353,6 @@ def principle_usage(kind: str, name: str) -> int:
     count = 0
     if field is not None:
         count = int(session.scalar(select(func.count(Element.id)).where(field == name)) or 0)
-    if kind in ("enclosure", "foundation"):
-        ref_kind = "pe" if kind == "enclosure" else "pf"
-        count += int(
-            session.scalar(
-                select(func.count(ElementPrinciple.id)).where(
-                    ElementPrinciple.kind == ref_kind, ElementPrinciple.name == name
-                )
-            )
-            or 0
-        )
     return count
 
 

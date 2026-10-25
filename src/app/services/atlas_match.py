@@ -2,7 +2,7 @@
 
 候选参数（"候选参数列"）是构件库资产的一次性快照，存在
 ``element_atlas_candidate`` 表，允许用户改、**永不自动改写**；参数值
-（工作面加宽 / 垫层厚 / 基础厚三行参数）按当前主围护原则的
+（工作面加宽 / 垫层厚 / 基础厚三行参数）按当前围护原则的
 ``con_found + found_angle`` 从候选里自动选组写进来。
 
 自动匹配的触发点（都在数据改动处调用 :func:`match_atlas_candidates`）：
@@ -48,10 +48,10 @@ from app.services import project_io
 
 
 def _principles(element: Element):
-    """主围护 / 面宽原则（同引擎：main_pe_name 优先，缺省取第一条）。"""
+    """围护 / 面宽原则（同引擎：按引用名解析，失效取第一条）。"""
     from app.core.calc.engine import resolve_element_principles
 
-    pe, _pf, _pp, pw, _pe_refs, _pf_refs = resolve_element_principles(element, orm.session())
+    pe, _pf, _pp, pw = resolve_element_principles(element, orm.session())
     return pe, pw
 
 
@@ -141,7 +141,7 @@ def ensure_atlas_candidates(element: Element) -> bool:
 
 
 def match_atlas_candidates(element: Element, *, commit: bool = True) -> bool:
-    """按当前主围护原则自动选组，把 a / C1 / C2 写进参数行。
+    """按当前围护原则自动选组，把 a / C1 / C2 写进参数行。
 
     只对直埋构件生效（其他类别的参数值仍由用户自由编辑）；候选行缺失时先
     补（见 :func:`ensure_atlas_candidates`）。选组顺序见
@@ -239,8 +239,7 @@ def match_for_enclosure(enclosure_name: str) -> int:
             select(Element)
             .where(
                 Element.category == CATEGORY_BURIED,
-                (Element.pe_name == enclosure_name)
-                | (Element.main_pe_name == enclosure_name),
+                Element.pe_name == enclosure_name,
             )
             .order_by(Element.order_no, Element.id)
         )

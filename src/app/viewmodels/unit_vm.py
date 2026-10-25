@@ -24,11 +24,8 @@ from app.core.models.models import (
     CATEGORY_JACKING,
     CATEGORY_PULLING,
     CATEGORY_STRUCTURE,
-    MULTI_PE_TEXT,
-    MULTI_PF_TEXT,
     Element,
     ElementParam,
-    ElementPrinciple,
     ElementQuantity,
     Pipe,
     unit_of,
@@ -134,17 +131,6 @@ class QuantityRow:
     item: str
     unit: str
     value: str
-
-
-@dataclass
-class PrincipleRefRow:
-    """多原则引用行（旧版 dGVPE / dGVPF 的一行）。"""
-
-    id: int
-    name: str
-    ratio: float
-    order_no: int
-    is_main: bool = False
 
 
 def _evaluate_field(text: str) -> tuple[float, str]:
@@ -299,8 +285,8 @@ def compute_unit(unit_id: int):
     session = orm.session()
     for element in _elements_of(unit_id):
         row = _element_row(element)
-        pe, pf, pp, pw, pe_refs, pf_refs = resolve_element_principles(element, session)
-        info = build_element_input(element, pe, pf, pe_refs, pf_refs, pp, pw)
+        pe, pf, pp, pw = resolve_element_principles(element, session)
+        info = build_element_input(element, pe, pf, pp, pw)
         row.spec = info.spec()
         try:
             result = compute_element(info) or QDict()
@@ -425,7 +411,7 @@ def auto_atlas_params(element: Element) -> dict[str, float]:
 
     if not atlas_param_rows(element.category):
         return {}
-    pe, _pf, _pp, pw, _pe_refs, _pf_refs = resolve_element_principles(element, orm.session())
+    pe, _pf, _pp, pw = resolve_element_principles(element, orm.session())
     if pe is None:
         return {}
     info = build_element_input(element, pe, None)
@@ -454,7 +440,7 @@ def auto_pipe_thicknesses(element: Element) -> dict[int, float]:
 
     if element.category in (CATEGORY_BOX_CULVERT, CATEGORY_GALLERY):
         return {pipe.id: 0.0 for pipe in element.pipes}
-    pe, _pf, _pp, pw, _pe_refs, _pf_refs = resolve_element_principles(element, orm.session())
+    pe, _pf, _pp, pw = resolve_element_principles(element, orm.session())
     if pe is None:
         return {}
     info = build_element_input(element, pe, None)
@@ -569,9 +555,6 @@ def create_element(
     params: list[tuple[str, str, str]] | None = None,
     quantities: list[tuple[str, str, str, str]] | None = None,
     order_no: int | None = None,
-    pe_refs: list[tuple[str, float]] | None = None,
-    pf_refs: list[tuple[str, float]] | None = None,
-    main_pe_name: str = "",
     seed_atlas_defaults: bool = False,
     atlas_candidates: list[tuple] | None = None,
 ) -> Element | None:
@@ -605,7 +588,6 @@ def create_element(
         pf_name=pf_name if pf_name is not None else (foundation_names[0] if foundation_names else ""),
         pp_name=pp_name if pp_name is not None else (precipitation_names[0] if precipitation_names else ""),
         pw_name=pw_name if pw_name is not None else (width_names[0] if width_names else ""),
-        main_pe_name=main_pe_name,
         source=source,
         order_no=order_no
         if order_no is not None
@@ -649,7 +631,6 @@ def create_element(
         element.quantities.append(_structure_default_quantity())
     session.add(element)
     session.flush()
-    _seed_principle_refs(session, element, pe_refs, pf_refs)
     if atlas_candidates and category == CATEGORY_BURIED:
         from app.core.models.models import ElementAtlasCandidate
 
@@ -681,40 +662,8 @@ def create_element(
     return element
 
 
-def _seed_principle_refs(
-    session,
-    element: Element,
-    pe_refs: list[tuple[str, float]] | None,
-    pf_refs: list[tuple[str, float]] | None,
-) -> None:
-    """写入多原则引用行并按旧版 setter 语义同步 show 名 / 主原则。"""
-    if pe_refs is None:
-        pe_refs = [(element.pe_name, 1.0)] if element.pe_name else []
-    if pf_refs is None:
-        pf_refs = [(element.pf_name, 1.0)] if element.pf_name else []
-    for order, (ref_name, ratio) in enumerate(pe_refs):
-        element.principle_refs.append(
-            ElementPrinciple(kind="pe", name=ref_name, ratio=float(ratio), order_no=order)
-        )
-    for order, (ref_name, ratio) in enumerate(pf_refs):
-        element.principle_refs.append(
-            ElementPrinciple(kind="pf", name=ref_name, ratio=float(ratio), order_no=order)
-        )
-    if len(pe_refs) > 1:
-        element.pe_name = MULTI_PE_TEXT
-        if not element.main_pe_name or element.main_pe_name == MULTI_PE_TEXT:
-            element.main_pe_name = pe_refs[0][0]
-    elif pe_refs:
-        element.pe_name = pe_refs[0][0]
-        element.main_pe_name = element.pe_name
-    if len(pf_refs) > 1:
-        element.pf_name = MULTI_PF_TEXT
-    elif pf_refs:
-        element.pf_name = pf_refs[0][0]
-
-
 def element_snapshot(element_id: int) -> dict | None:
-    """构件条目完整快照（复制/剪切/粘贴用，含管材、参数、工程量与多原则引用）。"""
+    """构件条目完整快照（复制/剪切/粘贴用，含管材、参数、工程量）。"""
     element = _element(element_id)
     if element is None:
         return None
@@ -727,7 +676,6 @@ def element_snapshot(element_id: int) -> dict | None:
         "pf_name": element.pf_name,
         "pp_name": element.pp_name,
         "pw_name": element.pw_name,
-        "main_pe_name": element.main_pe_name,
         "source": element.source,
         "pipes": [
             (pipe.mat, pipe.pipe_category, pipe.dn, pipe.content, pipe.t)
@@ -738,8 +686,6 @@ def element_snapshot(element_id: int) -> dict | None:
             (quantity.category, quantity.item, quantity.unit, quantity.value)
             for quantity in element.quantities
         ],
-        "pe_refs": [(ref.name, ref.ratio) for ref in element.pe_refs_sorted()],
-        "pf_refs": [(ref.name, ref.ratio) for ref in element.pf_refs_sorted()],
     }
 
 
@@ -764,14 +710,6 @@ def insert_element_data(
             for item in _elements_of(unit_id):
                 if item.order_no >= order_no:
                     item.order_no += 1
-    pe_refs = data.get("pe_refs") or None
-    if pe_refs is None:
-        pe_name = data.get("pe_name")
-        pe_refs = [(pe_name, 1.0)] if pe_name and pe_name != MULTI_PE_TEXT else None
-    pf_refs = data.get("pf_refs") or None
-    if pf_refs is None:
-        pf_name = data.get("pf_name")
-        pf_refs = [(pf_name, 1.0)] if pf_name and pf_name != MULTI_PF_TEXT else None
     return create_element(
         unit_id,
         category=data.get("category", CATEGORY_BURIED),
@@ -787,9 +725,6 @@ def insert_element_data(
         params=list(data.get("params") or []) or None,
         quantities=list(data.get("quantities") or []) or None,
         order_no=order_no,
-        pe_refs=pe_refs,
-        pf_refs=pf_refs,
-        main_pe_name=data.get("main_pe_name", "") or "",
         seed_atlas_defaults=bool(data.get("seed_atlas_defaults", False)),
         atlas_candidates=list(data.get("atlas_candidates") or []) or None,
     )
@@ -893,16 +828,9 @@ def update_element(element_id: int, **fields) -> Element | None:
     for key, value in fields.items():
         if key not in _ELEMENT_FIELDS:
             continue
-        if key == "pe_name":
-            _apply_show_name(element, "pe", str(value))
-            continue
-        if key == "pf_name":
-            _apply_show_name(element, "pf", str(value))
-            continue
         setattr(element, key, int(value) if key in ("category", "order_no") else str(value))
     if category_changed and element.category == CATEGORY_STRUCTURE:
         # 旧版 mcE7 构造：mList.Clear() + 名称/单位参数 + 默认工程量行（构筑物不带管材）
-        element.main_pe_name = element.main_pe_name or element.pe_name
         for pipe in list(element.pipes):
             element.pipes.remove(pipe)  # delete-orphan 级联删除
         for param in list(element.params):
@@ -931,7 +859,7 @@ def update_element(element_id: int, **fields) -> Element | None:
             from app.services.atlas_match import match_atlas_candidates
 
             match_atlas_candidates(element, commit=False)
-    elif "pe_name" in fields or "main_pe_name" in fields:
+    elif "pe_name" in fields:
         # 围护原则切换（con_found / 角度可能变了）：从候选自动重选一组
         if element.category == CATEGORY_BURIED:
             from app.services.atlas_match import match_atlas_candidates
@@ -940,33 +868,6 @@ def update_element(element_id: int, **fields) -> Element | None:
     project_io.commit()
     bus().unit_changed.emit(element.unit_id)
     return element
-
-
-def _apply_show_name(element: Element, kind: str, value: str) -> None:
-    """旧版 showPEname / showPFname setter：具体原则重置引用为 1 条，多原则只改显示名。"""
-    multi_text = MULTI_PE_TEXT if kind == "pe" else MULTI_PF_TEXT
-    refs = element.pe_refs_sorted() if kind == "pe" else element.pf_refs_sorted()
-    if value == multi_text:
-        # 切到多原则：引用行原样保留；主原则失效时回落到第一条引用
-        if kind == "pe":
-            element.pe_name = value
-            ref_names = [ref.name for ref in refs]
-            if element.main_pe_name not in ref_names:
-                element.main_pe_name = ref_names[0] if ref_names else ""
-        else:
-            element.pf_name = value
-        return
-    # 切到具体原则：引用重置为该原则（旧版 PEname.Clear() + Add(name, 1)）
-    for ref in refs:
-        element.principle_refs.remove(ref)  # delete-orphan 级联删除
-    element.principle_refs.append(
-        ElementPrinciple(kind=kind, name=value, ratio=1.0, order_no=0)
-    )
-    if kind == "pe":
-        element.pe_name = value
-        element.main_pe_name = value
-    else:
-        element.pf_name = value
 
 
 def delete_element(element_id: int) -> None:
@@ -1318,101 +1219,6 @@ def delete_quantity(quantity_id: int) -> None:
     project_io.commit()
     _expire_element(element)
     bus().unit_changed.emit(unit_id)
-
-
-# --------------------------------------------------------------------------- #
-# 多原则引用（旧版 FormUnit 的 dGVPE / dGVPF 子表）
-# --------------------------------------------------------------------------- #
-def principle_ref_rows(element_id: int, kind: str) -> list[PrincipleRefRow]:
-    """读取某构件的多原则引用（kind = "pe" / "pf"）。"""
-    element = _element(element_id)
-    if element is None:
-        return []
-    refs = element.pe_refs_sorted() if kind == "pe" else element.pf_refs_sorted()
-    return [
-        PrincipleRefRow(
-            id=ref.id,
-            name=ref.name,
-            ratio=ref.ratio,
-            order_no=ref.order_no,
-            is_main=(kind == "pe" and ref.name == element.main_pe_name),
-        )
-        for ref in refs
-    ]
-
-
-def add_principle_ref(element_id: int, kind: str, name: str, ratio: float = 1.0) -> ElementPrinciple | None:
-    """新增一条引用（旧版 dGVPE 允许追加行）。重名时返回 None 由界面提示。"""
-    element = _element(element_id)
-    if element is None or not name:
-        return None
-    existing = element.pe_refs_sorted() if kind == "pe" else element.pf_refs_sorted()
-    if any(ref.name == name for ref in existing):
-        return None
-    ref = ElementPrinciple(
-        kind=kind,
-        name=name,
-        ratio=float(ratio),
-        order_no=(existing[-1].order_no + 1) if existing else 0,
-    )
-    element.principle_refs.append(ref)
-    project_io.commit()
-    bus().unit_changed.emit(element.unit_id)
-    return ref
-
-
-def update_principle_ref(ref_id: int, *, name: str | None = None, ratio: float | None = None) -> ElementPrinciple | None:
-    """修改引用的原则名 / 比例（旧版 dGVPE CellEndEdit）。"""
-    ref = orm.session().get(ElementPrinciple, ref_id) if project_io.is_open() else None
-    if ref is None:
-        return None
-    element = ref.element
-    if name is not None and name != ref.name:
-        siblings = element.pe_refs_sorted() if ref.kind == "pe" else element.pf_refs_sorted()
-        if any(other.name == name for other in siblings if other.id != ref.id):
-            return None  # 旧版 CellValidating：“原则已存在于列表中。”
-        ref.name = name
-        if ref.kind == "pe":
-            ref_names = [row.name for row in element.pe_refs_sorted()]
-            if element.main_pe_name not in ref_names:
-                element.main_pe_name = ref_names[0] if ref_names else ""
-    if ratio is not None:
-        ref.ratio = float(ratio)
-    project_io.commit()
-    bus().unit_changed.emit(element.unit_id)
-    return ref
-
-
-def remove_principle_ref(ref_id: int) -> str | None:
-    """删除引用（旧版 dGVPE_KeyUp Delete）；全部删光时返回提示文案。"""
-    ref = orm.session().get(ElementPrinciple, ref_id) if project_io.is_open() else None
-    if ref is None:
-        return None
-    element = ref.element
-    refs = element.pe_refs_sorted() if ref.kind == "pe" else element.pf_refs_sorted()
-    if len(refs) <= 1:
-        return "至少需要一种围护原则。" if ref.kind == "pe" else "至少需要一种地基处理原则。"
-    if ref.kind == "pe" and element.main_pe_name == ref.name:
-        remaining = [row.name for row in refs if row.id != ref.id]
-        element.main_pe_name = remaining[0] if remaining else ""
-    # 从集合移除（delete-orphan 级联成 DELETE），保证内存集合同步
-    element.principle_refs.remove(ref)
-    project_io.commit()
-    bus().unit_changed.emit(element.unit_id)
-    return None
-
-
-def set_main_pe(element_id: int, name: str) -> Element | None:
-    """设置多围护原则下的主要围护原则（旧版 cmbBoxMainPE_DropDownClosed）。"""
-    element = _element(element_id)
-    if element is None:
-        return None
-    ref_names = [ref.name for ref in element.pe_refs_sorted()]
-    if name and name in ref_names:
-        element.main_pe_name = name
-        project_io.commit()
-        bus().unit_changed.emit(element.unit_id)
-    return element
 
 
 # --------------------------------------------------------------------------- #

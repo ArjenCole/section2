@@ -5,15 +5,12 @@ level_slope / groove_width），保证图上的沟槽形状与工程量公式完
 
 绘制约定与旧版 1.0 一致：
 - 黑底、青色线条；管体断面黄描边（圆）、洋红描边（矩形），内部黑填充用于挖空；
-- 坐标原点在画布底边中点，Y 轴向上；左侧用左围护原则、右侧镜像；
-- 多围护原则时左右两侧各按自己的围护原则放坡（旧版 PaintBackFilled(LmPE,1)/
-  (RmPE,-1)，默认左侧第一条引用、右侧第二条），图集参数与回填材质仍按主要
-  原则（旧版 mcAtlas / mainPE）；zoom 取两侧外包的最大值（旧版缩着重画一遍）；
+- 坐标原点在画布底边中点，Y 轴向上；左侧用构件的围护原则、右侧镜像
+  （旧版 PaintBackFilled(LmPE,1)/(RmPE,-1)；多围护原则已取消，两侧同原则）；
 - 自适应缩放 zoom（mm→px，只缩小不放大，上限 1）；
 - 左下角输出图集参数 ``t= a= C1= C2=``。
 
-`SectionPanel` = 断面画布 + 多原则时的「左侧围护/右侧围护/地基处理」选择行
-（旧版 FormUnit 的 PNLpicCtrler 三个下拉框）。
+`SectionPanel` = 断面画布容器（旧版多原则时的 PNLpicCtrler 选择行已随功能取消）。
 
 旧版 PaintBackFilled 的逐层递推（本模块 ``_walk_layers``）：
 从槽底起按"换填→垫层→坞膀下半→坞膀上半→管顶50cm→覆土"逐层向上，
@@ -26,7 +23,7 @@ from dataclasses import dataclass, field
 
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import QComboBox, QGridLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 from sqlalchemy import select
 
 from app.core.models import base as orm
@@ -38,8 +35,6 @@ from app.core.models.models import (
     CATEGORY_JACKING,
     CATEGORY_PULLING,
     CATEGORY_STRUCTURE,
-    MULTI_PE_TEXT,
-    MULTI_PF_TEXT,
     Element,
     PcpEnclosure,
     PcpFoundation,
@@ -100,11 +95,8 @@ class _Scene:
     """一次断面绘制的全部数据。"""
 
     segments: list[_Segment] = field(default_factory=list)
-    #: 右侧分段（多围护原则时与左侧不同；旧版 PaintBackFilled(RmPE, -1)）
-    segments_right: list[_Segment] = field(default_factory=list)
     total_h: float = 0.0  # 沟槽总深 m
     top_width: float = 0.0  # 槽顶总宽 m（左侧地面线起点）
-    top_width_right: float = 0.0  # 右侧槽顶总宽 m
     zoom: float = 1.0
     shapes: list[_Shape] = field(default_factory=list)
     shift: float = 0.0  # 本体零点相对槽底的抬升 mm（旧版 TiA + C1 - mC1）
@@ -119,38 +111,12 @@ class SectionView(QWidget):
         self._element_id: int | None = None
         self._hint = "请选择构件条目"
         self._scene: _Scene | None = None
-        # 多原则构件的断面取用原则（旧版 CMBpicCtrlerLPE/RPE/PF 的当前文字）
-        self._left_name: str | None = None
-        self._right_name: str | None = None
-        self._pf_name: str | None = None
         self.setMinimumSize(180, 160)
 
     # ------------------------------------------------------------------ 对外
     def set_element(self, element_id: int | None) -> None:
         """切换要绘制断面的构件条目（None 清空）。"""
         self._element_id = element_id
-        self._left_name = self._right_name = self._pf_name = None
-        self._refresh()
-
-    def set_sides(self, left_name: str | None, right_name: str | None, pf_name: str | None = None) -> None:
-        """多原则构件：按指定的左/右围护与地基原则重绘（旧版下拉框联动）。"""
-        self._left_name = left_name
-        self._right_name = right_name
-        self._pf_name = pf_name
-        self._refresh()
-
-    def set_element_sides(
-        self,
-        element_id: int | None,
-        left_name: str | None,
-        right_name: str | None,
-        pf_name: str | None = None,
-    ) -> None:
-        """多原则构件：同时切换构件与左/右围护、地基选择（SectionPanel 专用）。"""
-        self._element_id = element_id
-        self._left_name = left_name
-        self._right_name = right_name
-        self._pf_name = pf_name
         self._refresh()
 
     def show_multi(self) -> None:
@@ -165,10 +131,7 @@ class SectionView(QWidget):
         self._refresh()
 
     def _refresh(self) -> None:
-        self._scene, self._hint = _build_scene(
-            self._element_id, self.width(), self.height(),
-            left_name=self._left_name, right_name=self._right_name, pf_name=self._pf_name,
-        )
+        self._scene, self._hint = _build_scene(self._element_id, self.width(), self.height())
         self.update()
 
     # ------------------------------------------------------------------ 绘制
@@ -185,11 +148,10 @@ class SectionView(QWidget):
 
         pen = QPen(_COLOR_LINE, 1)
         painter.setPen(pen)
-        # 旧版：左侧 +1 用 LmPE、右侧 -1 用 RmPE（多围护原则时两侧分段不同）
-        for side, segments, top_width in (
-            (1, scene.segments, scene.top_width),
-            (-1, scene.segments_right, scene.top_width_right),
-        ):
+        # 旧版：左侧 +1 用 LmPE、右侧 -1 用 RmPE（多围护原则已取消，两侧同原则）
+        for side in (1, -1):
+            segments = scene.segments
+            top_width = scene.top_width
             previous: _Segment | None = None
             for segment in segments:
                 if segment.h_delta <= 0:
@@ -258,125 +220,32 @@ class SectionView(QWidget):
 
 
 class SectionPanel(QWidget):
-    """断面图面板：画布 + 多原则时的「左侧围护/右侧围护/地基处理」下拉行。
-
-    旧版 FormUnit.FlashSectionPic：构件用多围护原则或多地基原则时出现
-    PNLpicCtrler（CMBpicCtrlerLPE/RPE/PF），默认左侧第一条引用、右侧第二条
-    （只有一条时取第一条）、地基第一条；切换下拉即重绘。
-    """
+    """断面图面板：画布容器（旧版多原则时 PNLpicCtrler 的三个下拉已随功能取消）。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._element_id: int | None = None
-        self._loading = False
-
-        self._selector = QWidget()
-        grid = QGridLayout(self._selector)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(4)
-        grid.setVerticalSpacing(2)
-        self._pe_left_combo = self._add_selector_row(grid, 0, "左侧围护:", self._on_selection_changed)
-        self._pe_right_combo = self._add_selector_row(grid, 1, "右侧围护:", self._on_selection_changed)
-        self._pf_combo = self._add_selector_row(grid, 2, "地基处理:", self._on_selection_changed)
 
         self._canvas = SectionView()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
-        layout.addWidget(self._selector)
         layout.addWidget(self._canvas, 1)
-        self._selector.setVisible(False)
-
-    @staticmethod
-    def _add_selector_row(grid: QGridLayout, row: int, caption: str, slot) -> QComboBox:
-        grid.addWidget(QLabel(caption), row, 0)
-        combo = QComboBox()
-        combo.currentTextChanged.connect(slot)
-        grid.addWidget(combo, row, 1)
-        return combo
 
     # ------------------------------------------------------------------ 对外
     def set_element(self, element_id: int | None) -> None:
-        """跟随主表格选中行；多原则构件时显示并复位选择行（旧版 FlashSectionPic）。"""
+        """跟随主表格选中行。"""
         self._element_id = element_id
-        selections = self._multi_selections(element_id)
-        if selections is None:
-            self._selector.setVisible(False)
-            self._canvas.set_element(element_id)
-            return
-        pe_names, pf_names = selections
-        self._selector.setVisible(True)
-        self._loading = True
-        try:
-            for combo, names, default_index in (
-                (self._pe_left_combo, pe_names, 0),
-                # 右侧默认第二条引用（只有一条时取第一条，旧版 CMBpicCtrlerRPE）
-                (self._pe_right_combo, pe_names, 1 if len(pe_names) > 1 else 0),
-                (self._pf_combo, pf_names, 0),
-            ):
-                combo.blockSignals(True)
-                combo.clear()
-                combo.addItems(names)
-                if names:
-                    combo.setCurrentIndex(min(default_index, len(names) - 1))
-                combo.setEnabled(bool(names))
-                combo.blockSignals(False)
-        finally:
-            self._loading = False
-        self._canvas.set_element_sides(
-            element_id,
-            self._pe_left_combo.currentText() or None,
-            self._pe_right_combo.currentText() or None,
-            self._pf_combo.currentText() or None,
-        )
+        self._canvas.set_element(element_id)
 
     def show_multi(self) -> None:
-        """主表格选中多行：隐藏选择行，画布显示 *多种断面 占位。"""
+        """主表格选中多行：画布显示 *多种断面 占位。"""
         self._element_id = None
-        self._selector.setVisible(False)
         self._canvas.show_multi()
 
     def refresh(self) -> None:
-        """构件数据变化后重算重绘（多原则时保留当前左右围护/地基选择）。"""
-        left = self._pe_left_combo.currentText()
-        right = self._pe_right_combo.currentText()
-        pf = self._pf_combo.currentText()
-        self.set_element(self._element_id)
-        if self._selector.isVisibleTo(self):
-            for combo, text in (
-                (self._pe_left_combo, left),
-                (self._pe_right_combo, right),
-                (self._pf_combo, pf),
-            ):
-                if text and combo.currentText() != text and combo.findText(text) >= 0:
-                    combo.setCurrentText(text)  # 触发联动重绘
-
-    # ------------------------------------------------------------------ 内部
-    def _multi_selections(self, element_id: int | None) -> tuple[list[str], list[str]] | None:
-        """构件处于多围护/多地基模式时返回引用名列表（pe, pf），否则 None。
-
-        旧版三个下拉的数据源都是引用字典（PEname / PFname Keys），
-        单原则构件的引用列表也有一行，故这里不做 multi 过滤。
-        """
-        if element_id is None or not orm.is_open():
-            return None
-        element = orm.session().get(Element, element_id)
-        if element is None:
-            return None
-        if element.pe_name != MULTI_PE_TEXT and element.pf_name != MULTI_PF_TEXT:
-            return None
-        pe_names = [ref.name for ref in element.pe_refs_sorted()]
-        pf_names = [ref.name for ref in element.pf_refs_sorted()]
-        return pe_names, pf_names
-
-    def _on_selection_changed(self) -> None:
-        if self._loading:
-            return
-        self._canvas.set_sides(
-            self._pe_left_combo.currentText() or None,
-            self._pe_right_combo.currentText() or None,
-            self._pf_combo.currentText() or None,
-        )
+        """构件数据变化后重算重绘。"""
+        self._canvas.refresh()
 
 
 # --------------------------------------------------------------------------- #
@@ -386,9 +255,6 @@ def _build_scene(
     element_id: int | None,
     width: int,
     height: int,
-    left_name: str | None = None,
-    right_name: str | None = None,
-    pf_name: str | None = None,
 ) -> tuple[_Scene | None, str]:
     if element_id is None:
         return None, "请选择构件条目"
@@ -400,36 +266,12 @@ def _build_scene(
         # 附属构筑物（旧版 mcPictureBox 无 mcE7 分支）：不画沟槽与本体
         return None, "附属构筑物不参与沟槽计算，无断面图。"
 
-    pe_multi = element.pe_name == MULTI_PE_TEXT
-    pf_multi = element.pf_name == MULTI_PF_TEXT
-    pe_names = [ref.name for ref in element.pe_refs_sorted()] if pe_multi else []
-    pf_names = [ref.name for ref in element.pf_refs_sorted()] if pf_multi else []
-
-    # 图集参数与回填材质按主要原则（旧版 mcAtlas / PaintBackFilled 的 mainPE）
-    pe_draw_name = element.main_pe_name if pe_multi else element.pe_name
-    pe = _enclosure_by_name(session, pe_draw_name)
-    if pf_multi:
-        # 旧版 CMBpicCtrlerPF：多地基原则时按选中的引用绘制（默认第一条）
-        pf_draw_name = pf_name if pf_name in pf_names else (pf_names[0] if pf_names else "")
-    else:
-        pf_draw_name = element.pf_name
-    pf = _foundation_by_name(session, pf_draw_name)
+    pe = _enclosure_by_name(session, element.pe_name)
+    pf = _foundation_by_name(session, element.pf_name)
     if pe is None or pf is None:
         return None, "该构件未指定围护/地基处理原则，无法绘制断面。"
     if not element.pipes and element.category in (CATEGORY_BURIED, CATEGORY_JACKING, CATEGORY_PULLING):
         return None, "该构件未录入管材，无法绘制断面。"
-
-    # 左右两侧围护（旧版 PaintBackFilled(LmPE,1)/(RmPE,-1)：左侧第一条引用、
-    # 右侧第二条（只有一条时同侧），下拉选择时按选中的名字）
-    if pe_multi:
-        left = left_name if left_name in pe_names else (pe_names[0] if pe_names else "")
-        right = right_name if right_name in pe_names else (
-            pe_names[1] if len(pe_names) > 1 else (pe_names[0] if pe_names else "")
-        )
-        pe_left = _enclosure_by_name(session, left) or pe
-        pe_right = _enclosure_by_name(session, right) or pe
-    else:
-        pe_left = pe_right = pe
 
     # 降水/面宽按元素引用解析（面宽决定图集宽度表；失效回退第一条，同计算引擎）
     pw_name = element.pw_name
@@ -452,7 +294,7 @@ def _build_scene(
         scene.shapes = _ontology_shapes(info, at, c1_original)
         scene.atlas_text = _atlas_text(at, c1_display)
         return scene, ""
-    return _build_trench_scene(info, pe, pf, at, c1_original, width, height, pe_left, pe_right)
+    return _build_trench_scene(info, pe, pf, at, c1_original, width, height)
 
 
 def _enclosure_by_name(session, name: str | None) -> PcpEnclosure | None:
@@ -476,50 +318,35 @@ def _first_of(session, model):
 
 def _build_trench_scene(
     info: ElementInput, pe: PcpEnclosure, pf: PcpFoundation, at, c1_original: float,
-    width: int, height: int, pe_left: PcpEnclosure | None = None, pe_right: PcpEnclosure | None = None,
+    width: int, height: int,
 ) -> tuple[_Scene | None, str]:
-    """沟槽断面（直埋/包封/箱涵/管廊）：旧版 PaintBackFilled + PaintOntology。
-
-    ``pe_left`` / ``pe_right`` 为左右两侧各自的围护原则（旧版 LmPE / RmPE）：
-    两侧只共用槽底宽与回填分层，放坡分级各按本侧原则选择。
-    """
-    pe_left = pe_left or pe
-    pe_right = pe_right or pe
+    """沟槽断面（直埋/包封/箱涵/管廊）：旧版 PaintBackFilled + PaintOntology。"""
     c1_display = c1_original if c1_original != 0 else cushion_thickness(pe)
     at_display = replace(at, c1=c1_display)
     depth = info.depth + groove.mm2m(foundation_thickness(pf) + at_display.t + c1_display)
-    work_left = choice_work(pe_left, depth)
-    work_right = choice_work(pe_right, depth)
-    if work_left is None or work_right is None:
+    work = choice_work(pe, depth)
+    if work is None:
         return None, "该围护原则没有任何围护分级，无法绘制断面。"
 
     cushion_name = pe.cushions[0].name if pe.cushions else "中粗砂"
     ad_display = atlas_dims(info, at_display)  # 图集参数的算式伴随（这里只取数值）
     layers = groove.backfill_layers(pe, pf, ad_display, info.size_h_dim, dim(depth), cushion_name)
     bottom = groove.groove_width(ad_display, info.size_b_dim).v
-    segments = _walk_layers(list(work_left.levels), layers, bottom, depth)
-    segments_right = _walk_layers(list(work_right.levels), layers, bottom, depth)
+    segments = _walk_layers(list(work.levels), layers, bottom, depth)
     total_h = segments[-1].h_current + segments[-1].h_delta if segments else 0.0
     top_width = segments[-1].bottom + segments[-1].h_delta * segments[-1].slope * 2 if segments else 0.0
-    top_width_right = (
-        segments_right[-1].bottom + segments_right[-1].h_delta * segments_right[-1].slope * 2
-        if segments_right else 0.0
-    )
     if total_h <= 0:
         return None, "沟槽深度为 0，无法绘制断面。"
 
-    # zoom 取两侧外包的最大值（旧版先画左、再画右缩 zoom、缩了就清屏重画）
     zoom = min(
         1.0,
-        (width - _MARGIN * 2) / (max(top_width, top_width_right) * 1000.0),
+        (width - _MARGIN * 2) / (top_width * 1000.0),
         (height - _BOTTOM_GAP - _TOP_GAP) / (total_h * 1000.0),
     )
     scene = _Scene(
         segments=segments,
-        segments_right=segments_right,
         total_h=total_h,
         top_width=top_width,
-        top_width_right=top_width_right,
         zoom=max(zoom, 0.0),
         shapes=_ontology_shapes(info, at, c1_original),
         # 本体零点抬升：换填厚 + (显示垫层厚 - 图集垫层厚)，旧版 PaintOntology 的 Translate

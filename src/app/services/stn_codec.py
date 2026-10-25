@@ -10,7 +10,7 @@
 ```json
 {
   "format": "Section2",
-  "file_version": 1,
+  "file_version": 2,
   "app_version": "2.0.0.0",
   "created_at": "…", "saved_at": "…",
   "basic_info": {"project_name": "…", "project_index": "…", "author": "…", "atlas_name": "…"},
@@ -34,13 +34,15 @@
 ```
 
 构件（element）字段：``category`` / ``name`` / ``depth`` / ``amount`` /
-``pe_name`` / ``pf_name`` / ``pp_name`` / ``pw_name`` / ``main_pe_name`` /
-``source``，加 ``pe_refs`` / ``pf_refs``（多原则引用 ``[{"name", "ratio"}]``）、
-``pipes``（``{"cat","mat","dn","content","t"}``）、
+``pe_name`` / ``pf_name`` / ``pp_name`` / ``pw_name`` / ``source``，
+加 ``pipes``（``{"cat","mat","dn","content","t"}``）、
 ``params``（``[{"key","unit","value"}]``）、
 ``quantities``（``[{"category","item","unit","value"}]``）、
 ``atlas_candidates``（``[{"con_found","angle","t","a","c1","c2"}]``，值为 null
 表示图集该组合无数据）。
+
+file_version 1 的文件带 ``main_pe_name`` / ``pe_refs`` / ``pf_refs``（多原则
+引用，2.0 已取消该功能）：读取时按主原则降级成单引用，见 :func:`_load_element`。
 
 本模块只做忠实的双向转换：值一律存数据库原文（字符串算式、``"显示名|算式"``
 等不解不拆），保证 存盘 → 重开 后数据零漂移。
@@ -60,7 +62,6 @@ from app.core.models.models import (
     Element,
     ElementAtlasCandidate,
     ElementParam,
-    ElementPrinciple,
     ElementQuantity,
     EnclosureCushion,
     EnclosureLevel,
@@ -226,16 +227,7 @@ def _dump_element(element: Element) -> dict:
         "pf_name": element.pf_name or "",
         "pp_name": element.pp_name or "",
         "pw_name": element.pw_name or "",
-        "main_pe_name": element.main_pe_name or "",
         "source": element.source or "",
-        "pe_refs": [
-            {"name": ref.name or "", "ratio": float(ref.ratio or 1.0)}
-            for ref in element.pe_refs_sorted()
-        ],
-        "pf_refs": [
-            {"name": ref.name or "", "ratio": float(ref.ratio or 1.0)}
-            for ref in element.pf_refs_sorted()
-        ],
         "pipes": [
             {
                 "cat": pipe.cat or "",
@@ -440,37 +432,31 @@ def _load_width(session, data: dict, *, order_no: int) -> None:
 
 
 def _load_element(data: dict, *, order_no: int) -> Element:
+    pe_name = data.get("pe_name") or ""
+    pf_name = data.get("pf_name") or ""
+    # file_version 1 的文件带多原则引用（pe_refs/pf_refs/main_pe_name，2.0 已取消
+    # 该功能）：按主原则降级成单引用——围护取 main_pe_name（失效取第一条引用），
+    # 地基取第一条引用；旧 show 名若是“多围护原则”等占位文字一并被覆盖
+    legacy_main = str(data.get("main_pe_name") or "")
+    pe_refs = data.get("pe_refs") or []
+    if pe_refs:
+        ref_names = [str(ref.get("name") or "") for ref in pe_refs]
+        pe_name = legacy_main if legacy_main in ref_names else ref_names[0]
+    pf_refs = data.get("pf_refs") or []
+    if pf_refs:
+        pf_name = str(pf_refs[0].get("name") or "")
     element = Element(
         category=int(data.get("category") or 0),
         name=data.get("name") or "",
         depth=data.get("depth") or "0",
         amount=data.get("amount") or "0",
-        pe_name=data.get("pe_name") or "",
-        pf_name=data.get("pf_name") or "",
+        pe_name=pe_name,
+        pf_name=pf_name,
         pp_name=data.get("pp_name") or "",
         pw_name=data.get("pw_name") or "",
-        main_pe_name=data.get("main_pe_name") or "",
         source=data.get("source") or "",
         order_no=order_no,
     )
-    for ref_index, ref in enumerate(data.get("pe_refs") or []):
-        element.principle_refs.append(
-            ElementPrinciple(
-                kind="pe",
-                name=ref.get("name") or "",
-                ratio=float(ref.get("ratio") or 1.0),
-                order_no=ref_index,
-            )
-        )
-    for ref_index, ref in enumerate(data.get("pf_refs") or []):
-        element.principle_refs.append(
-            ElementPrinciple(
-                kind="pf",
-                name=ref.get("name") or "",
-                ratio=float(ref.get("ratio") or 1.0),
-                order_no=ref_index,
-            )
-        )
     for pipe_data in data.get("pipes") or []:
         thickness = pipe_data.get("t")
         element.pipes.append(

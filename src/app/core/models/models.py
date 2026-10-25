@@ -80,13 +80,6 @@ def unit_of(category: int | None) -> str:
     return UNIT_BY_CATEGORY.get(int(category or 0), "")
 
 
-# --------------------------------------------------------------------------- #
-# 多原则引用（旧版 mcElement.PEname / PFname 字典 + showPEname 的“多围护原则”）
-# --------------------------------------------------------------------------- #
-#: 主表格“沟槽围护原则”列的多原则选项（旧版 mcPcpEnclosure.Multi_PETxt）
-MULTI_PE_TEXT = "多围护原则"
-#: 主表格“地基处理原则”列的多原则选项（旧版 mcPcpFoundation.Multi_PFTxt）
-MULTI_PF_TEXT = "多地基原则"
 #: 围护做法“围护类型”列的多级围护选项（旧版 mcEnclosure.MultiScpntTxt）
 MULTI_LEVEL_TEXT = "多级围护"
 
@@ -228,12 +221,9 @@ class Unit(Base):
 class Element(Base):
     """构件条目（对应旧版 mcElement 及其子类 mcE1~mcE7）。
 
-    ``pe_name`` / ``pf_name`` 是旧版的 showPEname / showPFname：按名字引用原则，
-    原则本体在 principle_enclosure / principle_foundation 表里；当值为
-    “多围护原则”/“多地基原则”时，实际引用的是 element_principle 表里
-    按比例（ratio）引用的多条原则（旧版 PEname / PFname 字典）。
-    ``main_pe_name`` 是旧版 mainPEname：多围护原则下的主要围护原则
-    （沟槽回填材质命名、管道基础、支撑都用它计算）。
+    ``pe_name`` / ``pf_name`` 按名字引用原则，原则本体在
+    principle_enclosure / principle_foundation 表里；降水 / 面宽原则
+    （``pp_name`` / ``pw_name``）同级、同样按名字引用。
     """
 
     __tablename__ = "element"
@@ -252,8 +242,6 @@ class Element(Base):
     #: principle_width 表里；旧版这两项挂在围护原则下，v4 起独立）
     pp_name: Mapped[str] = mapped_column(String(200), default="")
     pw_name: Mapped[str] = mapped_column(String(200), default="")
-    #: 主要围护原则（旧版 mainPEname，多围护原则时必填）
-    main_pe_name: Mapped[str] = mapped_column(String(200), default="")
     #: 来源（旧版主表格“来源”列，构件库插入时记录模板出处）
     source: Mapped[str] = mapped_column(String(200), default="")
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -285,46 +273,6 @@ class Element(Base):
         passive_deletes=True,
         order_by="ElementQuantity.order_no",
     )
-    #: 多原则引用（旧版 PEname / PFname 字典，kind 区分 pe/pf）
-    principle_refs: Mapped[list["ElementPrinciple"]] = relationship(
-        back_populates="element",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        order_by="ElementPrinciple.order_no",
-    )
-
-    def pe_refs_sorted(self) -> list["ElementPrinciple"]:
-        return sorted(
-            (ref for ref in self.principle_refs if ref.kind == "pe"),
-            key=lambda ref: (ref.order_no, ref.id),
-        )
-
-    def pf_refs_sorted(self) -> list["ElementPrinciple"]:
-        return sorted(
-            (ref for ref in self.principle_refs if ref.kind == "pf"),
-            key=lambda ref: (ref.order_no, ref.id),
-        )
-
-
-class ElementPrinciple(Base):
-    """构件的多原则引用（对应旧版 mcElement.PEname / PFname 字典）。
-
-    ``kind`` 为 "pe" / "pf"；``name`` 引用原则名；``ratio`` 为占比系数
-    （旧版 value，计算时该原则的断面工程量 × ratio 后求和）。
-    """
-
-    __tablename__ = "element_principle"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    element_id: Mapped[int] = mapped_column(
-        ForeignKey("element.id", ondelete="CASCADE"), index=True
-    )
-    kind: Mapped[str] = mapped_column(String(2), default="pe")
-    name: Mapped[str] = mapped_column(String(200), default="")
-    ratio: Mapped[float] = mapped_column(Float, default=1.0)
-    order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-
-    element: Mapped[Element] = relationship(back_populates="principle_refs")
 
 
 class ElementParam(Base):
@@ -417,7 +365,7 @@ class ElementAtlasCandidate(Base):
     该组合没有数据（如砼管**砼基础表没有 150° 行**）。混凝土管 8 组都用，
     其他管材的 con/plain 两组值相同、界面只展示"不采用混凝土基础"的 4 列。
 
-    参数值（工作面加宽 / 垫层厚 / 基础厚三行参数）按当前主围护原则的
+    参数值（工作面加宽 / 垫层厚 / 基础厚三行参数）按当前围护原则的
     ``con_found + found_angle`` 从这里自动选（:func:`unit_vm.match_atlas_candidates`）；
     围护原则 / 管材类别变化时自动重新匹配，但候选行本身永不自动改写。
     """

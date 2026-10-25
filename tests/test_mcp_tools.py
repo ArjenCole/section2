@@ -82,7 +82,7 @@ def test_element_lifecycle_and_parts(project) -> None:
 
     detail = REG.execute("get_element_detail", {"element_id": element_id})["data"]
     assert detail["pipes"][0]["dn"] == 600
-    assert detail["principle_refs"]["pe"]
+    assert detail["pe_name"]
     pipe_id = detail["pipes"][0]["id"]
 
     # 直埋管道只允许一条管材：再加 / 删除都被拒（构筑物同理不带管材）
@@ -118,21 +118,19 @@ def test_element_lifecycle_and_parts(project) -> None:
     assert REG.execute("move_element", {"element_id": element_id, "delta": 1})["ok"]
 
 
-def test_principle_refs(project) -> None:
+def test_principle_rename_propagates(project) -> None:
+    """围护原则改名后，引用它的构件 pe_name 同步更新（原引用行机制已取消）。"""
     unit_id = _unit_id()
     element_id = _add_pipe_element(unit_id)
     pe_names = REG.execute("list_principles", {"kind": "enclosure"})["data"]["principles"]
     first = pe_names[0]["name"]
-    second = REG.execute("create_enclosure", {"name": "第二围护"})["data"]["name"]
-    added = REG.execute(
-        "add_principle_ref", {"element_id": element_id, "kind": "pe", "name": second, "ratio": 0.4}
+    assert REG.execute("update_element", {"element_id": element_id, "pe_name": first})["ok"]
+    renamed = REG.execute(
+        "rename_principle", {"kind": "enclosure", "name": first, "new_name": "围护甲"}
     )
-    assert added["ok"], added
-    refs = REG.execute("list_principle_refs", {"element_id": element_id})["data"]["pe"]
-    assert len(refs) == 2
-    assert REG.execute("update_principle_ref", {"ref_id": refs[1]["ref_id"], "ratio": 0.6})["ok"]
-    assert REG.execute("set_main_pe", {"element_id": element_id, "name": first})["ok"]
-    assert REG.execute("remove_principle_ref", {"ref_id": refs[1]["ref_id"]})["ok"]
+    assert renamed["ok"], renamed
+    detail = REG.execute("get_element_detail", {"element_id": element_id})["data"]
+    assert detail["pe_name"] == "围护甲"
 
 
 def test_current_context_resolution(project) -> None:

@@ -383,7 +383,7 @@ def test_candidate_column_highlight_follows_match(qapp, project):
         # 换围护原则的基础角度 → 匹配换组，高亮列跟着走
         pe = orm.session().scalar(
             select(PcpEnclosure).where(
-                PcpEnclosure.name == (element.main_pe_name or element.pe_name)
+                PcpEnclosure.name == element.pe_name
             )
         )
         assert pe is not None

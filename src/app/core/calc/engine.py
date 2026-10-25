@@ -30,8 +30,6 @@ from app.core.models.models import (
     CATEGORY_PULLING,
     CATEGORY_STRUCTURE,
     GROOVE_WIDTH_WORK,
-    MULTI_PE_TEXT,
-    MULTI_PF_TEXT,
     Element,
     PcpEnclosure,
     PcpFoundation,
@@ -99,10 +97,9 @@ _DEFAULT_PARAMS: dict[int, dict[str, float]] = {
 class ElementInput:
     """参与计算的构件快照（深度/数量已求值，参数已合并默认值）。
 
-    ``pe_refs`` / ``pf_refs`` 为多原则引用（旧版 PEname / PFname 字典，
-    (原则, 比例) 列表）；为空时退化为单原则 ``pe`` × ``pf``（比例 1）。
-    沟槽断面 / 降水 / 围护 / 特殊地基按 pe×pf 组合逐对计算后乘比例求和；
-    回填材质命名、支撑、管道基础用主原则 ``pe``（旧版 mainPEname）。
+    沟槽断面 / 降水 / 围护 / 特殊地基按构件引用的单条 ``pe`` × ``pf`` 计算；
+    回填材质命名、支撑、管道基础同样用 ``pe``（1.0 多原则条目迁移时已按
+    比例拆成独立条目，见 services/stn_migration）。
     """
 
     category: int
@@ -129,8 +126,6 @@ class ElementInput:
     #: 降水 / 面宽原则（旧版挂在 PE 下，v4 起独立引用）
     pp: PcpPrecipitation | None = None
     pw: PcpWidth | None = None
-    pe_refs: list[tuple[PcpEnclosure, float]] = field(default_factory=list)
-    pf_refs: list[tuple[PcpFoundation, float]] = field(default_factory=list)
 
     @property
     def depth_dim(self) -> Dim:
@@ -223,14 +218,11 @@ def build_element_input(
     element: Element,
     pe: PcpEnclosure | None,
     pf: PcpFoundation | None,
-    pe_refs: list[tuple[PcpEnclosure, float]] | None = None,
-    pf_refs: list[tuple[PcpFoundation, float]] | None = None,
     pp: PcpPrecipitation | None = None,
     pw: PcpWidth | None = None,
 ) -> ElementInput:
     """从 ORM 构件构造计算输入（深度/数量求值，扩展参数合并默认值）。
 
-    ``pe_refs`` / ``pf_refs`` 为 (原则, 比例) 多原则引用；None 时按单原则处理。
     ``pp`` / ``pw`` 为降水 / 面宽原则（None 时不参与降水与图集宽度查询）。
     """
     named_params = {(param.key, param.unit or ""): param.value for param in element.params}
@@ -287,8 +279,6 @@ def build_element_input(
         pf=pf,
         pp=pp,
         pw=pw,
-        pe_refs=[] if pe_refs is None else list(pe_refs),
-        pf_refs=[] if pf_refs is None else list(pf_refs),
     )
 
 
@@ -520,63 +510,56 @@ def compute_element(info: ElementInput) -> QDict | None:
     """计算一个构件条目的工程量；数量为 0 或原则缺失时返回 None。
 
     顶管 / 牵引管不开槽，只有管材（见 :func:`compute_trenchless`）；
-    多原则（旧版 mscGroove.Cal）：沟槽断面 + 降水 + 围护(F) + 特殊地基按
-    pe×pf 组合逐对计算后乘 (pe 比例 × pf 比例) 求和；支撑(Z)、管道基础、
-    管材只用主原则（旧版 mainPEname）计算，不乘比例。
+    沟槽断面 + 降水 + 围护(F) + 特殊地基按构件引用的单条 pe × pf 计算
+    （旧版多原则的按比例组合在迁移时已拆成独立条目）；支撑(Z)、管道
+    基础、管材用同一条 pe（对应旧版单原则时的主原则）。
     """
     if info.category == CATEGORY_STRUCTURE:
         return compute_structure(info)
     if info.category in (CATEGORY_JACKING, CATEGORY_PULLING):
         return compute_trenchless(info)
-    main_pe = info.pe
-    pf_main = info.pf
-    if info.amount == 0 or main_pe is None or pf_main is None or info.pp is None or info.pw is None:
+    pe = info.pe
+    pf = info.pf
+    if info.amount == 0 or pe is None or pf is None or info.pp is None or info.pw is None:
         return None
-    pe_refs = info.pe_refs or [(main_pe, 1.0)]
-    pf_refs = info.pf_refs or [(pf_main, 1.0)]
     depth_dim = info.depth_dim
     amount_dim = info.amount_dim
 
-    at = resolve_atlas(build_atlas_query(info, main_pe, info.pw))
+    at = resolve_atlas(build_atlas_query(info, pe, info.pw))
     ad = atlas_dims(info, at)
     if ad.c1.v == 0:
         # 垫层厚 0（砂基础无垫层）：旧版语义——垫层取围护原则的垫层表值
-        ad = ad.replace(c1=cushion_dim(main_pe))
+        ad = ad.replace(c1=cushion_dim(pe))
 
     per_meter = QDict()
-    for pe, pe_ratio in pe_refs:
-        for pf, pf_ratio in pf_refs:
-            pair = QDict()
-            groove_depth = depth_dim + (foundation_dim(pf) + ad.t + ad.c1) / 1000
-            work = choice_work(pe, groove_depth.v)
-            if work is None:
-                return None
-            if not groove.cal_groove(pe, work, pf, ad, info.size_b_dim, info.size_h_dim, groove_depth, pair):
-                return None
-            precipitation.cal_precipitation(info.pp, pe, work, pf, ad, info, groove_depth, pair)
-            works_quantities(work, groove_depth, amount_dim, "F", ad, info, pair, "围护")
-            special = pf.components[0] if pf.components else None
-            if special is not None:
-                component_quantities(
-                    special,
-                    groove_depth,
-                    groove.groove_width(ad, info.size_b_dim),
-                    amount_dim,
-                    "F",
-                    pair,
-                    "特殊地基",
-                )
-            pair.scale(pe_ratio * pf_ratio)
-            per_meter.extend(pair)
+    groove_depth = depth_dim + (foundation_dim(pf) + ad.t + ad.c1) / 1000
+    work = choice_work(pe, groove_depth.v)
+    if work is None:
+        return None
+    if not groove.cal_groove(pe, work, pf, ad, info.size_b_dim, info.size_h_dim, groove_depth, per_meter):
+        return None
+    precipitation.cal_precipitation(info.pp, pe, work, pf, ad, info, groove_depth, per_meter)
+    works_quantities(work, groove_depth, amount_dim, "F", ad, info, per_meter, "围护")
+    special = pf.components[0] if pf.components else None
+    if special is not None:
+        component_quantities(
+            special,
+            groove_depth,
+            groove.groove_width(ad, info.size_b_dim),
+            amount_dim,
+            "F",
+            per_meter,
+            "特殊地基",
+        )
 
-    # 支撑（Z 类公式）：只用主原则、不考虑换填层厚度（旧版 Cal 末尾）
+    # 支撑（Z 类公式）：不考虑换填层厚度（旧版 Cal 末尾）
     support_depth = depth_dim + (ad.t + ad.c1) / 1000
-    support_work = choice_work(main_pe, support_depth.v)
+    support_work = choice_work(pe, support_depth.v)
     if support_work is not None:
         works_quantities(support_work, support_depth, amount_dim, "Z", ad, info, per_meter, "支撑")
 
-    # 管道基础（扣弓形占土）+ 管材：主原则
-    foundation.cal_found(info, main_pe, ad, per_meter)
+    # 管道基础（扣弓形占土）+ 管材
+    foundation.cal_found(info, pe, ad, per_meter)
     if info.category == CATEGORY_ENCASED:
         foundation.encased_pipe_deduction(info, per_meter)
     foundation.cal_pipes(info, per_meter)
@@ -688,11 +671,9 @@ def replace(at, **changes):
 
 
 def resolve_element_principles(element: Element, session):
-    """按构件的引用解析出 (主 pe, 主 pf, pp, pw, [(pe, 比例)...], [(pf, 比例)...])。
+    """按构件的引用解析出 (pe, pf, pp, pw)。
 
-    引用行缺失时退化为单原则（pe_name/pf_name，比例 1）；主原则取
-    main_pe_name（不在引用列表里时取第一条引用）。降水/面宽原则按名字
-    解析，名字失效（如多围护原则迁出的行）时取库中第一条。
+    引用名失效（原则被删、旧文件迁出的行）时取库中第一条，与界面回退一致。
     """
     from sqlalchemy import select
 
@@ -701,26 +682,14 @@ def resolve_element_principles(element: Element, session):
             return None
         return session.get(model, session.scalar(select(model.id).where(model.name == name)))
 
-    def _refs(kind: str, model, fallback: str):
-        rows = element.pe_refs_sorted() if kind == "pe" else element.pf_refs_sorted()
-        refs = [(row.name, row.ratio) for row in rows]
-        if not refs:
-            refs = [(fallback, 1.0)] if fallback else []
-        resolved = [( _by_name(model, name), ratio) for name, ratio in refs]
-        return [(principle, ratio) for principle, ratio in resolved if principle is not None]
-
     def _first(model):
         return session.scalar(select(model).order_by(model.order_no, model.id))
 
-    pe_refs = _refs("pe", PcpEnclosure, element.pe_name if element.pe_name != MULTI_PE_TEXT else "")
-    pf_refs = _refs("pf", PcpFoundation, element.pf_name if element.pf_name != MULTI_PF_TEXT else "")
-    main_pe = _by_name(PcpEnclosure, element.main_pe_name) if element.main_pe_name else None
-    if main_pe is None and pe_refs:
-        main_pe = pe_refs[0][0]
-    main_pf = pf_refs[0][0] if pf_refs else None
+    pe = _by_name(PcpEnclosure, element.pe_name)
+    pf = _by_name(PcpFoundation, element.pf_name)
     pp = _by_name(PcpPrecipitation, element.pp_name) or _first(PcpPrecipitation)
     pw = _by_name(PcpWidth, element.pw_name) or _first(PcpWidth)
-    return main_pe, main_pf, pp, pw, pe_refs, pf_refs
+    return pe, pf, pp, pw
 
 
 def is_concrete_pipe(info: ElementInput) -> bool:

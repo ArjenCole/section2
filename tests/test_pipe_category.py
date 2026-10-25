@@ -31,13 +31,13 @@ from app.viewmodels import unit_vm
 
 
 def _main_pe(element):
-    """构件的主围护原则对象（测试用，同引擎 main_pe 语义）。"""
+    """构件的围护原则对象（测试用，同引擎引用语义）。"""
     from sqlalchemy import select
 
     from app.core.models import base as orm
     from app.core.models.models import PcpEnclosure
 
-    name = element.main_pe_name or element.pe_name
+    name = element.pe_name
     return orm.session().scalar(select(PcpEnclosure).where(PcpEnclosure.name == name))
 
 

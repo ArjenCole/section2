@@ -13,6 +13,9 @@
 
 * 兼容 1.0.x ~ 1.2.2.x（`<1.2.1.1` 补箱涵含钢量参数；`<1.2.2.1`
   工作面宽度类别“箱涵”改“箱涵-管廊”，统一按最新语义处理）；
+* 旧版多原则引用（PEname / PFname 字典，2.0 已取消该功能）按比例拆成
+  独立条目：pe×pf 组合逐对拆、数量 = 原数量 × 比例、名称加原则占比后缀，
+  明细与偏差写入报告（拆分明细段 + 警告），构筑物 / 顶管 / 牵引管不拆；
 * 原则按名称匹配到新库，匹配不到的构件引用记入报告 warning，
   绝不静默丢数据或静默替换；
 * 单个节点解析失败 → 跳过并记入报告；整体失败 → 抛出异常，由调用方
@@ -38,17 +41,16 @@ from app.core.models import base as orm
 #: 打开旧版文件自动转译时，原文件的备份文件夹（软件数据目录下，brackets 同款）
 MIGRATION_BACKUP_DIR_NAME = "migration_backup"
 from app.core.models.models import (
+    CATEGORY_JACKING,
     CATEGORY_NAMES,
+    CATEGORY_PULLING,
     CATEGORY_STRUCTURE,
-    MULTI_PE_TEXT,
-    MULTI_PF_TEXT,
     PRECIPITATION_COLUMNS,
     BasicInfo,
     Component,
     ComponentParam,
     Element,
     ElementParam,
-    ElementPrinciple,
     ElementQuantity,
     EnclosureCushion,
     EnclosureLevel,
@@ -67,6 +69,10 @@ from app.core.param_naming import atlas_param_rows, split_param_key
 
 _CATEGORY_BY_NAME = {name: value for value, name in CATEGORY_NAMES.items()}
 _LEGACY_CATEGORIES = tuple(CATEGORY_NAMES.values())
+
+#: 旧版 showPEname / showPFname 在多原则模式下的占位显示名（仅旧文件里出现）
+_LEGACY_MULTI_PE_TEXT = "多围护原则"
+_LEGACY_MULTI_PF_TEXT = "多地基原则"
 
 _PRECIP_DEFAULT_TEXT = {
     "wet_soil": "0|0|0",
@@ -91,9 +97,12 @@ class MigrationReport:
     enclosures: int = 0
     foundations: int = 0
     prices: int = 0
+    #: 1.0 多原则条目按比例拆分的源条目数（明细见 split_details）
+    splits: int = 0
     warnings: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     principle_names: list[str] = field(default_factory=list)
+    split_details: list[str] = field(default_factory=list)
 
     def text(self) -> str:
         lines = [
@@ -104,6 +113,10 @@ class MigrationReport:
             f"围护原则 {self.enclosures} 条，地基原则 {self.foundations} 条，单价 {self.prices} 条",
             f"涉及原则：{'、'.join(self.principle_names) if self.principle_names else '（无）'}",
         ]
+        if self.split_details:
+            lines.append("")
+            lines.append(f"多原则条目按比例拆分 {self.splits} 条：")
+            lines.extend(f"  · {item}" for item in self.split_details)
         if self.warnings:
             lines.append("")
             lines.append(f"警告 {len(self.warnings)} 条：")
@@ -486,113 +499,40 @@ def build_legacy_database(source: str | Path) -> MigrationReport:
             session.add(unit)
             session.flush()
             report.units += 1
-            for element_index, legacy_element in enumerate(legacy_unit.elements):
+            element_order = 0
+            for legacy_element in legacy_unit.elements:
                 category = _CATEGORY_BY_NAME.get(legacy_element.category, 0)
                 display_name = legacy_element.name or '(未命名)'
-                # 多原则引用（旧版 PEname / PFname 字典）→ 引用行 + show 名
-                pe_name, pe_refs, pe_warnings = _migrate_principle_refs(
+                # 1.0 多原则引用（PEname / PFname 字典）→ 2.0 已取消该功能：
+                # 按旧版 Cal 的 pe×pf 组合逐对拆成独立条目（数量 = 原数量 × 比例），
+                # 单组合条目原样保留（方案 B，详见 docs 与迁移报告的拆分明细）
+                pe_refs, pe_warnings = _valid_principle_refs(
                     "pe", legacy_element, _pe_names(legacy),
                     legacy.enclosures and legacy.enclosures[0].name or "",
                 )
-                pf_name, pf_refs, pf_warnings = _migrate_principle_refs(
+                pf_refs, pf_warnings = _valid_principle_refs(
                     "pf", legacy_element, _pf_names(legacy),
                     legacy.foundations and legacy.foundations[0][0] or "",
                 )
                 for warning in pe_warnings + pf_warnings:
                     report.warnings.append(f"构件“{display_name}”{warning}")
-                main_pe_name = legacy_element.main_pe_name
-                if len(pe_refs) > 1 and main_pe_name not in {name for name, _ratio in pe_refs}:
-                    main_pe_name = pe_refs[0][0]
-                # 降水/面宽引用随围护名拆出（v4 独立原则）；多围护等对不上号的
-                # 落到第一条原则（旧版随各 PE 计算，独立后取默认一条）
-                enclosure_names = {item.name for item in legacy.enclosures}
-                default_pppw = legacy.enclosures[0].name if legacy.enclosures else ""
-                element = Element(
-                    unit_id=unit.id,
-                    category=category,
-                    name=legacy_element.name,
-                    depth=legacy_element.depth or "0",
-                    amount=legacy_element.amount or "0",
-                    pe_name=pe_name,
-                    pf_name=pf_name,
-                    pp_name=pe_name if pe_name in enclosure_names else default_pppw,
-                    pw_name=pe_name if pe_name in enclosure_names else default_pppw,
-                    main_pe_name=main_pe_name,
-                    source=legacy_element.source or "",
-                    order_no=element_index,
-                )
-                session.add(element)
-                session.flush()
-                for order, (ref_name, ratio) in enumerate(pe_refs):
-                    session.add(
-                        ElementPrinciple(
-                            element_id=element.id, kind="pe", name=ref_name,
-                            ratio=ratio, order_no=order,
-                        )
+                _warn_ratio_usage(display_name, category, pe_refs, pf_refs, report)
+                pairs = _migration_pairs(category, legacy_element, pe_refs, pf_refs)
+                _warn_atlas_differences(legacy, pe_refs, display_name, report)
+                children = _split_children(legacy_element, pairs)
+                if len(children) > 1:
+                    report.splits += 1
+                    report.split_details.append(
+                        _split_detail_line(display_name, legacy_element, pairs)
                     )
-                for order, (ref_name, ratio) in enumerate(pf_refs):
-                    session.add(
-                        ElementPrinciple(
-                            element_id=element.id, kind="pf", name=ref_name,
-                            ratio=ratio, order_no=order,
-                        )
+                for child_name, child_amount, pe_name, pf_name in children:
+                    _write_legacy_element(
+                        session, unit.id, legacy_element, category,
+                        name=child_name, amount=child_amount,
+                        pe_name=pe_name, pf_name=pf_name,
+                        order_no=element_order, version=legacy.version, report=report,
                     )
-                report.elements += 1
-                for pipe_index, legacy_pipe in enumerate(legacy_element.pipes):
-                    session.add(
-                        Pipe(
-                            element_id=element.id,
-                            mat=legacy_pipe.mat,
-                            dn=int(legacy_pipe.dn),
-                            content=legacy_pipe.content or "1",
-                        )
-                    )
-                    report.pipes += 1
-                known_params = {key for key, _value in legacy_element.params}
-                # 旧版单键参数 → 新版“参数名/单位”两列；三段“类别|项目|单位”键
-                # 是构筑物工程量，迁 element_quantity 表（与库内结构迁移一致）
-                quantity_order = 0
-                for key, value in legacy_element.params:
-                    if category == 7 and "|" in key:
-                        quantity_category, item, unit = key.split("|", 2)
-                        session.add(
-                            ElementQuantity(
-                                element_id=element.id,
-                                category=quantity_category,
-                                item=item,
-                                unit=unit,
-                                value=value,
-                                order_no=quantity_order,
-                            )
-                        )
-                        quantity_order += 1
-                        continue
-                    name = key.lstrip("-") if category == CATEGORY_STRUCTURE else key
-                    name, unit = split_param_key(name)
-                    session.add(
-                        ElementParam(element_id=element.id, key=name, unit=unit, value=value)
-                    )
-                if category == 3 and "含钢量 kg/m3" not in known_params and _version_tuple(legacy.version or "0") < (1, 2, 1, 1):
-                    session.add(
-                        ElementParam(element_id=element.id, key="含钢量", unit="kg/m3", value="150")
-                    )
-                    report.warnings.append(
-                        f"旧版 <1.2.1.1：箱涵“{legacy_element.name or '(未命名)'}”补默认含钢量 150 kg/m³。"
-                    )
-                # 该类别显示的图集参数行（直埋三行，包封 / 箱涵 / 管廊的工作面
-                # 加宽 / 垫层厚；空 = 自动按图集 / 软件约定），与新建 / 构件库
-                # 插入的条目保持一致（1.0 没有这些行）
-                existing_keys = {param.key for param in element.params}
-                for param_name, param_unit in atlas_param_rows(category):
-                    if param_name not in existing_keys:
-                        session.add(
-                            ElementParam(
-                                element_id=element.id,
-                                key=param_name,
-                                unit=param_unit,
-                                value="",
-                            )
-                        )
+                    element_order += 1
 
     for key, value in legacy.prices:
         session.add(Price(key=key, value=value))
@@ -637,20 +577,21 @@ def _pf_names(legacy: LegacyProject) -> set[str]:
     return {name for name, _replacements, _component in legacy.foundations}
 
 
-def _migrate_principle_refs(
+def _valid_principle_refs(
     kind: str,
     element: _LegacyElement,
     known_names: set[str],
     fallback: str,
-) -> tuple[str, list[tuple[str, float]], list[str]]:
-    """迁移一个构件的原则引用，返回 (show 名, 有效引用列表, 警告列表)。
+) -> tuple[list[tuple[str, float]], list[str]]:
+    """收集一个构件的有效原则引用，返回 (引用列表, 警告列表)。
 
-    多原则引用（旧版 PEname 字典）优先；没有引用行时按 show 名退化成
-    单原则（比例 1）。引用的原则在旧文件中不存在 → 跳过该条并记警告；
-    一条有效的都不剩 → 回落引用第一条原则（与旧版 GetData 一致）。
+    旧版 PEname / PFname 字典优先；没有引用行时按 show 名退化成单原则
+    （比例 1，“多围护原则/多地基原则”占位名不算原则）。引用的原则在旧
+    文件中不存在 → 跳过该条并记警告；一条有效的都不剩 → 回落引用第一条
+    原则（与旧版 GetData 一致）。
     """
-    multi_text = MULTI_PE_TEXT if kind == "pe" else MULTI_PF_TEXT
     label = "围护" if kind == "pe" else "地基"
+    multi_text = _LEGACY_MULTI_PE_TEXT if kind == "pe" else _LEGACY_MULTI_PF_TEXT
     warnings: list[str] = []
     raw_refs = element.pe_refs if kind == "pe" else element.pf_refs
     show = element.pe_name if kind == "pe" else element.pf_name
@@ -662,15 +603,206 @@ def _migrate_principle_refs(
             refs.append((name, ratio))
         else:
             warnings.append(f"引用的{label}原则“{name}”在旧文件中不存在，已跳过。")
-    if not refs:
-        if fallback:
-            refs = [(fallback, 1.0)]
-            warnings.append(f"未指定{label}原则，已引用“{fallback}”。")
-        else:
-            return "", [], warnings
-    if len(refs) > 1:
-        return multi_text, refs, warnings
-    return refs[0][0], refs, warnings
+    if not refs and fallback:
+        refs = [(fallback, 1.0)]
+        warnings.append(f"未指定{label}原则，已引用“{fallback}”。")
+    return refs, warnings
+
+
+def _warn_ratio_usage(display_name: str, category: int,
+                      pe_refs: list[tuple[str, float]], pf_refs: list[tuple[str, float]],
+                      report: MigrationReport) -> None:
+    """比例异常的警告：单引用比例 ≠ 1（断面量会差比例倍）、多引用合计 ≠ 1
+    （拆分条目的管材量随合计缩放）。构筑物 / 顶管 / 牵引管的原则不参与
+    计算，两类偏差都不提示。"""
+    if category in (CATEGORY_STRUCTURE, CATEGORY_JACKING, CATEGORY_PULLING):
+        return
+    for label, refs in (("围护", pe_refs), ("地基", pf_refs)):
+        if len(refs) == 1 and abs(refs[0][1] - 1.0) > 1e-9:
+            report.warnings.append(
+                f"构件“{display_name}”的{label}原则比例 {refs[0][1]:g} ≠ 1，"
+                "已按原数量整条引用，断面量与旧版会差该比例倍。"
+            )
+        elif len(refs) > 1:
+            total = sum(ratio for _name, ratio in refs)
+            if abs(total - 1.0) > 1e-9:
+                report.warnings.append(
+                    f"构件“{display_name}”{label}原则比例合计 {total:g} ≠ 1，"
+                    "拆分条目的管材量将随合计缩放。"
+                )
+
+
+def _migration_pairs(category: int, legacy_element: _LegacyElement,
+                     pe_refs: list[tuple[str, float]], pf_refs: list[tuple[str, float]]
+                     ) -> list[tuple[str, float, str, float]]:
+    """把构件的原则引用展开成 (pe 名, pe 比例, pf 名, pf 比例) 组合列表。
+
+    旧版 mscGroove.Cal 按组合逐对计算断面量后乘 (pe 比例 × pf 比例) 求和；
+    2.0 取消多原则后，组合多于一个的条目按组合拆分（数量 = 原数量 × 比例）。
+    构筑物 / 顶管 / 牵引管的原则不参与计算，不拆：围护取主原则（失效取
+    第一条引用），地基取第一条引用。引用为空（旧文件一条原则都没有）时
+    返回空名组合，写出的条目两条原则引用留空。
+    """
+    if not pe_refs or not pf_refs:
+        return [("", 1.0, "", 1.0)]
+    if category in (CATEGORY_STRUCTURE, CATEGORY_JACKING, CATEGORY_PULLING):
+        pe_names = {name for name, _ratio in pe_refs}
+        main = legacy_element.main_pe_name
+        pe_name = main if main in pe_names else pe_refs[0][0]
+        return [(pe_name, 1.0, pf_refs[0][0], 1.0)]
+    return [
+        (pe_name, pe_ratio, pf_name, pf_ratio)
+        for pe_name, pe_ratio in pe_refs
+        for pf_name, pf_ratio in pf_refs
+    ]
+
+
+def _split_children(legacy_element: _LegacyElement, pairs: list[tuple[str, float, str, float]]
+                    ) -> list[tuple[str, str, str, str]]:
+    """把组合列表物化成子条目的 (名称, 数量原文, pe 名, pf 名) 列表。
+
+    单组合保持原条目原样（数量原文不动，比例偏差由警告说明）；多组合按
+    比例折算数量（合成算式 ``(<原式>)*比例…``，原文算式保留）并在名称后
+    追加 ``·原则名 占比%`` 后缀。
+    """
+    if len(pairs) <= 1:
+        pe_name, _pe_ratio, pf_name, _pf_ratio = pairs[0]
+        return [(legacy_element.name, legacy_element.amount or "0", pe_name, pf_name)]
+    multi_pf = len({pf_name for _pe, _pr, pf_name, _fr in pairs}) > 1
+    children: list[tuple[str, str, str, str]] = []
+    for pe_name, pe_ratio, pf_name, pf_ratio in pairs:
+        factors = [
+            f"{ratio:g}" for ratio in (pe_ratio, pf_ratio) if abs(ratio - 1.0) > 1e-12
+        ]
+        amount = legacy_element.amount or "0"
+        if factors:
+            amount = f"({amount})*{'*'.join(factors)}"
+        percent = f"{pe_ratio * pf_ratio * 100:g}%"
+        suffix = f"·{pe_name}×{pf_name} {percent}" if multi_pf else f"·{pe_name} {percent}"
+        children.append((f"{legacy_element.name}{suffix}", amount, pe_name, pf_name))
+    return children
+
+
+def _split_detail_line(display_name: str, legacy_element: _LegacyElement,
+                       pairs: list[tuple[str, float, str, float]]) -> str:
+    parts = [
+        f"{pe_name} {pe_ratio * pf_ratio * 100:g}%"
+        for pe_name, pe_ratio, pf_name, pf_ratio in pairs
+    ]
+    main = legacy_element.main_pe_name
+    tail = f"（旧主围护原则：{main}）" if main else ""
+    return f"“{display_name}”拆成 {len(pairs)} 条：{'、'.join(parts)}{tail}"
+
+
+def _enclosure_profile(pe: _LegacyEnclosure) -> tuple:
+    """围护原则的图集相关参数指纹（砼基础 / 角度 / 两张宽度表）。"""
+    widths = tuple(sorted((key, tuple(sorted(table.items()))) for key, table in pe.widths.items()))
+    groove_bs = tuple(sorted((key, tuple(sorted(table.items()))) for key, table in pe.groove_bs.items()))
+    return (pe.con_found, pe.found_angle, widths, groove_bs)
+
+
+def _warn_atlas_differences(legacy: LegacyProject, pe_refs: list[tuple[str, float]],
+                            display_name: str, report: MigrationReport) -> None:
+    """拆分引用的各围护原则图集/面宽参数不同时提示断面量可能与旧版有差异。
+
+    旧版 mcAtlas 整条构件只取主原则的一套图集参数与宽度表（所有组合共用）；
+    拆分后每个条目按各自围护原则取值，参数不同时断面量会有差异。
+    """
+    if len(pe_refs) <= 1:
+        return
+    by_name = {pe.name: pe for pe in legacy.enclosures}
+    profiles = {
+        _enclosure_profile(by_name[name]) for name, _ratio in pe_refs if name in by_name
+    }
+    if len(profiles) > 1:
+        report.warnings.append(
+            f"构件“{display_name}”拆分引用的围护原则图集/面宽参数不同："
+            "旧版整条按主原则取一套，2.0 拆分后各条目按各自原则取值，断面量可能有差异。"
+        )
+
+
+def _write_legacy_element(session, unit_id: int, legacy_element: _LegacyElement,
+                          category: int, *, name: str, amount: str, pe_name: str,
+                          pf_name: str, order_no: int, version: str,
+                          report: MigrationReport) -> Element:
+    """写一条构件及其管道 / 参数 / 工程量行 / 图集参数行（拆分条目共用）。
+
+    降水 / 面宽原则跟随围护原则同名引用（write_legacy_enclosure 为每条旧
+    围护原则生成了同名降水 / 面宽原则，对应旧版断面降水按该组合的围护
+    原则参数计算）。
+    """
+    element = Element(
+        unit_id=unit_id,
+        category=category,
+        name=name,
+        depth=legacy_element.depth or "0",
+        amount=amount,
+        pe_name=pe_name,
+        pf_name=pf_name,
+        pp_name=pe_name,
+        pw_name=pe_name,
+        source=legacy_element.source or "",
+        order_no=order_no,
+    )
+    session.add(element)
+    session.flush()
+    report.elements += 1
+    for legacy_pipe in legacy_element.pipes:
+        session.add(
+            Pipe(
+                element_id=element.id,
+                mat=legacy_pipe.mat,
+                dn=int(legacy_pipe.dn),
+                content=legacy_pipe.content or "1",
+            )
+        )
+        report.pipes += 1
+    known_params = {key for key, _value in legacy_element.params}
+    # 旧版单键参数 → 新版“参数名/单位”两列；三段“类别|项目|单位”键
+    # 是构筑物工程量，迁 element_quantity 表（与库内结构迁移一致）
+    quantity_order = 0
+    for key, value in legacy_element.params:
+        if category == 7 and "|" in key:
+            quantity_category, item, unit = key.split("|", 2)
+            session.add(
+                ElementQuantity(
+                    element_id=element.id,
+                    category=quantity_category,
+                    item=item,
+                    unit=unit,
+                    value=value,
+                    order_no=quantity_order,
+                )
+            )
+            quantity_order += 1
+            continue
+        param_name = key.lstrip("-") if category == CATEGORY_STRUCTURE else key
+        param_name, unit = split_param_key(param_name)
+        session.add(
+            ElementParam(element_id=element.id, key=param_name, unit=unit, value=value)
+        )
+    if category == 3 and "含钢量 kg/m3" not in known_params and _version_tuple(version or "0") < (1, 2, 1, 1):
+        session.add(
+            ElementParam(element_id=element.id, key="含钢量", unit="kg/m3", value="150")
+        )
+        report.warnings.append(
+            f"旧版 <1.2.1.1：箱涵“{name or '(未命名)'}”补默认含钢量 150 kg/m³。"
+        )
+    # 该类别显示的图集参数行（直埋三行，包封 / 箱涵 / 管廊的工作面
+    # 加宽 / 垫层厚；空 = 自动按图集 / 软件约定），与新建 / 构件库
+    # 插入的条目保持一致（1.0 没有这些行）
+    existing_keys = {param.key for param in element.params}
+    for param_name, param_unit in atlas_param_rows(category):
+        if param_name not in existing_keys:
+            session.add(
+                ElementParam(
+                    element_id=element.id,
+                    key=param_name,
+                    unit=param_unit,
+                    value="",
+                )
+            )
+    return element
 
 
 def _seed_widths(session, width: PcpWidth, table: dict[str, dict[int, float]], kind: str) -> None:

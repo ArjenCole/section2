@@ -1,8 +1,9 @@
 """旧 .stn 迁移测试（M6 验收）。
 
 用 tests/fixtures/legacy 的样例旧工程做批量导入：全部成功打开、
-标段/单位工程/构件/管道计数与源文件一致、原则引用全部落到实际表记录；
-“多原则与构筑物”样例覆盖多原则引用（PEname 字典）与构筑物（mcE7）迁移。
+标段/单位工程/构件/管道计数与源文件一致（多原则条目按比例拆条后只多不少）、
+原则引用全部落到实际表记录；“多原则与构筑物”样例覆盖多原则引用按比例
+拆条（方案 B）与构筑物（mcE7）迁移。
 """
 
 from __future__ import annotations
@@ -47,8 +48,10 @@ def test_migrate_sample(tmp_path: Path, source: Path) -> None:
     expected = _source_counts(source)
     assert report.segments == expected["segments"]
     assert report.units == expected["units"]
-    assert report.elements == expected["elements"]
-    assert report.pipes == expected["pipes"]
+    # 1.0 多原则条目按比例拆条（方案 B），构件/管道只会增多不会减少；
+    # 精确拆分数见 test_migrate_multi_principle_split
+    assert report.elements >= expected["elements"]
+    assert report.pipes >= expected["pipes"]
     assert report.enclosures == expected["enclosures"]
     assert report.foundations == expected["foundations"]
     assert report.prices == expected["prices"]
@@ -61,29 +64,93 @@ def test_migrate_sample(tmp_path: Path, source: Path) -> None:
         session = project_io.orm.session()
         from sqlalchemy import select
 
-        from app.core.models.models import MULTI_PE_TEXT, MULTI_PF_TEXT, Element, ElementPrinciple
+        from app.core.models.models import Element
 
         referenced_pe = {
             name for name in session.scalars(select(Element.pe_name)) if name
-        } - {MULTI_PE_TEXT}
+        }
         referenced_pf = {
             name for name in session.scalars(select(Element.pf_name)) if name
-        } - {MULTI_PF_TEXT}
+        }
         assert referenced_pe <= enclosure_names, f"悬空围护原则引用：{referenced_pe - enclosure_names}"
         assert referenced_pf <= foundation_names, f"悬空地基原则引用：{referenced_pf - foundation_names}"
-        # 多原则引用行必须落到真实原则（旧版 PEname 字典）
-        ref_pe_names = {
-            name for name in session.scalars(
-                select(ElementPrinciple.name).where(ElementPrinciple.kind == "pe")
-            ) if name
+        # 降水/面宽引用（迁移时跟随围护原则名）同样不悬空
+        referenced_pp = {
+            name for name in session.scalars(select(Element.pp_name)) if name
         }
-        ref_pf_names = {
-            name for name in session.scalars(
-                select(ElementPrinciple.name).where(ElementPrinciple.kind == "pf")
-            ) if name
+        referenced_pw = {
+            name for name in session.scalars(select(Element.pw_name)) if name
         }
-        assert ref_pe_names <= enclosure_names, f"悬空多原则围护引用：{ref_pe_names - enclosure_names}"
-        assert ref_pf_names <= foundation_names, f"悬空多原则地基引用：{ref_pf_names - foundation_names}"
+        precipitation_names = set(project_io.precipitation_names())
+        width_names = set(project_io.width_names())
+        assert referenced_pp <= precipitation_names, f"悬空降水原则引用：{referenced_pp - precipitation_names}"
+        assert referenced_pw <= width_names, f"悬空面宽原则引用：{referenced_pw - width_names}"
+    finally:
+        project_io.close_project()
+
+
+def test_migrate_multi_principle_split(tmp_path: Path) -> None:
+    """1.0 多原则条目按比例拆条（方案 B）：pe×pf 组合逐对拆、数量 = 原数量 × 比例。
+
+    样例的第二条构件：放坡开挖 0.6 + 钢板桩 0.4（旧主原则 钢板桩）、数量 200.5；
+    拆成两条后断面量与旧版 Σ(组合 × 比例) 一致，构筑物 / 单原则条目不拆。
+    """
+    from sqlalchemy import select
+
+    from app.core.models import base as orm
+    from app.core.models.models import CATEGORY_STRUCTURE, Element
+
+    source = next(
+        path for path in _available_samples() if "多原则" in path.stem
+    )
+    target = tmp_path / "split.stn"
+    report = stn_migration.migrate(source, target)
+
+    # 3 条源构件 → 4 条（多原则条目拆 2），管道 2 → 3（两个子条目各带一根）
+    assert report.elements == 4
+    assert report.pipes == 3
+    assert report.splits == 1
+    assert len(report.split_details) == 1
+    assert "放坡开挖 60%" in report.split_details[0]
+    assert "钢板桩 40%" in report.split_details[0]
+    assert "旧主围护原则：钢板桩" in report.split_details[0]
+
+    project_io.open_project(target)
+    try:
+        rows = list(orm.session().scalars(select(Element).order_by(Element.order_no, Element.id)))
+        assert len(rows) == 4
+
+        # 单原则条目原样保留（名称/数量原文不动）
+        assert rows[0].name == ""
+        assert rows[0].amount == "100"
+        assert rows[0].pe_name == "放坡开挖"
+        assert rows[0].pp_name == "放坡开挖" and rows[0].pw_name == "放坡开挖"
+
+        # 拆分条目：名称加“·原则名 占比%”后缀，数量合成算式，各引用自己的原则
+        assert rows[1].name == "·放坡开挖 60%"
+        assert rows[1].amount == "(200.5)*0.6"
+        assert rows[1].pe_name == "放坡开挖"
+        assert rows[1].pp_name == "放坡开挖" and rows[1].pw_name == "放坡开挖"
+        assert rows[2].name == "·钢板桩 40%"
+        assert rows[2].amount == "(200.5)*0.4"
+        assert rows[2].pe_name == "钢板桩"
+        assert rows[2].pp_name == "钢板桩" and rows[2].pw_name == "钢板桩"
+        # 管道行原样复制到每个子条目
+        for row in rows[1:3]:
+            assert len(row.pipes) == 1 and row.pipes[0].dn == 800
+
+        # 构筑物不拆：围护取旧主原则（mainPEname 在文件中存在）
+        well = rows[3]
+        assert well.category == CATEGORY_STRUCTURE
+        assert well.name == "圆形雨水检查井DN1000"
+        assert well.pe_name == "不起作用的原则"
+
+        # 拆分条目可正常计算（深度 3.6 > 围护做法适用范围即可出量）
+        from app.viewmodels.unit_vm import compute_unit
+
+        _summary, detail = compute_unit(rows[1].unit_id)
+        keys = {quantity.key for quantity in detail[1][1].items()}
+        assert any(key.startswith("开挖|") for key in keys)
     finally:
         project_io.close_project()
 

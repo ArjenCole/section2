@@ -16,9 +16,10 @@ APP_VERSION = "2.0.0.0"
 SCHEMA_VERSION = 1
 
 #: `.stn` 文件 JSON 数据体的结构版本（见 services/stn_format.py）。
-#: 数据结构变更时 +1；打开时与代码不一致即拒绝（高版本提示升级，
-#: 低版本文件出自未发布预览版，不提供迁移）。
-STN_FILE_VERSION = 1
+#: 数据结构变更时 +1；打开时高版本拒绝（提示升级），低版本接受并按当前
+#: 结构兼容升级（stn_codec 负责旧字段的降级转换，open_project 弹提示）。
+#: v2：删除多围护/多地基原则引用（main_pe_name / pe_refs / pf_refs）。
+STN_FILE_VERSION = 2
 
 #: 新版工程文件：1.0 风格的 XML 头（供 1.0 软件识别“高版本文件”并提醒）
 #: + CDATA 包裹的 JSON 数据体（services/stn_format.py）。

@@ -39,7 +39,6 @@ from xml.etree import ElementTree as ET
 from app.core.version import APP_VERSION, STN_FILE_VERSION
 from app.core.models.base import (
     NotAProjectFileError,
-    ProjectFileError,
     SchemaTooNewError,
 )
 
@@ -102,8 +101,9 @@ def load_stn(path: str | Path) -> StnDocument:
     * 不是合法 XML / 缺头 / JSON 坏了 → :class:`NotAProjectFileError`；
     * JSON ``file_version`` 高于本程序 → :class:`SchemaTooNewError`
       （文件由更新版本的程序保存）；
-    * ``file_version`` 低于本程序 → :class:`ProjectFileError`
-      （出自未发布的旧预览版，不提供迁移）。
+    * ``file_version`` 低于本程序 → 接受并按当前结构升级（低版本文件出自
+      早期发布版，结构差异由 stn_codec 兼容读取，见 project_io.open_project
+      的打开提示）。
     """
     source = Path(path)
     try:
@@ -143,11 +143,7 @@ def _check_file_version(file_version, source: Path) -> None:
             f"工程文件数据结构版本为 {file_version}，本程序支持到 {STN_FILE_VERSION}；"
             "文件由更新版本的 Section 保存，请升级程序后再打开。"
         )
-    if file_version < STN_FILE_VERSION:
-        raise ProjectFileError(
-            f"工程文件数据结构版本为 {file_version}，低于本程序支持的 {STN_FILE_VERSION}；"
-            "该文件出自内部预览版，请用保存它的版本打开。"
-        )
+    # 低于当前版本：接受，由 stn_codec 兼容读取并就地升级（open_project 会提示）
 
 
 def looks_like_legacy_file(path: str | Path) -> bool:

@@ -73,8 +73,8 @@ def test_sloped_vs_vertical_dig_and_enclosure_quantities(project) -> None:
     session = orm.session()
 
     def _compute(element):
-        pe, pf, pp, pw, pe_refs, pf_refs = resolve_element_principles(element, session)
-        info = build_element_input(element, pe, pf, pe_refs, pf_refs, pp, pw)
+        pe, pf, pp, pw = resolve_element_principles(element, session)
+        info = build_element_input(element, pe, pf, pp, pw)
         return info, compute_element(info)
 
     library = project_io.component_library()

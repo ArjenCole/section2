@@ -11,11 +11,11 @@ from app.mcp_server.adapter import McpToolAdapter
 
 def test_registry_tool_surface() -> None:
     registry = default_registry()
-    assert len(registry.names()) == 74
-    assert len(set(registry.names())) == 74
+    assert len(registry.names()) == 69
+    assert len(set(registry.names())) == 69
     read_only = registry.read_only_tools()
     assert read_only
-    assert len(read_only) < 74
+    assert len(read_only) < 69
 
 
 def test_adapter_lists_all_or_read_only() -> None:
@@ -23,7 +23,7 @@ def test_adapter_lists_all_or_read_only() -> None:
     readonly = McpToolAdapter(default_registry(), allow_actions=False)
     full_names = {tool.name for tool in full.list_tools()}
     readonly_names = {tool.name for tool in readonly.list_tools()}
-    assert len(full_names) == 74
+    assert len(full_names) == 69
     assert readonly_names < full_names
     assert "add_element" not in readonly_names
     assert "compute_unit" in readonly_names

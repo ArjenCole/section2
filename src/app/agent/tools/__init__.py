@@ -2,11 +2,11 @@
 
 工具按领域分文件（project/tree/element/element_parts/principle/reference/
 compute/migrate/summary/meta），每个模块提供 ``register(registry)``。
-共 74 个工具：
+共 69 个工具（多原则引用 5 个工具已随功能取消移除）：
 
-- project 7、tree 6、element 8、element_parts 17、principle 20、
+- project 7、tree 6、element 8、element_parts 12、principle 20、
   reference 8、compute 3、migrate 2、summary 4、meta 2（含 get_conventions）——
-  减去重复计数的 get_current_context（在 meta 中）= 74。
+  减去重复计数的 get_current_context（在 meta 中）= 69。
 """
 
 from __future__ import annotations

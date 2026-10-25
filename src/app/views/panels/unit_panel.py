@@ -47,8 +47,6 @@ from app.core.models.models import (
     CATEGORY_JACKING,
     CATEGORY_PULLING,
     CATEGORY_STRUCTURE,
-    MULTI_PE_TEXT,
-    MULTI_PF_TEXT,
     category_name,
 )
 from app.core.pipe_category import PIPE_CATEGORIES
@@ -63,7 +61,6 @@ from app.viewmodels.unit_vm import (
     SINGLE_PIPE_CATEGORIES,
     UnitViewModel,
 )
-from app.views.panels.multi_principle_tab import MultiPrincipleTab
 from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.views.widgets.panel_splitter import SPLITTER_HANDLE_WIDTH, LineSplitter
 from app.views.widgets.row_button_column import RowButtonColumn
@@ -454,19 +451,8 @@ class UnitPanel(QWidget):
         detail.addTab(param_page, "构件参数")
         detail.addTab(qty_page, "工程量")
 
-        # 多原则引用子表（旧版 FormUnit 左下角 PNLPE / PNLPF → 新版独立 Tab）
-        self._multi_pe_tab = MultiPrincipleTab("pe")
-        self._multi_pf_tab = MultiPrincipleTab("pf")
-        self._multi_pe_tab.became_active.connect(
-            lambda: self._detail_tabs.setCurrentWidget(self._multi_pe_tab)
-        )
-        self._multi_pf_tab.became_active.connect(
-            lambda: self._detail_tabs.setCurrentWidget(self._multi_pf_tab)
-        )
-        detail.addTab(self._multi_pe_tab, MULTI_PE_TEXT)
-        detail.addTab(self._multi_pf_tab, MULTI_PF_TEXT)
-        # 五个页签（管材/构件参数/工程量/多围护原则/多地基原则）在窄面板下会被
-        # 省略并出现滚动箭头：按页签条完整宽度设最小宽度，保证全部页签可见
+        # 三个页签（管材/构件参数/工程量）在窄面板下会被省略并出现滚动箭头：
+        # 按页签条完整宽度设最小宽度，保证全部页签可见
         detail.setMinimumWidth(detail.tabBar().sizeHint().width() + 16)
         self._detail_tabs = detail
         bottom.addWidget(detail)
@@ -491,7 +477,7 @@ class UnitPanel(QWidget):
         bottom.setStretchFactor(0, 2)
         bottom.setStretchFactor(1, 3)
         bottom.setStretchFactor(2, 2)
-        # 管材/构件参数｜定额/清单｜断面图 默认宽度：左栏加宽以容下五个明细页签
+        # 管材/构件参数｜定额/清单｜断面图 默认宽度：左栏加宽以容下三个明细页签
         bottom.setSizes([500, 880, 286])
         return bottom
 
@@ -691,8 +677,6 @@ class UnitPanel(QWidget):
         has_unit = unit_id is not None
         self._placeholder.setVisible(not has_unit)
         self._work_area.setVisible(has_unit)
-        self._multi_pe_tab.set_element(None)
-        self._multi_pf_tab.set_element(None)
         if not has_unit:
             self._vm.load_unit(None)
             self._element_table.setRowCount(0)
@@ -726,12 +710,8 @@ class UnitPanel(QWidget):
         try:
             _clear_cell_widgets(self._element_table)  # 旧内嵌下拉框显式销毁，避免残留叠加
             self._element_table.setRowCount(len(rows))
-            enclosure_names = _combo_names(
-                project_io.enclosure_names() + [MULTI_PE_TEXT], rows, "pe_name"
-            )
-            foundation_names = _combo_names(
-                project_io.foundation_names() + [MULTI_PF_TEXT], rows, "pf_name"
-            )
+            enclosure_names = _combo_names(project_io.enclosure_names(), rows, "pe_name")
+            foundation_names = _combo_names(project_io.foundation_names(), rows, "pf_name")
             precipitation_names = _combo_names(project_io.precipitation_names(), rows, "pp_name")
             width_names = _combo_names(project_io.width_names(), rows, "pw_name")
             for index, row in enumerate(rows):
@@ -1055,9 +1035,6 @@ class UnitPanel(QWidget):
         self._multi_detail = False
         self._current_detail_id = element_id
         self._vm.load_detail(element_id)
-        self._multi_pe_tab.set_element(element_id)
-        self._multi_pf_tab.set_element(element_id)
-        self._auto_switch_multi_tab(element_id)
         self._section_view.set_element(element_id)
         self._fill_quantities()
         from app.viewmodels.unit_vm import _element
@@ -1070,31 +1047,9 @@ class UnitPanel(QWidget):
             }
         )
 
-    def _auto_switch_multi_tab(self, element_id: int) -> None:
-        """选中使用多原则的构件时自动切到对应 Tab（旧版 PNLPE/PNLPF 自动出现）。"""
-        from app.viewmodels.unit_vm import _element
-
-        element = _element(element_id)
-        if element is None:
-            return
-        current = self._detail_tabs.currentWidget()
-        if current in (self._multi_pe_tab, self._multi_pf_tab):
-            # 已在多原则 Tab：跟随本行实际使用的模式（行间切换不跳出）
-            if element.pe_name == MULTI_PE_TEXT:
-                self._detail_tabs.setCurrentWidget(self._multi_pe_tab)
-            elif element.pf_name == MULTI_PF_TEXT:
-                self._detail_tabs.setCurrentWidget(self._multi_pf_tab)
-            return
-        if element.pe_name == MULTI_PE_TEXT:
-            self._detail_tabs.setCurrentWidget(self._multi_pe_tab)
-        elif element.pf_name == MULTI_PF_TEXT:
-            self._detail_tabs.setCurrentWidget(self._multi_pf_tab)
-
     def _show_multi_detail(self) -> None:
         self._multi_detail = True
         self._current_detail_id = None
-        self._multi_pe_tab.set_element(None)
-        self._multi_pf_tab.set_element(None)
         # 多选显示占位行：增删没有明确目标构件，按钮一律禁用
         self._update_pipe_buttons(None)
         self._fill_multi_placeholders()
@@ -1150,8 +1105,6 @@ class UnitPanel(QWidget):
         self._qty_table.setRowCount(0)
         self._qty_table.setVisible(False)
         self._qty_placeholder.setVisible(True)
-        self._multi_pe_tab.set_element(None)
-        self._multi_pf_tab.set_element(None)
         self._section_view.set_element(None)
         self._fill_quantities()
         bus().ai_context_changed.emit({"element_id": None, "element_name": ""})

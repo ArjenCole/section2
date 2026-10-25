@@ -8,7 +8,6 @@ from app.agent.serializers import element_detail_dict, element_row_dict
 from app.agent.tool_registry import Tool, ToolRegistry
 from app.agent.tools._common import parse_category, require_open, validate_principle_names
 from app.core.models.models import CATEGORY_NAMES, category_name
-from app.services import project_io
 from app.viewmodels import unit_vm
 
 
@@ -69,21 +68,6 @@ def _quantities(arguments: dict):
     return result or None
 
 
-def _refs(arguments: dict, key: str):
-    refs = arguments.get(key)
-    if not refs:
-        return None
-    result = []
-    for ref in refs:
-        if not isinstance(ref, dict):
-            raise ToolError(f"{key} 每一项必须是对象 {{name, ratio}}。")
-        name = str(ref.get("name") or "").strip()
-        if not name:
-            raise ToolError(f"{key} 里的原则名不能为空。")
-        result.append((name, float(ref.get("ratio", 1.0) or 1.0)))
-    return result
-
-
 def tool_list_elements(arguments: dict) -> dict:
     require_open()
     unit_id = resolve_unit_id(arguments)
@@ -109,13 +93,6 @@ def tool_add_element(arguments: dict) -> dict:
     pp_name = arguments.get("pp_name")
     pw_name = arguments.get("pw_name")
     validate_principle_names(pe_name, pf_name, pp_name, pw_name)
-    pe_refs = _refs(arguments, "pe_refs")
-    pf_refs = _refs(arguments, "pf_refs")
-    for refs, kind in ((pe_refs, "pe"), (pf_refs, "pf")):
-        for ref_name, _ratio in refs or []:
-            names = project_io.enclosure_names() if kind == "pe" else project_io.foundation_names()
-            if ref_name not in names:
-                raise ToolError(f"{'围护' if kind == 'pe' else '地基'}原则“{ref_name}”不存在。")
     element = unit_vm.create_element(
         unit_id,
         category=category,
@@ -130,9 +107,6 @@ def tool_add_element(arguments: dict) -> dict:
         pipes=_pipes(arguments),
         params=_params(arguments),
         quantities=_quantities(arguments),
-        pe_refs=pe_refs,
-        pf_refs=pf_refs,
-        main_pe_name=str(arguments.get("main_pe_name") or ""),
         # v8 起默认补图集快照（计算侧不再查图集），AI 不必显式传
         seed_atlas_defaults=bool(arguments.get("seed_atlas_defaults", True)),
     )
@@ -251,7 +225,7 @@ def register(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
             "get_element_detail",
-            "读取构件完整详情（管材/参数/工程量/多原则引用/图集自动值预览）。只读。",
+            "读取构件完整详情（管材/参数/工程量/图集自动值预览）。只读。",
             {"type": "object", "properties": {"element_id": element_id_schema}},
             tool_get_element_detail,
             read_only=True,
@@ -260,7 +234,7 @@ def register(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
             "add_element",
-            "新增构件条目（可带管材/参数/工程量/多原则引用）。写操作。",
+            "新增构件条目（可带管材/参数/工程量）。写操作。",
             {
                 "type": "object",
                 "properties": {
@@ -280,10 +254,6 @@ def register(registry: ToolRegistry) -> None:
                                "description": "[{key,unit,value}]"},
                     "quantities": {"type": "array", "items": {"type": "object"},
                                    "description": "构筑物工程量行 [{category,item,unit,value}]"},
-                    "pe_refs": {"type": "array", "items": {"type": "object"},
-                                "description": "多围护引用 [{name,ratio}]"},
-                    "pf_refs": {"type": "array", "items": {"type": "object"}},
-                    "main_pe_name": {"type": "string"},
                     "seed_atlas_defaults": {"type": "boolean", "default": True},
                 },
                 "required": ["name"],
@@ -335,7 +305,7 @@ def register(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
             "duplicate_element",
-            "复制构件（含管材/参数/工程量/多原则引用）到同单位工程末尾或指定单位工程。写操作。",
+            "复制构件（含管材/参数/工程量）到同单位工程末尾或指定单位工程。写操作。",
             {
                 "type": "object",
                 "properties": {"element_id": element_id_schema,
