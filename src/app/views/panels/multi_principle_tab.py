@@ -44,6 +44,7 @@ from app.viewmodels.unit_vm import (
 )
 from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.views.widgets.table_edit_delegate import TableEditDelegate
+from app.views.widgets.table_width import fixed_width_behavior
 
 _REF_ROLE = Qt.ItemDataRole.UserRole + 1
 
@@ -95,8 +96,10 @@ class MultiPrincipleTab(QWidget):
         self._table.horizontalHeader().setHighlightSections(False)
         self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(32)
-        self._table.horizontalHeader().setStretchLastSection(True)
+        # 固定列宽（可拖动）：表格不随父控件拉伸，右侧留白 / 窄时出横向滚动条
+        fixed_width_behavior(self._table)
         self._table.setColumnWidth(0, 130)
+        self._table.setColumnWidth(1, 90)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         # 比例列编辑态抛光：32px 行高里去掉 QLineEdit 编辑器的边框/内边距，
         # 否则文字上下被裁掉（与主表格各表的编辑器处理一致）

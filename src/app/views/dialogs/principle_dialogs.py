@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -60,6 +59,7 @@ from app.core.models.models import (
 from app.services import project_io
 from app.views.widgets.cell_fill_table import CellFillTable
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
+from app.views.widgets.table_width import fixed_width_behavior
 
 _WIDTH_DNS = tuple(range(0, 3100, 100))
 
@@ -415,7 +415,13 @@ class _LevelTable(CellFillTable):
     def __init__(self) -> None:
         super().__init__(0, 5)
         self.setHorizontalHeaderLabels(["固定", "高度m", "平台单侧宽", "围护类型", "围护形式描述"])
-        self.horizontalHeader().setStretchLastSection(True)
+        # 固定列宽（可拖动）：表格不随窗体宽度拉伸，右侧留白 / 窄时出横向滚动条
+        fixed_width_behavior(self)
+        self.setColumnWidth(0, 48)
+        self.setColumnWidth(1, 76)
+        self.setColumnWidth(2, 90)
+        self.setColumnWidth(3, 130)
+        self.setColumnWidth(4, 220)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.verticalHeader().setDefaultSectionSize(32)
 
@@ -458,7 +464,10 @@ class ComponentEditDialog(PrincipleSubDialog):
         for prefix, header_key, header_value, row, column in self._GROUPS:
             table = CellFillTable(0, 2)
             table.setHorizontalHeaderLabels([header_key, header_value])
-            table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+            # 固定列宽（可拖动）：不随窗体拉伸（全项目约定，见 table_width 模块）
+            fixed_width_behavior(table)
+            table.setColumnWidth(0, 120)
+            table.setColumnWidth(1, 260)
             table.verticalHeader().setDefaultSectionSize(28)
             grid.addWidget(table, row, column)
             self._tables[prefix] = table
@@ -565,7 +574,9 @@ class WidthEditDialog(FramelessDialog):
                 item = QTableWidgetItem(category)
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 table.setItem(row_index, 0, item)
-            table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+            # 固定列宽（可拖动）：初始列宽由 _fill 装填后按内容定一次，
+            # 之后不随内容/窗体变化，总宽超出窗体即出横向滚动条
+            fixed_width_behavior(table)
             layout.addWidget(table)
             self._tabs.addTab(page, title)
             self._tables[kind] = table
@@ -614,6 +625,9 @@ class WidthEditDialog(FramelessDialog):
                     for column, dn in enumerate(_WIDTH_DNS, start=1):
                         value = data.get(kind, {}).get(category, {}).get(dn)
                         table.setItem(row_index, column, QTableWidgetItem("" if value is None else f"{value:g}"))
+                # 首次装填按内容定初始列宽（Interactive 不会随内容自动重算），
+                # 之后用户可拖动调整、宽度不再被覆盖
+                table.resizeColumnsToContents()
         finally:
             self._loading = False
 
@@ -731,12 +745,9 @@ class PrecipitationEditDialog(FramelessDialog):
         self._table.verticalHeader().setVisible(False)  # 行标识已由“措施名称”列承担
         header = self._table.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
-        # 列宽以“刚好显示全部单元格/表头文字”为准：选用/埋深/范围/侧数/间隔
-        # 按内容自适应（间隔列保持最窄），措施名称列吸收剩余宽度；
-        # 全部列内容放下即无横向滚动条，行数固定 5 行即无纵向滚动条
-        for column in range(1, 6):
-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(self._COL_NAME, QHeaderView.ResizeMode.Stretch)
+        # 固定列宽（可拖动）：初始列宽由 _fill 装填后按内容定一次（措施名称列
+        # 不低于 110），之后不随窗体拉伸；总宽超出窗体即出横向滚动条
+        fixed_width_behavior(self._table)
         layout.addWidget(self._table)
         self._describe = QLabel("")
         self._describe.setProperty("role", "hint")
@@ -793,6 +804,11 @@ class PrecipitationEditDialog(FramelessDialog):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         finally:
             self._loading = False
+        # 首次装填按内容定初始列宽（Interactive 不会随内容自动重算），之后
+        # 用户可拖动调整、宽度不再被覆盖
+        self._table.resizeColumnsToContents()
+        if self._table.columnWidth(self._COL_NAME) < 110:
+            self._table.setColumnWidth(self._COL_NAME, 110)
         self._describe_change()
 
     def _refresh_range(self) -> None:

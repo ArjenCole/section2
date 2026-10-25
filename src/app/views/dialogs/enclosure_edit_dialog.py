@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -47,6 +46,7 @@ from app.views.dialogs.principle_dialogs import (
 from app.views.widgets.cell_fill_table import CellFillTable
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 from app.views.widgets.row_button_column import RowButtonColumn
+from app.views.widgets.table_width import fixed_width_behavior
 
 _EXCVT_CHOICES = ("Ⅰ、Ⅱ类土", "Ⅲ类土", "Ⅳ类土", "松石", "次坚石", "普坚石", "特坚石")
 _DOCK_CHOICES = ("至管顶50cm", "至管顶标高", "至管中心标高", "至沟槽顶标高")
@@ -251,6 +251,9 @@ class EnclosureEditDialog(FramelessDialog):
         # 创建之前，会把下拉列压窄、表头文字整体移位，视觉上字体忽粗忽细
         for column in (_COL_DEPTH, _COL_RANGE, _COL_ECLS_CAT, _COL_WS_CAT):
             table.resizeColumnToContents(column)
+        # 描述列固定宽（可拖动调整）：不再吸收剩余宽度，总宽超出窗体出横向滚动条
+        for column in (_COL_ECLS_DIS, _COL_WS_DIS):
+            table.setColumnWidth(column, 150)
 
     @staticmethod
     def _readonly_item(text: str) -> QTableWidgetItem:
@@ -486,12 +489,9 @@ class _WorkTable(CellFillTable):
         self.verticalHeader().setVisible(False)
         # 行高与主表格一致（32px）；单元格内下拉框的纵向内边距已由 QSS 压小
         self.verticalHeader().setDefaultSectionSize(32)
-        # 列宽以“刚好显示全部单元格/表头文字”为准：埋深、范围、两个下拉列按内容
-        # 自适应，两个描述列平分剩余宽度
-        header = self.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(_COL_ECLS_DIS, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(_COL_WS_DIS, QHeaderView.ResizeMode.Stretch)
+        # 固定列宽（可拖动）：埋深、范围、两个下拉列初始按内容自适应（_fill 里
+        # 每次装填后重算），两个描述列固定宽；表格总宽超出窗体即出横向滚动条
+        fixed_width_behavior(self)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         if event.key() == Qt.Key.Key_Insert:

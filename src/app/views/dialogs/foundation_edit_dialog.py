@@ -39,6 +39,7 @@ from app.views.dialogs.principle_dialogs import ComponentEditDialog, describe_co
 from app.views.widgets.cell_fill_table import CellFillTable
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 from app.views.widgets.row_button_column import RowButtonColumn
+from app.views.widgets.table_width import fixed_width_behavior
 
 _COL_MATERIAL, _COL_THICKNESS = 0, 1
 
@@ -307,6 +308,8 @@ class _ReplaceTable(CellFillTable):
     def __init__(self) -> None:
         super().__init__(0, 3)
         self.setHorizontalHeaderLabels(["换填材质", "厚度 mm", ""])
+        # 固定列宽（可拖动）：表格不随窗体拉伸，右侧留白 / 窄时出横向滚动条
+        fixed_width_behavior(self)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.verticalHeader().setVisible(False)

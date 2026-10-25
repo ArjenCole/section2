@@ -17,7 +17,6 @@ from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QHeaderView,
     QLabel,
     QStyle,
     QTabWidget,
@@ -69,6 +68,7 @@ from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.views.widgets.panel_splitter import SPLITTER_HANDLE_WIDTH, LineSplitter
 from app.views.widgets.row_button_column import RowButtonColumn
 from app.views.widgets.table_edit_delegate import TableEditDelegate
+from app.views.widgets.table_width import fixed_width_behavior
 
 _ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
 _COL_NAME, _COL_CATEGORY, _COL_SPEC, _COL_DEPTH, _COL_UNIT, _COL_AMOUNT, _COL_PE, _COL_PF, _COL_PP, _COL_PW, _COL_SOURCE = range(11)
@@ -341,7 +341,9 @@ class UnitPanel(QWidget):
 
     def _build_element_table(self) -> QTableWidget:
         self._element_table = self._make_table(_ELEMENT_HEADERS)
-        for index, width in enumerate(_ELEMENT_WIDTHS[:-1]):
+        # 全部列都按 _ELEMENT_WIDTHS 定宽（含末列「来源」）：表格总宽即各列之和，
+        # 不随父控件拉伸（固定列宽约定见 table_width 模块）
+        for index, width in enumerate(_ELEMENT_WIDTHS):
             self._element_table.setColumnWidth(index, width)
         self._element_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._element_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -367,19 +369,22 @@ class UnitPanel(QWidget):
         self._pipe_table = self._make_table(_PIPE_HEADERS)
         self._param_table = self._make_table(_PARAM_HEADERS)
         # 手设列宽：前三列保持可读（管径/壁厚列常有四位数字）；末列是按钮列
-        # （「+」表头格 + 每行行尾「-」，见 RowButtonColumn），类别列拉伸
+        # （「+」表头格 + 每行行尾「-」，见 RowButtonColumn），类别列固定宽
         self._pipe_table.setColumnWidth(_PIPE_COL_MAT, 120)
         self._pipe_table.setColumnWidth(_PIPE_COL_DN, 72)
         self._pipe_table.setColumnWidth(_PIPE_COL_T, 96)
         self._pipe_table.setColumnWidth(_PIPE_COL_CONTENT, 66)
+        self._pipe_table.setColumnWidth(_PIPE_COL_CAT, 100)
         self._pipe_table.setColumnHidden(_PIPE_COL_DEL, True)
         self._pipe_table.setItemDelegate(_PipeCategoryDelegate(self._pipe_table))
         self._param_table.setColumnWidth(0, _PARAM_NAME_WIDTH)
         self._param_table.setColumnWidth(1, _PARAM_UNIT_WIDTH)
+        self._param_table.setColumnWidth(2, 110)
         self._qty_table = self._make_table(_QTY_HEADERS)
         self._qty_table.setColumnWidth(0, 110)
         self._qty_table.setColumnWidth(1, 140)
         self._qty_table.setColumnWidth(2, 56)
+        self._qty_table.setColumnWidth(3, 120)
         # 三张明细表的「+ / -」按钮列（管材面板同款）：+ 在按钮列表头格，
         # 每行行尾「-」删该行；类别不允许时整列不显示（_update_pipe_buttons /
         # _on_detail_loaded 控制显隐）。参数表列数随候选列变化，attach 在每次
@@ -492,8 +497,7 @@ class UnitPanel(QWidget):
             table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
             table.setWordWrap(False)
             table.itemDoubleClicked.connect(self._show_expression_detail)
-            # 列宽取自运行实例实测（定额/清单共用同一组），末列不再拉伸以保持实测值
-            table.horizontalHeader().setStretchLastSection(False)
+            # 列宽取自运行实例实测（定额/清单共用同一组），固定列宽不随父控件拉伸
             for index, width in enumerate(_QUANTITY_WIDTHS):
                 table.setColumnWidth(index, width)
             self._quantity_tables[name] = table
@@ -507,8 +511,9 @@ class UnitPanel(QWidget):
         table = QTableWidget(0, len(headers))
         table.setHorizontalHeaderLabels(headers)
         table.setAlternatingRowColors(True)
-        table.horizontalHeader().setStretchLastSection(True)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        # 固定列宽（可拖动调整）：表格不随父控件拉伸，父控件宽时右侧留白、
+        # 窄时出横向滚动条（全项目约定，见 table_width.fixed_width_behavior）
+        fixed_width_behavior(table)
         # 选中单元格时对应列的列头不再加粗重绘（QSS 列头规则没有 :selected
         # 背景，highlightSections 的唯一表现是选中列列头文字变粗，见 CellFillTable）
         table.horizontalHeader().setHighlightSections(False)

@@ -40,9 +40,8 @@ class RowButtonColumn(QObject):
         self._col = -1  # attach 前未附着
         self._width = width
         self._delete_tooltip = delete_tooltip
-        self._prev_stretch_col: int | None = None
         header = table.horizontalHeader()
-        # 按钮列固定宽度：原先「最后一列拉伸」让位给按钮列的前一列（attach 设置）
+        # 按钮列固定宽度（表格本体遵循固定列宽约定，见 table_width 模块）
         if header.stretchLastSection():
             header.setStretchLastSection(False)
         self.add_button = QPushButton("+", header)
@@ -60,23 +59,15 @@ class RowButtonColumn(QObject):
         return self._col
 
     def attach(self) -> None:
-        """按钮列 = 当前最后一列：固定宽度，前一列改为拉伸（原尾列的拉伸外观）。"""
+        """按钮列 = 当前最后一列：钉成固定宽度，其余列宽不动。"""
         header = self._table.horizontalHeader()
         new_col = self._table.columnCount() - 1
-        if self._prev_stretch_col is not None and self._prev_stretch_col != new_col - 1:
-            if self._prev_stretch_col < self._table.columnCount():
-                header.setSectionResizeMode(
-                    self._prev_stretch_col, QHeaderView.ResizeMode.Interactive
-                )
         self._col = new_col
         # 钉成固定宽度：整表 ResizeToContents 的表格（如围护窗体做法表）里
         # setColumnWidth 会被内容宽度覆盖，按钮列必须显式 Interactive，
         # 否则按钮列宽随内容漂移、按钮被压扁
         header.setSectionResizeMode(new_col, QHeaderView.ResizeMode.Interactive)
         self._table.setColumnWidth(self._col, self._width)
-        self._prev_stretch_col = new_col - 1 if new_col > 0 else None
-        if self._prev_stretch_col is not None:
-            header.setSectionResizeMode(self._prev_stretch_col, QHeaderView.ResizeMode.Stretch)
         self.place()
 
     def set_visible(self, visible: bool) -> None:
