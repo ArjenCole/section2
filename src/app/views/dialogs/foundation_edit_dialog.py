@@ -10,7 +10,8 @@
 * 描述 Label 在特殊地基框下方，作为整个窗体当前选择的总体描述（双击同样打开
   构件公式编辑；描述文案与旧版 FlashCpnt 一致）；
 * 底部「取消 / 确认」按钮（Apple HIG：取消在左、确认在右），原则名称在确认时
-  写回（重命名同步构件引用）。
+  写回（重命名同步构件引用）；换填层与特殊地基构件的编辑只写共享会话、
+  确认时统一落库，「取消」回滚会话整体丢弃。
 """
 
 from __future__ import annotations
@@ -139,9 +140,12 @@ class FoundationEditDialog(FramelessDialog):
 
     # ------------------------------------------------------------------ 数据
     def _foundation(self) -> PcpFoundation | None:
+        # 提交/直改后已加载的 replacements/components 集合不会自动刷新，取用时
+        # 强制重载；expire 后的重载路径不做 autoflush，先把未 flush 的编辑写进
+        # 事务（flush 不提交，「取消」的回滚仍然整体丢弃）
+        orm.session().flush()
         foundation = orm.session().get(PcpFoundation, self._foundation_id)
         if foundation is not None:
-            # 提交/直改后已加载的 replacements/components 集合不会自动刷新，取用时强制重载
             orm.session().expire(foundation)
         return foundation
 
@@ -151,7 +155,6 @@ class FoundationEditDialog(FramelessDialog):
             foundation = self._foundation()
             if foundation is None:
                 return
-            orm.session().expire(foundation)  # 提交后强制重载 replacements/components
             self._name.setText(foundation.name)
             replacements = list(foundation.replacements)
             self._replace_buttons.clear_row_buttons()
@@ -199,7 +202,6 @@ class FoundationEditDialog(FramelessDialog):
                 replacement.h = float(item.text() or 0)
             except ValueError:
                 pass
-        project_io.commit()
         self._refresh_describe()
 
     def _on_component_pick(self, text: str) -> None:
@@ -217,7 +219,6 @@ class FoundationEditDialog(FramelessDialog):
         project_io.attach_foundation_component(
             orm.session(), foundation, project_io.component_library(), name=text
         )
-        project_io.commit()
         self._refresh_describe()
 
     def _edit_component(self) -> None:
@@ -229,7 +230,6 @@ class FoundationEditDialog(FramelessDialog):
             return
         dialog = ComponentEditDialog(component, self)
         if dialog.exec() and dialog.saved:
-            project_io.commit()
             self._refresh_describe()
 
     # ------------------------------------------------------------------ 换填层 Insert/Delete
@@ -247,7 +247,6 @@ class FoundationEditDialog(FramelessDialog):
         )
         for index, item in enumerate(sorted(foundation.replacements, key=lambda r: (r.order_no, r.id))):
             item.order_no = index
-        project_io.commit()
         self._fill()
 
     def _delete_selected_replacements(self) -> None:
@@ -270,10 +269,18 @@ class FoundationEditDialog(FramelessDialog):
         orm.session().expire(foundation)  # 集合里还留着已删对象，强制重载
         for index, item in enumerate(foundation.replacements):
             item.order_no = index
-        project_io.commit()
         self._fill()
 
     # ------------------------------------------------------------------ 确认 / 取消
+    def reject(self) -> None:  # noqa: N802 - Qt 命名
+        """取消：回滚会话，丢弃换填层与特殊地基构件的全部未落库修改。
+
+        编辑过程只写共享会话不 commit（按钮、标题栏 X、Esc 关闭都汇到这里），
+        因此一次回滚即可整体复原。
+        """
+        orm.session().rollback()
+        super().reject()
+
     def _confirm(self) -> None:
         """BTNyes：名称写回（mscCtrl.Set 同步引用）。
 
@@ -291,6 +298,7 @@ class FoundationEditDialog(FramelessDialog):
         if name != foundation.name:
             project_io.rename_foundation(foundation.id, name)
             bus().tree_structure_changed.emit()
+        # 本次编辑（换填层、特殊地基构件）随这次提交统一落库
         project_io.commit()
         bus().principle_changed.emit()
         self.accept()

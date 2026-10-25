@@ -11,8 +11,9 @@
   Delete 删除（全删时提示“至少需要一种围护做法。”）；
 * 双击“围护形式描述”：多级围护 → 做法编辑（FormEcls），单构件 → 构件公式编辑
   （FormCpntEdit）；双击“止水形式描述” → 构件公式编辑；
-* 「确认修改」才写回顶部参数（原版“编辑副本、确认生效”；做法与子编辑器沿用新版
-  即改即存的持久化方式）。
+* 「确认修改」才落库（原版“编辑副本、确认生效”）：顶部参数本就确认时写回，
+  做法表与子编辑器的编辑也只写共享会话、不 commit；「取消修改」回滚会话，
+  本次编辑（含子编辑器）整体丢弃。
 """
 
 from __future__ import annotations
@@ -159,7 +160,13 @@ class EnclosureEditDialog(FramelessDialog):
         return orm.session().get(PcpEnclosure, self._enclosure_id)
 
     def _fresh(self) -> PcpEnclosure | None:
-        """重载原则（丢弃已加载的 works/cushions 集合缓存，仅在无未提交修改时调用）。"""
+        """重载原则（丢弃已加载的 works/cushions 集合缓存）。
+
+        编辑过程不再即改即存，未提交修改是常态；expire 后的重载路径不做
+        autoflush，未 flush 的修改会被静默刷掉，因此先 flush 进事务（flush
+        不提交，「取消修改」的回滚仍然整体丢弃）。
+        """
+        orm.session().flush()
         enclosure = self._enclosure()
         if enclosure is not None:
             orm.session().expire(enclosure)
@@ -282,7 +289,6 @@ class EnclosureEditDialog(FramelessDialog):
             work.min_depth = float(item.text())
         except ValueError:
             pass
-        project_io.commit()
         self._fill()
 
     def _on_cell_double_clicked(self, row: int, column: int) -> None:
@@ -295,7 +301,6 @@ class EnclosureEditDialog(FramelessDialog):
             if work.cpnt_cat == MULTI_LEVEL_TEXT:
                 dialog = EnclosureWorkDialog(work, self)
                 if dialog.exec() and dialog.saved:
-                    project_io.commit()
                     self._fill()
             else:
                 level = work.levels[0] if work.levels else None
@@ -304,7 +309,6 @@ class EnclosureEditDialog(FramelessDialog):
                     return
                 dialog = ComponentEditDialog(component, self)
                 if dialog.exec() and dialog.saved:
-                    project_io.commit()
                     self._fill()
         elif column == _COL_WS_DIS:
             component = work.waterstops[0] if work.waterstops else None
@@ -312,7 +316,6 @@ class EnclosureEditDialog(FramelessDialog):
                 return
             dialog = ComponentEditDialog(component, self)
             if dialog.exec() and dialog.saved:
-                project_io.commit()
                 self._fill()
 
     def _on_work_category(self, work: EnclosureWork, text: str) -> None:
@@ -320,7 +323,6 @@ class EnclosureEditDialog(FramelessDialog):
         if self._loading or work.cpnt_cat == text or not text:
             return
         project_io.set_work_category(orm.session(), work, project_io.component_library(), text)
-        project_io.commit()
         self._fill()
 
     def _on_waterstop_changed(self, work: EnclosureWork, text: str) -> None:
@@ -337,7 +339,6 @@ class EnclosureEditDialog(FramelessDialog):
             enclosure_work_id=work.id,
         )
         orm.session().expire(work)  # expire_on_commit=False：让 waterstops 集合重载
-        project_io.commit()
         self._fill()
 
     def _work_at(self, row: int) -> EnclosureWork | None:
@@ -373,7 +374,6 @@ class EnclosureEditDialog(FramelessDialog):
                 shifted[1].min_depth = 3.5 if len(shifted) == 2 else shifted[2].min_depth / 2.0
         for index, work in enumerate(enclosure.works_sorted()):
             work.order_no = index
-        project_io.commit()
         self._fill()
 
     def _delete_selected_works(self) -> None:
@@ -400,10 +400,18 @@ class EnclosureEditDialog(FramelessDialog):
             remaining[0].min_depth = 0.0  # 删除后第一行埋深归 0（原版）
         for index, work in enumerate(remaining):
             work.order_no = index
-        project_io.commit()
         self._fill()
 
     # ------------------------------------------------------------------ 确认 / 取消
+    def reject(self) -> None:  # noqa: N802 - Qt 命名
+        """取消修改：回滚会话，丢弃做法表与子编辑器的全部未落库修改。
+
+        编辑过程只写共享会话不 commit（按钮、标题栏 X、Esc 关闭都汇到这里，
+        Esc 已被 keyPressEvent 屏蔽），因此一次回滚即可整体复原。
+        """
+        orm.session().rollback()
+        super().reject()
+
     def _confirm(self) -> None:
         """BTNyes：GetDetailFormFm + mscCtrl.Set（确认修改才写回）。
 
@@ -459,6 +467,7 @@ class EnclosureEditDialog(FramelessDialog):
                 cushion.h = float(self._cushion_h.text() or 0)
             except ValueError:
                 pass
+        # 本次编辑（做法表、子编辑器、垫层）随这次提交统一落库
         project_io.commit()
         if renamed:
             bus().tree_structure_changed.emit()

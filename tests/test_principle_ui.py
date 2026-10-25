@@ -309,3 +309,173 @@ def test_enclosure_table_column_widths_stable_across_rebuilds(qapp, project) -> 
         assert widths_after == widths, f"{widths} != {widths_after}"
     finally:
         dialog.close()
+
+
+# --------------------------------------------------------------------------- #
+# 取消修改丢弃本次编辑（编辑只写会话，确认才统一落库）
+# --------------------------------------------------------------------------- #
+def test_enclosure_dialog_cancel_discards_work_edits(qapp, project) -> None:
+    """围护原则编辑：取消修改后，新增/删行/埋深编辑全部失效，确认才落库。"""
+    from app.core.models import base as orm
+    from app.views.dialogs.enclosure_edit_dialog import EnclosureEditDialog
+
+    def works_snapshot() -> list[tuple[float, str]]:
+        enclosure = project_io.enclosures()[0]
+        orm.session().flush()
+        orm.session().expire(enclosure)
+        return [(work.min_depth, work.cpnt_cat) for work in enclosure.works_sorted()]
+
+    before = works_snapshot()
+    dialog = EnclosureEditDialog(project_io.enclosures()[0].id)
+    try:
+        dialog._insert_work()  # 追加做法（未落库）
+        dialog._insert_work()  # 再追加一条（未落库）
+        dialog._work_table.item(1, 0).setText("9.5")  # 改中间行埋深（未落库）
+        dialog._delete_work_rows([1])  # 删中间行（未落库）
+        assert works_snapshot() != before  # 编辑期间会话里已生效
+        dialog.reject()  # 取消修改 → 回滚
+        assert works_snapshot() == before
+    finally:
+        dialog.close()
+
+    confirmed = EnclosureEditDialog(project_io.enclosures()[0].id)
+    try:
+        confirmed._insert_work()
+        confirmed._confirm()  # 确认修改 → 统一落库
+        assert len(works_snapshot()) == len(before) + 1
+    finally:
+        confirmed.close()
+
+
+def test_foundation_dialog_cancel_discards_edits(qapp, project) -> None:
+    """地基原则编辑：取消修改后，换填层的增行/改材质失效，确认才落库。"""
+    from app.core.models import base as orm
+    from app.views.dialogs.foundation_edit_dialog import FoundationEditDialog
+
+    foundation = project_io.foundations()[0]
+
+    def replacements_snapshot() -> list[tuple[str, float]]:
+        orm.session().flush()
+        orm.session().expire(foundation)
+        return [(layer.name, layer.h) for layer in foundation.replacements]
+
+    before = replacements_snapshot()
+    dialog = FoundationEditDialog(foundation.id)
+    try:
+        dialog._insert_replacement()
+        dialog._replace_table.item(0, 0).setText("砂砾")  # 改首行材质（未落库）
+        assert replacements_snapshot() != before
+        dialog.reject()
+        assert replacements_snapshot() == before
+    finally:
+        dialog.close()
+
+    confirmed = FoundationEditDialog(foundation.id)
+    try:
+        confirmed._insert_replacement()
+        confirmed._confirm()
+        assert len(replacements_snapshot()) == len(before) + 1
+    finally:
+        confirmed.close()
+
+
+def test_width_dialog_cancel_discards_changes(qapp, project) -> None:
+    """面宽原则编辑：取消后取值方式与宽度表编辑失效，确认才落库。"""
+    from app.core.models import base as orm
+    from app.core.models.models import WIDTH_KIND_WORK, WidthItem
+    from app.views.dialogs.principle_dialogs import WidthEditDialog, _WIDTH_CATEGORY_ORDER
+
+    from sqlalchemy import select
+
+    width = project_io.width_principles()[0]
+    original_mode = width.groove_width
+    dialog = WidthEditDialog(width.id)
+    try:
+        dialog._tabs.setCurrentIndex(0 if original_mode != "WorkWidth" else 1)
+        dialog.reject()
+        orm.session().expire(width)
+        assert width.groove_width == original_mode
+    finally:
+        dialog.close()
+
+    confirmed = WidthEditDialog(width.id)
+    try:
+        category = _WIDTH_CATEGORY_ORDER[0]
+        confirmed._tables[WIDTH_KIND_WORK].item(0, 1).setText("123")  # DN0 格
+        confirmed._confirm()
+        orm.session().expire(width)
+        hit = (
+            orm.session()
+            .scalars(
+                select(WidthItem).where(
+                    WidthItem.width_id == width.id,
+                    WidthItem.kind == WIDTH_KIND_WORK,
+                    WidthItem.pipe_type == category,
+                    WidthItem.dn == 0,
+                )
+            )
+            .first()
+        )
+        assert hit is not None and hit.width == 123
+    finally:
+        confirmed.close()
+
+
+def test_precipitation_dialog_cancel_discards_edits(qapp, project) -> None:
+    """降水原则编辑：取消后井型勾选修改失效，确认才落库。"""
+    from PySide6.QtCore import Qt
+
+    from app.core.models import base as orm
+    from app.views.dialogs.principle_dialogs import PrecipitationEditDialog
+
+    precipitation = project_io.precipitations()[0]
+    original = precipitation.light_well
+    dialog = PrecipitationEditDialog(precipitation.id)
+    try:
+        dialog._table.item(1, 1).setCheckState(Qt.CheckState.Unchecked)  # 取消轻型井点
+        dialog.reject()
+        orm.session().expire(precipitation)
+        assert precipitation.light_well == original
+    finally:
+        dialog.close()
+
+    confirmed = PrecipitationEditDialog(precipitation.id)
+    try:
+        confirmed._table.item(1, 1).setCheckState(Qt.CheckState.Unchecked)
+        confirmed._confirm()
+        orm.session().expire(precipitation)
+        assert precipitation.light_well == "-1|1.2|2"
+    finally:
+        confirmed.close()
+
+
+def test_enclosure_work_dialog_cancel_restores_levels(qapp, project) -> None:
+    """多级围护编辑窗体：取消修改把分级子树恢复为进入时的样子，确认才生效。"""
+    from app.core.models import base as orm
+    from app.views.dialogs.principle_dialogs import EnclosureWorkDialog
+
+    work = project_io.enclosures()[0].works_sorted()[0]
+
+    def levels_snapshot() -> list[tuple[str, float, float]]:
+        orm.session().flush()
+        orm.session().expire(work)
+        return [(level.name, level.h, level.step_width) for level in work.levels]
+
+    before = levels_snapshot()
+    dialog = EnclosureWorkDialog(work)
+    try:
+        dialog._insert_level()
+        assert len(levels_snapshot()) == len(before) + 1
+        dialog.reject()  # 取消修改 → 分级子树恢复
+        assert levels_snapshot() == before
+    finally:
+        dialog.close()
+
+    confirmed = EnclosureWorkDialog(work)
+    try:
+        confirmed._insert_level()
+        confirmed._accept()  # 确认修改：本窗体只标记生效，落库由原则主窗体统一提交
+        project_io.commit()  # 模拟主窗体「确认修改」
+        assert len(levels_snapshot()) == len(before) + 1
+    finally:
+        confirmed.close()

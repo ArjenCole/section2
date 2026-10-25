@@ -11,6 +11,10 @@ FoundationEditDialog，复刻 FormPE / FormPF）与横条等处复用：
   按沟槽总宽度两个 tab，各自一张宽度表，当前 tab 即取值方式）；
 * :class:`PrecipitationEditDialog` —— 降水原则编辑（FormPrecipitation：
   措施名称 / 选用 / 埋深 / 范围 / 侧数 / 间隔，五种井型）。
+
+持久化约定（原版“编辑副本、确认生效”）：编辑过程只写共享会话不 commit，
+「确认」才统一落库，「取消」回滚会话整体丢弃——编辑期间落库会让“取消修改”
+形同虚设（做法表、子编辑器曾沿用即改即存，取消后修改仍然生效）。
 """
 
 from __future__ import annotations
@@ -125,7 +129,11 @@ def precipitation_text(enclosure: PcpEnclosure) -> str:
 
 
 class PrincipleSubDialog(FramelessDialog):
-    """原则子编辑对话框的公共骨架：无边框（Quotor 风格）+ 确定 = 写库 / 取消 = 丢弃。
+    """原则子编辑对话框的公共骨架：无边框（Quotor 风格）+ 确定 = 生效 / 取消 = 丢弃。
+
+    修改只写共享会话、不落库：落库统一由原则主窗体（EnclosureEditDialog 等）
+    在其「确认修改」时 commit，主窗体「取消修改」回滚会话时一并丢弃（与旧版
+    FormPE 编辑副本的语义一致）。
 
     ``with_buttons=False`` 时不加底部按钮行，由子类自建（如多级围护编辑窗体的
     右侧竖排按钮，旧版 FormEcls 布局）。
@@ -177,6 +185,10 @@ class EnclosureWorkDialog(PrincipleSubDialog):
         self.resize(695, 460)
         self._work = work
         self._repair_levels()
+        # 取消恢复用：记下进入窗体时的分级子树（级字段 + 级构件及参数）。
+        # 本窗体的编辑只写会话不落库，取消时按这份快照还原，最终生效与否
+        # 由原则主窗体的 确认/取消 决定
+        self._level_backup = self._snapshot_levels()
         self._build()
         self._fill()
 
@@ -251,6 +263,68 @@ class EnclosureWorkDialog(PrincipleSubDialog):
     def _levels(self) -> list[EnclosureLevel]:
         return list(self._work.levels)
 
+    def _snapshot_levels(self) -> list[dict]:
+        """分级子树快照：级字段 + 级构件（名称、公式、参数），取消恢复用。"""
+        snaps: list[dict] = []
+        for level in self._levels():
+            component = level.components[0] if level.components else None
+            snaps.append(
+                {
+                    "name": level.name,
+                    "h": level.h,
+                    "step_width": level.step_width,
+                    "component": None
+                    if component is None
+                    else {
+                        "name": component.name,
+                        "formula": component.formula,
+                        "params": [(param.key, param.value) for param in component.params],
+                    },
+                }
+            )
+        return snaps
+
+    def reject(self) -> None:  # noqa: N802 - Qt 命名
+        """取消修改：把分级子树恢复为进入窗体时的样子。
+
+        只写会话不落库——主窗体确认时随之生效、主窗体取消时随会话回滚。
+        """
+        from sqlalchemy import select
+
+        session = orm.session()
+        # 级列表直接按 DB 查（级集合在编辑过程中可能陈旧）；级联删除级构件与参数
+        levels = session.scalars(
+            select(EnclosureLevel)
+            .where(EnclosureLevel.work_id == self._work.id)
+            .order_by(EnclosureLevel.order_no)
+        ).all()
+        for level in levels:
+            session.delete(level)
+        session.flush()
+        for order_no, snap in enumerate(self._level_backup):
+            level = EnclosureLevel(
+                work_id=self._work.id,
+                name=snap["name"],
+                h=snap["h"],
+                step_width=snap["step_width"],
+                order_no=order_no,
+            )
+            session.add(level)
+            session.flush()
+            component = snap["component"]
+            if component is not None:
+                rebuilt = Component(
+                    name=component["name"],
+                    formula=component["formula"],
+                    enclosure_level_id=level.id,
+                )
+                for key, value in component["params"]:
+                    rebuilt.params.append(ComponentParam(key=key, value=value))
+                session.add(rebuilt)
+        session.flush()
+        session.expire(self._work)  # 让 levels 集合与恢复结果一致
+        super().reject()
+
     def _add_level(self) -> None:
         # BTNadd（FormEcls）：新级加在最后
         self._insert_level()
@@ -286,7 +360,6 @@ class EnclosureWorkDialog(PrincipleSubDialog):
             dirty = True
         if dirty:
             orm.session().expire(self._work)
-            project_io.commit()
 
     def _insert_level(self, position: int | None = None) -> None:
         """InsertCpnt（FormEcls）：新增一级（默认加最后，Insert 键插到当前行前）。
@@ -317,7 +390,6 @@ class EnclosureWorkDialog(PrincipleSubDialog):
                 session, library, "Ei", names[0], enclosure_level_id=level.id
             )
         session.expire(self._work)  # 让 levels 集合包含新行
-        project_io.commit()
         self._fill()
 
     def _delete_levels(self) -> None:
@@ -338,7 +410,7 @@ class EnclosureWorkDialog(PrincipleSubDialog):
         orm.session().expire(self._work)
         for index, level in enumerate(self._levels()):
             level.order_no = index
-        project_io.commit()
+        orm.session().flush()  # expire 重载不做 autoflush，先写进事务
         self._fill()
 
     def _on_level_changed(self, item: QTableWidgetItem) -> None:
@@ -362,7 +434,6 @@ class EnclosureWorkDialog(PrincipleSubDialog):
                 pass
         else:
             return
-        project_io.commit()
         self._fill()
 
     def _on_level_category(self, level: EnclosureLevel, text: str) -> None:
@@ -380,7 +451,8 @@ class EnclosureWorkDialog(PrincipleSubDialog):
             orm.session(), library, "Ei", text, enclosure_level_id=level.id
         )
         orm.session().expire(level)  # 让 components 集合重载新构件
-        project_io.commit()
+        # expire 重载不做 autoflush，先把级名等未 flush 修改写进事务
+        orm.session().flush()
         self._fill()
 
     def _on_level_double_clicked(self, row: int, column: int) -> None:
@@ -395,7 +467,6 @@ class EnclosureWorkDialog(PrincipleSubDialog):
             return
         dialog = ComponentEditDialog(component, self)
         if dialog.exec() and dialog.saved:
-            project_io.commit()
             self._fill()
 
     def save(self) -> None:
@@ -539,12 +610,13 @@ class WidthEditDialog(FramelessDialog):
         self._tables: dict[str, CellFillTable] = {}
         self._build_ui()
         self._fill()
-        # 取值方式跟随当前 tab（旧版 grooveWidth 单选）。
+        # 取值方式跟随当前 tab（旧版 grooveWidth 单选），切换只写会话、确认才落库。
         # 必须在 _fill() 之后才连：QTabWidget 的 currentChanged 会在显示/布局阶段
-        # 延迟补发一次，若在 _fill() 之前连上，那一发会在对话框早已关闭后触发一次
-        # 多余的 project_io.commit()；碰上"下一次新建工程正在提交事务"就会重入
-        # commit，把 SQLAlchemy 的提交状态机打断（实测 IllegalStateChangeError /
-        # ResourceClosedError，也就是日志里那条 "session is in 'prepared' state"）。
+        # 延迟补发一次，若在 _fill() 之前连上，那一发会在对话框早已关闭后触发——
+        # 槽内再用 isVisible() 挡掉关窗后的补发（早先版本在槽里直接 commit，
+        # 补发撞上"下一次新建工程正在提交事务"就会重入 commit，把 SQLAlchemy
+        # 的提交状态机打断，实测 IllegalStateChangeError / ResourceClosedError，
+        # 也就是日志里那条 "session is in 'prepared' state"）。
         self._tabs.currentChanged.connect(self._on_tab_changed)
 
     # ------------------------------------------------------------------ 界面
@@ -602,9 +674,11 @@ class WidthEditDialog(FramelessDialog):
 
     # ------------------------------------------------------------------ 数据
     def _width(self) -> PcpWidth | None:
+        # expire 后的重载路径不做 autoflush，先把未 flush 的编辑写进事务
+        # （flush 不提交，「取消」的回滚仍然整体丢弃），再强制重载 items
+        orm.session().flush()
         width = orm.session().get(PcpWidth, self._width_id)
         if width is not None:
-            # 提交后已加载的 items 集合不会自动刷新，取用时强制重载
             orm.session().expire(width)
         return width
 
@@ -632,16 +706,15 @@ class WidthEditDialog(FramelessDialog):
             self._loading = False
 
     def _on_tab_changed(self, _index: int) -> None:
-        if self._loading or not orm.is_open():
+        if self._loading or not orm.is_open() or not self.isVisible():
             return
         width = self._width()
         if width is None:
             return
         desired = GROOVE_WIDTH_WORK if self._tabs.currentIndex() == 0 else GROOVE_WIDTH_B
         if width.groove_width == desired:
-            return  # 值没变就不写库：延迟补发的信号不该再产生一次 commit
-        width.groove_width = desired
-        project_io.commit()
+            return  # 值没变就不写：延迟补发的信号不该产生多余的未落库修改
+        width.groove_width = desired  # 确认时随本次编辑统一落库
 
     def _reset_current(self) -> None:
         """把当前 tab 的表恢复为图集默认（另一种方式的表不动）。"""
@@ -684,8 +757,8 @@ class WidthEditDialog(FramelessDialog):
                             order_no=row_index * 100 + column,
                         )
                     )
-        session.expire(width)  # expire_on_commit=False：重载 items
-        project_io.commit()
+        session.expire(width)  # 强制重载 items
+        # 不在此处落库：整表替换是未提交修改，确认时统一 commit、取消随会话回滚
 
     def _confirm(self) -> None:
         self._apply_tables()
@@ -698,8 +771,14 @@ class WidthEditDialog(FramelessDialog):
             if name != width.name:
                 project_io.rename_width(width.id, name)
                 bus().tree_structure_changed.emit()  # 同步原则横条与引用名
+        project_io.commit()  # 本次编辑（两张宽度表、取值方式）在此统一落库
         bus().principle_changed.emit()
         self.accept()
+
+    def reject(self) -> None:  # noqa: N802 - Qt 命名
+        """取消：回滚会话，丢弃宽度表与取值方式的全部未落库修改。"""
+        orm.session().rollback()
+        super().reject()
 
 
 class PrecipitationEditDialog(FramelessDialog):
@@ -872,7 +951,7 @@ class PrecipitationEditDialog(FramelessDialog):
             gap = _num(self._COL_GAP, 0.0)
             sides = _num(self._COL_SIDES, 0.0)
             setattr(precipitation, key, format_precipitation(elevation, gap, sides))
-        project_io.commit()
+        # 不在此处落库：单元格编辑是未提交修改，确认时统一 commit、取消随会话回滚
 
     def _confirm(self) -> None:
         self._apply_rows()
@@ -885,5 +964,11 @@ class PrecipitationEditDialog(FramelessDialog):
             if name != precipitation.name:
                 project_io.rename_precipitation(precipitation.id, name)
                 bus().tree_structure_changed.emit()  # 同步原则横条与引用名
+        project_io.commit()  # 本次编辑（各井型参数）在此统一落库
         bus().principle_changed.emit()
         self.accept()
+
+    def reject(self) -> None:  # noqa: N802 - Qt 命名
+        """取消：回滚会话，丢弃井型参数的全部未落库修改。"""
+        orm.session().rollback()
+        super().reject()
