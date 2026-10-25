@@ -1,34 +1,20 @@
 """冒烟：offscreen 实例化各表格，验证固定列宽行为（不随父控件拉伸）。
 
-本机 System32 里若有旧版 msvcp140.dll 会抢在 PySide6 自带运行时之前加载，
-导致 Qt 6.11 DLL 报“找不到指定的程序”（打包版 exe 目录自带运行时不受影响）。
-这里先按全路径预加载 PySide6 目录里的 VC 运行时：加载器对已加载模块按名字
-复用，后续 QtCore 的依赖就落在正确版本上。
+与 main.py / tests/conftest.py 相同的约定：先 import app（触发
+app/__init__.py 的系统 ICU 预加载），再导入 PySide6——否则在 PATH 里
+带第三方 ICU 的机器上（如 Git Bash 继承的 Anaconda PATH）import PySide6
+会报 WinError 127（DLL load failed，找不到指定的程序）。
 """
-import ctypes
 import os
 import sys
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-import PySide6
-
-_PYSIDE_DIR = os.path.dirname(PySide6.__file__)
-# 本机 System32 的旧版 VC 运行时会抢在 PySide6 自带版本之前被解析，
-# Qt 6.11 DLL 因此报“找不到指定的程序”（打包版 exe 目录自带运行时不受影响）。
-# 预加载 PySide6 目录里的全部 DLL：加载器对已加载模块按名字复用，
-# 之后 QtCore/QtWidgets 的依赖就都落在正确版本上。
-for _name in sorted(os.listdir(_PYSIDE_DIR)):
-    if _name.lower().endswith(".dll"):
-        try:
-            ctypes.WinDLL(os.path.join(_PYSIDE_DIR, _name), winmode=8)
-        except OSError:
-            pass
-
+import app  # noqa: F401  ICU 预加载必须早于 PySide6
 from PySide6.QtWidgets import QApplication, QHeaderView
 
-app = QApplication([])
+app_qt = QApplication([])
 
 failures = []
 
@@ -81,8 +67,8 @@ if mode_prev != QHeaderView.ResizeMode.Interactive:
 wide = panel._element_table
 wide.resize(120, 300)
 wide.show()
-app.processEvents()
-app.processEvents()
+app_qt.processEvents()
+app_qt.processEvents()
 if wide.horizontalScrollBar().maximum() <= 0:
     failures.append("主表格：视口压窄后未出现横向滚动范围")
 
