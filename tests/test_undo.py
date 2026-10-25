@@ -632,6 +632,14 @@ def test_redo_with_ctrl_key_does_not_accumulate_selection(qapp, project) -> None
             assert table.currentRow() == row
             assert _selected_rows() == [row]
     finally:
+        # QTest 发送的按键事件（连 KeyRelease 在内）都携带 Ctrl 修饰符标记，
+        # 处理完后应用层 QApplication.keyboardModifiers() 滞留为 Ctrl——真实
+        # 键盘会单独发修饰键释放事件，QTest 不会。不显式释放的话，Ctrl 泄漏
+        # 进同一进程里的后续用例：setCurrentCell 会被 QAbstractItemView 的
+        # selectionCommand 判读成“按着 Ctrl 的追加/翻转选择”，测试间互相污染
+        # （回归：test_enclosure_dialog_insert_rules 删行被全选拦截、
+        # test_pipe_add_delete_buttons_follow_category 选区滚成多选）。
+        QTest.keyRelease(window, Qt.Key_Control)
         window.close()
         qapp.processEvents()
 

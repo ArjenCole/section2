@@ -74,8 +74,13 @@ class MultiPrincipleTab(QWidget):
         self._loading = False
         self._last_active = False
         self._build_ui()
+        # 延迟刷新定时器（见 _defer_reload 的说明）：必须是 C++ 子对象，
+        # Tab 析构时挂起的 timeout 一并取消
+        self._deferred_reload_timer = QTimer(self)
+        self._deferred_reload_timer.setSingleShot(True)
+        self._deferred_reload_timer.timeout.connect(self.reload)
         connect_weak(bus().unit_changed, self, "_defer_reload")
-        bus().tree_structure_changed.connect(self._defer_reload)
+        connect_weak(bus().tree_structure_changed, self, "_defer_reload")
 
     # ------------------------------------------------------------------ 界面
     def _build_ui(self) -> None:
@@ -233,8 +238,18 @@ class MultiPrincipleTab(QWidget):
 
     # ------------------------------------------------------------------ 事件
     def _defer_reload(self, *_args) -> None:
-        """延后刷新：本槽可能由表格自身编辑信号触发，立即重建会删掉正编辑的控件。"""
-        QTimer.singleShot(0, self.reload)
+        """延后刷新：本槽可能由表格自身编辑信号触发，立即重建会删掉正编辑的控件。
+
+        延迟回调必须挂在**子对象定时器**上（QTimer(self) + timeout 连接绑定
+        方法）。不能用 ``QTimer.singleShot(0, callable)``：无论带不带接收者
+        上下文，挂起的回调都持有绑定方法的强引用，会把离开作用域的 Tab 整个
+        钉住——不销毁、不释放，下一次事件循环里还拿着旧工程的构件 id 在新
+        工程数据库上执行重载（回归：测试套件合并运行时随机原生崩溃，
+        event_bus 模块文档记载的同类事故）。子对象定时器随 Tab 析构自动取消，
+        timeout 连接对绑定方法的接收者只持弱引用，不钉住；连续触发只会重启
+        同一个单发定时器，也不会堆积回调。
+        """
+        self._deferred_reload_timer.start()
 
     def _on_name_changed(self, ref_id: int, text: str) -> None:
         if self._loading:

@@ -264,6 +264,7 @@ def test_tables_disable_highlight_sections(qapp, project):
     highlightSections（QHeaderView 默认开）会让选中列的列头节走另一条渲染
     路径，文字变粗（视觉上字体忽粗忽细、像变小）；QSS 的列头规则没有
     :selected 背景，高亮的唯一表现就是这个字重跳变，故统一关闭。"""
+    from PySide6.QtCore import QEvent
     from PySide6.QtWidgets import QDialog, QVBoxLayout
 
     from app.services import project_io
@@ -286,6 +287,13 @@ def test_tables_disable_highlight_sections(qapp, project):
         assert panel._param_table.horizontalHeader().highlightSections() is False
     finally:
         dialog.close()
+        # 独立创建的控件须在用例内销毁：面板连着全局事件总线，PySide 对绑定
+        # 方法连接经 cell 强引用持有接收者（跨 C++/Python 边界的环，Python GC
+        # 不可见），close() 只是隐藏——泄漏的面板会存活到后续用例里继续接收
+        # 总线广播（回归：套件合并运行时随机原生崩溃，见 event_bus 模块文档）
+        dialog.deleteLater()
+        qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        qapp.processEvents()
 
     foundation = FoundationEditDialog(project_io.foundations()[0].id)
     multi = MultiPrincipleTab("pe")
@@ -294,3 +302,7 @@ def test_tables_disable_highlight_sections(qapp, project):
         assert multi._table.horizontalHeader().highlightSections() is False
     finally:
         foundation.close()
+        foundation.deleteLater()
+        multi.deleteLater()
+        qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        qapp.processEvents()

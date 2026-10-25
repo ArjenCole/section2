@@ -271,6 +271,7 @@ def test_migrate_multi_principle_and_structure(tmp_path) -> None:
 # 多原则 Tab 控件
 # --------------------------------------------------------------------------- #
 def test_multi_principle_tab_widget(qapp, project, monkeypatch) -> None:
+    from PySide6.QtCore import QEvent
     from PySide6.QtWidgets import QComboBox
 
     from app.core.models import base as orm
@@ -319,3 +320,12 @@ def test_multi_principle_tab_widget(qapp, project, monkeypatch) -> None:
     assert len(principle_ref_rows(element.id, "pe")) == 1
     tab.set_element(None)
     assert not tab._element_active()
+    # 独立创建的控件必须在用例内销毁：MultiPrincipleTab 连着全局事件总线，
+    # PySide 对绑定方法连接经 cell 强引用持有接收者（跨 C++/Python 边界的
+    # 环，Python GC 不可见），丢弃后 C++ 对象不销毁、连接不摘除——泄漏的
+    # Tab 会带着本用例的构件 id 存活到后续用例里继续接收总线广播（回归：
+    # 与 test_component_edit_dialog_close_no_dead_callback 合并运行时随机
+    # 原生崩溃，event_bus 模块文档记载的同类事故）
+    tab.deleteLater()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qapp.processEvents()
