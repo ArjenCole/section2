@@ -81,6 +81,96 @@ def tool_get_element_detail(arguments: dict) -> dict:
     return {"ok": True, "data": element_detail_dict(element_id)}
 
 
+# --------------------------------------------------------------------------- #
+# 合槽编组（v3）：与界面同走 unit_vm 模块级函数，一条代码路径
+# --------------------------------------------------------------------------- #
+def tool_list_groups(arguments: dict) -> dict:
+    require_open()
+    from app.core.models import base as orm
+    from app.core.models.models import TrenchGroup
+    from sqlalchemy import select
+
+    groups = []
+    for group in orm.session().scalars(select(TrenchGroup).order_by(TrenchGroup.id)):
+        members = sorted(group.members, key=lambda item: (item.order_no, item.id))
+        groups.append(
+            {
+                "group_id": group.id,
+                "name": group.name,
+                "pe_name": group.pe_name,
+                "pw_name": group.pw_name,
+                "unit_id": group.unit_id,
+                "members": [
+                    {"element_id": member.id, "name": member.name}
+                    for member in members
+                ],
+            }
+        )
+    return {"ok": True, "data": {"groups": groups}}
+
+
+def tool_group_elements(arguments: dict) -> dict:
+    require_open()
+    element_ids = arguments.get("element_ids") or []
+    if not isinstance(element_ids, list) or not element_ids:
+        raise ToolError("请给出 element_ids（两条及以上构件 id，从左到右按表单顺序）。")
+    group, error = unit_vm.create_trench_group([int(item) for item in element_ids])
+    if error is not None or group is None:
+        raise ToolError(f"编组失败：{error}")
+    return {
+        "ok": True,
+        "data": {"group_id": group.id, "name": group.name},
+        "summary": f"已创建合槽组 id={group.id}：{group.name}",
+    }
+
+
+def tool_dissolve_group(arguments: dict) -> dict:
+    require_open()
+    group_id = arguments.get("group_id")
+    if group_id is None:
+        raise ToolError("请给出 group_id（先调 list_trench_groups 查看）。")
+    unit_vm.dissolve_trench_group(int(group_id))
+    return {"ok": True, "data": {"group_id": int(group_id)}}
+
+
+def tool_update_group(arguments: dict) -> dict:
+    require_open()
+    group_id = arguments.get("group_id")
+    if group_id is None:
+        raise ToolError("请给出 group_id。")
+    fields: dict = {}
+    for key in ("name", "pe_name", "pw_name"):
+        if arguments.get(key) is not None:
+            fields[key] = str(arguments[key])
+    if not fields:
+        raise ToolError("没有给出要修改的字段。可改：name/pe_name/pw_name（左边缘原则）。")
+    group = unit_vm.update_group(int(group_id), **fields)
+    if group is None:
+        raise ToolError(f"找不到 id={group_id} 的合槽组。")
+    return {"ok": True, "data": {"group_id": group.id, "changed": fields}}
+
+
+def tool_group_membership(arguments: dict) -> dict:
+    """加入 / 移出合槽组（action: add / remove）。"""
+    require_open()
+    element_id = arguments.get("element_id")
+    if element_id is None:
+        raise ToolError("请给出 element_id。")
+    action = str(arguments.get("action") or "add")
+    if action == "add":
+        group_id = arguments.get("group_id")
+        if group_id is None:
+            raise ToolError("加入合槽请给出 group_id（先调 list_trench_groups 查看）。")
+        ok, error = unit_vm.add_to_group(int(element_id), int(group_id))
+        if not ok:
+            raise ToolError(f"加入失败：{error}")
+        return {"ok": True, "data": {"element_id": int(element_id), "group_id": int(group_id)}}
+    if action == "remove":
+        unit_vm.remove_from_group(int(element_id))
+        return {"ok": True, "data": {"element_id": int(element_id)}}
+    raise ToolError("action 只能是 add / remove。")
+
+
 def tool_add_element(arguments: dict) -> dict:
     require_open()
     unit_id = resolve_unit_id(arguments)
@@ -124,13 +214,22 @@ def tool_update_element(arguments: dict) -> dict:
     require_open()
     element_id = resolve_element_id(arguments)
     fields: dict = {}
-    for key in ("name", "depth", "amount", "pe_name", "pf_name", "pp_name", "pw_name", "source"):
+    for key in (
+        "name", "depth", "amount", "pe_name", "pf_name", "pp_name", "pw_name", "source",
+        "pe_left_name", "pe_right_name", "excvt_side", "foundation_side",
+    ):
         if arguments.get(key) is not None:
             fields[key] = str(arguments[key])
+    for key in ("support_left", "support_right"):
+        if arguments.get(key) is not None:
+            fields[key] = bool(arguments[key])
     if arguments.get("category") is not None:
         fields["category"] = parse_category(arguments["category"])
     if not fields:
-        raise ToolError("没有给出要修改的字段。可改：name/category/depth/amount/pe_name/pf_name/pp_name/pw_name/source。")
+        raise ToolError(
+            "没有给出要修改的字段。可改：name/category/depth/amount/pe_name/pf_name/pp_name/pw_name/source"
+            "/pe_left_name/pe_right_name/support_left/support_right/excvt_side/foundation_side。"
+        )
     validate_principle_names(
         fields.get("pe_name"), fields.get("pf_name"), fields.get("pp_name"), fields.get("pw_name")
     )
@@ -264,7 +363,7 @@ def register(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
             "update_element",
-            "修改构件字段（名称/类别/埋深/数量/四类原则）。写操作。",
+            "修改构件字段（名称/类别/埋深/数量/四类原则/左右分设与支撑勾选）。写操作。",
             {
                 "type": "object",
                 "properties": {
@@ -273,9 +372,19 @@ def register(registry: ToolRegistry) -> None:
                     "category": {"type": "string",
                                  "enum": [name for name in CATEGORY_NAMES.values() if name]},
                     "depth": {"type": "string"}, "amount": {"type": "string"},
-                    "pe_name": {"type": "string"}, "pf_name": {"type": "string"},
+                    "pe_name": {"type": "string",
+                                "description": "围护原则名；填「左右分设」进入左右分设模式"},
+                    "pf_name": {"type": "string"},
                     "pp_name": {"type": "string"}, "pw_name": {"type": "string"},
                     "source": {"type": "string"},
+                    "pe_left_name": {"type": "string", "description": "左侧围护原则（左右分设模式）"},
+                    "pe_right_name": {"type": "string", "description": "右侧围护原则（左右分设模式）"},
+                    "support_left": {"type": "boolean", "description": "左侧支撑（Z 类公式）是否计算"},
+                    "support_right": {"type": "boolean", "description": "右侧支撑是否计算"},
+                    "excvt_side": {"type": "string", "enum": ["L", "R"],
+                                   "description": "挖填类型（土质/回填材质）取侧"},
+                    "foundation_side": {"type": "string", "enum": ["L", "R"],
+                                        "description": "管道基础（砼基础/角度/垫层）取侧"},
                 },
             },
             tool_update_element,
@@ -330,5 +439,74 @@ def register(registry: ToolRegistry) -> None:
                 "required": ["category", "unit", "index"],
             },
             tool_insert_element_from_template,
+        )
+    )
+    registry.register(
+        Tool(
+            "list_trench_groups",
+            "列出全部合槽编组（父节点）及其成员顺序（从左到右）。只读。",
+            {"type": "object", "properties": {}},
+            tool_list_groups,
+            read_only=True,
+        )
+    )
+    registry.register(
+        Tool(
+            "group_elements",
+            "把多条构件编成合槽组（父节点管最左一侧；成员转为左右分设，"
+            "表单顺序 = 沟槽从左到右）。写操作。",
+            {
+                "type": "object",
+                "properties": {
+                    "element_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "两条及以上构件 id，按从左到右顺序给出",
+                    }
+                },
+                "required": ["element_ids"],
+            },
+            tool_group_elements,
+        )
+    )
+    registry.register(
+        Tool(
+            "update_group",
+            "修改合槽父节点属性（name/pe_name/pw_name；PE、PW 只管最左一侧）。写操作。",
+            {
+                "type": "object",
+                "properties": {
+                    "group_id": {"type": "integer"},
+                    "name": {"type": "string"},
+                    "pe_name": {"type": "string", "description": "左边缘围护原则"},
+                    "pw_name": {"type": "string", "description": "左边缘工作面宽原则"},
+                },
+                "required": ["group_id"],
+            },
+            tool_update_group,
+        )
+    )
+    registry.register(
+        Tool(
+            "dissolve_group",
+            "解散合槽组（父节点删除、成员还原为独立构件）。写操作。",
+            {"type": "object", "properties": {"group_id": {"type": "integer"}}},
+            tool_dissolve_group,
+        )
+    )
+    registry.register(
+        Tool(
+            "group_membership",
+            "合槽组成员调整：action=add 加入组（追加为最右成员）/ action=remove 移出。写操作。",
+            {
+                "type": "object",
+                "properties": {
+                    "element_id": element_id_schema,
+                    "action": {"type": "string", "enum": ["add", "remove"]},
+                    "group_id": {"type": "integer"},
+                },
+                "required": ["element_id", "action"],
+            },
+            tool_group_membership,
         )
     )

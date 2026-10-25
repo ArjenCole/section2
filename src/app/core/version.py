@@ -19,6 +19,9 @@ SCHEMA_VERSION = 1
 #: 数据结构变更时 +1；打开时高版本拒绝（提示升级），低版本接受并按当前
 #: 结构兼容升级（stn_codec 负责旧字段的降级转换，open_project 弹提示）。
 #: v2：删除多围护/多地基原则引用（main_pe_name / pe_refs / pf_refs）。
+#: 2.0 开发阶段内新增（不升版本号）：构件左右分设（pe_left/pe_right、
+#: 支撑勾选、挖填/基础取侧）与合槽编组（groups + element.group），
+#: 全部字段可缺省，旧文件读入即默认值。
 STN_FILE_VERSION = 2
 
 #: 新版工程文件：1.0 风格的 XML 头（供 1.0 软件识别“高版本文件”并提醒）

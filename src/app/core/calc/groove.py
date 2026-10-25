@@ -244,3 +244,167 @@ def level_slope(level) -> Dim:
 
         return raw_dim(expression, evaluate_or_default(expression))
     return dim(0.0)
+
+
+# --------------------------------------------------------------------------- #
+# 左右分设：不对称几何（两侧各自的围护做法，级标高取并集切段）
+# --------------------------------------------------------------------------- #
+def trapezoid_lr(bottom: float, height: float, slope_l: float, slope_r: float) -> float:
+    """不对称梯形断面面积：``(2B+H*sL+H*sR)*H/2``；两侧直壁退化为 ``B*H``。"""
+    if slope_l == 0 and slope_r == 0:
+        return bottom * height
+    return (2.0 * bottom + height * (slope_l + slope_r)) * height / 2.0
+
+
+def trapezoid_lr_expr(bottom: Dim, height: Dim, slope_l: Dim, slope_r: Dim) -> str:
+    """不对称梯形的代入算式：直壁侧省略 ``H*s`` 项（与对称版同风格，不出 ``*0``）。"""
+    h = wrap(height.e)
+    b = wrap(bottom.e)
+    if slope_l.v == 0 and slope_r.v == 0:
+        return f"{b}*{h}"
+    terms = [f"2*{b}"]
+    if slope_l.v != 0:
+        terms.append(f"{h}*{wrap(slope_l.e)}")
+    if slope_r.v != 0:
+        terms.append(f"{h}*{wrap(slope_r.e)}")
+    return "(" + "+".join(terms) + f")*{h}/2"
+
+
+def widen_lr(delta: Dim, slope_l: Dim, slope_r: Dim) -> Dim:
+    """不对称层间外扩 ``Δ*sL+Δ*sR``（直壁侧省略项）。"""
+    if slope_l.v == 0 and slope_r.v == 0:
+        return dim(0.0)
+    parts: list[Dim] = []
+    if slope_l.v != 0:
+        parts.append(delta * slope_l)
+    if slope_r.v != 0:
+        parts.append(delta * slope_r)
+    return dim_sum(*parts)
+
+
+@dataclass
+class _SideSegment:
+    """不对称挖方的一个等坡段：每段左右各自的坡（合并判据 = 两坡都相等）。"""
+
+    bottom: Dim
+    height: Dim
+    slope_l: Dim
+    slope_r: Dim
+    note: str = ""
+    breaks_before: bool = False
+
+
+def cal_groove_sided(
+    pe,
+    work_l,
+    work_r,
+    pf,
+    ad: AtlasDims,
+    size_b: Dim,
+    size_h: Dim,
+    depth: Dim,
+    out: QDict,
+    cushion_name: str | None = None,
+) -> bool:
+    """左右分设模式的沟槽断面工程量（每延米），结果写入 ``out``。
+
+    与 :func:`cal_groove` 同构，区别在两侧各自的围护做法：级标高取**并集**切段，
+    每段梯形按 ``(2B+H*sL+H*sR)*H/2``，切级时平台加宽只加发生切级的一侧。
+    ``pe`` 提供挖填类型（开挖土质与回填材质）；分设模式下垫层材质与基础参数
+    取**管道基础侧**原则，由 ``cushion_name`` 显式传入。
+    """
+    if cushion_name is None:
+        cushion_name = pe.cushions[0].name if pe.cushions else "中粗砂"
+    layers = backfill_layers(pe, pf, ad, size_h, depth, cushion_name)
+    bottom = groove_width(ad, size_b)
+    heights_l = split_h_by_step(list(work_l.levels), depth)
+    heights_r = split_h_by_step(list(work_r.levels), depth)
+    if not heights_l or not heights_r:
+        return False
+    step_l = len(work_l.levels) - 1
+    step_r = len(work_r.levels) - 1
+
+    current = dim(0.0)
+    dig_key = f"开挖|{pe.excvt}|m3"
+    dig_segments: list[_SideSegment] = []
+    jump_pending = False
+    for key, layer, note in layers:
+        target = current + layer
+        clipped = False
+        while True:
+            top_l = heights_l[step_l]
+            top_r = heights_r[step_r]
+            # 并集切点：取两侧级标高中的较小者（其算式随被截的那侧进算式）
+            step_top = top_l if top_l.v <= top_r.v else top_r
+            if target.v <= step_top.v:
+                delta = target - current if clipped else Dim(target.v - current.v, layer.e)
+            else:
+                delta = step_top - current
+                clipped = True
+            slope_l = level_slope(work_l.levels[step_l])
+            slope_r = level_slope(work_r.levels[step_r])
+            out.add(
+                key,
+                trapezoid_lr(bottom.v, delta.v, slope_l.v, slope_r.v),
+                trapezoid_lr_expr(bottom, delta, slope_l, slope_r),
+                note,
+            )
+            dig_segments.append(
+                _SideSegment(
+                    bottom=bottom,
+                    height=delta,
+                    slope_l=slope_l,
+                    slope_r=slope_r,
+                    note=note,
+                    breaks_before=jump_pending,
+                )
+            )
+            jump_pending = False
+            if target.v <= step_top.v:
+                current = current + delta
+            else:
+                current = Dim(current.v + delta.v, step_top.e)
+            bottom = bottom + widen_lr(delta, slope_l, slope_r)
+            if current.v == top_l.v and step_l > 0:
+                step_l -= 1
+                if heights_l[step_l].v != heights_l[step_l + 1].v and heights_l[step_l + 1].v != 0:
+                    bottom = bottom + dim(work_l.levels[step_l].step_width)
+                    jump_pending = True  # 平台加宽处断开，不与上一段合并
+            if current.v == top_r.v and step_r > 0:
+                step_r -= 1
+                if heights_r[step_r].v != heights_r[step_r + 1].v and heights_r[step_r + 1].v != 0:
+                    bottom = bottom + dim(work_r.levels[step_r].step_width)
+                    jump_pending = True
+            if current.v - target.v >= -0.0001:
+                break
+
+    # 挖方 = 各段不对称梯形之和；(sL,sR) 相等且无平台断点的连续段合并成一条
+    dig = out.add(dig_key, 0.0)
+    dig.terms.clear()
+    dig.value = 0.0
+    index = 0
+    while index < len(dig_segments):
+        segment = dig_segments[index]
+        total = segment.height
+        notes = [segment.note] if segment.note else []
+        index += 1
+        while (
+            index < len(dig_segments)
+            and not dig_segments[index].breaks_before
+            and dig_segments[index].slope_l.v == segment.slope_l.v
+            and dig_segments[index].slope_r.v == segment.slope_r.v
+        ):
+            total = total + dig_segments[index].height
+            if dig_segments[index].note:
+                notes.append(dig_segments[index].note)
+            index += 1
+        if total.v != 0:
+            height = depth if abs(total.v - depth.v) < 1e-9 else total
+            dig.add_term(
+                trapezoid_lr(segment.bottom.v, total.v, segment.slope_l.v, segment.slope_r.v),
+                trapezoid_lr_expr(segment.bottom, height, segment.slope_l, segment.slope_r),
+                _segment_note(notes),
+            )
+    if not dig.terms:
+        out.discard(dig_key)
+    return len(out) > 0

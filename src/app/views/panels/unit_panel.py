@@ -16,6 +16,7 @@ from PySide6.QtCore import QItemSelectionModel, QRect, Qt
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QLabel,
     QStyle,
@@ -47,6 +48,7 @@ from app.core.models.models import (
     CATEGORY_JACKING,
     CATEGORY_PULLING,
     CATEGORY_STRUCTURE,
+    LR_PE_TEXT,
     category_name,
 )
 from app.core.pipe_category import PIPE_CATEGORIES
@@ -55,6 +57,7 @@ from app.services import project_io
 from app.viewmodels.project_vm import TreeNode
 from app.viewmodels.unit_vm import (
     ElementRow,
+    GroupRow,
     ParamRow,
     PipeRow,
     QuantityRow,
@@ -68,12 +71,18 @@ from app.views.widgets.table_edit_delegate import TableEditDelegate
 from app.views.widgets.table_width import fixed_width_behavior, header_fit_width
 
 _ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
+#: 合槽父节点行的标记（name item 的 UserRole 数据 = ("group", 组 id)）
+_GROUP_ROLE_TAG = "group"
 _COL_NAME, _COL_CATEGORY, _COL_SPEC, _COL_DEPTH, _COL_UNIT, _COL_AMOUNT, _COL_PE, _COL_PF, _COL_PP, _COL_PW, _COL_SOURCE = range(11)
 _ELEMENT_HEADERS = ["名称", "类型", "规格", "埋深", "单位", "数量", "沟槽围护原则", "地基处理原则", "降水原则", "工作面宽原则", "来源"]
 #: 复刻旧版 dGVmain 列结构（类型 / 规格 / 来源列只读）
 #: 围护/地基原则两列等宽（下拉框完整显示 6 个字）；
 #: 规格列两倍宽；埋深=数量列宽；类型/单位列容得下表头两字；埋深/单位/数量居中
 _ELEMENT_WIDTHS = [130, 48, 280, 70, 48, 70, 130, 130, 130, 130, 80]
+
+#: 详情面板「围护原则」tab（左右分设构件显示）：6 行的行头与取侧下拉项
+_LR_ROWS = ("左侧围护", "右侧围护", "左侧支撑", "右侧支撑", "挖填类型", "管道基础")
+_LR_SIDE_CHOICES = ("按左侧原则", "按右侧原则")
 
 #: 类型列简称（仅显示层，数据库 / 工程量 / 导出等仍用完整类别名）：
 #: 直埋管道→直；包封埋管/箱涵/管廊（构件库“混凝土结构”组）→箱；
@@ -308,6 +317,10 @@ class UnitPanel(QWidget):
         self._ids_stale = False
         #: 参数表当前显示的候选列（直埋构件有候选时非空，见 _on_detail_loaded）
         self._candidate_columns: list = []
+        #: 最近一次装填的表格行（含父节点行；_current_element_row 用）
+        self._rows_cache: list = []
+        #: 合槽父行选中时的成员 id（工程量合计 / 断面图用；空 = 非父行态）
+        self._group_member_ids: list[int] = []
         self._build_ui()
         self._connect()
         self._show_unit(None)
@@ -447,9 +460,42 @@ class UnitPanel(QWidget):
         self._qty_placeholder.setVisible(False)
         qty_layout.addWidget(self._qty_placeholder, 1)
 
+        # 左右分设构件的「围护原则」页（v3）：六行（行头见 _LR_ROWS），
+        # 未选分设的构件整页隐藏（setTabVisible）。合槽子节点的左侧行 /
+        # 取侧"按左侧"由父节点接管，置灰展示。
+        lr_page = QWidget()
+        lr_page.setProperty("role", "panel")
+        lr_page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        lr_layout = QVBoxLayout(lr_page)
+        lr_layout.setContentsMargins(6, 6, 6, 6)
+        lr_layout.setSpacing(4)
+        self._lr_table = QTableWidget(0, 1)
+        self._lr_table.setVerticalHeaderLabels([])
+        self._lr_table.setHorizontalHeaderLabels(["取值"])
+        self._lr_table.setProperty("cardHeader", True)
+        self._lr_table.horizontalHeader().setHighlightSections(False)
+        self._lr_table.verticalHeader().setVisible(True)
+        self._lr_table.verticalHeader().setDefaultSectionSize(32)
+        fixed_width_behavior(self._lr_table)
+        self._lr_table.setColumnWidth(0, 170)
+        self._lr_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._lr_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        lr_layout.addWidget(self._lr_table, 1)
+        self._lr_placeholder = QLabel(
+            "该构件未使用左右分设。\n"
+            "在主表格「沟槽围护原则」列选择「左右分设」后在此设置左右原则、"
+            "支撑与挖填 / 管道基础的取侧。"
+        )
+        self._lr_placeholder.setProperty("role", "placeholder")
+        self._lr_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lr_placeholder.setWordWrap(True)
+        self._lr_placeholder.setVisible(False)
+        lr_layout.addWidget(self._lr_placeholder, 1)
+
         detail.addTab(pipe_page, "管材")
         detail.addTab(param_page, "构件参数")
         detail.addTab(qty_page, "工程量")
+        detail.addTab(lr_page, "围护原则")
 
         # 三个页签（管材/构件参数/工程量）在窄面板下会被省略并出现滚动箭头：
         # 按页签条完整宽度设最小宽度，保证全部页签可见
@@ -709,6 +755,7 @@ class UnitPanel(QWidget):
         self._loading = True
         try:
             _clear_cell_widgets(self._element_table)  # 旧内嵌下拉框显式销毁，避免残留叠加
+            self._rows_cache = rows
             self._element_table.setRowCount(len(rows))
             enclosure_names = _combo_names(project_io.enclosure_names(), rows, "pe_name")
             foundation_names = _combo_names(project_io.foundation_names(), rows, "pf_name")
@@ -750,6 +797,8 @@ class UnitPanel(QWidget):
         ids = self._selected_element_ids() or (
             [self._current_detail_id] if self._current_detail_id else []
         )
+        if not ids and getattr(self, "_group_member_ids", None):
+            ids = list(self._group_member_ids)  # 合槽父行选中：成员合计
         chosen = [per_element[i] for i in ids if i in per_element]
         if not chosen:
             for table in self._quantity_tables.values():
@@ -902,14 +951,21 @@ class UnitPanel(QWidget):
     def _fill_element_row(
         self,
         index: int,
-        row: ElementRow,
+        row,
         enclosure_names: list[str],
         foundation_names: list[str],
         precipitation_names: list[str],
         width_names: list[str],
     ) -> None:
+        if isinstance(row, GroupRow):
+            self._fill_group_row(index, row, enclosure_names, width_names)
+            return
         name_item = QTableWidgetItem(row.name)
         name_item.setData(_ELEMENT_ROLE, row.id)
+        if row.group_id is not None:
+            # 合槽子节点：缩进显示（组内从上到下 = 沟槽从左到右）
+            name_item.setText(f"    {row.name}")
+            name_item.setToolTip(f"合槽组成员（左起第 {row.group_index + 1} 条），上下移动即左右排序。")
         self._element_table.setItem(index, _COL_NAME, name_item)
 
         category_item = QTableWidgetItem(_category_abbr(row.category))
@@ -941,11 +997,19 @@ class UnitPanel(QWidget):
         _apply_expression_hint(amount_item, row.amount, row.amount_error)
 
         pe_combo = QComboBox()
-        pe_combo.addItems(enclosure_names)
-        pe_combo.setCurrentText(row.pe_name)
+        # 普通构件：库原则 + 「左右分设」占位；合槽子节点：下拉即右原则
+        # （左原则由父节点 / 左邻构件接管，在「围护原则」tab 里置灰展示）
+        pe_combo.addItems(enclosure_names + ([] if LR_PE_TEXT in enclosure_names else [LR_PE_TEXT]))
+        pe_combo.setCurrentText(row.pe_right_name if row.group_id is not None else row.pe_name)
         pe_combo.currentTextChanged.connect(
-            lambda text, element_id=row.id: self._vm.set_element_field(element_id, "pe_name", text)
+            lambda text, element_id=row.id, grouped=row.group_id is not None: self._vm.set_element_field(
+                element_id,
+                "pe_right_name" if grouped and text != LR_PE_TEXT else "pe_name",
+                text,
+            )
         )
+        if row.group_id is not None:
+            pe_combo.setToolTip("合槽子节点的围护原则 = 其右侧面（中间坡 / 右边坡）的做法。")
         self._element_table.setCellWidget(index, _COL_PE, pe_combo)
 
         pf_combo = QComboBox()
@@ -977,10 +1041,78 @@ class UnitPanel(QWidget):
         source_item.setForeground(QBrush(_secondary_color()))
         self._element_table.setItem(index, _COL_SOURCE, source_item)
 
+    def _fill_group_row(
+        self,
+        index: int,
+        row: GroupRow,
+        enclosure_names: list[str],
+        width_names: list[str],
+    ) -> None:
+        """合槽父节点行：名称可编辑；PE / PW = 左边缘原则；PF / PP 恒 '-'。"""
+        name_item = QTableWidgetItem(f"▣ {row.name}")
+        name_item.setData(_ELEMENT_ROLE, (_GROUP_ROLE_TAG, row.id))
+        name_item.setToolTip(
+            f"合槽组（{row.member_count} 条构件，从上到下 = 从左到右）。"
+            "父节点不持有工程量，仅作子构件合计视图；围护 / 工作面宽原则只管最左一侧。"
+        )
+        brush = QBrush(QColor(ThemeManager.instance().current().primary_soft))
+        for column in range(len(_ELEMENT_HEADERS)):
+            item = QTableWidgetItem()
+            item.setBackground(brush)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._element_table.setItem(index, column, item)
+        self._element_table.setItem(index, _COL_NAME, name_item)
+        # 名称可编辑（改的是父节点名称）
+        name_item.setFlags(name_item.flags() | Qt.ItemFlag.ItemIsEditable)
+
+        category_item = self._element_table.item(index, _COL_CATEGORY)
+        category_item.setText("组")
+        category_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        spec_item = self._element_table.item(index, _COL_SPEC)
+        spec_item.setText(row.spec)
+        depth_item = self._element_table.item(index, _COL_DEPTH)
+        depth_item.setText(row.depth and f"{format_number(row.depth)}")
+        depth_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        depth_item.setToolTip("组内最深构件的埋深（仅显示）。")
+        unit_item = self._element_table.item(index, _COL_UNIT)
+        unit_item.setText("m")
+        unit_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        amount_item = self._element_table.item(index, _COL_AMOUNT)
+        amount_item.setText(row.amount)
+        amount_item.setToolTip("L_组 = 组员数量（编组时校验一致）。")
+        amount_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        pe_combo = QComboBox()
+        pe_combo.addItems(enclosure_names)
+        pe_combo.setCurrentText(row.pe_name)
+        pe_combo.currentTextChanged.connect(
+            lambda text, group_id=row.id: self._vm.set_group_field(group_id, "pe_name", text)
+        )
+        pe_combo.setToolTip("左边缘围护原则（左边坡 + 左工作面）。")
+        self._element_table.setCellWidget(index, _COL_PE, pe_combo)
+
+        pw_combo = QComboBox()
+        pw_combo.addItems(width_names)
+        pw_combo.setCurrentText(row.pw_name)
+        pw_combo.currentTextChanged.connect(
+            lambda text, group_id=row.id: self._vm.set_group_field(group_id, "pw_name", text)
+        )
+        pw_combo.setToolTip("左边缘工作面宽原则（查工作面宽度表取 wL）。")
+        self._element_table.setCellWidget(index, _COL_PW, pw_combo)
+
     def _on_element_item_changed(self, item: QTableWidgetItem) -> None:
         if self._loading:
             return
-        element_id = self._element_id_at(item.row())
+        row = item.row()
+        group_id = self._group_id_at(row)
+        if group_id is not None:
+            # 合槽父节点行：只有名称列可编辑（改父节点名称）
+            if item.column() == _COL_NAME:
+                from app.viewmodels.unit_vm import update_group
+
+                update_group(group_id, name=item.text().replace("▣", "").strip())
+            return
+        element_id = self._element_id_at(row)
         if element_id is None:
             return
         field = {_COL_NAME: "name", _COL_DEPTH: "depth", _COL_AMOUNT: "amount"}.get(item.column())
@@ -1012,15 +1144,21 @@ class UnitPanel(QWidget):
 
     # ------------------------------------------------------------------ 明细面板跟随选中行
     def _sync_detail_to_selection(self) -> None:
-        """明细面板（管材/参数、多原则、工程量、断面）显示主表格当前选中行的内容。
+        """明细面板（管材/参数、围护原则、工程量、断面）跟随主表格当前选中行。
 
         多选（≥2 行）→ 左侧显示 *多种管材/*多种参数、断面显示 *多种断面、
-        工程量显示选中行求和；单行 → 显示该行内容。
+        工程量显示选中行求和；合槽父行 → 成员合计工程量 + 整槽断面；
+        单行 → 显示该行内容。
         """
         ids = self._selected_element_ids()
         if len(ids) >= 2:
             self._show_multi_detail()
             return
+        if not ids:
+            group_id = self._selected_group_row_id()
+            if group_id is not None:
+                self._show_group_detail(group_id)
+                return
         element_id = ids[0] if ids else self._current_element_id()
         if element_id is None:
             if self._current_detail_id is not None or self._multi_detail:
@@ -1031,9 +1169,29 @@ class UnitPanel(QWidget):
         else:
             self._fill_quantities()  # 同一行重新选中：只刷新工程量
 
+    def _show_group_detail(self, group_id: int) -> None:
+        """合槽父行选中：明细占位 + 成员合计工程量 + 整槽断面图。"""
+        from app.core.models import base as orm
+        from app.core.models.models import TrenchGroup
+
+        self._multi_detail = True
+        self._current_detail_id = None
+        group = orm.session().get(TrenchGroup, group_id)
+        self._group_member_ids = (
+            [member.id for member in sorted(group.members, key=lambda item: (item.order_no, item.id))]
+            if group is not None
+            else []
+        )
+        self._update_pipe_buttons(None)
+        self._fill_multi_placeholders()
+        self._section_view.set_group(group_id)
+        self._fill_quantities()
+        bus().ai_context_changed.emit({"element_id": None, "element_name": ""})
+
     def _show_single_detail(self, element_id: int) -> None:
         self._multi_detail = False
         self._current_detail_id = element_id
+        self._group_member_ids = []
         self._vm.load_detail(element_id)
         self._section_view.set_element(element_id)
         self._fill_quantities()
@@ -1050,6 +1208,7 @@ class UnitPanel(QWidget):
     def _show_multi_detail(self) -> None:
         self._multi_detail = True
         self._current_detail_id = None
+        self._group_member_ids = []
         # 多选显示占位行：增删没有明确目标构件，按钮一律禁用
         self._update_pipe_buttons(None)
         self._fill_multi_placeholders()
@@ -1067,6 +1226,10 @@ class UnitPanel(QWidget):
         # 多选恢复显示工程量表（非构筑物选中态把它换成了空面板提示）
         self._qty_table.setVisible(True)
         self._qty_placeholder.setVisible(False)
+        _clear_cell_widgets(self._lr_table)
+        self._lr_table.setRowCount(0)
+        self._lr_table.setVisible(False)
+        self._lr_placeholder.setVisible(True)
         for table, text in (
             (self._pipe_table, "*多种管材"),
             (self._param_table, "*多种参数"),
@@ -1091,6 +1254,7 @@ class UnitPanel(QWidget):
         """
         self._multi_detail = False
         self._current_detail_id = None
+        self._group_member_ids = []
         self._pipe_buttons.clear_row_buttons()
         self._pipe_buttons.set_visible(False)
         self._pipe_table.setRowCount(0)
@@ -1105,6 +1269,10 @@ class UnitPanel(QWidget):
         self._qty_table.setRowCount(0)
         self._qty_table.setVisible(False)
         self._qty_placeholder.setVisible(True)
+        _clear_cell_widgets(self._lr_table)
+        self._lr_table.setRowCount(0)
+        self._lr_table.setVisible(False)
+        self._lr_placeholder.setVisible(True)
         self._section_view.set_element(None)
         self._fill_quantities()
         bus().ai_context_changed.emit({"element_id": None, "element_name": ""})
@@ -1114,7 +1282,22 @@ class UnitPanel(QWidget):
 
     def _element_id_at(self, row: int) -> int | None:
         item = self._element_table.item(row, _COL_NAME) if row >= 0 else None
-        return item.data(_ELEMENT_ROLE) if item is not None else None
+        if item is None:
+            return None
+        data = item.data(_ELEMENT_ROLE)
+        if isinstance(data, tuple):
+            return None  # 合槽父节点行（不是构件）
+        return data
+
+    def _group_id_at(self, row: int) -> int | None:
+        """该行若是合槽父节点行，返回组 id；否则 None。"""
+        item = self._element_table.item(row, _COL_NAME) if row >= 0 else None
+        if item is None:
+            return None
+        data = item.data(_ELEMENT_ROLE)
+        if isinstance(data, tuple) and data[0] == _GROUP_ROLE_TAG:
+            return int(data[1])
+        return None
 
     def _next_element_id(self) -> int | None:
         """当前选中行下一行的构件 id；当前已是末行（或未选中行）时为 None。"""
@@ -1231,9 +1414,22 @@ class UnitPanel(QWidget):
         return [element_id for element_id in (self._element_id_at(row) for row in rows) if element_id]
 
     def _delete_selected_elements(self) -> None:
-        """Delete 键：直接删除选中行（与原版一致，不经确认）。"""
+        """Delete 键：删除选中行（与原版一致，不经确认）。
+
+        合槽父节点行的删除语义 = 解散合槽（父节点删掉、子构件还原保留）。
+        """
+        from app.viewmodels.unit_vm import dissolve_trench_group
+
+        for row in sorted({index.row() for index in self._element_table.selectedIndexes()}, reverse=True):
+            group_id = self._group_id_at(row)
+            if group_id is not None:
+                dissolve_trench_group(group_id)
         for element_id in self._selected_element_ids():
             self._vm.remove_element(element_id)
+
+    def _selected_group_row_id(self) -> int | None:
+        """选中行里的合槽父节点组 id（单选父行时用）。"""
+        return self._group_id_at(self._element_table.currentRow())
 
     def _on_element_context_menu(self, position) -> None:
         from PySide6.QtWidgets import QMenu
@@ -1258,7 +1454,58 @@ class UnitPanel(QWidget):
         apply_menu.addAction("应用沟槽及地基原则", lambda: self._paste_principles(True, True))
         apply_menu.addAction("应用沟槽围护原则", lambda: self._paste_principles(True, False))
         apply_menu.addAction("应用地基处理原则", lambda: self._paste_principles(False, True))
+        # ---- 合槽编组（v3）----
+        menu.addSeparator()
+        ids = self._selected_element_ids()
+        group_action = menu.addAction("合槽编组", lambda: self._vm.create_group(ids))
+        group_action.setEnabled(len(ids) >= 2)
+        group_action.setToolTip(
+            "多选构件后编组：成员转为左右分设，上下顺序 = 沟槽从左到右；"
+            "约束不满足时状态栏提示原因。"
+        )
+        # 选中父行或组成员时给解散 / 移出入口
+        current_group = self._selected_group_row_id()
+        element = self._current_element_row()
+        if current_group is None and element is not None:
+            current_group = element.group_id
+        if current_group is not None:
+            menu.addAction("解散合槽", lambda: self._vm.dissolve_group(current_group))
+            if element is not None and element.group_id is not None:
+                menu.addAction("移出合槽", lambda: self._vm.remove_from_group(element.id))
+                menu.addSeparator()
+                menu.addAction(
+                    "组内左移（上移）", lambda: self._vm.move_element(element.id, -1)
+                )
+                menu.addAction(
+                    "组内右移（下移）", lambda: self._vm.move_element(element.id, 1)
+                )
+        elif len(ids) >= 1:
+            join_menu = menu.addMenu("加入合槽…")
+            from app.core.models import base as orm
+            from app.core.models.models import TrenchGroup
+            from sqlalchemy import select
+
+            groups = list(orm.session().scalars(select(TrenchGroup).order_by(TrenchGroup.id)))
+            if not groups:
+                join_menu.setEnabled(False)
+            for group in groups:
+                target = element.id if element is not None else (ids[0] if ids else None)
+                join_menu.addAction(
+                    group.name,
+                    lambda group_id=group.id, target_id=target: target_id is not None
+                    and self._vm.add_to_group(target_id, group_id),
+                )
         menu.exec(self._element_table.viewport().mapToGlobal(position))
+
+    def _current_element_row(self):
+        """当前选中行的 ElementRow（父行 / 空表返回 None）。"""
+        element_id = self._current_element_id()
+        if element_id is None:
+            return None
+        for row in self._rows_cache:
+            if isinstance(row, ElementRow) and row.id == element_id:
+                return row
+        return None
 
     #: 行剪贴板 / 原则剪贴板（原版 mClipboard / mClipboard_PCP 的内存版）
     _clipboard: list[dict] | None = None
@@ -1558,6 +1805,9 @@ class UnitPanel(QWidget):
                     self._qty_buttons.add_row_button(index)
             else:
                 self._qty_table.setRowCount(0)
+
+            # 「围护原则」tab：左右分设构件显示六行设置，其余显示占位说明
+            self._fill_lr_tab(element)
         finally:
             self._loading = False
         # 管径/壁厚/参数/工程量都影响断面几何与工程量结果，明细变化后重绘
@@ -1565,6 +1815,89 @@ class UnitPanel(QWidget):
             self._section_view.set_element(element_id)
         else:
             self._section_view.set_element(None)
+
+    def _fill_lr_tab(self, element) -> None:
+        """「围护原则」tab：分设构件显示六行设置，其余显示占位说明。
+
+        合槽子节点：左侧围护、取侧"按左侧"由父节点 / 左邻构件接管 → 置灰；
+        左右支撑勾选均有效（语义 = 该构件左 / 右面的支撑）。
+        """
+        is_lr = element is not None and element.pe_name == LR_PE_TEXT
+        grouped = is_lr and element.group_id is not None
+        _clear_cell_widgets(self._lr_table)
+        self._lr_table.setVisible(is_lr)
+        self._lr_placeholder.setVisible(not is_lr)
+        if not is_lr:
+            return
+        element_id = element.id
+        names = project_io.enclosure_names() or [""]
+
+        left = QComboBox()
+        left.addItems([name for name in names if name != LR_PE_TEXT])
+        left.setCurrentText(element.pe_left_name or "")
+        left.currentTextChanged.connect(
+            lambda text, eid=element_id: self._vm.set_element_field(eid, "pe_left_name", text)
+        )
+        left.setToolTip("左侧围护原则（左边坡做法、放坡系数取其围护分级）。")
+        if grouped:
+            left.setEnabled(False)
+            left.setToolTip(
+                "合槽内左侧围护由父节点 / 左侧相邻构件的右原则接管，不参与计算。"
+            )
+
+        right = QComboBox()
+        right.addItems([name for name in names if name != LR_PE_TEXT])
+        right.setCurrentText(element.pe_right_name or "")
+        right.currentTextChanged.connect(
+            lambda text, eid=element_id: self._vm.set_element_field(eid, "pe_right_name", text)
+        )
+        right.setToolTip(
+            "右侧围护原则（单管 = 右边坡；合槽 = 构件右侧中间坡 / 右边缘的做法）。"
+        )
+
+        support_left = QCheckBox("计算支撑（Z 类公式）")
+        support_left.setChecked(bool(element.support_left))
+        support_left.toggled.connect(
+            lambda checked, eid=element_id: self._vm.set_element_field(eid, "support_left", checked)
+        )
+        support_left.setToolTip(
+            "勾选 = 左侧做法的支撑 / 围檩公式参与计算（单管 = 左边坡支撑；"
+            "合槽 = 该构件左面的中间坡支撑，当自己是该面深侧构件时）。"
+        )
+
+        support_right = QCheckBox("计算支撑（Z 类公式）")
+        support_right.setChecked(bool(element.support_right))
+        support_right.toggled.connect(
+            lambda checked, eid=element_id: self._vm.set_element_field(eid, "support_right", checked)
+        )
+        support_right.setToolTip("勾选 = 右侧做法的支撑 / 围檩公式参与计算。")
+
+        def _side_combo(field: str, current: str):
+            combo = QComboBox()
+            combo.addItems(list(_LR_SIDE_CHOICES))
+            combo.setCurrentText(_LR_SIDE_CHOICES[1] if current == "R" else _LR_SIDE_CHOICES[0])
+            combo.currentTextChanged.connect(
+                lambda text, eid=element_id, f=field: self._vm.set_element_field(
+                    eid, f, "R" if text == _LR_SIDE_CHOICES[1] else "L"
+                )
+            )
+            if grouped:
+                combo.setEnabled(False)
+                combo.setCurrentText(_LR_SIDE_CHOICES[1])
+            return combo
+
+        excvt = _side_combo("excvt_side", element.excvt_side or "L")
+        excvt.setToolTip("开挖土质与回填材质按哪一侧原则计算（单构件只能有唯一的挖填类型）。")
+        foundation = _side_combo("foundation_side", element.foundation_side or "L")
+        foundation.setToolTip(
+            "砼基础 / 基础角度 / 垫层按哪一侧原则计算（决定图集查询与候选匹配）。"
+        )
+
+        widgets = (left, right, support_left, support_right, excvt, foundation)
+        self._lr_table.setRowCount(len(widgets))
+        self._lr_table.setVerticalHeaderLabels(list(_LR_ROWS))
+        for row, widget in enumerate(widgets):
+            self._lr_table.setCellWidget(row, 0, widget)
 
     def _on_pipe_item_changed(self, item: QTableWidgetItem) -> None:
         if self._loading:

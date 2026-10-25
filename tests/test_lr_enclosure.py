@@ -1,0 +1,687 @@
+"""左右分设与合槽编组（v3）的计算与操作测试。
+
+金样例口径（docs/lr_enclosure_and_trench_group_design.md）：
+
+* 分设对称退化：左右同原则时，挖方 / 回填 / 围护 / 支撑 数值与普通单原则
+  构件一致（不对称几何与 sides=1 的每面调用在两侧同形时收敛回对称路径）；
+* 左坡右桩手算：挖方 = (2B+H*sL)*H/2（B/H 由图集与宽度表的**原始值**独立
+  组合，不用被测逻辑算结果）；桩量 = ⌈L/桩距⌉×桩长×单重（×1 单面）；
+* 合槽等深守恒：两侧直壁时 Σ成员挖方 = 平底宽 × H × L（精确矩形），
+  归属带宽（本体 + 工作面 + 半间距）之和 = 平底宽；
+* 合槽异深：中间区楔形按 精确梯形 + 平段 公式对拍；中间坡围护量挂深侧；
+* 父节点零工程量；降水逐构件挂各自名下。
+"""
+
+import math
+
+import pytest
+
+from app.core.evaluator import evaluate
+
+
+# --------------------------------------------------------------------------- #
+# 搭建助手
+# --------------------------------------------------------------------------- #
+def _first_unit_id():
+    from sqlalchemy import select
+
+    from app.core.models import base as orm
+    from app.core.models.models import Unit
+
+    return orm.session().scalar(select(Unit.id))
+
+
+def _make_enclosure(name: str, category: str, slope: float | None = None):
+    """按库模板建一条围护原则（单一做法）；slope 非空时把放坡系数设为该值。"""
+    from app.core.models import base as orm
+    from app.core.models.models import PcpEnclosure
+    from app.services import project_io
+
+    session = orm.session()
+    base_pe = project_io.enclosures()[0]
+    pe = PcpEnclosure(
+        name=name,
+        con_found=base_pe.con_found,
+        excvt=base_pe.excvt,
+        found_angle=base_pe.found_angle,
+        dock_l=base_pe.dock_l,
+        dock_h=base_pe.dock_h,
+        cover50=base_pe.cover50,
+        cover=base_pe.cover,
+        order_no=90 + len(project_io.enclosures()),
+    )
+    from app.core.models.models import EnclosureCushion
+
+    for cushion in base_pe.cushions:
+        pe.cushions.append(
+            EnclosureCushion(name=cushion.name, h=cushion.h, order_no=cushion.order_no)
+        )
+    session.add(pe)
+    session.flush()
+    project_io.new_enclosure_work(
+        session, pe, project_io.component_library(), order_no=0, level_name=category
+    )
+    if slope is not None:
+        for param in pe.works_sorted()[0].levels[0].components[0].params:
+            if param.key == "A":
+                param.value = f"放坡系数 1:X|{slope}"
+    project_io.commit()
+    return pe
+
+
+def _element(name: str, *, dn=600, depth="3", amount="120", pe_name=None):
+    from app.viewmodels import unit_vm
+
+    element = unit_vm.create_element(
+        _first_unit_id(),
+        category=1,
+        name=name,
+        depth=depth,
+        amount=amount,
+        pipes=[("Ⅱ级混凝土管", dn, "1")],
+        pe_name=pe_name,
+        seed_atlas_defaults=True,
+    )
+    assert element is not None
+    return element.id
+
+
+def _compute(element_id: int):
+    from app.core.calc.engine import (
+        build_element_input,
+        compute_element,
+        resolve_element_principles,
+    )
+    from app.core.models import base as orm
+    from app.core.models.models import Element
+
+    session = orm.session()
+    element = session.get(Element, element_id)
+    pe, pf, pp, pw = resolve_element_principles(element, session)
+    info = build_element_input(element, pe, pf, pp, pw)
+    result = compute_element(info)
+    assert result is not None
+    return result
+
+
+def _value(result, key: str) -> float:
+    quantity = result.get(key)
+    assert quantity is not None, f"缺少定额行 {key}（现有：{result.keys()}）"
+    return quantity.value
+
+
+def _make_lr(element_id: int, left: str, right: str):
+    from app.core.models.models import LR_PE_TEXT
+    from app.viewmodels import unit_vm
+
+    unit_vm.update_element(element_id, pe_name=LR_PE_TEXT)
+    unit_vm.update_element(element_id, pe_left_name=left, pe_right_name=right)
+    return element_id
+
+
+# --------------------------------------------------------------------------- #
+# 库模板 sides 代入
+# --------------------------------------------------------------------------- #
+def test_library_templates_use_sides_variable() -> None:
+    """库模板的两侧因子已变量化，支撑拆成 贯通行 + 围檩行（同定额键）。"""
+    from app.services.atlas import component_library
+
+    lib = component_library()
+    pile = lib.template("Ei", "钢板桩")
+    assert pile.params["FA"][1].endswith("*sides")
+    assert lib.template("Ei", "横列板").params["FA"][1] == "1*sides*height"
+    # ZA = 贯通支撑（无 sides）、ZB = 围檩（含 sides），display 同键合并
+    assert pile.params["ZA"][1] == "ROUND(count/G,0)/count*F*width*H/1000"
+    assert pile.params["ZB"][1] == "1*sides*2*F*I/1000"
+    assert pile.params["ZB"][0] == pile.params["ZA"][0] == "支撑|钢支撑、钢围檩|t"
+
+
+def test_normal_element_formula_output_matches_legacy(project) -> None:
+    """普通单原则构件：新模板 sides=2 代入后输出算式与旧版 *2 逐字节一致。"""
+    from app.core.models import base as orm
+    from app.core.models.models import EnclosureWork
+    from app.services import project_io
+
+    session = orm.session()
+    pe = project_io.enclosures()[0]
+    project_io.set_work_category(
+        session, pe.works_sorted()[0], project_io.component_library(), "钢板桩"
+    )
+    project_io.commit()
+
+    element_id = _element("普通钢板桩", pe_name=pe.name)
+    result = _compute(element_id)
+    assert "*2" in result.get("围护|拉森钢板桩|t").expression
+    assert "sides" not in result.get("围护|拉森钢板桩|t").expression
+
+
+# --------------------------------------------------------------------------- #
+# 左右分设计算
+# --------------------------------------------------------------------------- #
+def test_lr_symmetric_matches_single(project) -> None:
+    """左右同原则 = 对称退化：各定额行数值与普通单原则构件一致。"""
+    pe = _make_enclosure("对称测试原则", "钢板桩")
+    single = _compute(_element("普通", pe_name=pe.name))
+    lr = _compute(_make_lr(_element("分设", pe_name=pe.name), pe.name, pe.name))
+    assert set(single.keys()) == set(lr.keys())
+    for key in single.keys():
+        assert single.get(key).value == pytest.approx(lr.get(key).value, rel=1e-9), key
+
+
+def test_lr_slope_left_pile_right_hand_calc(project) -> None:
+    """左放坡 1:0.5、右钢板桩：不对称梯形 + 单面桩量手算对拍。"""
+    from app.core.calc.engine import (
+        atlas_dims,
+        build_atlas_query,
+        build_element_input,
+        choice_work,
+        resolve_element_principles,
+    )
+    from app.core.models import base as orm
+    from app.core.models.models import Element
+    from app.services.atlas import resolve_atlas
+
+    slope_pe = _make_enclosure("左坡1:0.5", "放坡", slope=0.5)
+    pile_pe = _make_enclosure("右桩", "钢板桩")
+
+    element_id = _make_lr(_element("左坡右桩", pe_name=slope_pe.name), slope_pe.name, pile_pe.name)
+    result = _compute(element_id)
+
+    # 原始输入（图集 / 宽度表值）独立组合出手算基准
+    session = orm.session()
+    element = session.get(Element, element_id)
+    _pe, pf, _pp, pw = resolve_element_principles(element, session)
+    info = build_element_input(element, slope_pe, pf, pw=pw)  # 挖填 / 基础默认左侧
+    at = resolve_atlas(build_atlas_query(info, slope_pe, pw))
+    bottom = info.size_b + (at.t * 2 + at.a * 2 + at.workwidth * 2) / 1000
+    depth = info.depth + (at.t + at.c1) / 1000  # 无换填
+
+    # 挖方 = (2B + H*0.5)*H/2（右侧直壁项省略）；分层求和与整槽一条等价
+    dig = _value(result, f"开挖|{slope_pe.excvt}|m3")
+    assert dig == pytest.approx((2 * bottom + depth * 0.5) * depth / 2 * info.amount, rel=1e-9)
+    # 右侧直壁：算式里只有左坡项（(H)*0.5 形式，不出现右坡项）
+    assert "*0.5)" in result.get(f"开挖|{slope_pe.excvt}|m3").expression
+
+    # 桩量 = ⌈L/桩距⌉×桩长×单重（×1 单面；桩距 400、桩长 12、单重 75）
+    pile = _value(result, "围护|拉森钢板桩|t")
+    expected = math.floor(120 / 0.4 + 0.5) / 120 * 12 * 75 / 1000 * 1 * 120
+    assert pile == pytest.approx(expected, rel=1e-9)
+
+
+def test_lr_support_flags(project) -> None:
+    """支撑勾选语义：右单勾 = 贯通支撑 + 单侧围檩；两侧勾 = 单原则总量。"""
+    from app.viewmodels import unit_vm
+
+    pile_pe = _make_enclosure("支撑勾选原则", "钢板桩")
+    single = _compute(_element("单原则基准", pe_name=pile_pe.name))
+    single_support = _value(single, "支撑|钢支撑、钢围檩|t")  # = 贯通支撑 S + 两侧围檩 2W
+
+    element_id = _make_lr(_element("支撑测试", pe_name=pile_pe.name), pile_pe.name, pile_pe.name)
+    unit_vm.update_element(element_id, support_left=False, support_right=True)
+    right_only = _compute(element_id)
+    ro = _value(right_only, "支撑|钢支撑、钢围檩|t")  # = S + W
+
+    unit_vm.update_element(element_id, support_left=True)
+    both = _compute(element_id)
+    bo = _value(both, "支撑|钢支撑、钢围檩|t")
+
+    # 单侧围檩（W）手算：1×1侧×2×2道×38.49kg/m（每延米）×L
+    wale = 1 * 1 * 2 * 2 * 38.49 / 1000 * 120
+    strut = single_support - 2 * wale
+    assert ro == pytest.approx(strut + wale, rel=1e-9)  # 贯通支撑整槽一次 + 右侧围檩
+    assert bo == pytest.approx(single_support, rel=1e-9)  # 两侧勾 = 单原则总量
+    # 两侧都不勾 → 没有支撑量
+    unit_vm.update_element(element_id, support_left=False, support_right=False)
+    none_checked = _compute(element_id)
+    assert none_checked.get("支撑|钢支撑、钢围檩|t") is None
+
+
+def test_lr_excvt_and_foundation_side(project) -> None:
+    """挖填 / 基础取侧：切到右原则后回填材质与图集基础参数跟着右原则走。"""
+    left_pe = _make_enclosure("左侧原则", "放坡", slope=0.5)
+    right_pe = _make_enclosure("右侧原则", "放坡", slope=0.75)
+    from app.core.models import base as orm
+    from app.viewmodels import unit_vm
+
+    # 右原则：坞膀/覆土材质、垫层、角度全部与左原则区分开
+    session = orm.session()
+    right_pe.dock_l = "右侧砂"
+    right_pe.dock_h = "右侧砂"
+    right_pe.cover50 = "右侧管顶砂"
+    right_pe.cover = "右侧覆土"
+    right_pe.found_angle = 180
+    for cushion in right_pe.cushions:
+        cushion.name = "右侧垫层"
+        cushion.h = 300.0
+    from app.services import project_io
+
+    project_io.commit()
+
+    element_id = _make_lr(_element("取侧测试", pe_name=left_pe.name), left_pe.name, right_pe.name)
+    before = _compute(element_id)
+    assert before.get(f"回填|{left_pe.dock_l}|m3") is not None
+
+    unit_vm.update_element(element_id, excvt_side="R", foundation_side="R")
+    after = _compute(element_id)
+    # 回填材质全部换成右原则的（坞膀 / 管顶50 / 覆土）
+    assert after.get("回填|右侧砂|m3") is not None
+    assert after.get("回填|右侧管顶砂|m3") is not None
+    assert after.get("回填|右侧覆土|m3") is not None
+    assert after.get(f"回填|{left_pe.dock_l}|m3") is None
+    assert after.get(f"回填|{left_pe.cover}|m3") is None
+    # 垫层名称跟着右原则（图集查询也换 180° 组）
+    assert after.get("垫层|右侧垫层|m3") is not None
+    # 左右坡不同 → 挖方数值 ≠ 对称（两侧都 0.5 的对称基准）
+    symmetric = _compute(_make_lr(_element("对称基准", pe_name=left_pe.name), left_pe.name, left_pe.name))
+    assert _value(after, f"开挖|{left_pe.excvt}|m3") != pytest.approx(
+        _value(symmetric, f"开挖|{left_pe.excvt}|m3")
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 合槽编组：计算
+# --------------------------------------------------------------------------- #
+def _group_fixture(project, depth2="3", dn2=600, member1_pe=None):
+    """建双管合槽（同管径等参数便于精确对拍），返回 (group, 成员 element 列表)。"""
+    from app.viewmodels import unit_vm
+
+    pile_pe = _make_enclosure("合槽桩原则", "钢板桩")
+    member1_pe = member1_pe or pile_pe
+    e1 = _element("合槽左管", dn=600, depth="3", amount="120", pe_name=member1_pe.name)
+    e2 = _element("合槽右管", dn=dn2, depth=depth2, amount="120", pe_name=pile_pe.name)
+    group, error = unit_vm.create_trench_group([e1, e2])
+    assert group is not None and error is None
+    return group, [e1, e2]
+
+
+def _group_results(group):
+    from app.core.models import base as orm
+    from app.core.calc.trench_group import compute_group
+
+    group = orm.session().get(type(group), group.id)
+    return compute_group(group)
+
+
+def test_group_equal_depth_flat_dig(project) -> None:
+    """等深 + 全直壁：Σ成员挖方 = 平底宽×H×L；归属带宽之和 = 平底宽。"""
+    from app.core.calc.engine import (
+        atlas_dims,
+        build_atlas_query,
+        build_element_input,
+        workwidth_of,
+    )
+    from app.core.calc.measures import foundation_thickness as fd
+    from app.core.models import base as orm
+    from app.core.models.models import (
+        Element,
+        PcpEnclosure,
+        PcpFoundation,
+        PcpWidth,
+    )
+    from app.services.atlas import resolve_atlas
+    from sqlalchemy import select
+
+    group, (e1, e2) = _group_fixture(project)
+    # 父节点 PE/PW 默认 = 首成员原原则；保持钢板桩（直壁）
+    results, errors = _group_results(group)
+    assert not errors, errors
+
+    session = orm.session()
+    geometry = []
+    for element_id in (e1, e2):
+        element = session.get(Element, element_id)
+        pw = session.scalars(select(PcpWidth).where(PcpWidth.name == element.pw_name)).first()
+        pe = session.scalars(
+            select(PcpEnclosure).where(PcpEnclosure.name == element.pe_right_name)
+        ).first()
+        pf = session.scalars(
+            select(PcpFoundation).where(PcpFoundation.name == element.pf_name)
+        ).first()
+        info = build_element_input(element, pe, pf, pw=pw)
+        ad = atlas_dims(info, resolve_atlas(build_atlas_query(info, pe, pw)))
+        geometry.append(
+            {
+                "b": info.size_b + (ad.t * 2 + ad.a * 2) / 1000,
+                "h": info.depth + (fd(pf).v + ad.t + ad.c1) / 1000,
+                "ww": workwidth_of(pw, info) / 1000,
+            }
+        )
+    g1, g2 = geometry
+    b1, b2 = g1["b"], g2["b"]
+    w1, w2 = g1["ww"], g2["ww"]
+    gap = w1  # g_1 = 子1 PW 表值；父 PW 默认取首成员原 PW（同一条）→ wL = w1
+    flat = w1 + b1 + gap + b2 + w2
+    # 等深断言（同管径 → 同图集参数）
+    assert g1["h"].v == pytest.approx(g2["h"].v, abs=1e-9)
+    depth = g1["h"].v
+    flat = flat.v
+
+    dig1 = _value(results[e1], "开挖|Ⅲ类土|m3")
+    dig2 = _value(results[e2], "开挖|Ⅲ类土|m3")
+    assert dig1 + dig2 == pytest.approx(flat * depth * 120, rel=1e-9)
+    # 归属带宽：构件1 = wL+b1+g/2，构件2 = g/2+b2+wR
+    assert dig1 == pytest.approx((w1 + b1 + gap / 2).v * depth * 120, rel=1e-9)
+    assert dig2 == pytest.approx((gap / 2 + b2 + w2).v * depth * 120, rel=1e-9)
+    # 父节点零工程量：输出只挂在成员名下
+    assert set(results) == {e1, e2}
+
+
+def test_group_precipitation_per_member(project) -> None:
+    """降水逐构件：两成员各有一条湿土排水（默认井型阈值不适用时）。"""
+    group, (e1, e2) = _group_fixture(project)
+    results, errors = _group_results(group)
+    assert not errors, errors
+    assert results[e1].get("降水|湿土排水|m3") is not None
+    assert results[e2].get("降水|湿土排水|m3") is not None
+
+
+def test_group_different_depth_mid_slope(project) -> None:
+    """异深中间坡：楔形挖方精确对拍；中间坡围护量挂深侧构件。"""
+    from app.core.calc.engine import (
+        atlas_dims,
+        build_atlas_query,
+        build_element_input,
+        workwidth_of,
+    )
+    from app.core.calc.measures import foundation_thickness as fd
+    from app.core.models import base as orm
+    from app.core.models.models import Element, PcpEnclosure, PcpFoundation, PcpWidth
+    from app.services.atlas import resolve_atlas
+    from sqlalchemy import select
+
+    slope_pe = _make_enclosure("中间坡1:0.5", "放坡", slope=0.5)
+    pile_pe = _make_enclosure("合槽桩原则2", "钢板桩")
+    # 左管右原则 = 钢板桩（中间隔断）、右管右原则 = 钢板桩
+    group, (e1, e2) = _group_fixture(project, depth2="4", member1_pe=pile_pe)
+    results, errors = _group_results(group)
+    assert not errors, errors
+
+    session = orm.session()
+    geometry = []
+    for element_id in (e1, e2):
+        element = session.get(Element, element_id)
+        pw = session.scalars(select(PcpWidth).where(PcpWidth.name == element.pw_name)).first()
+        pe = session.scalars(select(PcpEnclosure).where(PcpEnclosure.name == element.pe_right_name)).first()
+        pf = session.scalars(select(PcpFoundation).where(PcpFoundation.name == element.pf_name)).first()
+        info = build_element_input(element, pe, pf, pw=pw)
+        at = resolve_atlas(build_atlas_query(info, pe, pw))
+        ad = atlas_dims(info, at)
+        geometry.append(
+            {
+                "b": info.size_b + (ad.t * 2 + ad.a * 2) / 1000,
+                "h": info.depth + (fd(pf).v + ad.t + ad.c1) / 1000,
+                "ww": workwidth_of(pw, info) / 1000,
+            }
+        )
+    g1, g2 = geometry
+    gap = g1["ww"]
+    h1, h2 = g1["h"].v, g2["h"].v
+    # 中间隔断桩（s̄=0）：中间区全宽挖到深底
+    expected_mid = gap * h2
+    expected_total = (
+        g2["ww"] * h1  # wL（父 PW = 首成员 PW）
+        + g1["b"] * h1
+        + expected_mid
+        + g2["b"] * h2
+        + g2["ww"] * h2  # wR
+    )
+    dig1 = _value(results[e1], "开挖|Ⅲ类土|m3")
+    dig2 = _value(results[e2], "开挖|Ⅲ类土|m3")
+    assert dig1 + dig2 == pytest.approx(expected_total.v * 120, rel=1e-9)
+
+    # 中间坡围护量挂深侧（e2 深 4m）：e2 名下的桩量含隔断面，比 e1（只有左边坡面）多
+    pile1 = _value(results[e1], "围护|拉森钢板桩|t")
+    pile2 = _value(results[e2], "围护|拉森钢板桩|t")
+    per_face = math.floor(120 / 0.4 + 0.5) / 120 * 12 * 75 / 1000 * 1 * 120
+    assert pile1 == pytest.approx(per_face, rel=1e-9)  # 左边坡一面
+    assert pile2 == pytest.approx(per_face * 2, rel=1e-9)  # 中间坡 + 右边坡
+
+
+def test_group_mid_slope_pile_run_encroaches(project) -> None:
+    """中间坡放坡（左管右原则 = 放坡 1:0.5）：楔形按 平段+坡段 精确对拍。"""
+    from app.core.calc.engine import (
+        atlas_dims,
+        build_atlas_query,
+        build_element_input,
+        workwidth_of,
+    )
+    from app.core.calc.measures import foundation_thickness as fd
+    from app.core.models import base as orm
+    from app.core.models.models import Element, PcpEnclosure, PcpFoundation, PcpWidth
+    from app.services.atlas import resolve_atlas
+    from sqlalchemy import select
+
+    slope_pe = _make_enclosure("中间放坡原则", "放坡", slope=0.5)
+    pile_pe = _make_enclosure("合槽桩原则3", "钢板桩")
+    from app.viewmodels import unit_vm
+
+    e1 = _element("浅管", dn=600, depth="3", amount="120", pe_name=slope_pe.name)
+    e2 = _element("深管", dn=600, depth="4", amount="120", pe_name=pile_pe.name)
+    group, error = unit_vm.create_trench_group([e1, e2])
+    assert group is not None and error is None
+    # 父节点 PE 默认 = 首成员原原则（放坡）——显式设为钢板桩，聚焦中间坡断言
+    unit_vm.update_group(group.id, pe_name=pile_pe.name)
+    results, errors = _group_results(group)
+    assert not errors, errors
+
+    session = orm.session()
+    geometry = []
+    for element_id in (e1, e2):
+        element = session.get(Element, element_id)
+        pw = session.scalars(select(PcpWidth).where(PcpWidth.name == element.pw_name)).first()
+        pe = session.scalars(select(PcpEnclosure).where(PcpEnclosure.name == element.pe_right_name)).first()
+        pf = session.scalars(select(PcpFoundation).where(PcpFoundation.name == element.pf_name)).first()
+        info = build_element_input(element, pe, pf, pw=pw)
+        at = resolve_atlas(build_atlas_query(info, pe, pw))
+        ad = atlas_dims(info, at)
+        geometry.append(
+            {
+                "b": info.size_b + (ad.t * 2 + ad.a * 2) / 1000,
+                "h": info.depth + (fd(pf).v + ad.t + ad.c1) / 1000,
+                "ww": workwidth_of(pw, info) / 1000,
+            }
+        )
+    g1, g2 = geometry
+    gap = g1["ww"]
+    h1, h2 = g1["h"].v, g2["h"].v
+    delta = h2 - h1
+    run = delta * 0.5
+    mid_area = (gap - run) * h2 + run * (h1 + h2) / 2  # 平段（深底）+ 坡段梯形
+    expected_total = g1["ww"] * h1 + g1["b"] * h1 + mid_area + g2["b"] * h2 + g2["ww"] * h2
+    dig1 = _value(results[e1], "开挖|Ⅲ类土|m3")
+    dig2 = _value(results[e2], "开挖|Ⅲ类土|m3")
+    assert dig1 + dig2 == pytest.approx(expected_total.v * 120, rel=1e-6)
+
+
+# --------------------------------------------------------------------------- #
+# 合槽编组：操作与校验
+# --------------------------------------------------------------------------- #
+def test_group_validation_rules(project) -> None:
+    from app.viewmodels import unit_vm
+
+    e1 = _element("甲", amount="120")
+    e2 = _element("乙", amount="100")  # 数量不一致
+    _group, error = unit_vm.create_trench_group([e1, e2])
+    assert error is not None and "数量" in error
+
+    from app.viewmodels.unit_vm import create_element
+
+    jacking = create_element(
+        _first_unit_id(), category=4, name="顶管", amount="120",
+        pipes=[("钢管", 800, "1")],
+    )
+    _group, error = unit_vm.create_trench_group([e1, jacking.id])
+    assert error is not None and "不开槽" in error
+
+    _group, error = unit_vm.create_trench_group([e1])
+    assert error is not None and "至少" in error
+
+
+def test_group_dissolve_reverts_members(project) -> None:
+    from app.core.models import base as orm
+    from app.core.models.models import LR_PE_TEXT, TrenchGroup, Element
+    from app.viewmodels import unit_vm
+
+    group, (e1, e2) = _group_fixture(project)
+    # 编组后：成员是分设模式、连续排列
+    session = orm.session()
+    m1 = session.get(Element, e1)
+    m2 = session.get(Element, e2)
+    assert m1.pe_name == LR_PE_TEXT and m1.pe_left_name and m1.pe_right_name
+    assert m1.excvt_side == "R" and m1.foundation_side == "R"
+    assert abs(m1.order_no - m2.order_no) == 1
+
+    unit_vm.dissolve_trench_group(group.id)
+    session = orm.session()
+    assert session.get(TrenchGroup, group.id) is None
+    m1 = session.get(Element, e1)
+    assert m1.group_id is None
+    assert m1.pe_name != LR_PE_TEXT  # 还原为普通单原则
+    assert m1.pe_left_name == ""
+
+
+def test_group_member_reorder_and_remove(project) -> None:
+    from app.core.models import base as orm
+    from app.core.models.models import Element
+    from app.viewmodels import unit_vm
+
+    group, (e1, e2) = _group_fixture(project)
+    session = orm.session()
+    assert session.get(Element, e1).order_no < session.get(Element, e2).order_no
+    unit_vm.move_element(e2, -1)  # 组内右移成员上移 = 左移
+    session.expire_all()
+    assert session.get(Element, e2).order_no < session.get(Element, e1).order_no
+
+    unit_vm.remove_from_group(e1)  # 只剩一条 → 整组自动解散
+    session.expire_all()
+    assert session.get(Element, e2).group_id is None
+
+
+# --------------------------------------------------------------------------- #
+# stn 编解码往返（分设 + 编组）
+# --------------------------------------------------------------------------- #
+def test_stn_roundtrip_lr_and_group(project) -> None:
+    from app.core.models import base as orm
+    from app.core.models.models import LR_PE_TEXT, TrenchGroup, Element
+    from app.services import project_io, stn_codec
+
+    slope_pe = _make_enclosure("往返左原则", "放坡", slope=0.5)
+    pile_pe = _make_enclosure("往返右原则", "钢板桩")
+    lr = _make_lr(_element("分设往返", pe_name=slope_pe.name), slope_pe.name, pile_pe.name)
+    from app.viewmodels import unit_vm
+
+    unit_vm.update_element(lr, support_left=False, excvt_side="R")
+    g1 = _element("组员1", amount="120")
+    g2 = _element("组员2", amount="120")
+    group, _error = unit_vm.create_trench_group([g1, g2])
+
+    data = stn_codec.dump_database()
+    # dump 里有新字段与编组
+    element_data = next(item for item in data["segments"][0]["units"][0]["elements"] if item["name"] == "分设往返")
+    assert element_data["pe_name"] == LR_PE_TEXT
+    assert element_data["pe_left_name"] == slope_pe.name
+    assert element_data["pe_right_name"] == pile_pe.name
+    assert element_data["support_left"] is False
+    assert element_data["excvt_side"] == "R"
+    assert data["segments"][0]["units"][0]["groups"]
+
+    # 重开工程后字段零漂移
+    path = project_io.current_path()
+    project_io.close_project()
+    project_io.open_project(path)
+    session = orm.session()
+    restored = next(
+        element for element in session.query(Element).all() if element.name == "分设往返"
+    )
+    assert restored.pe_name == LR_PE_TEXT
+    assert restored.pe_left_name == slope_pe.name
+    assert restored.pe_right_name == pile_pe.name
+    assert restored.support_left is False
+    assert restored.excvt_side == "R"
+    groups = list(session.query(TrenchGroup).all())
+    assert len(groups) == 1
+    assert len(groups[0].members) == 2
+
+
+# --------------------------------------------------------------------------- #
+# UI / 断面图冒烟（离屏）
+# --------------------------------------------------------------------------- #
+def test_section_scene_builds_for_lr_and_group(project, qapp) -> None:
+    """分设构件与合槽的断面场景构建不报错（离屏渲染一帧）。"""
+    from PySide6.QtGui import QImage
+
+    from app.views.panels.section_view import SectionPanel, _build_group_scene, _build_scene
+
+    slope_pe = _make_enclosure("断面左原则", "放坡", slope=0.5)
+    pile_pe = _make_enclosure("断面右原则", "钢板桩")
+    lr = _make_lr(_element("断面分设", pe_name=slope_pe.name), slope_pe.name, pile_pe.name)
+    scene, hint = _build_scene(lr, 400, 300)
+    assert scene is not None, hint
+
+    e1 = _element("断面组1", amount="120")
+    e2 = _element("断面组2", amount="120")
+    from app.viewmodels import unit_vm
+
+    group, _error = unit_vm.create_trench_group([e1, e2])
+    scene, hint = _build_group_scene(group.id, 400, 300)
+    assert scene is not None and scene.outline, hint
+
+    # 画一帧（paintEvent 全路径）
+    panel = SectionPanel()
+    panel.resize(400, 300)
+    panel.set_element(lr)
+    image = QImage(400, 300, QImage.Format.Format_RGB32)
+    panel.render(image)
+    panel.set_group(group.id)
+    panel.render(image)
+
+
+def test_unit_panel_group_rows_and_lr_tab(project, qapp) -> None:
+    """主表格树形行 / 父行编辑 / 分设 tab 的装填冒烟。"""
+    from app.views.panels.unit_panel import UnitPanel
+
+    from app.viewmodels import unit_vm
+
+    slope_pe = _make_enclosure("面板左原则", "放坡", slope=0.5)
+    pile_pe = _make_enclosure("面板右原则", "钢板桩")
+    lr = _make_lr(_element("面板分设", pe_name=slope_pe.name), slope_pe.name, pile_pe.name)
+    e1 = _element("面板组1", amount="120")
+    e2 = _element("面板组2", amount="120")
+
+    panel = UnitPanel()
+    panel.resize(1400, 800)
+    from app.viewmodels.project_vm import TreeNode
+
+    from app.core.models.models import Unit
+    from app.core.models import base as orm
+    from sqlalchemy import select
+
+    unit = orm.session().scalar(select(Unit))
+    panel._on_node_selected(TreeNode(kind="unit", id=unit.id, name=unit.name))
+
+    # 分设构件选中 → 「围护原则」tab 装填 6 行（离屏未 show，用内容断言）
+    panel._show_single_detail(lr)
+    assert panel._lr_table.rowCount() == 6
+    assert not panel._lr_placeholder.isVisible()
+
+    # 编组 → 表格出现父行（▣ 前缀）+ 两行缩进子行
+    group, error = unit_vm.create_trench_group([e1, e2])
+    assert group is not None and error is None
+    panel.refresh()
+    table = panel._element_table
+    names = [table.item(row, 0).text() for row in range(table.rowCount())]
+    assert any(name.startswith("▣") for name in names)
+    assert any(name.startswith("    ") for name in names)
+    # 父行选中 → 组成员合计工程量与合槽断面
+    group_row = next(row for row in range(table.rowCount()) if table.item(row, 0).text().startswith("▣"))
+    from app.views.panels.unit_panel import _select_row
+
+    _select_row(table, group_row, 0)
+    panel._sync_detail_to_selection()
+    assert panel._group_member_ids
+    # 断面面板 + 工程量表都有内容（合槽断面 outline 模式）
+    assert panel._section_view._canvas._group_id == group.id
+
+    # 多选占位（分设 tab 内容切回占位说明）
+    panel._show_multi_detail()
+    assert panel._lr_table.rowCount() == 0

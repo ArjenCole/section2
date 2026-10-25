@@ -30,6 +30,7 @@ from app.core.models.models import (
     CATEGORY_PULLING,
     CATEGORY_STRUCTURE,
     GROOVE_WIDTH_WORK,
+    LR_PE_TEXT,
     Element,
     PcpEnclosure,
     PcpFoundation,
@@ -126,6 +127,14 @@ class ElementInput:
     #: 降水 / 面宽原则（旧版挂在 PE 下，v4 起独立引用）
     pp: PcpPrecipitation | None = None
     pw: PcpWidth | None = None
+    #: 左右分设（v3）：左右两条围护原则；None = 普通单原则模式。
+    #: ``pe`` 此时为**管道基础侧**原则（图集查询 / 包封扣管位等内部消费者用）
+    pe_left: PcpEnclosure | None = None
+    pe_right: PcpEnclosure | None = None
+    support_left: bool = True
+    support_right: bool = True
+    excvt_side: str = "L"
+    foundation_side: str = "L"
 
     @property
     def depth_dim(self) -> Dim:
@@ -214,6 +223,30 @@ def _usable_text(text: str) -> str:
     return str(text or "").strip()
 
 
+def _resolve_lr_enclosures(element: Element) -> tuple[PcpEnclosure | None, PcpEnclosure | None]:
+    """左右分设构件的 (左 PE, 右 PE)：按名解析，引用失效回退库中第一条。"""
+    from sqlalchemy import select
+
+    from app.core.models import base as orm
+
+    if not orm.is_open():
+        return None, None
+    session = orm.session()
+
+    def _by_name(name: str | None):
+        if not name:
+            return None
+        found_id = session.scalar(select(PcpEnclosure.id).where(PcpEnclosure.name == name))
+        return session.get(PcpEnclosure, found_id) if found_id is not None else None
+
+    def _first():
+        return session.scalar(select(PcpEnclosure).order_by(PcpEnclosure.order_no, PcpEnclosure.id))
+
+    pe_left = _by_name(element.pe_left_name) or _first()
+    pe_right = _by_name(element.pe_right_name) or _first()
+    return pe_left, pe_right
+
+
 def build_element_input(
     element: Element,
     pe: PcpEnclosure | None,
@@ -224,9 +257,24 @@ def build_element_input(
     """从 ORM 构件构造计算输入（深度/数量求值，扩展参数合并默认值）。
 
     ``pp`` / ``pw`` 为降水 / 面宽原则（None 时不参与降水与图集宽度查询）。
+
+    构件为左右分设模式（``pe_name == LR_PE_TEXT``）时自动解析左右两条围护
+    原则（引用失效回退库中第一条，与界面一致），``pe`` 落到**管道基础侧**
+    原则上——图集查询、包封扣管位等内部消费者照旧读 ``info.pe``。
     """
     named_params = {(param.key, param.unit or ""): param.value for param in element.params}
     params = dict(_DEFAULT_PARAMS.get(element.category, {}))
+    pe_left = pe_right = None
+    support_left = support_right = True
+    excvt_side = foundation_side = "L"
+    if element.pe_name == LR_PE_TEXT:
+        pe_left, pe_right = _resolve_lr_enclosures(element)
+        support_left = bool(element.support_left)
+        support_right = bool(element.support_right)
+        excvt_side = element.excvt_side or "L"
+        foundation_side = element.foundation_side or "L"
+        # 主 pe（图集查询 / 包封扣管位等内部消费者）= 管道基础侧原则
+        pe = pe_left if foundation_side != "R" else pe_right
     #: 参数原文的算式伴随：可求值才带回原文（求值失败的格子按 0 计算）
     param_dims: dict[str, Dim] = {}
     for (key, unit), text in named_params.items():
@@ -279,6 +327,12 @@ def build_element_input(
         pf=pf,
         pp=pp,
         pw=pw,
+        pe_left=pe_left,
+        pe_right=pe_right,
+        support_left=support_left,
+        support_right=support_right,
+        excvt_side=excvt_side,
+        foundation_side=foundation_side,
     )
 
 
@@ -323,6 +377,23 @@ def _width_tables(pw: PcpWidth | None) -> tuple[dict[str, dict[int, float]], dic
         if not groove_bs:
             groove_bs = groove_bs2
     return widths, groove_bs
+
+
+def workwidth_of(pw: PcpWidth | None, info: ElementInput) -> float:
+    """按面宽原则 pw 的工作面宽度表查 info 首根管的工作面宽度（mm）。
+
+    合槽编组用它取边缘工作面（wL 按父节点 PW + 构件 1 查、wR 按最右子节点
+    PW + 其自身管径查）；查表语义与图集宽度查询同一条（百位取整、越界钳到
+    0~3000，行由构件类别 + 管材类别决定）。
+    """
+    from app.core.pipe_category import width_dn_for, width_row_for
+
+    widths, _groove_bs = _width_tables(pw)
+    pipe = info.pipes[0] if info.pipes else None
+    row = width_row_for(info.category, pipe.resolved_category() if pipe else "")
+    dn = width_dn_for(info.category, pipe.dn if pipe else 0)
+    key = max(0, min(3000, int(round(float(dn) / 100.0) * 100)))
+    return widths.get(row, {}).get(key, 0.0)
 
 
 def atlas_dims(info: ElementInput, at: AtlasParam) -> AtlasDims:
@@ -453,18 +524,23 @@ def key_exp(params: dict[str, tuple[str, str]], key: str) -> str:
     return text.replace(" ", "")
 
 
-def pre_sub(expression: str, height: Dim, width: Dim, count: Dim) -> str:
-    """把 height / width / count 代入公式；埋深/数量为算式时原文随代入进算式。
+def pre_sub(expression: str, height: Dim, width: Dim, count: Dim, sides: int = 2) -> str:
+    """把 height / width / count / sides 代入公式；埋深/数量为算式时原文随代入进算式。
 
     括号按占位符在公式里的位置给（见 :func:`_embed`），与参数引用的代入同一套规则。
+    ``sides`` 是围护公式的"侧数"代入变量（v3）：普通构件恒 2（库模板的
+    ``*2`` 已改写成 ``*sides``，代入后输出与旧版逐字节一致）；左右分设与
+    合槽的每个面代入 1。公式里没写 ``sides`` 时零影响。
     """
     text = expression
-    for name, value in (("height", height), ("width", width), ("count", count)):
+    for name, value in (("height", height), ("width", width), ("count", count), ("sides", dim(sides))):
         text = _substitute(text, name, value.e)
     return text
 
 
-def component_quantities(component, height: Dim, width: Dim, count: Dim, cat: str, out: QDict, note: str = "") -> None:
+def component_quantities(
+    component, height: Dim, width: Dim, count: Dim, cat: str, out: QDict, note: str = "", sides: int = 2
+) -> None:
     """构件公式求值（旧版 mcComponent.Q）：cat="F" 工程量公式，"Z" 支撑公式。"""
     if component is None:
         return
@@ -475,10 +551,71 @@ def component_quantities(component, height: Dim, width: Dim, count: Dim, cat: st
         substituted = value_exp(params, key)
         if substituted == _CYCLE or substituted == "":
             continue
-        numeric = prettify_formula(pre_sub(substituted, height, width, count))
+        numeric = prettify_formula(pre_sub(substituted, height, width, count, sides))
         value = evaluate_or_default(numeric)
         if value != 0:
             out.add(key_exp(params, key), value, numeric, note)
+
+
+def component_support_quantities(
+    component, height: Dim, width: Dim, count: Dim, out: QDict, note: str = "", emit_strut: bool = True
+) -> None:
+    """Z 类（支撑）公式的"围檩 / 贯通支撑"分流输出（v3 库拆行后）。
+
+    库里 Z 类已拆成独立行（同定额键，QDict 同 key 合并）：公式含 ``sides``
+    变量的行是**围护侧量**（围檩），按调用侧 ×1（``sides=1``）；不含
+    ``sides`` 的行是**整槽量**（贯通支撑 / 支撑模板），只在 ``emit_strut=True``
+    的调用（首个勾选面）输出一次，避免左右分设 / 合槽多面重复。
+    普通单原则路径不走这里（works_quantities 全行 sides=2，与旧版一致）。
+    """
+    if component is None:
+        return
+    params = load_params(component)
+    for key in params:
+        if not key.startswith("Z") or len(key) <= 1:
+            continue
+        substituted = value_exp(params, key)
+        if substituted == _CYCLE or substituted == "":
+            continue
+        has_sides = re.search(r"\bsides\b", substituted) is not None
+        if not has_sides and not emit_strut:
+            continue  # 贯通支撑行：整槽只出一次
+        numeric = prettify_formula(pre_sub(substituted, height, width, count, 1))
+        value = evaluate_or_default(numeric)
+        if value != 0:
+            out.add(key_exp(params, key), value, numeric, note)
+
+
+def support_quantities_sided(
+    works, depth: Dim, count: Dim, ad: AtlasDims, info: ElementInput, out: QDict, width: Dim | None = None
+) -> None:
+    """左右分设 / 合槽的支撑（Z 类）输出：``works`` = [(做法, 勾选了支撑)]。
+
+    围檩行：每个勾选面各出一次（×1）；贯通支撑行：只在第一个勾选面出
+    一次（左优先，勾选顺序即列表顺序）。级高划分同 works_quantities。
+    """
+    if width is None:
+        width = groove.groove_width(ad, info.size_b_dim)
+    strut_emitted = False
+    for work, checked in works:
+        if not checked or work is None:
+            continue
+        levels = list(work.levels)
+        fixed_h = dim_sum(*(dim(level.h) for level in levels if level.h >= 0))
+        fixed_cnt = sum(1 for level in levels if level.h >= 0)
+        for level in levels:
+            if level.h >= 0:
+                height = dim(level.h)
+            elif len(levels) > fixed_cnt:
+                height = (depth - fixed_h) / (len(levels) - fixed_cnt)
+            else:
+                height = depth
+            component = level.components[0] if level.components else None
+            component_support_quantities(
+                component, height, width, count, out,
+                note="", emit_strut=not strut_emitted,
+            )
+            strut_emitted = True  # 首个勾选面之后不再出贯通支撑行
 
 
 def prettify_formula(expression: str) -> str:
@@ -518,6 +655,8 @@ def compute_element(info: ElementInput) -> QDict | None:
         return compute_structure(info)
     if info.category in (CATEGORY_JACKING, CATEGORY_PULLING):
         return compute_trenchless(info)
+    if info.pe_left is not None or info.pe_right is not None:
+        return compute_element_lr(info)
     pe = info.pe
     pf = info.pf
     if info.amount == 0 or pe is None or pf is None or info.pp is None or info.pw is None:
@@ -560,6 +699,77 @@ def compute_element(info: ElementInput) -> QDict | None:
 
     # 管道基础（扣弓形占土）+ 管材
     foundation.cal_found(info, pe, ad, per_meter)
+    if info.category == CATEGORY_ENCASED:
+        foundation.encased_pipe_deduction(info, per_meter)
+    foundation.cal_pipes(info, per_meter)
+
+    per_meter.scale(info.amount, expr=amount_dim.e)
+    return per_meter
+
+
+def compute_element_lr(info: ElementInput) -> QDict | None:
+    """左右分设构件的计算（v3）：两侧各自的围护做法 + 单面公式（sides=1）。
+
+    * 挖填类型（开挖土质 / 回填材质）取 ``excvt_side`` 侧原则，管道基础
+      （砼基础 / 角度 / 垫层，决定图集查询）取 ``foundation_side`` 侧原则；
+    * 断面几何走 :func:`groove.cal_groove_sided`（两侧级标高并集切段）；
+    * F 类（围护量）每侧各调一次 ×1；Z 类（支撑/围檩）按左右支撑勾选，
+      深度不含换填层（同旧版支撑口径）；
+    * 降水的湿土排水副调用也走双侧几何；特殊地基 / 管道基础 / 管材同单原则路径。
+    """
+    pe_l, pe_r = info.pe_left, info.pe_right
+    pf = info.pf
+    if pe_l is None or pe_r is None or pf is None or info.pp is None or info.pw is None:
+        return None
+    if info.amount == 0:
+        return None
+    pe_excvt = pe_r if info.excvt_side == "R" else pe_l
+    pe_found = pe_r if info.foundation_side == "R" else pe_l
+    depth_dim = info.depth_dim
+    amount_dim = info.amount_dim
+
+    at = resolve_atlas(build_atlas_query(info, pe_found, info.pw))
+    ad = atlas_dims(info, at)
+    if ad.c1.v == 0:
+        # 垫层厚 0（砂基础无垫层）：取管道基础侧原则的垫层表值
+        ad = ad.replace(c1=cushion_dim(pe_found))
+
+    per_meter = QDict()
+    groove_depth = depth_dim + (foundation_dim(pf) + ad.t + ad.c1) / 1000
+    work_l = choice_work(pe_l, groove_depth.v)
+    work_r = choice_work(pe_r, groove_depth.v)
+    if work_l is None or work_r is None:
+        return None
+    cushion_name = pe_found.cushions[0].name if pe_found.cushions else "中粗砂"
+    if not groove.cal_groove_sided(
+        pe_excvt, work_l, work_r, pf, ad, info.size_b_dim, info.size_h_dim,
+        groove_depth, per_meter, cushion_name,
+    ):
+        return None
+    width = groove.groove_width(ad, info.size_b_dim)
+    # 围护量：每侧 ×1（库公式 *sides 代入 1；放坡模板无公式天然不出量）
+    works_quantities(work_l, groove_depth, amount_dim, "F", ad, info, per_meter, "围护·左侧", sides=1)
+    works_quantities(work_r, groove_depth, amount_dim, "F", ad, info, per_meter, "围护·右侧", sides=1)
+    # 支撑（Z 类）：深度不含换填层（同旧版 Cal 末尾）；围檩行每侧 ×1、
+    # 贯通支撑行整槽一次（左优先），见 support_quantities_sided
+    support_depth = depth_dim + (ad.t + ad.c1) / 1000
+    support_work_l = choice_work(pe_l, support_depth.v)
+    support_work_r = choice_work(pe_r, support_depth.v)
+    support_quantities_sided(
+        [(support_work_l, info.support_left), (support_work_r, info.support_right)],
+        support_depth, amount_dim, ad, info, per_meter,
+    )
+    # 降水（湿土排水的断面副调用也走双侧几何，垫层材质取管道基础侧）
+    precipitation.cal_precipitation(
+        info.pp, pe_excvt, work_l, pf, ad, info, groove_depth, per_meter,
+        work_r=work_r, cushion_name=cushion_name,
+    )
+    # 特殊地基：按整槽宽（同单原则路径）
+    special = pf.components[0] if pf.components else None
+    if special is not None:
+        component_quantities(special, groove_depth, width, amount_dim, "F", per_meter, "特殊地基")
+    # 管道基础（扣弓形占土，公共参数取管道基础侧）+ 管材
+    foundation.cal_found(info, pe_found, ad, per_meter)
     if info.category == CATEGORY_ENCASED:
         foundation.encased_pipe_deduction(info, per_meter)
     foundation.cal_pipes(info, per_meter)
@@ -631,11 +841,26 @@ def compute_structure(info: ElementInput) -> QDict | None:
     return out
 
 
-def works_quantities(work, depth: Dim, count: Dim, cat: str, ad: AtlasDims, info: ElementInput, out: QDict, note: str) -> None:
+def works_quantities(
+    work,
+    depth: Dim,
+    count: Dim,
+    cat: str,
+    ad: AtlasDims,
+    info: ElementInput,
+    out: QDict,
+    note: str,
+    sides: int = 2,
+    width: Dim | None = None,
+) -> None:
     """围护做法各级构件 + 止水构件的公式量（旧版 cal_Ecpnts）。
 
     代入公式的 ``width`` 是槽底宽，与挖方 / 特殊地基同一条
-    :func:`app.core.calc.groove.groove_width`（面宽原则用沟槽宽度表时取表值）。
+    :func:`app.core.calc.groove.groove_width`（面宽原则用沟槽宽度表时取表值）；
+    ``width`` 显式传入时按传入值（合槽用平底宽 B_平底）。
+
+    ``sides`` 是围护公式的侧数代入（v3，见 :func:`pre_sub`）：普通构件 2，
+    左右分设 / 合槽的每个面 1。
 
     与旧版的偏差（修正旧版缺陷）：旧版 cal_Ecpnts 写的是
     ``D10E3(SizeB + t*2 + a*2 + workwidth*2)``，把米制的断面宽混进毫米的和里
@@ -648,7 +873,8 @@ def works_quantities(work, depth: Dim, count: Dim, cat: str, ad: AtlasDims, info
     levels = list(work.levels)
     fixed_h = dim_sum(*(dim(level.h) for level in levels if level.h >= 0))
     fixed_cnt = sum(1 for level in levels if level.h >= 0)
-    width = groove.groove_width(ad, info.size_b_dim)
+    if width is None:
+        width = groove.groove_width(ad, info.size_b_dim)
     for level in levels:
         if level.h >= 0:
             height = dim(level.h)
@@ -657,10 +883,10 @@ def works_quantities(work, depth: Dim, count: Dim, cat: str, ad: AtlasDims, info
         else:
             height = depth
         component = level.components[0] if level.components else None
-        component_quantities(component, height, width, count, cat, out, note)
+        component_quantities(component, height, width, count, cat, out, note, sides)
     waterstop = work.waterstops[0] if work.waterstops else None
     if waterstop is not None:
-        component_quantities(waterstop, depth, width, count, "F", out, "止水")
+        component_quantities(waterstop, depth, width, count, "F", out, "止水", sides)
 
 
 def replace(at, **changes):
@@ -687,6 +913,11 @@ def resolve_element_principles(element: Element, session):
         return session.scalar(select(model).order_by(model.order_no, model.id))
 
     pe = _by_name(PcpEnclosure, element.pe_name)
+    if pe is None and element.pe_name == LR_PE_TEXT:
+        # 左右分设：pe 解析为管道基础侧原则（图集查询 / 候选匹配 / 断面图
+        # 回退等消费者的取值口径），左右两侧完整解析见 _resolve_lr_enclosures
+        pe_left, pe_right = _resolve_lr_enclosures(element)
+        pe = pe_right if element.foundation_side == "R" else pe_left
     pf = _by_name(PcpFoundation, element.pf_name)
     pp = _by_name(PcpPrecipitation, element.pp_name) or _first(PcpPrecipitation)
     pw = _by_name(PcpWidth, element.pw_name) or _first(PcpWidth)

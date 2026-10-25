@@ -24,10 +24,12 @@ from app.core.models.models import (
     CATEGORY_JACKING,
     CATEGORY_PULLING,
     CATEGORY_STRUCTURE,
+    LR_PE_TEXT,
     Element,
     ElementParam,
     ElementQuantity,
     Pipe,
+    TrenchGroup,
     unit_of,
 )
 from app.core.param_naming import (
@@ -56,6 +58,12 @@ _ELEMENT_FIELDS = {
     "pw_name",
     "source",
     "order_no",
+    "pe_left_name",
+    "pe_right_name",
+    "support_left",
+    "support_right",
+    "excvt_side",
+    "foundation_side",
 }
 _PIPE_FIELDS = {"mat", "cat", "dn", "content", "t"}
 _PARAM_FIELDS = {"key", "unit", "value"}
@@ -95,6 +103,47 @@ class ElementRow:
     spec: str = ""
     #: 来源（旧版主表格“来源”列，构件库插入时记录模板出处）
     source: str = ""
+    #: 左右分设（v3）：左右围护原则 / 支撑勾选 / 挖填·基础取侧
+    pe_left_name: str = ""
+    pe_right_name: str = ""
+    support_left: bool = True
+    support_right: bool = True
+    excvt_side: str = "L"
+    foundation_side: str = "L"
+    #: 合槽编组（v3）：所属组的 id；None = 独立构件
+    group_id: int | None = None
+    #: 组内位置（从左到右 0 起）；独立构件恒 0
+    group_index: int = 0
+
+
+@dataclass
+class GroupRow:
+    """合槽父节点行（主表格显示用）。
+
+    父节点零工程量：不参与计算，仅作下属子构件工程量的合计分组视图。
+    显示位置 = 首个成员的位置（成员强制连续，见 :func:`create_trench_group`）。
+    """
+
+    id: int
+    name: str
+    pe_name: str  # 左边缘围护原则
+    pw_name: str  # 左边缘工作面宽原则
+    order_no: int
+    member_count: int
+    #: 供主表格统一装填的显示属性（与 ElementRow 同名同型）
+    category: int = 0
+    depth: str = ""
+    amount: str = ""
+    pf_name: str = "-"
+    pp_name: str = "-"
+    source: str = "合槽编组"
+    spec: str = ""
+    unit: str = "m"
+    depth_value: float = 0.0
+    amount_value: float = 0.0
+    depth_error: str = ""
+    amount_error: str = ""
+    error: str = ""
 
 
 @dataclass
@@ -142,7 +191,7 @@ def _evaluate_field(text: str) -> tuple[float, str]:
 
 
 def element_rows(unit_id: int) -> list[ElementRow]:
-    """读取某单位工程的构件列表（含算式求值结果）。"""
+    """读取某单位工程的构件列表（含算式求值结果，不含合槽父节点行）。"""
     if not project_io.is_open():
         return []
     rows: list[ElementRow] = []
@@ -151,6 +200,57 @@ def element_rows(unit_id: int) -> list[ElementRow]:
         row.spec = _element_spec(element)
         rows.append(row)
     return rows
+
+
+def table_rows(unit_id: int) -> list:
+    """主表格显示序列：构件行 + 合槽父节点行（插在首成员位置、成员缩进）。
+
+    组员按 order_no 强制连续（编组 / 加组 / 移动时维护）；父行出现在该组
+    第一个成员之前。返回 ``ElementRow | GroupRow`` 混合列表，面板按
+    ``isinstance(row, GroupRow)`` 分支装填。
+    """
+    elements = element_rows(unit_id)
+    by_group: dict[int, list[ElementRow]] = {}
+    for row in elements:
+        if row.group_id is not None:
+            by_group.setdefault(row.group_id, []).append(row)
+    rows: list = []
+    emitted: set[int] = set()
+    for row in elements:
+        if row.group_id is not None and row.group_id not in emitted:
+            emitted.add(row.group_id)
+            rows.append(_group_row(row.group_id, by_group[row.group_id]))
+        if row.group_id is not None:
+            row.group_index = next(
+                (
+                    index
+                    for index, member in enumerate(by_group[row.group_id])
+                    if member.id == row.id
+                ),
+                0,
+            )
+        rows.append(row)
+    return rows
+
+
+def _group_row(group_id: int, members: list[ElementRow]) -> GroupRow:
+    """父节点行：名称 / 原则引用 + 成员摘要（埋深取最深、数量取首成员）。"""
+    group = orm.session().get(TrenchGroup, group_id)
+    if group is None:  # pragma: no cover - 删除竞态下短暂出现
+        return GroupRow(id=group_id, name="合槽组", pe_name="", pw_name="", order_no=0, member_count=len(members))
+    depths = [row.depth_value for row in members]
+    return GroupRow(
+        id=group.id,
+        name=group.name,
+        pe_name=group.pe_name or "",
+        pw_name=group.pw_name or "",
+        order_no=group.order_no,
+        member_count=len(members),
+        depth=max(depths) if depths else 0.0,
+        amount=members[0].amount if members else "",
+        amount_value=members[0].amount_value if members else 0.0,
+        spec=f"{len(members)} 条构件合槽",
+    )
 
 
 def _element_spec(element: Element) -> str:
@@ -269,7 +369,8 @@ def compute_unit(unit_id: int):
 
     返回 ``(定额汇总 QDict, [(构件行, 该构件的 QDict)])``；构件计算失败
     （数量为 0 / 原则缺失 / 覆土不足）时其 QDict 为空字典并在行上带错误说明。
-    多原则引用（旧版 PEname 字典）按 pe×pf 组合与比例在引擎里合并。
+    合槽编组的成员由 :func:`app.core.calc.trench_group.compute_group` 统一
+    计算（整组一次、逐构件归属），父节点不出现在明细里（零工程量）。
     """
     from app.core.calc.engine import (
         build_element_input,
@@ -277,14 +378,30 @@ def compute_unit(unit_id: int):
         resolve_element_principles,
     )
     from app.core.calc.tracer import QDict
+    from app.core.calc.trench_group import compute_group
 
     summary = QDict()
     detail: list[tuple[ElementRow, QDict]] = []
     if not project_io.is_open():
         return summary, detail
     session = orm.session()
+    group_cache: dict[int, tuple[dict[int, QDict], dict[int, str]]] = {}
     for element in _elements_of(unit_id):
         row = _element_row(element)
+        if element.group_id is not None:
+            # 编组成员：整组只算一次（首成员触发），逐构件挂量
+            cached = group_cache.get(element.group_id)
+            if cached is None:
+                group = session.get(TrenchGroup, element.group_id)
+                cached = compute_group(group) if group is not None else ({}, {})
+                group_cache[element.group_id] = cached
+            results, errors = cached
+            row.spec = _element_spec(element)
+            result = results.get(element.id, QDict())
+            row.error = errors.get(element.id, "")
+            detail.append((row, result))
+            summary.extend(result)
+            continue
         pe, pf, pp, pw = resolve_element_principles(element, session)
         info = build_element_input(element, pe, pf, pp, pw)
         row.spec = info.spec()
@@ -336,6 +453,13 @@ def _element_row(element: Element) -> ElementRow:
         depth_error=depth_error,
         amount_error=amount_error,
         source=element.source,
+        pe_left_name=element.pe_left_name or "",
+        pe_right_name=element.pe_right_name or "",
+        support_left=bool(element.support_left),
+        support_right=bool(element.support_right),
+        excvt_side=element.excvt_side or "L",
+        foundation_side=element.foundation_side or "L",
+        group_id=element.group_id,
     )
 
 
@@ -557,6 +681,12 @@ def create_element(
     order_no: int | None = None,
     seed_atlas_defaults: bool = False,
     atlas_candidates: list[tuple] | None = None,
+    pe_left_name: str = "",
+    pe_right_name: str = "",
+    support_left: bool = True,
+    support_right: bool = True,
+    excvt_side: str = "L",
+    foundation_side: str = "L",
 ) -> Element | None:
     """新增构件条目；未指定原则时取库中第一条（旧版 mcElement.GetData 的做法）。
 
@@ -589,6 +719,12 @@ def create_element(
         pp_name=pp_name if pp_name is not None else (precipitation_names[0] if precipitation_names else ""),
         pw_name=pw_name if pw_name is not None else (width_names[0] if width_names else ""),
         source=source,
+        pe_left_name=pe_left_name or "",
+        pe_right_name=pe_right_name or "",
+        support_left=bool(support_left),
+        support_right=bool(support_right),
+        excvt_side="R" if excvt_side == "R" else "L",
+        foundation_side="R" if foundation_side == "R" else "L",
         order_no=order_no
         if order_no is not None
         else project_io.next_order_no(Element, unit_id=unit_id),
@@ -677,6 +813,12 @@ def element_snapshot(element_id: int) -> dict | None:
         "pp_name": element.pp_name,
         "pw_name": element.pw_name,
         "source": element.source,
+        "pe_left_name": element.pe_left_name or "",
+        "pe_right_name": element.pe_right_name or "",
+        "support_left": bool(element.support_left),
+        "support_right": bool(element.support_right),
+        "excvt_side": element.excvt_side or "L",
+        "foundation_side": element.foundation_side or "L",
         "pipes": [
             (pipe.mat, pipe.pipe_category, pipe.dn, pipe.content, pipe.t)
             for pipe in element.pipes
@@ -727,6 +869,12 @@ def insert_element_data(
         order_no=order_no,
         seed_atlas_defaults=bool(data.get("seed_atlas_defaults", False)),
         atlas_candidates=list(data.get("atlas_candidates") or []) or None,
+        pe_left_name=str(data.get("pe_left_name") or ""),
+        pe_right_name=str(data.get("pe_right_name") or ""),
+        support_left=bool(data.get("support_left", True)),
+        support_right=bool(data.get("support_right", True)),
+        excvt_side=str(data.get("excvt_side") or "L"),
+        foundation_side=str(data.get("foundation_side") or "L"),
     )
 
 
@@ -810,13 +958,14 @@ def insert_blank_element(unit_id: int, before_element_id: int | None = None) -> 
 
 
 def update_element(element_id: int, **fields) -> Element | None:
-    """修改构件字段（category / name / depth / amount / pe_name / pf_name）。
+    """修改构件字段（category / name / depth / amount / pe_name / pf_name 及分设字段）。
 
-    pe_name / pf_name 按旧版 showPEname / showPFname setter 语义处理：
-    选“多围护原则/多地基原则”只切换显示名、保留引用行；选具体原则则把
-    引用重置为该原则（比例 1）。类别改为构筑物时清空管材并重置默认
-    参数与工程量行；从构筑物切回其它类别时同样重置；其余类别之间切换时
-    按新类别增删图集参数行（见 :func:`_reconcile_atlas_rows`）。
+    pe_name 的左右分设语义（v3）：选「左右分设」占位即进入分设模式，左右
+    原则初始化为当前具体原则名（两列皆空时）；从占位改选具体原则则清空
+    左右字段退出分设。``support_left`` / ``support_right`` 存布尔，
+    ``excvt_side`` / ``foundation_side`` 收敛为 "L"/"R"。
+    类别改为构筑物时清空管材并重置默认参数与工程量行；从构筑物切回其它
+    类别时同样重置；其余类别之间切换时按新类别增删图集参数行。
     """
     element = _element(element_id)
     if element is None:
@@ -825,10 +974,32 @@ def update_element(element_id: int, **fields) -> Element | None:
 
     category_changed = "category" in fields and int(fields["category"]) != element.category
     old_category = element.category
+    was_lr = element.pe_name == LR_PE_TEXT
+    new_pe_name = str(fields.get("pe_name", element.pe_name or ""))
+    if "pe_name" in fields:
+        if new_pe_name == LR_PE_TEXT and not was_lr:
+            # 进入左右分设：左右原则初始化为当前具体原则（没有则取库中第一条）
+            original = element.pe_name if element.pe_name != LR_PE_TEXT else ""
+            if not original:
+                names = project_io.enclosure_names()
+                original = names[0] if names else ""
+            fields["pe_left_name"] = original
+            fields["pe_right_name"] = original
+        elif new_pe_name != LR_PE_TEXT and was_lr:
+            # 退出左右分设：清空左右字段
+            fields["pe_left_name"] = ""
+            fields["pe_right_name"] = ""
     for key, value in fields.items():
         if key not in _ELEMENT_FIELDS:
             continue
-        setattr(element, key, int(value) if key in ("category", "order_no") else str(value))
+        if key == "category" or key == "order_no":
+            setattr(element, key, int(value))
+        elif key in ("support_left", "support_right"):
+            setattr(element, key, bool(value) if not isinstance(value, bool) else value)
+        elif key in ("excvt_side", "foundation_side"):
+            setattr(element, key, "R" if str(value).strip().upper() == "R" else "L")
+        else:
+            setattr(element, key, str(value))
     if category_changed and element.category == CATEGORY_STRUCTURE:
         # 旧版 mcE7 构造：mList.Clear() + 名称/单位参数 + 默认工程量行（构筑物不带管材）
         for pipe in list(element.pipes):
@@ -859,8 +1030,15 @@ def update_element(element_id: int, **fields) -> Element | None:
             from app.services.atlas_match import match_atlas_candidates
 
             match_atlas_candidates(element, commit=False)
-    elif "pe_name" in fields:
-        # 围护原则切换（con_found / 角度可能变了）：从候选自动重选一组
+    elif fields.keys() & {
+        "pe_name",
+        "pe_left_name",
+        "pe_right_name",
+        "excvt_side",
+        "foundation_side",
+    }:
+        # 围护原则切换（con_found / 角度可能变了；分设模式含基础取侧变化）：
+        # 从候选自动重选一组
         if element.category == CATEGORY_BURIED:
             from app.services.atlas_match import match_atlas_candidates
 
@@ -875,13 +1053,25 @@ def delete_element(element_id: int) -> None:
     if element is None:
         return
     unit_id = element.unit_id
+    group_id = element.group_id
     orm.session().delete(element)
     project_io.commit()
+    if group_id is not None:
+        # 组员少于 2 条：整组解散（父节点删除、其余组员还原）
+        group = orm.session().get(TrenchGroup, group_id)
+        if group is not None and len(group.members) < 2:
+            _revert_members(list(group.members))
+            orm.session().delete(group)
+            project_io.commit()
     bus().unit_changed.emit(unit_id)
 
 
 def move_element(element_id: int, delta: int) -> None:
-    """上移/下移构件条目。"""
+    """上移/下移构件条目。
+
+    合槽组员只在组内移动（上下移 = 组内左右移，不破坏成员连续性）；
+    独立构件不移动进组块（相邻是别的组成员时不动）。
+    """
     element = _element(element_id)
     if element is None:
         return
@@ -890,14 +1080,195 @@ def move_element(element_id: int, delta: int) -> None:
         index = ordered.index(element)
     except ValueError:
         return
-    new_index = index + delta
-    if new_index < 0 or new_index >= len(ordered):
-        return
-    ordered[index], ordered[new_index] = ordered[new_index], ordered[index]
+    if element.group_id is not None:
+        # 组内移动：与相邻的同组成员交换（组边界处不动）
+        new_index = index + delta
+        if not 0 <= new_index < len(ordered):
+            return
+        if ordered[new_index].group_id != element.group_id:
+            return
+        ordered[index], ordered[new_index] = ordered[new_index], ordered[index]
+    else:
+        new_index = index + delta
+        if not 0 <= new_index < len(ordered):
+            return
+        if ordered[new_index].group_id is not None:
+            return  # 不拆组：相邻是组成员时不移动
+        ordered[index], ordered[new_index] = ordered[new_index], ordered[index]
     for position, item in enumerate(ordered):
         item.order_no = position
     project_io.commit()
     bus().unit_changed.emit(element.unit_id)
+
+
+# --------------------------------------------------------------------------- #
+# 合槽编组（父节点 / 子节点，见 docs/lr_enclosure_and_trench_group_design.md）
+# --------------------------------------------------------------------------- #
+#: 可入组的构件类别（不开槽的顶管 / 牵引管与构筑物拒绝）
+GROUPABLE_CATEGORIES = (CATEGORY_BURIED, CATEGORY_ENCASED, CATEGORY_BOX_CULVERT, CATEGORY_GALLERY)
+
+
+def group_elements_error(element_ids: list[int]) -> str | None:
+    """编组校验；返回提示文案，None = 允许。"""
+    if len(element_ids) < 2:
+        return "合槽编组至少选择两条构件。"
+    elements = [_element(element_id) for element_id in element_ids]
+    if any(element is None for element in elements):
+        return "部分构件不存在。"
+    unit_ids = {element.unit_id for element in elements}
+    if len(unit_ids) > 1:
+        return "只能编组同一单位工程内的构件。"
+    for element in elements:
+        if element.category not in GROUPABLE_CATEGORIES:
+            return f"构件「{element.name}」不开槽（顶管 / 牵引管 / 构筑物），不能入组。"
+        if element.group_id is not None:
+            return f"构件「{element.name}」已在合槽组内。"
+    amounts = {_evaluate_field(element.amount)[0] for element in elements}
+    if len(amounts) > 1:
+        return "组员数量（计算长度）必须一致，请先统一再编组。"
+    return None
+
+
+def create_trench_group(element_ids: list[int]) -> tuple[TrenchGroup | None, str | None]:
+    """多选构件「合槽编组」：建父节点 + 组员转为左右分设构件 + 成员移到连续位置。
+
+    组员转换：``pe_left`` / ``pe_right`` 置为原 ``pe_name``（合槽内只有右原则
+    参与计算）、挖填 / 基础取侧自动置"按右侧原则"；父节点 PE / PW 默认取首
+    成员的原围护 / 面宽原则（管最左一侧）。返回 (父节点, 错误说明)。
+    """
+    error = group_elements_error(element_ids)
+    if error is not None:
+        return None, error
+    elements = [_element(element_id) for element_id in element_ids]
+    unit_id = elements[0].unit_id
+    ordered = list(_elements_of(unit_id))
+    # 按当前表单顺序（从上到下 = 从左到右）取组员，整体挪到首成员位置
+    members = [element for element in ordered if element.id in set(element_ids)]
+    head_position = min(ordered.index(member) for member in members)
+    rest = [element for element in ordered if element.id not in set(element_ids)]
+    display = rest[:head_position] + members + rest[head_position:]
+
+    group = TrenchGroup(
+        unit_id=unit_id,
+        name=f"{members[0].name}+{members[1].name} 合槽",
+        pe_name=members[0].pe_name,
+        pw_name=members[0].pw_name,
+        order_no=0,
+    )
+    orm.session().add(group)
+    orm.session().flush()
+    for position, element in enumerate(display):
+        element.order_no = position
+        if element in members:
+            element.group_id = group.id
+            # 转为左右分设：右原则 = 原围护原则，左原则同值（合槽内不参与）
+            element.pe_left_name = element.pe_name
+            element.pe_right_name = element.pe_name
+            element.pe_name = LR_PE_TEXT
+            element.excvt_side = "R"
+            element.foundation_side = "R"
+    for index, member in enumerate(members):
+        member.order_no = head_position + index
+    project_io.commit()
+    bus().unit_changed.emit(unit_id)
+    bus().tree_structure_changed.emit()
+    return group, None
+
+
+def dissolve_trench_group(group_id: int) -> None:
+    """解散合槽组：删除父节点，组员还原（左右同原则的退回普通构件）。"""
+    group = orm.session().get(TrenchGroup, group_id) if project_io.is_open() else None
+    if group is None:
+        return
+    unit_id = group.unit_id
+    _revert_members(list(group.members))
+    orm.session().delete(group)
+    project_io.commit()
+    bus().unit_changed.emit(unit_id)
+    bus().tree_structure_changed.emit()
+
+
+def add_to_group(element_id: int, group_id: int) -> tuple[bool, str | None]:
+    """把构件加入已有合槽组（追加为最右成员，挪到组块末尾）。"""
+    element = _element(element_id)
+    group = orm.session().get(TrenchGroup, group_id) if project_io.is_open() else None
+    if element is None or group is None:
+        return False, "构件或合槽组不存在。"
+    if element.group_id is not None:
+        return False, "构件已在合槽组内。"
+    if element.unit_id != group.unit_id:
+        return False, "只能加入同一单位工程内的合槽组。"
+    if element.category not in GROUPABLE_CATEGORIES:
+        return False, "不开槽的构件（顶管 / 牵引管 / 构筑物）不能入组。"
+    members = sorted(group.members, key=lambda item: (item.order_no, item.id))
+    if not members:
+        return False, "合槽组没有成员。"
+    amounts = {_evaluate_field(member.amount)[0] for member in members} | {
+        _evaluate_field(element.amount)[0]
+    }
+    if len(amounts) > 1:
+        return False, "组员数量（计算长度）必须一致，请先统一再加入。"
+
+    ordered = list(_elements_of(element.unit_id))
+    tail = members[-1]
+    display = [item for item in ordered if item.id != element.id]
+    tail_position = display.index(tail)
+    display.insert(tail_position + 1, element)
+    for position, item in enumerate(display):
+        item.order_no = position
+    element.group_id = group.id
+    if not element.pe_left_name and not element.pe_right_name:
+        element.pe_left_name = element.pe_name
+        element.pe_right_name = element.pe_name
+        element.pe_name = LR_PE_TEXT
+    element.excvt_side = "R"
+    element.foundation_side = "R"
+    project_io.commit()
+    bus().unit_changed.emit(element.unit_id)
+    return True, None
+
+
+def remove_from_group(element_id: int) -> None:
+    """把构件移出合槽组（还原为独立构件；组员不足 2 条时整组解散）。"""
+    element = _element(element_id)
+    if element is None or element.group_id is None:
+        return
+    group = orm.session().get(TrenchGroup, element.group_id)
+    unit_id = element.unit_id
+    remaining = [member for member in (group.members if group else []) if member.id != element.id]
+    _revert_members([element])
+    element.group_id = None
+    if len(remaining) < 2:
+        _revert_members(remaining)
+        if group is not None:
+            orm.session().delete(group)
+    project_io.commit()
+    bus().unit_changed.emit(unit_id)
+    bus().tree_structure_changed.emit()
+
+
+def _revert_members(members: list[Element]) -> None:
+    """组员还原为独立构件：左右同原则的退回普通单原则模式。"""
+    for member in members:
+        member.group_id = None
+        if member.pe_left_name and member.pe_left_name == member.pe_right_name:
+            member.pe_name = member.pe_left_name
+            member.pe_left_name = ""
+            member.pe_right_name = ""
+        # 左右不同（用户在组内改过）：保持左右分设模式（pe_name 仍为占位）
+
+
+def update_group(group_id: int, **fields) -> TrenchGroup | None:
+    """修改合槽父节点字段（name / pe_name / pw_name）。"""
+    group = orm.session().get(TrenchGroup, group_id) if project_io.is_open() else None
+    if group is None:
+        return None
+    for key, value in fields.items():
+        if key in ("name", "pe_name", "pw_name"):
+            setattr(group, key, str(value))
+    project_io.commit()
+    bus().unit_changed.emit(group.unit_id)
+    return group
 
 
 #: 管材行数固定的类别：直埋 / 顶管 / 牵引管恒为一条管材（不能增删）；
@@ -1252,7 +1623,7 @@ class UnitViewModel(QObject):
             self.unit_loaded.emit(0, [])
             self.detail_loaded.emit(0, [], [], [])
             return
-        self.unit_loaded.emit(unit_id, element_rows(unit_id))
+        self.unit_loaded.emit(unit_id, table_rows(unit_id))
 
     def load_detail(self, element_id: int | None) -> None:
         self._element_id = element_id
@@ -1276,7 +1647,7 @@ class UnitViewModel(QObject):
     def _refresh(self) -> None:
         if self._unit_id is None:
             return
-        self.unit_loaded.emit(self._unit_id, element_rows(self._unit_id))
+        self.unit_loaded.emit(self._unit_id, table_rows(self._unit_id))
         if self._element_id is not None:
             self.detail_loaded.emit(
                 self._element_id,
@@ -1296,6 +1667,28 @@ class UnitViewModel(QObject):
 
     def move_element(self, element_id: int, delta: int) -> None:
         move_element(element_id, delta)
+
+    # --- 合槽编组 / 左右分设 ---
+    def create_group(self, element_ids: list[int]) -> tuple[object, str | None]:
+        """多选构件编组；错误说明经 error_occurred 展示。"""
+        group, error = create_trench_group(element_ids)
+        if error is not None:
+            self.error_occurred.emit(error)
+        return group, error
+
+    def dissolve_group(self, group_id: int) -> None:
+        dissolve_trench_group(group_id)
+
+    def add_to_group(self, element_id: int, group_id: int) -> None:
+        _ok, error = add_to_group(element_id, group_id)
+        if error is not None:
+            self.error_occurred.emit(error)
+
+    def remove_from_group(self, element_id: int) -> None:
+        remove_from_group(element_id)
+
+    def set_group_field(self, group_id: int, field: str, value) -> None:
+        update_group(group_id, **{field: value})
 
     # --- 明细操作 ---
     def add_pipe(self) -> None:

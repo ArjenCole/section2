@@ -80,8 +80,13 @@ def unit_of(category: int | None) -> str:
     return UNIT_BY_CATEGORY.get(int(category or 0), "")
 
 
-#: 围护做法“围护类型”列的多级围护选项（旧版 mcEnclosure.MultiScpntTxt）
+#: 围护做法"围护类型"列的多级围护选项（旧版 mcEnclosure.MultiScpntTxt）
 MULTI_LEVEL_TEXT = "多级围护"
+
+#: 主表格「沟槽围护原则」下拉的左右分设占位项（对应 1.0 多原则时代的
+#: showPEname 占位机制）：pe_name 存该文本时读 pe_left_name / pe_right_name，
+#: 不按名解析原则（resolve_element_principles 跳过占位名）
+LR_PE_TEXT = "左右分设"
 
 
 # --------------------------------------------------------------------------- #
@@ -216,6 +221,12 @@ class Unit(Base):
         passive_deletes=True,
         order_by="Element.order_no",
     )
+    groups: Mapped[list["TrenchGroup"]] = relationship(
+        back_populates="unit",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="TrenchGroup.order_no",
+    )
 
 
 class Element(Base):
@@ -224,6 +235,15 @@ class Element(Base):
     ``pe_name`` / ``pf_name`` 按名字引用原则，原则本体在
     principle_enclosure / principle_foundation 表里；降水 / 面宽原则
     （``pp_name`` / ``pw_name``）同级、同样按名字引用。
+
+    左右分设（v3）：``pe_name`` 存 :data:`LR_PE_TEXT` 占位时为分设模式，
+    左右两条围护原则按名引用（``pe_left_name`` / ``pe_right_name``，两列
+    皆空 = 普通单原则模式，现状语义）；挖填类型 / 管道基础各自由
+    ``excvt_side`` / ``foundation_side`` 指定取哪一侧的原则计算；
+    左右支撑是否参与计算由 ``support_left`` / ``support_right`` 勾选。
+
+    合槽编组（v3）：``group_id`` 指向所属合槽组（父节点），组内 ``order_no``
+    即沟槽从左到右的顺序；父节点本体是 :class:`TrenchGroup` 行，不持有工程量。
     """
 
     __tablename__ = "element"
@@ -242,6 +262,19 @@ class Element(Base):
     #: principle_width 表里；旧版这两项挂在围护原则下，v4 起独立）
     pp_name: Mapped[str] = mapped_column(String(200), default="")
     pw_name: Mapped[str] = mapped_column(String(200), default="")
+    #: 左侧 / 右侧围护原则名（左右分设模式；两列皆空 = 普通单原则模式）
+    pe_left_name: Mapped[str] = mapped_column(String(200), default="")
+    pe_right_name: Mapped[str] = mapped_column(String(200), default="")
+    #: 左侧 / 右侧支撑（Z 类公式）是否参与计算（左右分设模式）
+    support_left: Mapped[bool] = mapped_column(Boolean, default=True)
+    support_right: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: 挖填类型 / 管道基础取哪一侧原则（"L"/"R"；仅左右分设模式有意义）
+    excvt_side: Mapped[str] = mapped_column(String(1), default="L")
+    foundation_side: Mapped[str] = mapped_column(String(1), default="L")
+    #: 所属合槽组（父节点）；空 = 独立构件
+    group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("trench_group.id", ondelete="CASCADE"), index=True, nullable=True
+    )
     #: 来源（旧版主表格“来源”列，构件库插入时记录模板出处）
     source: Mapped[str] = mapped_column(String(200), default="")
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -272,6 +305,44 @@ class Element(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
         order_by="ElementQuantity.order_no",
+    )
+    #: 所属合槽组（父节点）；None = 独立构件
+    group: Mapped["TrenchGroup | None"] = relationship(
+        back_populates="members",
+    )
+
+
+class TrenchGroup(Base):
+    """合槽组（父节点行，v3）。
+
+    多选构件「合槽编组」后插入主表格的一行：不持有任何工程量（全部工程量
+    按横向区间切到子构件名下，父节点仅作合计视图）。``pe_name`` / ``pw_name``
+    只负责合槽**最左一侧**（左边坡做法 + 左工作面宽度表）；右侧边缘由最右
+    子节点的右原则接管，中间坡 / 管间间距由各子节点的右原则与面宽原则接管。
+
+    组员的左右顺序 = 组内 ``Element.order_no``（从上到下 = 从左到右）；
+    组员引用失效（原则被删）时回退库中第一条，与构件的解析规则一致。
+    """
+
+    __tablename__ = "trench_group"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    unit_id: Mapped[int] = mapped_column(
+        ForeignKey("unit.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), default="合槽组")
+    #: 左边缘围护原则名（父节点只管最左一侧）
+    pe_name: Mapped[str] = mapped_column(String(200), default="")
+    #: 左边缘工作面宽原则名（查工作面宽度表取 wL）
+    pw_name: Mapped[str] = mapped_column(String(200), default="")
+    order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    unit: Mapped[Unit] = relationship(back_populates="groups")
+    members: Mapped[list["Element"]] = relationship(
+        back_populates="group",
+        foreign_keys="Element.group_id",
+        order_by="Element.order_no",
+        passive_deletes=True,
     )
 
 

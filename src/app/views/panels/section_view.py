@@ -35,14 +35,17 @@ from app.core.models.models import (
     CATEGORY_JACKING,
     CATEGORY_PULLING,
     CATEGORY_STRUCTURE,
+    LR_PE_TEXT,
     Element,
     PcpEnclosure,
     PcpFoundation,
     PcpWidth,
+    TrenchGroup,
 )
 from app.core.calc import groove
 from app.core.calc.engine import (
     ElementInput,
+    _resolve_lr_enclosures,
     atlas_dims,
     build_atlas_query,
     build_element_input,
@@ -51,9 +54,10 @@ from app.core.calc.engine import (
     foundation_thickness,
     is_concrete_pipe,
     replace,
+    workwidth_of,
 )
 from app.core.calc.groove import level_slope
-from app.core.calc.tracer import dim
+from app.core.calc.tracer import dim, scale_sum
 from app.services.atlas import resolve_atlas
 
 _MARGIN = 10  # 画布左右留白 px（旧版 10*2）
@@ -92,7 +96,13 @@ class _Shape:
 
 @dataclass
 class _Scene:
-    """一次断面绘制的全部数据。"""
+    """一次断面绘制的全部数据。
+
+    ``segments_r`` 非空 = 左右分设：左侧用 ``segments``、右侧用 ``segments_r``
+    各画各的折线（对称断面仍是镜像画法）；``outline`` 非空 = 合槽断面：
+    一条完整折线（x 相对槽中心、右正，y 自槽底向上，单位 m），此时忽略
+    segments / top_width。
+    """
 
     segments: list[_Segment] = field(default_factory=list)
     total_h: float = 0.0  # 沟槽总深 m
@@ -101,6 +111,9 @@ class _Scene:
     shapes: list[_Shape] = field(default_factory=list)
     shift: float = 0.0  # 本体零点相对槽底的抬升 mm（旧版 TiA + C1 - mC1）
     atlas_text: str = ""
+    segments_r: list[_Segment] | None = None
+    outline: list[tuple[float, float]] | None = None
+    top_width_r: float = 0.0  # 右侧地面线起点（左右分设 / 合槽用）
 
 
 class SectionView(QWidget):
@@ -109,6 +122,7 @@ class SectionView(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._element_id: int | None = None
+        self._group_id: int | None = None
         self._hint = "请选择构件条目"
         self._scene: _Scene | None = None
         self.setMinimumSize(180, 160)
@@ -117,11 +131,19 @@ class SectionView(QWidget):
     def set_element(self, element_id: int | None) -> None:
         """切换要绘制断面的构件条目（None 清空）。"""
         self._element_id = element_id
+        self._group_id = None
+        self._refresh()
+
+    def set_group(self, group_id: int | None) -> None:
+        """合槽父行选中：画整槽全景断面（成员各自的左右分设也看得到）。"""
+        self._element_id = None
+        self._group_id = group_id
         self._refresh()
 
     def show_multi(self) -> None:
         """主表格选中多行：不绘制具体断面，居中显示占位提示。"""
         self._element_id = None
+        self._group_id = None
         self._scene = None
         self._hint = "*多种断面"
         self.update()
@@ -131,7 +153,10 @@ class SectionView(QWidget):
         self._refresh()
 
     def _refresh(self) -> None:
-        self._scene, self._hint = _build_scene(self._element_id, self.width(), self.height())
+        if self._group_id is not None:
+            self._scene, self._hint = _build_group_scene(self._group_id, self.width(), self.height())
+        else:
+            self._scene, self._hint = _build_scene(self._element_id, self.width(), self.height())
         self.update()
 
     # ------------------------------------------------------------------ 绘制
@@ -148,31 +173,51 @@ class SectionView(QWidget):
 
         pen = QPen(_COLOR_LINE, 1)
         painter.setPen(pen)
-        # 旧版：左侧 +1 用 LmPE、右侧 -1 用 RmPE（多围护原则已取消，两侧同原则）
-        for side in (1, -1):
-            segments = scene.segments
-            top_width = scene.top_width
-            previous: _Segment | None = None
-            for segment in segments:
-                if segment.h_delta <= 0:
+        if scene.outline is not None:
+            # 合槽断面：一条完整折线（x 相对槽中心右正、y 自槽底向上，单位 m）
+            previous: tuple[float, float] | None = None
+            for value_x, value_y in scene.outline:
+                x = center_x + value_x * 1000.0 * scene.zoom
+                y = origin_y - value_y * 1000.0 * scene.zoom
+                if previous is not None:
+                    painter.drawLine(int(previous[0]), int(previous[1]), int(x), int(y))
+                previous = (x, y)
+            if previous is not None and scene.outline:
+                # 地面线：折线首尾（地面高程）向两侧画到画布边缘
+                top_y = int(origin_y - scene.total_h * 1000.0 * scene.zoom)
+                first_x = int(center_x + scene.outline[0][0] * 1000.0 * scene.zoom)
+                last_x = int(previous[0])
+                painter.drawLine(0, top_y, first_x, top_y)
+                painter.drawLine(last_x, top_y, int(self.width()), top_y)
+        else:
+            # 单管断面：左侧 +1 用左做法、右侧 -1 用右做法（左右分设各画各的
+            # 折线；对称断面 segments_r 为空仍是镜像）
+            for side in (1, -1):
+                segments = scene.segments if side == 1 or scene.segments_r is None else scene.segments_r
+                top_width = (
+                    scene.top_width if side == 1 else (scene.top_width_r or scene.top_width)
+                )
+                previous: _Segment | None = None
+                for segment in segments:
+                    if segment.h_delta <= 0:
+                        previous = segment
+                        continue
+                    points_m = []
+                    if segment.continues and previous is not None:
+                        start_b = previous.bottom + previous.h_delta * previous.slope * 2
+                        points_m.append((start_b / 2.0, segment.h_current))
+                    else:
+                        points_m.append((0.0, segment.h_current))
+                    points_m.append((segment.bottom / 2.0, segment.h_current))
+                    points_m.append(((segment.bottom + segment.h_delta * segment.slope * 2) / 2.0,
+                                     segment.h_current + segment.h_delta))
+                    self._draw_side_line(painter, points_m, side, center_x, origin_y, scene.zoom)
                     previous = segment
-                    continue
-                points_m = []
-                if segment.continues and previous is not None:
-                    start_b = previous.bottom + previous.h_delta * previous.slope * 2
-                    points_m.append((start_b / 2.0, segment.h_current))
-                else:
-                    points_m.append((0.0, segment.h_current))
-                points_m.append((segment.bottom / 2.0, segment.h_current))
-                points_m.append(((segment.bottom + segment.h_delta * segment.slope * 2) / 2.0,
-                                 segment.h_current + segment.h_delta))
-                self._draw_side_line(painter, points_m, side, center_x, origin_y, scene.zoom)
-                previous = segment
-            # 地面线：本侧槽顶边一直到画布边缘（旧版终点是画框半宽，按像素计）
-            edge_x = center_x - side * (self.width() / 2.0)
-            top_y = origin_y - scene.total_h * 1000.0 * scene.zoom
-            start_x = center_x - top_width / 2.0 * 1000.0 * scene.zoom * side
-            painter.drawLine(int(start_x), int(top_y), int(edge_x), int(top_y))
+                # 地面线：本侧槽顶边一直到画布边缘（旧版终点是画框半宽，按像素计）
+                edge_x = center_x - side * (self.width() / 2.0)
+                top_y = origin_y - scene.total_h * 1000.0 * scene.zoom
+                start_x = center_x - top_width / 2.0 * 1000.0 * scene.zoom * side
+                painter.drawLine(int(start_x), int(top_y), int(edge_x), int(top_y))
 
         # 管体本体（画一次，居中；黑填充挖空 + 描边，与旧版 FillRectangle/FillEllipse 一致）
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -238,6 +283,11 @@ class SectionPanel(QWidget):
         self._element_id = element_id
         self._canvas.set_element(element_id)
 
+    def set_group(self, group_id: int | None) -> None:
+        """合槽父行选中：画整槽全景断面。"""
+        self._element_id = None
+        self._canvas.set_group(group_id)
+
     def show_multi(self) -> None:
         """主表格选中多行：画布显示 *多种断面 占位。"""
         self._element_id = None
@@ -268,6 +318,8 @@ def _build_scene(
 
     pe = _enclosure_by_name(session, element.pe_name)
     pf = _foundation_by_name(session, element.pf_name)
+    if pe is None and element.pe_name == LR_PE_TEXT:
+        return _build_trench_scene_lr(element, session, pf, width, height)
     if pe is None or pf is None:
         return None, "该构件未指定围护/地基处理原则，无法绘制断面。"
     if not element.pipes and element.category in (CATEGORY_BURIED, CATEGORY_JACKING, CATEGORY_PULLING):
@@ -382,6 +434,259 @@ def _walk_layers(levels: list, layers: list[tuple[str, float, str]], bottom: flo
             if current - target >= -0.0001:
                 break
     return segments
+
+
+def _walk_layers_sided(
+    levels_l: list,
+    levels_r: list,
+    layers: list[tuple[str, float, str]],
+    bottom: float,
+    depth: float,
+) -> tuple[list[_Segment], list[_Segment]]:
+    """左右分设的逐层递推（与 cal_groove_sided 同构，只出几何不出量）。
+
+    返回 (左段列表, 右段列表)：两列共享底宽序列（bottom 随两侧坡度之和
+    外扩、平台按发生切级的一侧加宽），各自的 ``slope`` 是该侧放坡系数。
+    """
+    heights_l = [step.v for step in groove.split_h_by_step(levels_l, dim(depth))]
+    heights_r = [step.v for step in groove.split_h_by_step(levels_r, dim(depth))]
+    if not heights_l or not heights_r:
+        return [], []
+    step_l, step_r = len(levels_l) - 1, len(levels_r) - 1
+
+    segments_l: list[_Segment] = []
+    segments_r: list[_Segment] = []
+    current = 0.0
+    for key, layer, _note in layers:
+        layer_h = layer.v
+        target = current + layer_h
+        while True:
+            top_l, top_r = heights_l[step_l], heights_r[step_r]
+            step_top = min(top_l, top_r)
+            delta = min(target, step_top) - current
+            slope_l = level_slope(levels_l[step_l]).v
+            slope_r = level_slope(levels_r[step_r]).v
+            segments_l.append(
+                _Segment(key, bottom, current, delta, slope_l,
+                         bool(segments_l) and segments_l[-1].key == key)
+            )
+            segments_r.append(
+                _Segment(key, bottom, current, delta, slope_r,
+                         bool(segments_r) and segments_r[-1].key == key)
+            )
+            current += delta
+            bottom += delta * (slope_l + slope_r)
+            if current == top_l and step_l > 0:
+                step_l -= 1
+                if heights_l[step_l] != heights_l[step_l + 1] and heights_l[step_l + 1] != 0:
+                    bottom += levels_l[step_l].step_width
+            if current == top_r and step_r > 0:
+                step_r -= 1
+                if heights_r[step_r] != heights_r[step_r + 1] and heights_r[step_r + 1] != 0:
+                    bottom += levels_r[step_r].step_width
+            if current - target >= -0.0001:
+                break
+    return segments_l, segments_r
+
+
+def _build_trench_scene_lr(
+    element: Element, session, pf: PcpFoundation | None, width: int, height: int
+) -> tuple[_Scene | None, str]:
+    """左右分设构件的沟槽断面：两侧各自的围护做法，各画各的折线。"""
+    pe_l, pe_r = _resolve_lr_enclosures(element)
+    if pe_l is None or pe_r is None:
+        return None, "左右分设的围护原则不可用，无法绘制断面。"
+    if pf is None:
+        pf = _first_of(session, PcpFoundation)
+    if pf is None:
+        return None, "该构件未指定地基处理原则，无法绘制断面。"
+    pw_name = element.pw_name
+    pw = (
+        session.scalars(select(PcpWidth).where(PcpWidth.name == pw_name)).first()
+        if pw_name
+        else None
+    ) or _first_of(session, PcpWidth)
+    pe_found = pe_r if element.foundation_side == "R" else pe_l
+    pe_excvt = pe_r if element.excvt_side == "R" else pe_l
+    info = build_element_input(element, pe_found, pf, pw=pw)
+    at = resolve_atlas(build_atlas_query(info, pe_found, pw))
+    c1_original = at.c1
+    c1_display = c1_original if c1_original != 0 else cushion_thickness(pe_found)
+    at_display = replace(at, c1=c1_display)
+    depth = info.depth + groove.mm2m(foundation_thickness(pf) + at_display.t + c1_display)
+    work_l = choice_work(pe_l, depth)
+    work_r = choice_work(pe_r, depth)
+    if work_l is None or work_r is None:
+        return None, "左右任一侧围护原则没有任何围护分级，无法绘制断面。"
+
+    ad_display = atlas_dims(info, at_display)
+    cushion_name = pe_found.cushions[0].name if pe_found.cushions else "中粗砂"
+    layers = groove.backfill_layers(
+        pe_excvt, pf, ad_display, info.size_h_dim, dim(depth), cushion_name
+    )
+    bottom = groove.groove_width(ad_display, info.size_b_dim).v
+    segments_l, segments_r = _walk_layers_sided(
+        list(work_l.levels), list(work_r.levels), layers, bottom, depth
+    )
+    if not segments_l or not segments_r:
+        return None, "沟槽深度为 0，无法绘制断面。"
+    total_h = segments_l[-1].h_current + segments_l[-1].h_delta
+    top_width = segments_l[-1].bottom + segments_l[-1].h_delta * segments_l[-1].slope * 2
+    top_width_r = segments_r[-1].bottom + segments_r[-1].h_delta * segments_r[-1].slope * 2
+    zoom = min(
+        1.0,
+        (width - _MARGIN * 2) / (max(top_width, top_width_r) * 1000.0),
+        (height - _BOTTOM_GAP - _TOP_GAP) / (total_h * 1000.0),
+    )
+    scene = _Scene(
+        segments=segments_l,
+        segments_r=segments_r,
+        total_h=total_h,
+        top_width=top_width,
+        top_width_r=top_width_r,
+        zoom=max(zoom, 0.0),
+        shapes=_ontology_shapes(info, at, c1_original),
+        shift=foundation_thickness(pf) + c1_display - c1_original,
+    )
+    scene.atlas_text = _atlas_text(at, c1_display)
+    return scene, ""
+
+
+def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene | None, str]:
+    """合槽整槽全景断面：左边坡（父 PE）+ 各构件本体 + 中间坡 + 右边坡。
+
+    几何与 :mod:`app.core.calc.trench_group` 同一套口径（间距 / 边缘工作面 /
+    中间坡等效坡 / 边坡折线），只出折线不出量。折线坐标：x 相对槽中心
+    （右正）、y 自**最深槽底**向上，单位 m。
+    """
+    from app.core.calc.trench_group import _mid_slope_of, _slope_points
+
+    session = orm.session()
+    group = session.get(TrenchGroup, group_id)
+    if group is None:
+        return None, "合槽组不存在。"
+    members = sorted(group.members, key=lambda item: (item.order_no, item.id))
+    if len(members) < 2:
+        return None, "合槽组至少需要两条构件。"
+    pe_group = _enclosure_by_name(session, group.pe_name) or _first_of(session, PcpEnclosure)
+    pw_group = (
+        session.scalars(select(PcpWidth).where(PcpWidth.name == group.pw_name)).first()
+        if group.pw_name
+        else None
+    ) or _first_of(session, PcpWidth)
+    if pe_group is None or pw_group is None:
+        return None, "父节点缺少围护 / 工作面宽原则，无法绘制断面。"
+
+    # 成员快照（右原则 / PF / PW 各自解析）
+    snapshots = []
+    for element in members:
+        pe_r = (
+            _enclosure_by_name(session, element.pe_right_name)
+            or _enclosure_by_name(session, element.pe_name)
+            or _first_of(session, PcpEnclosure)
+        )
+        pf = _foundation_by_name(session, element.pf_name) or _first_of(session, PcpFoundation)
+        pw = (
+            session.scalars(select(PcpWidth).where(PcpWidth.name == element.pw_name)).first()
+            if element.pw_name
+            else None
+        ) or _first_of(session, PcpWidth)
+        if pe_r is None or pf is None or pw is None:
+            return None, f"构件「{element.name}」缺少围护 / 地基 / 面宽原则。"
+        info = build_element_input(element, pe_r, pf, pw=pw)
+        at = resolve_atlas(build_atlas_query(info, pe_r, pw))
+        ad = atlas_dims(info, at)
+        c1_original = at.c1
+        c1_display = c1_original if c1_original != 0 else cushion_thickness(pe_r).v
+        depth = info.depth + groove.mm2m(foundation_thickness(pf) + ad.t.v + c1_display)
+        base_width = (info.size_b_dim + scale_sum((ad.t, ad.a), 2.0) / 1000).v
+        snapshots.append(
+            {
+                "element": element,
+                "info": info,
+                "pe_r": pe_r,
+                "pf": pf,
+                "at": at,
+                "c1_display": c1_display,
+                "depth": depth,
+                "base_width": base_width,
+            }
+        )
+
+    n = len(snapshots)
+    gaps = [workwidth_of(snap["info"].pw, snap["info"]) / 1000 for snap in snapshots[:-1]]
+    w_left = workwidth_of(pw_group, snapshots[0]["info"]) / 1000
+    w_right = workwidth_of(snapshots[n - 1]["info"].pw, snapshots[n - 1]["info"]) / 1000
+    work_left = choice_work(pe_group, snapshots[0]["depth"])
+    work_right = choice_work(snapshots[n - 1]["pe_r"], snapshots[n - 1]["depth"])
+    if work_left is None or work_right is None:
+        return None, "边缘围护原则没有任何围护分级，无法绘制断面。"
+
+    # 底部折线（自左向右）：工作面 / 本体平段 + 中间坡（浅底 → 坡 → 深底）
+    bottoms: list[tuple[float, float]] = []  # (x 自左平底缘, 自地面深度)
+    x = 0.0
+    bottoms.append((0.0, snapshots[0]["depth"]))
+    x += w_left
+    for i, snap in enumerate(snapshots):
+        bottoms.append((x, snap["depth"]))
+        x += snap["base_width"]
+        bottoms.append((x, snap["depth"]))
+        if i < n - 1:
+            delta = abs(snapshots[i + 1]["depth"] - snap["depth"])
+            work_mid = choice_work(snap["pe_r"], delta) if delta > 0 else None
+            slope = _mid_slope_of(work_mid, delta) if work_mid is not None else 0.0
+            run = delta * slope
+            if run > 0 and run < gaps[i]:
+                # 坡靠浅侧：浅底平段 → 坡 → 深底
+                bottoms.append((x + gaps[i] - run, min(snap["depth"], snapshots[i + 1]["depth"])))
+            x += gaps[i]
+            bottoms.append((x, snapshots[i + 1]["depth"]))
+    x += w_right
+    total_flat = x
+    half = total_flat / 2.0
+    h_max = max(snap["depth"] for snap in snapshots)
+
+    outline: list[tuple[float, float]] = []
+    # 左边坡：自地面向下（depth 升序），x = −half − 外扩
+    for d, run in sorted(_slope_points(work_left, snapshots[0]["depth"]), key=lambda p: p[0]):
+        outline.append((-half - run, h_max - d))
+    # 槽底折线（x 自左平底缘 → 相对中心）
+    for bx, d in bottoms:
+        outline.append((bx - half, h_max - d))
+    # 右边坡：自槽底向上（depth 降序），x = +half + 外扩
+    for d, run in sorted(_slope_points(work_right, snapshots[n - 1]["depth"]), key=lambda p: -p[0]):
+        outline.append((half + run, h_max - d))
+
+    # 各构件本体：偏移到各自中心（x 相对槽中心），抬升量同单管 shift
+    shapes: list[_Shape] = []
+    cursor = w_left
+    for i, snap in enumerate(snapshots):
+        center_x = cursor + snap["base_width"] / 2 - half
+        raise_mm = foundation_thickness(snap["pf"]) + snap["c1_display"] - snap["at"].c1
+        for shape in _ontology_shapes(snap["info"], snap["at"], snap["at"].c1):
+            shapes.append(
+                _Shape(shape.kind, shape.x + center_x * 1000.0, shape.y + raise_mm, shape.w, shape.h)
+            )
+        if i < n - 1:
+            cursor += snap["base_width"] + gaps[i]
+
+    total_w = total_flat + max(
+        run for _d, run in _slope_points(work_left, snapshots[0]["depth"])
+    ) + max(run for _d, run in _slope_points(work_right, snapshots[n - 1]["depth"]))
+    zoom = min(
+        1.0,
+        (width - _MARGIN * 2) / (total_w * 1000.0),
+        (height - _BOTTOM_GAP - _TOP_GAP) / (h_max * 1000.0),
+    )
+    scene = _Scene(
+        total_h=h_max,
+        zoom=max(zoom, 0.0),
+        shapes=shapes,
+        shift=0.0,
+        outline=outline,
+    )
+    scene.atlas_text = f"合槽断面：{n} 条构件（从左到右）"
+    return scene, ""
 
 
 def _ontology_shapes(info: ElementInput, at, c1: float) -> list[_Shape]:

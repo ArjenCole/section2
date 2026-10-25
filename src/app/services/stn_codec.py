@@ -40,6 +40,10 @@
 ``quantities``（``[{"category","item","unit","value"}]``）、
 ``atlas_candidates``（``[{"con_found","angle","t","a","c1","c2"}]``，值为 null
 表示图集该组合无数据）。
+v3 起左右分设构件（``pe_name == "左右分设"``）另带 ``pe_left_name`` /
+``pe_right_name`` / ``support_left`` / ``support_right`` / ``excvt_side`` /
+``foundation_side``，编组成员另带 ``group``（单位工程 ``groups`` 数组的下标）；
+这些字段全部可缺省，缺省即普通构件 / 无编组（v2 文件兼容读入）。
 
 file_version 1 的文件带 ``main_pe_name`` / ``pe_refs`` / ``pf_refs``（多原则
 引用，2.0 已取消该功能）：读取时按主原则降级成单引用，见 :func:`_load_element`。
@@ -55,6 +59,7 @@ from sqlalchemy import select
 from app.core.version import APP_VERSION, STN_FILE_VERSION
 from app.core.models import base as orm
 from app.core.models.models import (
+    LR_PE_TEXT,
     PRECIPITATION_COLUMNS,
     BasicInfo,
     Component,
@@ -74,6 +79,7 @@ from app.core.models.models import (
     Pipe,
     Price,
     Segment,
+    TrenchGroup,
     Unit,
     WidthItem,
 )
@@ -204,21 +210,45 @@ def _dump_component(component: Component | None) -> dict | None:
 def _dump_segment(item: Segment) -> dict:
     return {
         "name": item.name or "",
-        "units": [
+        "units": [_dump_unit(unit) for unit in sorted(item.units, key=lambda row: (row.order_no, row.id))],
+    }
+
+
+def _dump_unit(unit: Unit) -> dict:
+    """单位工程 → JSON：elements（带 group 序号）+ groups（父节点，按首成员顺序）。
+
+    合槽组在 JSON 里没有自己的 id：元素携带 ``group`` = 该单位工程 groups
+    数组的下标；groups 数组按"首个成员的 order_no"排序，落库时按数组次序
+    重建 order_no。v2 及更早的文件没有这两块，读取时全部缺省 = 无编组。
+    """
+    elements = sorted(unit.elements, key=lambda row: (row.order_no, row.id))
+    groups = sorted(unit.groups, key=lambda row: (row.order_no, row.id))
+    # 组的排序键取首个成员的 order_no（成员必连续，父行显示在首成员位置）
+    member_head = {}
+    for element in elements:
+        if element.group_id is not None and element.group_id not in member_head:
+            member_head[element.group_id] = element.order_no
+    groups.sort(key=lambda group: (member_head.get(group.id, group.order_no), group.order_no, group.id))
+    group_index = {group.id: index for index, group in enumerate(groups)}
+    return {
+        "name": unit.name or "",
+        "elements": [
+            _dump_element(element, group_index.get(element.group_id))
+            for element in elements
+        ],
+        "groups": [
             {
-                "name": unit.name or "",
-                "elements": [
-                    _dump_element(element)
-                    for element in sorted(unit.elements, key=lambda row: (row.order_no, row.id))
-                ],
+                "name": group.name or "",
+                "pe_name": group.pe_name or "",
+                "pw_name": group.pw_name or "",
             }
-            for unit in sorted(item.units, key=lambda row: (row.order_no, row.id))
+            for group in groups
         ],
     }
 
 
-def _dump_element(element: Element) -> dict:
-    return {
+def _dump_element(element: Element, group_index: int | None = None) -> dict:
+    data = {
         "category": int(element.category or 0),
         "name": element.name or "",
         "depth": element.depth or "",
@@ -263,6 +293,17 @@ def _dump_element(element: Element) -> dict:
             for row in sorted(element.atlas_candidates, key=lambda row: (row.order_no, row.id))
         ],
     }
+    # 左右分设（v3）：只在分设模式下写出，普通构件不携带（零漂移）
+    if (element.pe_left_name or element.pe_right_name) and element.pe_name == LR_PE_TEXT:
+        data["pe_left_name"] = element.pe_left_name or ""
+        data["pe_right_name"] = element.pe_right_name or ""
+        data["support_left"] = bool(element.support_left)
+        data["support_right"] = bool(element.support_right)
+        data["excvt_side"] = element.excvt_side or "L"
+        data["foundation_side"] = element.foundation_side or "L"
+    if group_index is not None:
+        data["group"] = int(group_index)
+    return data
 
 
 # --------------------------------------------------------------------------- #
@@ -304,8 +345,28 @@ def load_database(data: dict) -> None:
         for unit_index, unit_data in enumerate(item.get("units") or []):
             unit = Unit(name=unit_data.get("name") or "新建单位工程", order_no=unit_index)
             segment.units.append(unit)
+            # 合槽组（父节点）先建，元素按 group 下标挂到组上（v3；缺省 = 无编组）
+            groups: list[TrenchGroup] = []
+            for group_index, group_data in enumerate(unit_data.get("groups") or []):
+                group = TrenchGroup(
+                    name=group_data.get("name") or "合槽组",
+                    pe_name=group_data.get("pe_name") or "",
+                    pw_name=group_data.get("pw_name") or "",
+                    order_no=group_index,
+                )
+                unit.groups.append(group)
+                groups.append(group)
             for element_index, element_data in enumerate(unit_data.get("elements") or []):
-                unit.elements.append(_load_element(element_data, order_no=element_index))
+                element = _load_element(element_data, order_no=element_index)
+                group_ref = element_data.get("group")
+                if group_ref is not None:
+                    try:
+                        position = int(group_ref)
+                    except (TypeError, ValueError):
+                        position = -1
+                    if 0 <= position < len(groups):
+                        element.group = groups[position]
+                unit.elements.append(element)
         session.add(segment)
 
     for price in data.get("prices") or []:
@@ -454,6 +515,13 @@ def _load_element(data: dict, *, order_no: int) -> Element:
         pf_name=pf_name,
         pp_name=data.get("pp_name") or "",
         pw_name=data.get("pw_name") or "",
+        # 左右分设（v3，可缺省）：两列皆空 = 普通单原则模式
+        pe_left_name=str(data.get("pe_left_name") or ""),
+        pe_right_name=str(data.get("pe_right_name") or ""),
+        support_left=bool(data.get("support_left", True)),
+        support_right=bool(data.get("support_right", True)),
+        excvt_side="R" if str(data.get("excvt_side") or "L") == "R" else "L",
+        foundation_side="R" if str(data.get("foundation_side") or "L") == "R" else "L",
         source=data.get("source") or "",
         order_no=order_no,
     )

@@ -27,10 +27,27 @@ def _enabled(text: str, key: str) -> tuple[bool, float, float, float]:
     return elevation >= 0, elevation, gap, sides
 
 
-def cal_precipitation(pp, pe, work, pf, ad: AtlasDims, info, groove_depth: Dim, out: QDict) -> None:
+def cal_precipitation(
+    pp,
+    pe,
+    work,
+    pf,
+    ad: AtlasDims,
+    info,
+    groove_depth: Dim,
+    out: QDict,
+    work_r=None,
+    cushion_name: str | None = None,
+    wet_dig=None,
+) -> None:
     """降水工程量（每延米），结果写入 ``out``；井型配置取降水原则 ``pp``。
 
-    湿土排水的沟槽断面（深度−1m）仍按围护原则 ``pe`` 的开挖/回填结构算。
+    湿土排水的沟槽断面（深度−1m）仍按围护原则 ``pe`` 的开挖/回填结构算；
+    左右分设模式传 ``work_r``（右做法）时走双侧几何，垫层材质由
+    ``cushion_name`` 显式传入（管道基础侧原则）。
+
+    ``wet_dig``（合槽用）：预计算的湿土排水量（Dim，按归属带宽的简化断面），
+    传入时跳过单管断面副调用直接采用。
     """
     amount = info.amount or 1.0
     amount_dim = raw_dim(info.amount_text, amount)
@@ -59,10 +76,26 @@ def cal_precipitation(pp, pe, work, pf, ad: AtlasDims, info, groove_depth: Dim, 
 
     enabled, _elevation, _gap, _sides = _enabled(pp.wet_soil, "wet_soil")
     if enabled and groove_depth.v > 1:
+        if wet_dig is not None:
+            # 合槽：湿土排水 = 归属带宽 ×（槽深−1m）的简化断面（合槽路径预算）
+            if wet_dig.v != 0:
+                out.add(
+                    "降水|湿土排水|m3",
+                    wet_dig.v,
+                    wet_dig.e,
+                    "湿土排水 = 归属带宽×(槽深−1m)（合槽简化断面）",
+                )
+            return
         sub = QDict()
-        groove.cal_groove(
-            pe, work, pf, ad, info.size_b_dim, info.size_h_dim, groove_depth - dim(1.0), sub
-        )
+        if work_r is None:
+            groove.cal_groove(
+                pe, work, pf, ad, info.size_b_dim, info.size_h_dim, groove_depth - dim(1.0), sub
+            )
+        else:
+            groove.cal_groove_sided(
+                pe, work, work_r, pf, ad, info.size_b_dim, info.size_h_dim,
+                groove_depth - dim(1.0), sub, cushion_name,
+            )
         dig = sub.get(f"开挖|{pe.excvt}|m3")
         if dig is not None:
             out.add(
