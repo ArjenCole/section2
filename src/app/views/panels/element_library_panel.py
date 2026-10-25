@@ -39,12 +39,14 @@ class ElementLibraryPanel(QWidget):
         self.reload()
 
     def _build_ui(self) -> None:
+        # 顶边距 8px 与上半段「项目结构」标题一致（其距面板顶也是 8px）；
+        # 左右不留边：TreePanel 的 8px 外边距已保证与上半段内容对齐
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(4)
 
         title = QLabel("构件库")
-        title.setProperty("role", "panel-title")
+        title.setProperty("role", "title")
         layout.addWidget(title)
 
         self._combo = QComboBox()

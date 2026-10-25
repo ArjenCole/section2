@@ -367,6 +367,9 @@ class UnitPanel(QWidget):
             detail.setDocumentMode(True)
         detail.tabBar().setDrawBase(False)
         self._pipe_table = self._make_table(_PIPE_HEADERS)
+        # 行头 / 列头底色要与管材 TAB 页面同色：QSS 按 objectName 定向改
+        # （该页 role="panel" 底为 bg_card，全局表头却是 bg_window，上下两截色）
+        self._pipe_table.setObjectName("PipeTable")
         self._param_table = self._make_table(_PARAM_HEADERS)
         # 手设列宽：前三列保持可读（管径/壁厚列常有四位数字）；末列是按钮列
         # （「+」表头格 + 每行行尾「-」，见 RowButtonColumn），类别列固定宽
@@ -1127,7 +1130,7 @@ class UnitPanel(QWidget):
         self._vm.add_element()
 
     def refresh(self) -> None:
-        """重新加载当前单位工程（主题切换、手动刷新时用）。"""
+        """重新加载当前单位工程（主题切换、树结构变化时用）。"""
         if self._unit_id is not None:
             self._vm.load_unit(self._unit_id)
 

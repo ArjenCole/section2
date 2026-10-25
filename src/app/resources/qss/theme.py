@@ -162,7 +162,6 @@ QWidget[role="toolbar-strip"] {
     border-bottom: 1px solid $border;
 }
 QLabel { background: transparent; }
-QLabel[role="panel-title"] { font-size: 13px; font-weight: 600; color: $text_primary; }
 QLabel[role="title"] { font-size: 13px; font-weight: 600; color: $text_secondary; padding: 2px 4px; }
 QLabel[role="hint"] { color: $text_secondary; }
 QLabel[role="error"] { color: $danger; }
@@ -481,6 +480,10 @@ QHeaderView::section {
 QHeaderView::section:last { border-right: none; }
 QHeaderView::section:hover { background-color: $bg_hover; }
 QTableCornerButton::section { background-color: $bg_window; border: none; }
+/* 管材面板（PipeTable）：行头 / 列头 / 左上角块底色与管材 TAB 页面同色
+   （该页 role="panel" 底为 bg_card），避免白底页面配一圈灰底表头 */
+QTableWidget#PipeTable QHeaderView::section { background-color: $bg_card; }
+QTableWidget#PipeTable QTableCornerButton::section { background-color: $bg_card; border: none; }
 /* 表格单元格内嵌的下拉框：纵向内边距压小，行高才能收回到 32px 且文字完整 */
 QTableWidget QComboBox, QTableView QComboBox {
     padding-top: 2px;

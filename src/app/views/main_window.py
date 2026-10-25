@@ -588,7 +588,6 @@ class MainWindow(QMainWindow):
         "act_add_segment": "folder-plus",
         "act_add_unit": "file-text",
         "act_add_element": "plus",
-        "act_refresh": "refresh-cw",
         "act_theme": "moon",
         "act_ai_panel": "panel-right",
     }
@@ -610,7 +609,6 @@ class MainWindow(QMainWindow):
         self._act_add_segment = self._action("新增标段", self._tree_panel.add_segment)
         self._act_add_unit = self._action("新增单位工程", self._tree_panel.add_unit)
         self._act_add_element = self._action("新增构件条目", self._add_element)
-        self._act_refresh = self._action("刷新", self._refresh, "F5")
         self._act_theme = self._action("切换暗色主题", self._toggle_theme, "Ctrl+Shift+T")
         self._act_ai_panel = self._action("AI 助手", self._toggle_ai_panel, "Ctrl+L")
         self._act_ai_settings = self._action("AI 设置…", self._ai_settings)
@@ -632,7 +630,6 @@ class MainWindow(QMainWindow):
             self._act_add_segment,
             self._act_add_unit,
             self._act_add_element,
-            self._act_refresh,
         ):
             action.setEnabled(False)
         self._project_actions = (
@@ -644,7 +641,6 @@ class MainWindow(QMainWindow):
             self._act_add_segment,
             self._act_add_unit,
             self._act_add_element,
-            self._act_refresh,
         )
 
     def _action(self, text: str, slot, shortcut: str | None = None) -> QAction:
@@ -709,19 +705,6 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self._act_undo)
         edit_menu.addAction(self._act_redo)
 
-        project_menu = menubar.addMenu("项目(&P)")
-        project_menu.addAction(self._act_add_segment)
-        project_menu.addAction(self._act_add_unit)
-        project_menu.addAction(self._act_add_element)
-        project_menu.addSeparator()
-        # 直接接原则横条上的绑定方法（不包 lambda，避免把主窗体钉住）
-        project_menu.addAction("添加沟槽围护原则", self._principle_bar.add_enclosure)
-        project_menu.addAction("添加地基处理原则", self._principle_bar.add_foundation)
-        project_menu.addAction("添加降水原则", self._principle_bar.add_precipitation)
-        project_menu.addAction("添加面宽原则", self._principle_bar.add_width)
-        project_menu.addSeparator()
-        project_menu.addAction(self._act_refresh)
-
         view_menu = menubar.addMenu("视图(&V)")
         view_menu.addAction(self._act_theme)
         view_menu.addSeparator()
@@ -745,6 +728,8 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self._act_new)
         toolbar.addAction(self._act_open)
         toolbar.addAction(self._act_save)
+        # 撤销 / 重做单独一组（文件操作与编辑操作之间隔开）
+        toolbar.addSeparator()
         toolbar.addAction(self._act_undo)
         toolbar.addAction(self._act_redo)
         toolbar.addSeparator()
@@ -752,7 +737,6 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self._act_add_unit)
         toolbar.addAction(self._act_add_element)
         toolbar.addSeparator()
-        toolbar.addAction(self._act_refresh)
         toolbar.addAction(self._act_theme)
         toolbar.addAction(self._act_ai_panel)
         self.addToolBar(toolbar)
@@ -1110,11 +1094,6 @@ class MainWindow(QMainWindow):
             self._set_status("请先在左侧选择单位工程。", 4000)
             return
         self._unit_panel.add_element()
-
-    def _refresh(self) -> None:
-        self._tree_panel.vm.load()
-        self._unit_panel.refresh()
-        self._set_status("已刷新", 2000)
 
     def _toggle_theme(self) -> None:
         name = ThemeManager.instance().toggle(QApplication.instance())
