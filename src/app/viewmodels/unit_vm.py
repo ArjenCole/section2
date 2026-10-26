@@ -246,7 +246,7 @@ def _group_row(group_id: int, members: list[ElementRow]) -> GroupRow:
         pw_name=group.pw_name or "",
         order_no=group.order_no,
         member_count=len(members),
-        depth=max(depths) if depths else 0.0,
+        depth=format_number(max(depths)) if depths else "",
         amount=members[0].amount if members else "",
         amount_value=members[0].amount_value if members else 0.0,
         spec=f"{len(members)} 条构件合槽",

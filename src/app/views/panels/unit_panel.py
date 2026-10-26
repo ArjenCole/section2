@@ -1071,7 +1071,7 @@ class UnitPanel(QWidget):
         spec_item = self._element_table.item(index, _COL_SPEC)
         spec_item.setText(row.spec)
         depth_item = self._element_table.item(index, _COL_DEPTH)
-        depth_item.setText(row.depth and f"{format_number(row.depth)}")
+        depth_item.setText(row.depth)
         depth_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         depth_item.setToolTip("组内最深构件的埋深（仅显示）。")
         unit_item = self._element_table.item(index, _COL_UNIT)
