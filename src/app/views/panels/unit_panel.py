@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QItemSelectionModel, QRect, Qt
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -71,6 +71,10 @@ from app.views.widgets.table_edit_delegate import TableEditDelegate
 from app.views.widgets.table_width import fixed_width_behavior, header_fit_width
 
 _ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
+
+#: 名称列树形元数据（Quotor ResourceSeqDelegate 同款）：合槽父行 / 子行挂
+#: {"indent": int, "has_children": bool, "expanded": bool}，普通行不挂
+_TREE_ROLE = Qt.ItemDataRole.UserRole + 2
 #: 合槽父节点行的标记（name item 的 UserRole 数据 = ("group", 组 id)）
 _GROUP_ROLE_TAG = "group"
 _COL_NAME, _COL_CATEGORY, _COL_SPEC, _COL_DEPTH, _COL_UNIT, _COL_AMOUNT, _COL_PE, _COL_PF, _COL_PP, _COL_PW, _COL_SOURCE = range(11)
@@ -269,6 +273,136 @@ class _FocusCellDelegate(TableEditDelegate):
     # --- 编辑态抛光见基类 TableEditDelegate（去 QLineEdit 边框/边距并占满单元格） ---
 
 
+class _ElementNameDelegate(_FocusCellDelegate):
+    """构件表名称列委托：合槽父行画 +/- 展开方框，成员行画缩进竖线（Quotor
+    ResourceSeqDelegate 同款视觉语言）。
+
+    树形元数据存于名称条目的 _TREE_ROLE（dict），普通行不带该角色、按
+    基类原样绘制。点击父行的 +/- 方框区域触发 toggle_callback 切换展开。
+    """
+
+    INDENT_UNIT = 18      # 每级缩进像素
+    ICON_SIZE = 11        # 方框图标边长
+    ICON_LINE_WIDTH = 1
+    TEXT_MARGIN = 6
+    LEFT_PADDING = 8      # 与 QSS ::item 的 8px 左内边距对齐
+    LINE_INSET = 3        # +/- 线条距方框边缘的缩进
+
+    def __init__(self, parent: QWidget | None = None, toggle_callback=None) -> None:
+        super().__init__(parent)
+        self._toggle_callback = toggle_callback
+
+    def _icon_slot_x(self, rect, indent_level: int) -> float:
+        return rect.x() + self.LEFT_PADDING + self.INDENT_UNIT * indent_level
+
+    def _text_x(self, rect, indent: int) -> float:
+        return self._icon_slot_x(rect, indent) + self.ICON_SIZE + self.TEXT_MARGIN
+
+    def _icon_rect(self, rect, meta) -> QRectF:
+        icon_y = rect.center().y() - self.ICON_SIZE / 2.0
+        return QRectF(
+            self._icon_slot_x(rect, meta["indent"]), icon_y,
+            self.ICON_SIZE, self.ICON_SIZE,
+        )
+
+    def paint(self, painter: QPainter, option, index) -> None:  # noqa: N802 - Qt 命名
+        meta = index.data(_TREE_ROLE)
+        if meta is None:
+            super().paint(painter, option, index)
+            return
+        view = self.parent()
+        is_focus_cell = (
+            isinstance(view, QTableWidget)
+            and getattr(view, _FOCUS_OWNER_ATTR, False)
+            and view.currentIndex() == index
+        )
+        indent = int(meta.get("indent", 0))
+        has_children = bool(meta.get("has_children"))
+        expanded = bool(meta.get("expanded"))
+
+        painter.save()
+        # 底色自绘（Quotor ResourceSeqDelegate 同款）：选中行 = QSS ::item:selected
+        # 的 table_selected_bg；未选中行按行奇偶 = 表背景 bg_card / 交替行 table_alt_row，
+        # 与视图的 alternate-background-color 条纹保持连续
+        theme = ThemeManager.instance().current()
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(option.rect, QColor(theme.table_selected_bg))
+        else:
+            painter.fillRect(
+                option.rect,
+                QColor(theme.table_alt_row if index.row() % 2 == 1 else theme.bg_card),
+            )
+
+        rect = option.rect
+        # 缩进竖线（成员行）：在该级图标槽位之后
+        if indent >= 1:
+            line_x = self._icon_slot_x(rect, indent) - self.TEXT_MARGIN / 2.0
+            painter.setPen(QPen(QColor(theme.text_disabled), self.ICON_LINE_WIDTH))
+            painter.drawLine(
+                QPointF(line_x, rect.y() + 0.5),
+                QPointF(line_x, rect.bottom() - 0.5),
+            )
+
+        # +/- 方框（仅合槽父行）：展开 = 「−」，收起 = 「+」
+        if has_children:
+            icon_y = rect.center().y() - self.ICON_SIZE / 2.0
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            pen = QPen(QColor(theme.text_primary), self.ICON_LINE_WIDTH)
+            pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            box = QRectF(
+                self._icon_slot_x(rect, indent), icon_y,
+                self.ICON_SIZE, self.ICON_SIZE,
+            )
+            painter.drawRect(box)
+            center_y = icon_y + self.ICON_SIZE / 2.0
+            painter.drawLine(
+                QPointF(box.left() + self.LINE_INSET, center_y),
+                QPointF(box.right() - self.LINE_INSET, center_y),
+            )
+            if not expanded:
+                center_x = box.center().x()
+                painter.drawLine(
+                    QPointF(center_x, box.top() + self.LINE_INSET),
+                    QPointF(center_x, box.bottom() - self.LINE_INSET),
+                )
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+        # 名称文本（从图标槽位之后统一 x 起始，同级对齐）
+        text_x = self._text_x(rect, indent)
+        painter.setPen(QPen(QColor(theme.text_primary)))
+        text_rect = QRect(
+            int(text_x), rect.y(), rect.right() - int(text_x) - self.LEFT_PADDING,
+            rect.height(),
+        )
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, index.data(Qt.ItemDataRole.DisplayRole) or "")
+        painter.restore()
+
+        # 当前单元格加粗边框（与 _FocusCellDelegate 同款）
+        if is_focus_cell:
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            painter.setPen(QPen(QColor(ThemeManager.instance().current().table_selected_border), 3))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(QRect(option.rect).adjusted(1, 1, -2, -2))
+            painter.restore()
+
+    def editorEvent(self, event, model, option, index) -> bool:  # noqa: N802 - Qt 命名
+        """点击 +/- 方框区域 → 切换合槽组展开/收起（Quotor 同款交互）。"""
+        if (
+            event.type() == QEvent.Type.MouseButtonPress
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            meta = index.data(_TREE_ROLE)
+            if meta and meta.get("has_children"):
+                if self._icon_rect(option.rect, meta).contains(event.position()):
+                    if self._toggle_callback is not None:
+                        self._toggle_callback(index.row())
+                    return True
+        return super().editorEvent(event, model, option, index)
+
+
 class _PipeCategoryDelegate(_FocusCellDelegate):
     """管材表“管材”列下拉：四类管材（宽度表行），其余列仍是文本框。
 
@@ -319,6 +453,8 @@ class UnitPanel(QWidget):
         self._candidate_columns: list = []
         #: 最近一次装填的表格行（含父节点行；_current_element_row 用）
         self._rows_cache: list = []
+        #: 收起的合槽组 id（跨表格重载保留；仅视图状态，不入库）
+        self._collapsed_group_ids: set[int] = set()
         #: 合槽父行选中时的成员 id（工程量合计 / 断面图用；空 = 非父行态）
         self._group_member_ids: list[int] = []
         self._build_ui()
@@ -357,6 +493,10 @@ class UnitPanel(QWidget):
             self._element_table.setColumnWidth(index, width)
         self._element_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._element_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        # 名称列树形委托：合槽父行 +/- 展开方框（点击切换），成员行缩进竖线
+        self._element_table.setItemDelegateForColumn(
+            _COL_NAME, _ElementNameDelegate(self._element_table, self._on_group_toggle_requested)
+        )
         self._element_table.setSortingEnabled(False)
         self._element_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._element_table.customContextMenuRequested.connect(self._on_element_context_menu)
@@ -765,6 +905,7 @@ class UnitPanel(QWidget):
                 self._fill_element_row(
                     index, row, enclosure_names, foundation_names, precipitation_names, width_names
                 )
+            self._apply_group_visibility()
         finally:
             self._loading = False
         self._restore_current_element(
@@ -963,8 +1104,8 @@ class UnitPanel(QWidget):
         name_item = QTableWidgetItem(row.name)
         name_item.setData(_ELEMENT_ROLE, row.id)
         if row.group_id is not None:
-            # 合槽子节点：缩进显示（组内从上到下 = 沟槽从左到右）
-            name_item.setText(f"    {row.name}")
+            # 合槽子节点：委托画缩进竖线（组内从上到下 = 沟槽从左到右）
+            name_item.setData(_TREE_ROLE, {"indent": 1, "has_children": False, "expanded": False})
             name_item.setToolTip(f"合槽组成员（左起第 {row.group_index + 1} 条），上下移动即左右排序。")
         self._element_table.setItem(index, _COL_NAME, name_item)
 
@@ -1049,11 +1190,16 @@ class UnitPanel(QWidget):
         width_names: list[str],
     ) -> None:
         """合槽父节点行：名称可编辑；PE / PW = 左边缘原则；PF / PP 恒 '-'。"""
-        name_item = QTableWidgetItem(f"▣ {row.name}")
+        name_item = QTableWidgetItem(row.name)
         name_item.setData(_ELEMENT_ROLE, (_GROUP_ROLE_TAG, row.id))
+        name_item.setData(
+            _TREE_ROLE,
+            {"indent": 0, "has_children": True, "expanded": row.id not in self._collapsed_group_ids},
+        )
         name_item.setToolTip(
             f"合槽组（{row.member_count} 条构件，从上到下 = 从左到右）。"
             "父节点不持有工程量，仅作子构件合计视图；围护 / 工作面宽原则只管最左一侧。"
+            "点击 +/- 展开或收起成员行。"
         )
         brush = QBrush(QColor(ThemeManager.instance().current().primary_soft))
         for column in range(len(_ELEMENT_HEADERS)):
@@ -1100,6 +1246,44 @@ class UnitPanel(QWidget):
         pw_combo.setToolTip("左边缘工作面宽原则（查工作面宽度表取 wL）。")
         self._element_table.setCellWidget(index, _COL_PW, pw_combo)
 
+    def _on_group_toggle_requested(self, row_index: int) -> None:
+        """点击合槽父行 +/- 方框：切换该组成员行的显示/隐藏（Quotor 组合定额同款）。"""
+        item = self._element_table.item(row_index, _COL_NAME)
+        if item is None:
+            return
+        data = item.data(_ELEMENT_ROLE)
+        if not (isinstance(data, tuple) and data[0] == _GROUP_ROLE_TAG):
+            return
+        group_id = data[1]
+        collapsed = group_id not in self._collapsed_group_ids
+        if collapsed:
+            self._collapsed_group_ids.add(group_id)
+        else:
+            self._collapsed_group_ids.discard(group_id)
+        # 图标重绘走 setData（触发 itemChanged），用 _loading 挡住重命名逻辑
+        self._loading = True
+        try:
+            item.setData(
+                _TREE_ROLE,
+                {"indent": 0, "has_children": True, "expanded": not collapsed},
+            )
+            self._apply_group_visibility()
+        finally:
+            self._loading = False
+        # 焦点落在被隐藏的成员行上时移回父行，避免选中态悬空
+        current = self._element_table.currentRow()
+        if current >= 0 and self._element_table.isRowHidden(current):
+            _select_row(self._element_table, row_index, _COL_NAME)
+            self._sync_detail_to_selection()
+
+    def _apply_group_visibility(self) -> None:
+        """按收起集合显隐成员行：收起的组，其成员行全部隐藏，父行恒显示。"""
+        for index, row in enumerate(self._rows_cache):
+            if isinstance(row, ElementRow) and row.group_id is not None:
+                self._element_table.setRowHidden(
+                    index, row.group_id in self._collapsed_group_ids
+                )
+
     def _on_element_item_changed(self, item: QTableWidgetItem) -> None:
         if self._loading:
             return
@@ -1110,7 +1294,7 @@ class UnitPanel(QWidget):
             if item.column() == _COL_NAME:
                 from app.viewmodels.unit_vm import update_group
 
-                update_group(group_id, name=item.text().replace("▣", "").strip())
+                update_group(group_id, name=item.text().strip())
             return
         element_id = self._element_id_at(row)
         if element_id is None:

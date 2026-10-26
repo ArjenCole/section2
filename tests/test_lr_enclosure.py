@@ -664,16 +664,21 @@ def test_unit_panel_group_rows_and_lr_tab(project, qapp) -> None:
     assert panel._lr_table.rowCount() == 6
     assert not panel._lr_placeholder.isVisible()
 
-    # 编组 → 表格出现父行（▣ 前缀）+ 两行缩进子行
+    # 编组 → 表格出现父行（树形元数据 has_children）+ 两行缩进子行（indent=1）
     group, error = unit_vm.create_trench_group([e1, e2])
     assert group is not None and error is None
     panel.refresh()
     table = panel._element_table
-    names = [table.item(row, 0).text() for row in range(table.rowCount())]
-    assert any(name.startswith("▣") for name in names)
-    assert any(name.startswith("    ") for name in names)
+    from app.views.panels.unit_panel import _TREE_ROLE
+
+    metas = [table.item(row, 0).data(_TREE_ROLE) for row in range(table.rowCount())]
+    assert any(meta and meta["has_children"] for meta in metas)
+    assert sum(1 for meta in metas if meta and meta["indent"] == 1) == 2
     # 父行选中 → 组成员合计工程量与合槽断面
-    group_row = next(row for row in range(table.rowCount()) if table.item(row, 0).text().startswith("▣"))
+    group_row = next(
+        row for row in range(table.rowCount())
+        if (table.item(row, 0).data(_TREE_ROLE) or {}).get("has_children")
+    )
     from app.views.panels.unit_panel import _select_row
 
     _select_row(table, group_row, 0)
@@ -681,6 +686,26 @@ def test_unit_panel_group_rows_and_lr_tab(project, qapp) -> None:
     assert panel._group_member_ids
     # 断面面板 + 工程量表都有内容（合槽断面 outline 模式）
     assert panel._section_view._canvas._group_id == group.id
+
+    # 点击 +/- 收起 → 两条成员行隐藏；再点展开 → 恢复显示
+    panel._on_group_toggle_requested(group_row)
+    assert sum(1 for row in range(table.rowCount()) if table.isRowHidden(row)) == 2
+    assert (table.item(group_row, 0).data(_TREE_ROLE))["expanded"] is False
+    panel._on_group_toggle_requested(group_row)
+    assert not any(table.isRowHidden(row) for row in range(table.rowCount()))
+
+    # 真实鼠标点击 +/- 方框区域：委托 editorEvent 收到左键按下 → 收起成员行
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    item_rect = table.visualItemRect(table.item(group_row, 0))
+    QTest.mouseClick(
+        table.viewport(),
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+        QPoint(item_rect.x() + 13, item_rect.center().y()),
+    )
+    assert sum(1 for row in range(table.rowCount()) if table.isRowHidden(row)) == 2
 
     # 多选占位（分设 tab 内容切回占位说明）
     panel._show_multi_detail()
