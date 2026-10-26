@@ -239,6 +239,7 @@ def _dump_unit(unit: Unit) -> dict:
         "groups": [
             {
                 "name": group.name or "",
+                "amount": group.amount or "",
                 "pe_name": group.pe_name or "",
                 "pw_name": group.pw_name or "",
             }
@@ -350,6 +351,7 @@ def load_database(data: dict) -> None:
             for group_index, group_data in enumerate(unit_data.get("groups") or []):
                 group = TrenchGroup(
                     name=group_data.get("name") or "合槽组",
+                    amount=group_data.get("amount") or "",
                     pe_name=group_data.get("pe_name") or "",
                     pw_name=group_data.get("pw_name") or "",
                     order_no=group_index,
@@ -367,6 +369,15 @@ def load_database(data: dict) -> None:
                     if 0 <= position < len(groups):
                         element.group = groups[position]
                 unit.elements.append(element)
+            # 合槽数量归父节点：旧工程（无 amount）取首成员数量兜底，
+            # 并把全部组员强制对齐到父节点（子构件不单独持有数量）
+            for group in groups:
+                members = sorted(group.members, key=lambda item: (item.order_no, item.id))
+                if not group.amount and members:
+                    group.amount = members[0].amount or ""
+                if group.amount:
+                    for member in members:
+                        member.amount = group.amount
         session.add(segment)
 
     for price in data.get("prices") or []:

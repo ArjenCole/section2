@@ -1163,6 +1163,11 @@ class UnitPanel(QWidget):
 
         amount_item = QTableWidgetItem(row.amount)
         amount_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        if row.group_id is not None:
+            # 合槽子节点：数量强制取父节点（只读，改父行即同步）
+            amount_item.setFlags(amount_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            amount_item.setForeground(QBrush(_secondary_color()))
+            amount_item.setToolTip("合槽子构件数量由父节点统一控制（只读）。")
         self._element_table.setItem(index, _COL_AMOUNT, amount_item)
         _apply_expression_hint(amount_item, row.amount, row.amount_error)
 
@@ -1217,7 +1222,7 @@ class UnitPanel(QWidget):
         self._element_table.setItem(index, _COL_SOURCE, source_item)
 
     def _fill_group_row(self, index: int, row: GroupRow) -> None:
-        """合槽父节点行：名称可编辑；不持有围护 / 面宽原则（显示 "-"）。"""
+        """合槽父节点行：名称 / 数量（L_组）可编辑；埋深恒 "-"、不参与计算。"""
         name_item = QTableWidgetItem(row.name)
         name_item.setData(_ELEMENT_ROLE, (_GROUP_ROLE_TAG, row.id))
         name_item.setData(
@@ -1247,14 +1252,18 @@ class UnitPanel(QWidget):
         depth_item = self._element_table.item(index, _COL_DEPTH)
         depth_item.setText(row.depth)
         depth_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        depth_item.setToolTip("组内最深构件的埋深（仅显示）。")
+        depth_item.setToolTip("父节点埋深不参与计算（显示 -），组内槽深由各子构件自己的埋深推导。")
+        depth_item.setForeground(QBrush(_secondary_color()))
         unit_item = self._element_table.item(index, _COL_UNIT)
         unit_item.setText("m")
         unit_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         amount_item = self._element_table.item(index, _COL_AMOUNT)
         amount_item.setText(row.amount)
-        amount_item.setToolTip("L_组 = 组员数量（编组时校验一致）。")
+        amount_item.setToolTip("L_组：子构件数量统一取此值，修改后同步全部子构件。")
         amount_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 数量列可编辑（改父节点即同步全部子构件）
+        amount_item.setFlags(amount_item.flags() | Qt.ItemFlag.ItemIsEditable)
+        _apply_expression_hint(amount_item, row.amount, row.amount_error)
 
         # 父节点不选围护 / 工作面宽原则：显示 "-"，无下拉框
         for column, tooltip in (
@@ -1311,11 +1320,17 @@ class UnitPanel(QWidget):
         row = item.row()
         group_id = self._group_id_at(row)
         if group_id is not None:
-            # 合槽父节点行：只有名称列可编辑（改父节点名称）
+            # 合槽父节点行：名称 / 数量（L_组）可编辑
             if item.column() == _COL_NAME:
                 from app.viewmodels.unit_vm import update_group
 
                 update_group(group_id, name=item.text().strip())
+            elif item.column() == _COL_AMOUNT:
+                from app.viewmodels.unit_vm import update_group
+
+                text = item.text()
+                _apply_expression_hint(item, text, "")
+                update_group(group_id, amount=text)
             return
         element_id = self._element_id_at(row)
         if element_id is None:

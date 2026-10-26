@@ -509,22 +509,64 @@ def test_group_mid_slope_pile_run_encroaches(project) -> None:
 def test_group_validation_rules(project) -> None:
     from app.viewmodels import unit_vm
 
+    # 数量可以不一致：编组后统一取父节点（首成员）的数量
     e1 = _element("甲", amount="120")
-    e2 = _element("乙", amount="100")  # 数量不一致
-    _group, error = unit_vm.create_trench_group([e1, e2])
-    assert error is not None and "数量" in error
+    e2 = _element("乙", amount="100")
+    group, error = unit_vm.create_trench_group([e1, e2])
+    assert group is not None and error is None
+    assert group.amount == "120"
 
     from app.viewmodels.unit_vm import create_element
 
+    e3 = _element("丙", amount="120")
     jacking = create_element(
         _first_unit_id(), category=4, name="顶管", amount="120",
         pipes=[("钢管", 800, "1")],
     )
-    _group, error = unit_vm.create_trench_group([e1, jacking.id])
+    _group, error = unit_vm.create_trench_group([e3, jacking.id])
     assert error is not None and "不开槽" in error
 
-    _group, error = unit_vm.create_trench_group([e1])
+    _group, error = unit_vm.create_trench_group([e3])
     assert error is not None and "至少" in error
+
+
+def test_group_amount_owned_by_parent(project) -> None:
+    """子构件数量强制 = 父节点数量；父节点埋深显示 "-" 且不参与计算。"""
+    from app.core.models import base as orm
+    from app.core.models.models import Element, TrenchGroup
+    from app.viewmodels import unit_vm
+
+    e1 = _element("数量甲", amount="120")
+    e2 = _element("数量乙", amount="100")
+    group, error = unit_vm.create_trench_group([e1, e2])
+    assert group is not None and error is None
+    session = orm.session()
+    assert session.get(TrenchGroup, group.id).amount == "120"
+    assert session.get(Element, e1).amount == "120"
+    assert session.get(Element, e2).amount == "120"  # 由父节点强制统一
+
+    # 改父节点数量 → 全部子构件同步
+    unit_vm.update_group(group.id, amount="150")
+    session.expire_all()
+    assert session.get(Element, e1).amount == "150"
+    assert session.get(Element, e2).amount == "150"
+
+    # 改子构件数量 → 强制回父节点值（不生效）
+    unit_vm.update_element(e1, amount="99")
+    session.expire_all()
+    assert session.get(Element, e1).amount == "150"
+    assert session.get(TrenchGroup, group.id).amount == "150"
+
+    # 父行显示：数量 = L_组，埋深恒 "-"
+    from app.viewmodels.unit_vm import GroupRow
+
+    parent_row = next(
+        row for row in unit_vm.table_rows(session.get(Element, e1).unit_id)
+        if isinstance(row, GroupRow)
+    )
+    assert parent_row.amount == "150"
+    assert parent_row.depth == "-"
+    assert parent_row.depth_value == 0.0
 
 
 def test_group_dissolve_reverts_members(project) -> None:
@@ -748,12 +790,20 @@ def test_unit_panel_group_rows_and_lr_tab(project, qapp) -> None:
     assert group is not None and error is None
     panel.refresh()
     table = panel._element_table
-    from app.views.panels.unit_panel import _COL_PE, _COL_PW, _TREE_ROLE, _select_row
+    from app.views.panels.unit_panel import (
+        _COL_AMOUNT,
+        _COL_DEPTH,
+        _COL_PE,
+        _COL_PW,
+        _TREE_ROLE,
+        _select_row,
+    )
 
     metas = [table.item(row, 0).data(_TREE_ROLE) for row in range(table.rowCount())]
     assert any(meta and meta["has_children"] for meta in metas)
     assert sum(1 for meta in metas if meta and meta["indent"] == 1) == 2
-    # 父行不持有围护 / 面宽原则：两列显示 "-" 且没有下拉框
+    # 父行不持有围护 / 面宽原则：两列显示 "-" 且没有下拉框；
+    # 埋深恒 "-"（不参与计算），数量 = L_组 且可编辑
     group_row_index = next(
         row for row in range(table.rowCount())
         if (table.item(row, 0).data(_TREE_ROLE) or {}).get("has_children")
@@ -761,13 +811,22 @@ def test_unit_panel_group_rows_and_lr_tab(project, qapp) -> None:
     assert table.item(group_row_index, _COL_PE).text() == "-"
     assert table.item(group_row_index, _COL_PW).text() == "-"
     assert table.cellWidget(group_row_index, _COL_PE) is None
-    # 子行强制「左右分设」（只读文本，无下拉框）
+    assert table.item(group_row_index, _COL_DEPTH).text() == "-"
+    assert table.item(group_row_index, _COL_AMOUNT).text() == "120"
+    from PySide6.QtCore import Qt
+
+    assert table.item(group_row_index, _COL_AMOUNT).flags() & Qt.ItemFlag.ItemIsEditable
+    # 子行强制「左右分设」（只读文本，无下拉框）；数量只读（由父节点控制）
     member_row_index = next(
         row for row in range(table.rowCount())
         if (table.item(row, 0).data(_TREE_ROLE) or {}).get("indent") == 1
     )
     assert table.item(member_row_index, _COL_PE).text() == "左右分设"
     assert table.cellWidget(member_row_index, _COL_PE) is None
+    assert table.item(member_row_index, _COL_AMOUNT).text() == "120"
+    assert not (
+        table.item(member_row_index, _COL_AMOUNT).flags() & Qt.ItemFlag.ItemIsEditable
+    )
 
     # 选中首构件：等深相邻侧（右侧）强制 "-"，对应的支撑勾选也禁用
     _select_row(table, member_row_index, 0)

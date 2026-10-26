@@ -321,6 +321,10 @@ class TrenchGroup(Base):
     构件左原则，右边坡取末构件右原则，每条构件的工作面宽按自己的面宽原则
     确定；相邻等深两侧强制 "-"，异深时深侧按所选原则向浅槽底放坡。
 
+    ``amount`` 是父节点唯一持有的数据：合槽的**计算长度 L_组**，子构件数量
+    强制与之一致（改父节点即同步全部子构件）；父节点埋深无效（界面显示 "-"），
+    组内槽深全部由子构件自己的埋深 + 基础推导。
+
     组员的左右顺序 = 组内 ``Element.order_no``（从上到下 = 从左到右）；
     组员引用失效（原则被删）时回退库中第一条，与构件的解析规则一致。
     """
@@ -332,6 +336,8 @@ class TrenchGroup(Base):
         ForeignKey("unit.id", ondelete="CASCADE"), index=True
     )
     name: Mapped[str] = mapped_column(String(200), default="合槽组")
+    #: 合槽数量（计算长度 L_组，字符串原文可写算式）；子构件 amount 强制等于此值
+    amount: Mapped[str] = mapped_column(String(100), default="")
     #: 恒空（父节点不选围护原则；字段保留仅为旧工程兼容）
     pe_name: Mapped[str] = mapped_column(String(200), default="")
     #: 恒空（父节点不选工作面宽原则；字段保留仅为旧工程兼容）

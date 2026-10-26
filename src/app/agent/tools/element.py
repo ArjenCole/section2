@@ -97,6 +97,7 @@ def tool_list_groups(arguments: dict) -> dict:
             {
                 "group_id": group.id,
                 "name": group.name,
+                "amount": group.amount,
                 "unit_id": group.unit_id,
                 "members": [
                     {"element_id": member.id, "name": member.name}
@@ -137,11 +138,11 @@ def tool_update_group(arguments: dict) -> dict:
     if group_id is None:
         raise ToolError("请给出 group_id。")
     fields: dict = {}
-    for key in ("name",):
+    for key in ("name", "amount"):
         if arguments.get(key) is not None:
             fields[key] = str(arguments[key])
     if not fields:
-        raise ToolError("没有给出要修改的字段。可改：name（父节点不选围护 / 面宽原则）。")
+        raise ToolError("没有给出要修改的字段。可改：name / amount（父节点不选围护 / 面宽原则）。")
     group = unit_vm.update_group(int(group_id), **fields)
     if group is None:
         raise ToolError(f"找不到 id={group_id} 的合槽组。")
@@ -470,12 +471,14 @@ def register(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
             "update_group",
-            "修改合槽父节点属性（仅 name；父节点不持有围护 / 面宽原则）。写操作。",
+            "修改合槽父节点属性（name / amount；amount = L_组，会强制同步全部子构件；"
+            "父节点不持有围护 / 面宽原则，埋深无效）。写操作。",
             {
                 "type": "object",
                 "properties": {
                     "group_id": {"type": "integer"},
                     "name": {"type": "string"},
+                    "amount": {"type": "string", "description": "合槽计算长度 L_组（可写算式）"},
                 },
                 "required": ["group_id"],
             },

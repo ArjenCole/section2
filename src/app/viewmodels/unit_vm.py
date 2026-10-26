@@ -123,6 +123,8 @@ class GroupRow:
     父节点零工程量：不参与计算，仅作下属子构件工程量的合计分组视图。
     父节点也不持有围护 / 面宽原则（``pe_name`` / ``pw_name`` 恒空，界面
     显示 "-"）：左 / 右边坡与各构件工作面宽全部由子构件自己的原则决定。
+    **埋深恒显示 "-"、不参与任何计算**；**数量 L_组 由父节点唯一持有**
+    （子构件 ``Element.amount`` 强制等于父节点 ``TrenchGroup.amount``）。
     显示位置 = 首个成员的位置（成员强制连续，见 :func:`create_trench_group`）。
     """
 
@@ -236,11 +238,20 @@ def table_rows(unit_id: int) -> list:
 
 
 def _group_row(group_id: int, members: list[ElementRow]) -> GroupRow:
-    """父节点行：名称 + 成员摘要（埋深取最深、数量取首成员），原则恒空。"""
+    """父节点行：名称 + 数量（L_组）；埋深与原则不参与（显示 "-"）。"""
     group = orm.session().get(TrenchGroup, group_id)
     if group is None:  # pragma: no cover - 删除竞态下短暂出现
-        return GroupRow(id=group_id, name="合槽组", pe_name="", pw_name="", order_no=0, member_count=len(members))
-    depths = [row.depth_value for row in members]
+        return GroupRow(
+            id=group_id,
+            name="合槽组",
+            pe_name="",
+            pw_name="",
+            order_no=0,
+            member_count=len(members),
+            depth="-",
+        )
+    amount = _group_amount(group) or (members[0].amount if members else "")
+    amount_value, amount_error = _evaluate_field(amount or "0")
     return GroupRow(
         id=group.id,
         name=group.name,
@@ -248,11 +259,22 @@ def _group_row(group_id: int, members: list[ElementRow]) -> GroupRow:
         pw_name="",
         order_no=group.order_no,
         member_count=len(members),
-        depth=format_number(max(depths)) if depths else "",
-        amount=members[0].amount if members else "",
-        amount_value=members[0].amount_value if members else 0.0,
+        depth="-",
+        amount=amount,
+        amount_value=amount_value,
+        amount_error=amount_error,
         spec=f"{len(members)} 条构件合槽",
     )
+
+
+def _group_amount(group: TrenchGroup | None) -> str:
+    """组数量（L_组）：父节点存值；旧数据为空时回退首成员数量。"""
+    if group is None:
+        return ""
+    if group.amount:
+        return group.amount
+    members = sorted(group.members, key=lambda item: (item.order_no, item.id))
+    return (members[0].amount or "") if members else ""
 
 
 def _element_spec(element: Element) -> str:
@@ -979,6 +1001,15 @@ def update_element(element_id: int, **fields) -> Element | None:
     if element.group_id is not None:
         # 合槽子节点强制左右分设：不允许通过 pe_name 退回普通模式
         fields.pop("pe_name", None)
+        # 合槽子节点数量强制 = 父节点数量（旧数据父节点为空时以本次值补齐）
+        if "amount" in fields:
+            group = orm.session().get(TrenchGroup, element.group_id)
+            if group is not None:
+                if not group.amount:
+                    group.amount = str(fields["amount"])
+                    for member in group.members:
+                        member.amount = group.amount
+                fields["amount"] = _group_amount(group)
     was_lr = element.pe_name == LR_PE_TEXT
     new_pe_name = str(fields.get("pe_name", element.pe_name or ""))
     if "pe_name" in fields:
@@ -1128,9 +1159,6 @@ def group_elements_error(element_ids: list[int]) -> str | None:
             return f"构件「{element.name}」不开槽（顶管 / 牵引管 / 构筑物），不能入组。"
         if element.group_id is not None:
             return f"构件「{element.name}」已在合槽组内。"
-    amounts = {_evaluate_field(element.amount)[0] for element in elements}
-    if len(amounts) > 1:
-        return "组员数量（计算长度）必须一致，请先统一再编组。"
     return None
 
 
@@ -1173,6 +1201,7 @@ def create_trench_group(element_ids: list[int]) -> tuple[TrenchGroup | None, str
     group = TrenchGroup(
         unit_id=unit_id,
         name=f"{members[0].name}+{members[1].name} 合槽",
+        amount=members[0].amount or "",
         pe_name="",
         pw_name="",
         order_no=0,
@@ -1201,6 +1230,8 @@ def create_trench_group(element_ids: list[int]) -> tuple[TrenchGroup | None, str
         element.pe_name = LR_PE_TEXT
         element.excvt_side = "R"
         element.foundation_side = "R"
+        # 数量统一取父节点（首成员的值；组员不单独持有数量）
+        element.amount = group.amount
     for index, member in enumerate(members):
         member.order_no = head_position + index
     project_io.commit()
@@ -1251,11 +1282,6 @@ def add_to_group(element_id: int, group_id: int) -> tuple[bool, str | None]:
     members = sorted(group.members, key=lambda item: (item.order_no, item.id))
     if not members:
         return False, "合槽组没有成员。"
-    amounts = {_evaluate_field(member.amount)[0] for member in members} | {
-        _evaluate_field(element.amount)[0]
-    }
-    if len(amounts) > 1:
-        return False, "组员数量（计算长度）必须一致，请先统一再加入。"
 
     ordered = list(_elements_of(element.unit_id))
     tail = members[-1]
@@ -1273,6 +1299,12 @@ def add_to_group(element_id: int, group_id: int) -> tuple[bool, str | None]:
     element.pe_name = LR_PE_TEXT
     element.excvt_side = "R"
     element.foundation_side = "R"
+    # 新成员数量强制取父节点数量
+    if not group.amount:
+        group.amount = members[0].amount or element.amount or ""
+        for member in members:
+            member.amount = group.amount
+    element.amount = group.amount
     project_io.commit()
     bus().unit_changed.emit(element.unit_id)
     return True, None
@@ -1333,13 +1365,21 @@ def group_side_plan(group_id: int) -> dict[int, tuple[bool, bool]]:
 
 
 def update_group(group_id: int, **fields) -> TrenchGroup | None:
-    """修改合槽父节点字段（name；父节点不持有围护 / 面宽原则）。"""
+    """修改合槽父节点字段（name / amount；不持有围护 / 面宽原则）。
+
+    ``amount`` 是合槽的计算长度 L_组：写入父节点后**强制同步全部子构件**
+    （子构件不单独持有数量）。
+    """
     group = orm.session().get(TrenchGroup, group_id) if project_io.is_open() else None
     if group is None:
         return None
     for key, value in fields.items():
         if key == "name":
             group.name = str(value)
+        elif key == "amount":
+            group.amount = str(value)
+            for member in group.members:
+                member.amount = group.amount
     project_io.commit()
     bus().unit_changed.emit(group.unit_id)
     return group
