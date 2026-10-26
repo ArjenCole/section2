@@ -316,9 +316,10 @@ class TrenchGroup(Base):
     """合槽组（父节点行，v3）。
 
     多选构件「合槽编组」后插入主表格的一行：不持有任何工程量（全部工程量
-    按横向区间切到子构件名下，父节点仅作合计视图）。``pe_name`` / ``pw_name``
-    只负责合槽**最左一侧**（左边坡做法 + 左工作面宽度表）；右侧边缘由最右
-    子节点的右原则接管，中间坡 / 管间间距由各子节点的右原则与面宽原则接管。
+    按横向区间切到子构件名下，父节点仅作合计视图）。父节点也**不持有围护 /
+    面宽原则**（``pe_name`` / ``pw_name`` 恒空，界面显示 "-"）：左边坡取首
+    构件左原则，右边坡取末构件右原则，每条构件的工作面宽按自己的面宽原则
+    确定；相邻等深两侧强制 "-"，异深时深侧按所选原则向浅槽底放坡。
 
     组员的左右顺序 = 组内 ``Element.order_no``（从上到下 = 从左到右）；
     组员引用失效（原则被删）时回退库中第一条，与构件的解析规则一致。
@@ -331,9 +332,9 @@ class TrenchGroup(Base):
         ForeignKey("unit.id", ondelete="CASCADE"), index=True
     )
     name: Mapped[str] = mapped_column(String(200), default="合槽组")
-    #: 左边缘围护原则名（父节点只管最左一侧）
+    #: 恒空（父节点不选围护原则；字段保留仅为旧工程兼容）
     pe_name: Mapped[str] = mapped_column(String(200), default="")
-    #: 左边缘工作面宽原则名（查工作面宽度表取 wL）
+    #: 恒空（父节点不选工作面宽原则；字段保留仅为旧工程兼容）
     pw_name: Mapped[str] = mapped_column(String(200), default="")
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 

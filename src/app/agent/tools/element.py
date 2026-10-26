@@ -97,8 +97,6 @@ def tool_list_groups(arguments: dict) -> dict:
             {
                 "group_id": group.id,
                 "name": group.name,
-                "pe_name": group.pe_name,
-                "pw_name": group.pw_name,
                 "unit_id": group.unit_id,
                 "members": [
                     {"element_id": member.id, "name": member.name}
@@ -139,11 +137,11 @@ def tool_update_group(arguments: dict) -> dict:
     if group_id is None:
         raise ToolError("请给出 group_id。")
     fields: dict = {}
-    for key in ("name", "pe_name", "pw_name"):
+    for key in ("name",):
         if arguments.get(key) is not None:
             fields[key] = str(arguments[key])
     if not fields:
-        raise ToolError("没有给出要修改的字段。可改：name/pe_name/pw_name（左边缘原则）。")
+        raise ToolError("没有给出要修改的字段。可改：name（父节点不选围护 / 面宽原则）。")
     group = unit_vm.update_group(int(group_id), **fields)
     if group is None:
         raise ToolError(f"找不到 id={group_id} 的合槽组。")
@@ -453,7 +451,7 @@ def register(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
             "group_elements",
-            "把多条构件编成合槽组（父节点管最左一侧；成员转为左右分设，"
+            "把多条构件编成合槽组（父节点不选围护 / 面宽原则；成员转为左右分设，"
             "表单顺序 = 沟槽从左到右）。写操作。",
             {
                 "type": "object",
@@ -472,14 +470,12 @@ def register(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
             "update_group",
-            "修改合槽父节点属性（name/pe_name/pw_name；PE、PW 只管最左一侧）。写操作。",
+            "修改合槽父节点属性（仅 name；父节点不持有围护 / 面宽原则）。写操作。",
             {
                 "type": "object",
                 "properties": {
                     "group_id": {"type": "integer"},
                     "name": {"type": "string"},
-                    "pe_name": {"type": "string", "description": "左边缘围护原则"},
-                    "pw_name": {"type": "string", "description": "左边缘工作面宽原则"},
                 },
                 "required": ["group_id"],
             },

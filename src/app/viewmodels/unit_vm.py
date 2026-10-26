@@ -121,13 +121,15 @@ class GroupRow:
     """合槽父节点行（主表格显示用）。
 
     父节点零工程量：不参与计算，仅作下属子构件工程量的合计分组视图。
+    父节点也不持有围护 / 面宽原则（``pe_name`` / ``pw_name`` 恒空，界面
+    显示 "-"）：左 / 右边坡与各构件工作面宽全部由子构件自己的原则决定。
     显示位置 = 首个成员的位置（成员强制连续，见 :func:`create_trench_group`）。
     """
 
     id: int
     name: str
-    pe_name: str  # 左边缘围护原则
-    pw_name: str  # 左边缘工作面宽原则
+    pe_name: str  # 恒空（父节点不选围护原则）
+    pw_name: str  # 恒空（父节点不选工作面宽原则）
     order_no: int
     member_count: int
     #: 供主表格统一装填的显示属性（与 ElementRow 同名同型）
@@ -234,7 +236,7 @@ def table_rows(unit_id: int) -> list:
 
 
 def _group_row(group_id: int, members: list[ElementRow]) -> GroupRow:
-    """父节点行：名称 / 原则引用 + 成员摘要（埋深取最深、数量取首成员）。"""
+    """父节点行：名称 + 成员摘要（埋深取最深、数量取首成员），原则恒空。"""
     group = orm.session().get(TrenchGroup, group_id)
     if group is None:  # pragma: no cover - 删除竞态下短暂出现
         return GroupRow(id=group_id, name="合槽组", pe_name="", pw_name="", order_no=0, member_count=len(members))
@@ -242,8 +244,8 @@ def _group_row(group_id: int, members: list[ElementRow]) -> GroupRow:
     return GroupRow(
         id=group.id,
         name=group.name,
-        pe_name=group.pe_name or "",
-        pw_name=group.pw_name or "",
+        pe_name="",
+        pw_name="",
         order_no=group.order_no,
         member_count=len(members),
         depth=format_number(max(depths)) if depths else "",
@@ -974,6 +976,9 @@ def update_element(element_id: int, **fields) -> Element | None:
 
     category_changed = "category" in fields and int(fields["category"]) != element.category
     old_category = element.category
+    if element.group_id is not None:
+        # 合槽子节点强制左右分设：不允许通过 pe_name 退回普通模式
+        fields.pop("pe_name", None)
     was_lr = element.pe_name == LR_PE_TEXT
     new_pe_name = str(fields.get("pe_name", element.pe_name or ""))
     if "pe_name" in fields:
@@ -1129,12 +1134,29 @@ def group_elements_error(element_ids: list[int]) -> str | None:
     return None
 
 
+def _original_side_name(element: Element, side: str) -> str:
+    """构件编组前的左 / 右围护原则名（普通构件左右同值）。"""
+    if side == "left":
+        if element.pe_left_name:
+            return element.pe_left_name
+    elif element.pe_right_name:
+        return element.pe_right_name
+    return "" if element.pe_name == LR_PE_TEXT else (element.pe_name or "")
+
+
+def _default_internal_side() -> str:
+    """合槽内侧（深侧）围护默认原则：库中围护原则列表的第一条。"""
+    names = project_io.enclosure_names()
+    return names[0] if names else ""
+
+
 def create_trench_group(element_ids: list[int]) -> tuple[TrenchGroup | None, str | None]:
     """多选构件「合槽编组」：建父节点 + 组员转为左右分设构件 + 成员移到连续位置。
 
-    组员转换：``pe_left`` / ``pe_right`` 置为原 ``pe_name``（合槽内只有右原则
-    参与计算）、挖填 / 基础取侧自动置"按右侧原则"；父节点 PE / PW 默认取首
-    成员的原围护 / 面宽原则（管最左一侧）。返回 (父节点, 错误说明)。
+    父节点不持有围护 / 面宽原则（``pe_name`` / ``pw_name`` 留空，规则 1）；
+    组员一律转左右分设（规则 2）：首构件左侧 / 末构件右侧保留各自编组前
+    原则（规则 3），其余侧为内侧，默认库中第一条（规则 5，等深时计算强制
+    "-"）。挖填 / 基础取侧置"按右侧原则"。返回 (父节点, 错误说明)。
     """
     error = group_elements_error(element_ids)
     if error is not None:
@@ -1151,22 +1173,34 @@ def create_trench_group(element_ids: list[int]) -> tuple[TrenchGroup | None, str
     group = TrenchGroup(
         unit_id=unit_id,
         name=f"{members[0].name}+{members[1].name} 合槽",
-        pe_name=members[0].pe_name,
-        pw_name=members[0].pw_name,
+        pe_name="",
+        pw_name="",
         order_no=0,
     )
     orm.session().add(group)
     orm.session().flush()
+    internal = _default_internal_side()
+    last_index = len(members) - 1
     for position, element in enumerate(display):
         element.order_no = position
-        if element in members:
-            element.group_id = group.id
-            # 转为左右分设：右原则 = 原围护原则，左原则同值（合槽内不参与）
-            element.pe_left_name = element.pe_name
-            element.pe_right_name = element.pe_name
-            element.pe_name = LR_PE_TEXT
-            element.excvt_side = "R"
-            element.foundation_side = "R"
+        if element not in members:
+            continue
+        index = members.index(element)
+        element.group_id = group.id
+        # 边缘（规则 3）保留编组前原则；内侧默认第一条（规则 5）
+        element.pe_left_name = (
+            _original_side_name(element, "left")
+            if index == 0
+            else (internal or _original_side_name(element, "left"))
+        )
+        element.pe_right_name = (
+            _original_side_name(element, "right")
+            if index == last_index
+            else (internal or _original_side_name(element, "right"))
+        )
+        element.pe_name = LR_PE_TEXT
+        element.excvt_side = "R"
+        element.foundation_side = "R"
     for index, member in enumerate(members):
         member.order_no = head_position + index
     project_io.commit()
@@ -1230,11 +1264,13 @@ def add_to_group(element_id: int, group_id: int) -> tuple[bool, str | None]:
     display.insert(tail_position + 1, element)
     for position, item in enumerate(display):
         item.order_no = position
+    internal = _default_internal_side()
+    # 原末构件变为内侧：其右原则默认改为第一条（规则 5；等深时强制 "-"）
+    tail.pe_right_name = internal or _original_side_name(tail, "right")
     element.group_id = group.id
-    if not element.pe_left_name and not element.pe_right_name:
-        element.pe_left_name = element.pe_name
-        element.pe_right_name = element.pe_name
-        element.pe_name = LR_PE_TEXT
+    element.pe_left_name = internal or _original_side_name(element, "left")
+    element.pe_right_name = _original_side_name(element, "right")
+    element.pe_name = LR_PE_TEXT
     element.excvt_side = "R"
     element.foundation_side = "R"
     project_io.commit()
@@ -1262,24 +1298,48 @@ def remove_from_group(element_id: int) -> None:
 
 
 def _revert_members(members: list[Element]) -> None:
-    """组员还原为独立构件：左右同原则的退回普通单原则模式。"""
+    """组员还原为独立构件：合槽内自动分配的左右侧不保留，退回普通单原则。
+
+    首构件用其左原则、其余用右原则（与合槽外边缘 / 材质取侧一致）。
+    """
     for member in members:
+        group = member.group
+        siblings = (
+            sorted(group.members, key=lambda item: (item.order_no, item.id))
+            if group is not None
+            else [member]
+        )
+        index = siblings.index(member) if member in siblings else 0
+        restore = (
+            member.pe_left_name or member.pe_right_name
+            if index == 0
+            else member.pe_right_name or member.pe_left_name
+        )
         member.group_id = None
-        if member.pe_left_name and member.pe_left_name == member.pe_right_name:
-            member.pe_name = member.pe_left_name
+        if restore and restore != LR_PE_TEXT:
+            member.pe_name = restore
             member.pe_left_name = ""
             member.pe_right_name = ""
-        # 左右不同（用户在组内改过）：保持左右分设模式（pe_name 仍为占位）
+
+
+def group_side_plan(group_id: int) -> dict[int, tuple[bool, bool]]:
+    """组内 (左侧可编辑, 右侧可编辑)：界面「围护原则」tab 用。"""
+    group = orm.session().get(TrenchGroup, group_id) if project_io.is_open() else None
+    if group is None:
+        return {}
+    from app.core.calc.trench_group import group_side_plan as _plan
+
+    return _plan(group)
 
 
 def update_group(group_id: int, **fields) -> TrenchGroup | None:
-    """修改合槽父节点字段（name / pe_name / pw_name）。"""
+    """修改合槽父节点字段（name；父节点不持有围护 / 面宽原则）。"""
     group = orm.session().get(TrenchGroup, group_id) if project_io.is_open() else None
     if group is None:
         return None
     for key, value in fields.items():
-        if key in ("name", "pe_name", "pw_name"):
-            setattr(group, key, str(value))
+        if key == "name":
+            group.name = str(value)
     project_io.commit()
     bus().unit_changed.emit(group.unit_id)
     return group

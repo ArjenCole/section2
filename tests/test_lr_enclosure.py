@@ -7,9 +7,11 @@
 * 左坡右桩手算：挖方 = (2B+H*sL)*H/2（B/H 由图集与宽度表的**原始值**独立
   组合，不用被测逻辑算结果）；桩量 = ⌈L/桩距⌉×桩长×单重（×1 单面）；
 * 合槽等深守恒：两侧直壁时 Σ成员挖方 = 平底宽 × H × L（精确矩形），
-  归属带宽（本体 + 工作面 + 半间距）之和 = 平底宽；
-* 合槽异深：中间区楔形按 精确梯形 + 平段 公式对拍；中间坡围护量挂深侧；
-* 父节点零工程量；降水逐构件挂各自名下。
+  平底宽 = Σ本体 + 2×（各构件自身工作面宽）；
+* 合槽异深：浅侧构件自身工作面 + 深侧放坡（坡到浅槽底），深侧构件另得
+  浅槽底以上的竖直条带；中间坡围护量挂深侧；挖填拆分以浅侧虚拟垂直围护
+  为界；
+* 父节点零工程量、不持有围护 / 面宽原则；降水逐构件挂各自名下。
 """
 
 import math
@@ -303,7 +305,11 @@ def _group_results(group):
 
 
 def test_group_equal_depth_flat_dig(project) -> None:
-    """等深 + 全直壁：Σ成员挖方 = 平底宽×H×L；归属带宽之和 = 平底宽。"""
+    """等深 + 全直壁（两侧相邻面强制 "-"）：Σ成员挖方 = 平底宽×H×L。
+
+    平底 = 首构件工作面 + 本体 + （右构件自身工作面 + 左构件工作面）+ 本体
+    + 末构件工作面；各构件挖方 = （本体 + 2×自身工作面）× H × L。
+    """
     from app.core.calc.engine import (
         atlas_dims,
         build_atlas_query,
@@ -322,7 +328,6 @@ def test_group_equal_depth_flat_dig(project) -> None:
     from sqlalchemy import select
 
     group, (e1, e2) = _group_fixture(project)
-    # 父节点 PE/PW 默认 = 首成员原原则；保持钢板桩（直壁）
     results, errors = _group_results(group)
     assert not errors, errors
 
@@ -349,19 +354,18 @@ def test_group_equal_depth_flat_dig(project) -> None:
     g1, g2 = geometry
     b1, b2 = g1["b"], g2["b"]
     w1, w2 = g1["ww"], g2["ww"]
-    gap = w1  # g_1 = 子1 PW 表值；父 PW 默认取首成员原 PW（同一条）→ wL = w1
-    flat = w1 + b1 + gap + b2 + w2
+    # 父节点不持有面宽原则：首 / 末构件各用自己的 PW 工作面；相邻区 = w1 + w2
+    flat = b1 + b2 + 2 * w1 + 2 * w2
     # 等深断言（同管径 → 同图集参数）
     assert g1["h"].v == pytest.approx(g2["h"].v, abs=1e-9)
     depth = g1["h"].v
-    flat = flat.v
 
     dig1 = _value(results[e1], "开挖|Ⅲ类土|m3")
     dig2 = _value(results[e2], "开挖|Ⅲ类土|m3")
-    assert dig1 + dig2 == pytest.approx(flat * depth * 120, rel=1e-9)
-    # 归属带宽：构件1 = wL+b1+g/2，构件2 = g/2+b2+wR
-    assert dig1 == pytest.approx((w1 + b1 + gap / 2).v * depth * 120, rel=1e-9)
-    assert dig2 == pytest.approx((gap / 2 + b2 + w2).v * depth * 120, rel=1e-9)
+    assert dig1 + dig2 == pytest.approx(flat.v * depth * 120, rel=1e-9)
+    # 挖填拆分：等深相邻面为虚拟垂直空围护，各构件 = 本体 + 自身两侧工作面
+    assert dig1 == pytest.approx((b1 + 2 * w1).v * depth * 120, rel=1e-9)
+    assert dig2 == pytest.approx((b2 + 2 * w2).v * depth * 120, rel=1e-9)
     # 父节点零工程量：输出只挂在成员名下
     assert set(results) == {e1, e2}
 
@@ -376,7 +380,7 @@ def test_group_precipitation_per_member(project) -> None:
 
 
 def test_group_different_depth_mid_slope(project) -> None:
-    """异深中间坡：楔形挖方精确对拍；中间坡围护量挂深侧构件。"""
+    """异深中间坡：浅侧自身工作面 + 深侧竖直隔断（桩）；中间坡围护量挂深侧。"""
     from app.core.calc.engine import (
         atlas_dims,
         build_atlas_query,
@@ -388,11 +392,13 @@ def test_group_different_depth_mid_slope(project) -> None:
     from app.core.models.models import Element, PcpEnclosure, PcpFoundation, PcpWidth
     from app.services.atlas import resolve_atlas
     from sqlalchemy import select
+    from app.viewmodels import unit_vm
 
-    slope_pe = _make_enclosure("中间坡1:0.5", "放坡", slope=0.5)
     pile_pe = _make_enclosure("合槽桩原则2", "钢板桩")
-    # 左管右原则 = 钢板桩（中间隔断）、右管右原则 = 钢板桩
     group, (e1, e2) = _group_fixture(project, depth2="4", member1_pe=pile_pe)
+    # 深侧（e2）相邻侧原则由用户选择：显式改为钢板桩（竖直隔断）
+    e2_right = orm.session().get(Element, e2).pe_right_name
+    unit_vm.update_element(e2, pe_left_name=e2_right)
     results, errors = _group_results(group)
     assert not errors, errors
 
@@ -414,16 +420,12 @@ def test_group_different_depth_mid_slope(project) -> None:
             }
         )
     g1, g2 = geometry
-    gap = g1["ww"]
     h1, h2 = g1["h"].v, g2["h"].v
-    # 中间隔断桩（s̄=0）：中间区全宽挖到深底
-    expected_mid = gap * h2
+    # 桩类内侧放坡水平投影为 0：浅侧构件 = 本体 + 自身两侧工作面；
+    # 深侧构件 = 本体 + 自身右侧工作面（相邻侧竖直隔断，无工作面）
     expected_total = (
-        g2["ww"] * h1  # wL（父 PW = 首成员 PW）
-        + g1["b"] * h1
-        + expected_mid
-        + g2["b"] * h2
-        + g2["ww"] * h2  # wR
+        (2 * g1["ww"] + g1["b"]) * h1
+        + (g2["b"] + g2["ww"]) * h2
     )
     dig1 = _value(results[e1], "开挖|Ⅲ类土|m3")
     dig2 = _value(results[e2], "开挖|Ⅲ类土|m3")
@@ -438,7 +440,7 @@ def test_group_different_depth_mid_slope(project) -> None:
 
 
 def test_group_mid_slope_pile_run_encroaches(project) -> None:
-    """中间坡放坡（左管右原则 = 放坡 1:0.5）：楔形按 平段+坡段 精确对拍。"""
+    """深侧放坡 1:0.5：坡到浅槽底后竖直向上，浅槽底以上条带归深侧构件。"""
     from app.core.calc.engine import (
         atlas_dims,
         build_atlas_query,
@@ -459,8 +461,8 @@ def test_group_mid_slope_pile_run_encroaches(project) -> None:
     e2 = _element("深管", dn=600, depth="4", amount="120", pe_name=pile_pe.name)
     group, error = unit_vm.create_trench_group([e1, e2])
     assert group is not None and error is None
-    # 父节点 PE 默认 = 首成员原原则（放坡）——显式设为钢板桩，聚焦中间坡断言
-    unit_vm.update_group(group.id, pe_name=pile_pe.name)
+    # 深侧（e2）相邻侧（左）由用户选择：放坡 1:0.5（默认是库中第一条）
+    unit_vm.update_element(e2, pe_left_name=slope_pe.name)
     results, errors = _group_results(group)
     assert not errors, errors
 
@@ -482,12 +484,20 @@ def test_group_mid_slope_pile_run_encroaches(project) -> None:
             }
         )
     g1, g2 = geometry
-    gap = g1["ww"]
     h1, h2 = g1["h"].v, g2["h"].v
     delta = h2 - h1
     run = delta * 0.5
-    mid_area = (gap - run) * h2 + run * (h1 + h2) / 2  # 平段（深底）+ 坡段梯形
-    expected_total = g1["ww"] * h1 + g1["b"] * h1 + mid_area + g2["b"] * h2 + g2["ww"] * h2
+    # 首构件（e1）自身左侧原则为放坡 1:0.5 → 左边坡梯形 = h1×(h1×0.5)/2
+    edge_slope = h1 * (h1 * 0.5) / 2
+    # 浅侧构件 = 本体 + 两侧自身工作面；深侧构件 = 浅槽底以上的竖直条带
+    # （宽 run）+ 坡楔（h1 处宽 run → h2 处宽 0）+ 本体 + 右侧工作面
+    mid_area = run * h1 + run * (h2 - h1) / 2
+    expected_total = (
+        (2 * g1["ww"] + g1["b"]) * h1
+        + edge_slope
+        + mid_area
+        + (g2["b"] + g2["ww"]) * h2
+    )
     dig1 = _value(results[e1], "开挖|Ⅲ类土|m3")
     dig2 = _value(results[e2], "开挖|Ⅲ类土|m3")
     assert dig1 + dig2 == pytest.approx(expected_total.v * 120, rel=1e-6)
@@ -538,6 +548,61 @@ def test_group_dissolve_reverts_members(project) -> None:
     assert m1.group_id is None
     assert m1.pe_name != LR_PE_TEXT  # 还原为普通单原则
     assert m1.pe_left_name == ""
+
+
+def test_group_parent_has_no_principles_and_children_forced_lr(project) -> None:
+    """规则 1 / 2：父节点不选围护 / 面宽原则；子节点强制左右分设。"""
+    from app.core.models import base as orm
+    from app.core.models.models import Element, LR_PE_TEXT, TrenchGroup
+    from app.viewmodels import unit_vm
+
+    group, (e1, e2) = _group_fixture(project)
+    session = orm.session()
+    parent = session.get(TrenchGroup, group.id)
+    assert parent.pe_name == "" and parent.pw_name == ""
+    # update_group 只接受 name，PE / PW 写入被忽略
+    unit_vm.update_group(group.id, pe_name="合槽桩原则", pw_name="默认面宽原则")
+    session.expire_all()
+    parent = session.get(TrenchGroup, group.id)
+    assert parent.pe_name == "" and parent.pw_name == ""
+
+    # 子节点强制左右分设：pe_name 改回具体原则不生效
+    assert session.get(Element, e1).pe_name == LR_PE_TEXT
+    unit_vm.update_element(e1, pe_name="合槽桩原则")
+    session.expire_all()
+    assert session.get(Element, e1).pe_name == LR_PE_TEXT
+
+
+def test_group_side_plan_equal_and_unequal(project) -> None:
+    """规则 4 / 5：等深相邻侧强制 "-"；异深只有更深一侧可编辑。"""
+    from app.core.models import base as orm
+    from app.core.models.models import Element
+    from app.services import project_io
+    from app.viewmodels import unit_vm
+
+    group, (e1, e2) = _group_fixture(project)
+    plan = unit_vm.group_side_plan(group.id)
+    # 等深：外边缘可选，中间相邻面两侧都强制 "-"
+    assert plan[e1] == (True, False)
+    assert plan[e2] == (False, True)
+
+    # 编组时内部侧默认 = 当前围护原则列表第一条（规则 5）
+    first = project_io.enclosure_names()[0]
+    session = orm.session()
+    assert session.get(Element, e1).pe_right_name == first
+    assert session.get(Element, e2).pe_left_name == first
+
+    # 右管更深：其左侧可编辑，左管右侧仍强制 "-"
+    unit_vm.update_element(e2, depth="4")
+    plan = unit_vm.group_side_plan(group.id)
+    assert plan[e1] == (True, False)
+    assert plan[e2] == (True, True)
+
+    # 右管更浅：深浅翻转，只有左管右侧可编辑
+    unit_vm.update_element(e2, depth="2")
+    plan = unit_vm.group_side_plan(group.id)
+    assert plan[e1] == (True, True)
+    assert plan[e2] == (False, True)
 
 
 def test_delete_group_removes_all_members(project) -> None:
@@ -683,36 +748,54 @@ def test_unit_panel_group_rows_and_lr_tab(project, qapp) -> None:
     assert group is not None and error is None
     panel.refresh()
     table = panel._element_table
-    from app.views.panels.unit_panel import _TREE_ROLE
+    from app.views.panels.unit_panel import _COL_PE, _COL_PW, _TREE_ROLE, _select_row
 
     metas = [table.item(row, 0).data(_TREE_ROLE) for row in range(table.rowCount())]
     assert any(meta and meta["has_children"] for meta in metas)
     assert sum(1 for meta in metas if meta and meta["indent"] == 1) == 2
-    # 父行选中 → 组成员合计工程量与合槽断面
-    group_row = next(
+    # 父行不持有围护 / 面宽原则：两列显示 "-" 且没有下拉框
+    group_row_index = next(
         row for row in range(table.rowCount())
         if (table.item(row, 0).data(_TREE_ROLE) or {}).get("has_children")
     )
-    from app.views.panels.unit_panel import _select_row
+    assert table.item(group_row_index, _COL_PE).text() == "-"
+    assert table.item(group_row_index, _COL_PW).text() == "-"
+    assert table.cellWidget(group_row_index, _COL_PE) is None
+    # 子行强制「左右分设」（只读文本，无下拉框）
+    member_row_index = next(
+        row for row in range(table.rowCount())
+        if (table.item(row, 0).data(_TREE_ROLE) or {}).get("indent") == 1
+    )
+    assert table.item(member_row_index, _COL_PE).text() == "左右分设"
+    assert table.cellWidget(member_row_index, _COL_PE) is None
 
-    _select_row(table, group_row, 0)
+    # 选中首构件：等深相邻侧（右侧）强制 "-"，对应的支撑勾选也禁用
+    _select_row(table, member_row_index, 0)
+    panel._sync_detail_to_selection()
+    assert panel._lr_table.rowCount() == 6
+    right_combo = panel._lr_table.cellWidget(1, 0)
+    assert not right_combo.isEnabled() and right_combo.currentText() == "-"
+    assert not panel._lr_table.cellWidget(3, 0).isEnabled()  # 右侧支撑
+
+    # 父行选中 → 组成员合计工程量与合槽断面
+    _select_row(table, group_row_index, 0)
     panel._sync_detail_to_selection()
     assert panel._group_member_ids
     # 断面面板 + 工程量表都有内容（合槽断面 outline 模式）
     assert panel._section_view._canvas._group_id == group.id
 
     # 点击 +/- 收起 → 两条成员行隐藏；再点展开 → 恢复显示
-    panel._on_group_toggle_requested(group_row)
+    panel._on_group_toggle_requested(group_row_index)
     assert sum(1 for row in range(table.rowCount()) if table.isRowHidden(row)) == 2
-    assert (table.item(group_row, 0).data(_TREE_ROLE))["expanded"] is False
-    panel._on_group_toggle_requested(group_row)
+    assert (table.item(group_row_index, 0).data(_TREE_ROLE))["expanded"] is False
+    panel._on_group_toggle_requested(group_row_index)
     assert not any(table.isRowHidden(row) for row in range(table.rowCount()))
 
     # 真实鼠标点击 +/- 方框区域：委托 editorEvent 收到左键按下 → 收起成员行
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
 
-    item_rect = table.visualItemRect(table.item(group_row, 0))
+    item_rect = table.visualItemRect(table.item(group_row_index, 0))
     QTest.mouseClick(
         table.viewport(),
         Qt.MouseButton.LeftButton,

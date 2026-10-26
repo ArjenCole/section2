@@ -2,29 +2,40 @@
 
 断面从左到右的区间（每个区间归属一条构件）：
 
-    [左边坡+左工作面·父PE/PW] [构件1本体] [中间区1·子1右PW] [构件2本体] …
-    [构件n本体] [右工作面+右边坡·子n右PE/PW]
+    [左边坡+左工作面·首构件左PE/自身PW] [构件1本体]
+    [相邻区1·浅侧工作面 + 深侧放坡] [构件2本体] …
+    [构件n本体] [右工作面+右边坡·末构件右PE/自身PW]
 
 实现口径（等深 / 异深统一）：
 
-* **每个构件一套"归属区"**：本体区（宽 b_i = 基础外皮宽）、左右工作面区
-  （仅最外构件，按父 / 最右子 PW 查表）、相邻中间区的各半（构件间范围
-  平分）、边缘边坡区（仅最外构件，做法取父 PE / 最右子右 PE 按各自槽深
-  选择，折线含分级与平台）；
-* **宽度函数分段线性**：本体 / 工作面恒宽；中间区在埋深差段线性收窄
-  （等效坡系数 = 所选做法按坡高 ΔH 的各级放坡系数按级高加权，桩类为 0
-  即直壁隔断）；边坡为折线。构件的分层界面与全部折点构成事件集，事件
-  之间的带上宽度线性 → 梯形公式 ``(w1+w2)/2*Δ`` 精确；
+* **父节点不持有围护 / 面宽原则**：父节点零工程量、零几何，只作合计视图；
+  全部原则取子构件自己的。
+* **每个构件一套"归属区"**：本体区（宽 b_i = 基础外皮宽）、工作面区
+  （宽按**自己的**面宽原则 + 自身管径查表）、内侧放坡区（仅深侧构件）、
+  边缘边坡区（仅首 / 末构件）。首构件左边缘取``pe_left_name``、末构件
+  右边缘取``pe_right_name``，中间构件的左右侧只在与邻居的相邻区里生效。
+* **相邻区**：
+  - 埋深相同 → 两侧围护均为 "-"（等同 1:0、高 0 的围护），几何 =
+    左构件右侧工作面 + 右构件左侧工作面；
+  - 埋深不同 → 浅侧围护 "-"（自身工作面宽 + 虚拟垂直空围护），深侧围护
+    由用户选择（默认库中第一条）并向浅侧槽底放坡；坡与浅槽底的交点即
+    浅侧虚拟垂直围护的水平位置。相邻区宽 = 浅侧工作面宽 + 深侧放坡水平
+    投影（分级 / 平台按做法逐级累加）。
+* **挖填拆分**：以浅侧虚拟垂直围护为分界线——浅侧构件得工作面矩形，
+  深侧构件得内侧放坡楔形 + 浅槽底以上的垂直条带（宽度 = 放坡水平投影）。
+* **宽度函数分段线性**：本体 / 工作面恒宽；内侧放坡区为折线（含平台
+  跳变）；边缘边坡为折线。构件的分层界面与全部折点构成事件集，事件
+  之间的带上宽度线性 → 梯形公式 ``(w1+w2)/2*Δ`` 精确。
 * **回填正量 = 该构件归属区面积按它自己的分层界面归类**（材质 / 换填取
-  其右原则 PE / 自己的 PF，与"子节点只影响自身范围"的编组语义一致）；
-  比其槽底更深的归属区部分（中间坡楔形）追加为覆土层；挖方 = 同带面积
-  之和进开挖定额键；逐管扣减（弓形 / 包封 / 箱涵）由 foundation 现状函数
-  以同 key 负项合并；
-* **围护量每面 ×1**（``sides=1``）：左边坡挂构件 1、右边坡挂构件 n、
-  中间坡挂深度更深一侧的构件（做法按坡高 ΔH 选择）；支撑（Z 类）按归属
-  构件朝向该面的支撑勾选，深度按面深减该构件换填（同单管支撑口径）；
+  自身围护原则 PE / 自己的 PF）；比其槽底更深的归属区部分追加为覆土层；
+  挖方 = 同带面积之和进开挖定额键；逐管扣减（弓形 / 包封 / 箱涵）由
+  foundation 现状函数以同 key 负项合并。
+* **围护量每面 ×1**（``sides=1``）：左边坡挂首构件（其左原则）、右边坡
+  挂末构件（其右原则）、内侧坡挂深侧构件（其朝向该面的原则）；等深相邻
+  面不出围护量。支撑（Z 类）按归属构件朝向该面的支撑勾选，深度按面深
+  减该构件换填（同单管支撑口径）。
 * **降水逐构件**（湿土排水 = 归属带宽 ×（槽深−1m）的简化断面）；特殊地基
-  按归属带宽代入 width；
+  按归属带宽代入 width。
 * **父节点零工程量**：全部输出挂在子构件名下，每构件量 × L_组（编组时
   校验组员数量一致）。
 """
@@ -88,40 +99,6 @@ class _RectZone(_Zone):
         return [self.top]
 
 
-class _MidZone(_Zone):
-    """中间区（相邻构件的间距 g，构件间范围平分各取一半）。
-
-    宽度（深度 d）：d ≤ H_浅 → g；H_浅 < d < H_深 → g − (d−H_浅)×s̄
-    （坡从浅槽底边向深侧收，桩类 s̄=0 即直壁隔断、整区挖到深底）；
-    更深 → 0。
-    """
-
-    def __init__(self, g: Dim, h_shallow: float, h_deep: float, slope: float, note: str) -> None:
-        self.g = g
-        self.h_shallow = h_shallow
-        self.h_deep = h_deep
-        self.slope = slope
-        self.note = note
-
-    def _width(self, d: float) -> float:
-        """深度 d 处的中间区全宽（带端点取带内侧值：h_deep 处 = g−run / 直壁 = g）。"""
-        if d <= self.h_shallow:
-            return self.g.v
-        if d > self.h_deep:
-            return 0.0
-        return max(0.0, self.g.v - (d - self.h_shallow) * self.slope)
-
-    def band_area_dim(self, a: float, b: float) -> Dim | None:
-        total = dim(0.0)
-        for lo, hi in _clip_bands(a, b, self.kinks()):
-            band = (dim(self._width(lo)) + dim(self._width(hi))) / 2 * dim(hi - lo)
-            total = total + band
-        return total / 2 if total.v != 0 else None  # 半区 = 面积平分
-
-    def kinks(self) -> list[float]:
-        return [self.h_shallow, self.h_deep]
-
-
 class _SlopeZone(_Zone):
     """边坡区（分级放坡 + 平台）：折线 ``points`` = (绝对深度, 边坡外扩宽)。
 
@@ -149,12 +126,6 @@ class _SlopeZone(_Zone):
         return [point[0] for point in self.points]
 
 
-def _clip_bands(a: float, b: float, kinks: list[float]) -> list[tuple[float, float]]:
-    """把带 [a, b] 按折点切成无折点子带（线性宽度 → 梯形精确）。"""
-    edges = sorted({a, b, *(k for k in kinks if a < k < b)})
-    return [(lo, hi) for lo, hi in zip(edges, edges[1:]) if hi > lo]
-
-
 def _slope_points(work, depth: float) -> list[tuple[float, float]]:
     """边坡折线（绝对深度, 外扩宽 m）：槽底 (H, 0) 分级放坡到地面，切级处加平台。
 
@@ -180,17 +151,32 @@ def _slope_points(work, depth: float) -> list[tuple[float, float]]:
     return points
 
 
-def _mid_slope_of(work, delta_h: float) -> float:
-    """中间坡等效坡系数：所选做法各级放坡系数按级高加权（桩类 = 0）。"""
-    if delta_h <= 0:
+def _internal_run(work, h_deep: float, h_shallow: float) -> float:
+    """内侧放坡的水平投影（m）：深侧槽底放坡到浅侧槽底的总外扩宽。
+
+    按做法逐级累加（含切级平台），桩类为 0（竖直隔断）。
+    """
+    delta = h_deep - h_shallow
+    if delta <= 0 or work is None:
         return 0.0
-    levels = list(work.levels)
-    heights = [step.v for step in split_h_by_step(levels, dim(delta_h))]
-    total = sum(
-        (heights[index] - (heights[index - 1] if index else 0.0)) * level_slope(level).v
-        for index, level in enumerate(levels)
-    )
-    return total / delta_h
+    return max((run for _depth, run in _slope_points(work, delta)), default=0.0)
+
+
+def _internal_slope_points(work, h_deep: float, h_shallow: float) -> list[tuple[float, float]]:
+    """内侧放坡区的折线（绝对深度, 距深侧本体边的外扩宽 m）。
+
+    深侧槽底 (h_deep, 0) 按做法放坡到浅侧槽底 (h_shallow, run)；浅槽底
+    以上为虚拟垂直围护（恒宽 run 直到地面）。
+    """
+    delta = h_deep - h_shallow
+    if delta <= 0 or work is None:
+        return []
+    points = [(h_shallow + depth, run) for depth, run in _slope_points(work, delta)]
+    total_run = max((run for _depth, run in points), default=0.0)
+    if h_shallow > 1e-9:
+        points.append((h_shallow, total_run))
+        points.append((0.0, total_run))
+    return points
 
 
 # --------------------------------------------------------------------------- #
@@ -203,17 +189,37 @@ class _Member:
     element: Element
     info: ElementInput
     ad: AtlasDims
-    pe_r: object  # 右侧围护原则（编组时挖填 / 基础取侧自动置"R"）
+    pe_r: object  # 自身材质 / 基础原则（右 → 左 → 库首条；与几何侧原则分开）
     depth: Dim  # 槽底深 H_i（埋深 + 换填 + 壁厚 + 垫层）
     base_width: Dim  # 基础外皮宽 b_i（= 单管槽底宽去掉两侧工作面）
+    work_width: Dim  # 自身面宽原则按自身管径查到的单侧工作面宽
     zones: list = field(default_factory=list)
     flat_width: Dim = field(default_factory=lambda: dim(0.0))  # 平面归属带宽（降水 / 特殊地基代入用）
+
+
+@dataclass
+class _Pair:
+    """相邻两构件的几何口径（规则 4 / 5 / 7）。"""
+
+    deep: _Member | None  # 更深一侧；None = 等深
+    run: float  # 深侧放坡水平投影（m）；等深为 0
+    work: object | None  # 深侧内侧坡做法
+    pe: object | None  # 深侧围护原则（支撑深度选择用）
+    left_width: Dim  # 左构件在该相邻面的归属宽（浅侧 = 工作面，深侧 = 放坡投影）
+    right_width: Dim  # 右构件在该相邻面的归属宽
+
+
+def _side_name(element: Element, side: str) -> str:
+    """构件的左 / 右围护原则名；分设占位 ``pe_name`` 不参与几何。"""
+    if side == "left":
+        return element.pe_left_name or ("" if element.pe_name == "左右分设" else element.pe_name)
+    return element.pe_right_name or ("" if element.pe_name == "左右分设" else element.pe_name)
 
 
 def _resolve_by_name(session, model, name: str | None):
     from sqlalchemy import select
 
-    if not name:
+    if not name or name == "-":
         return None
     found_id = session.scalar(select(model.id).where(model.name == name))
     return session.get(model, found_id) if found_id is not None else None
@@ -225,18 +231,94 @@ def _first_of(session, model):
     return session.scalar(select(model).order_by(model.order_no, model.id))
 
 
-def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]:
-    """计算一个合槽组：返回 (构件 id → 工程量, 构件 id → 错误说明)。
-
-    组员按 order_no 从左到右；原则缺失 / 无做法时相关构件带错误说明、其余
-    构件照算（单条失败不拖垮整组，错误字符串挂在行上展示）。父节点零工程量。
-    """
+def _resolve_member(session, element: Element) -> tuple[_Member | None, str | None]:
+    """单个成员的计算快照；返回 (快照, 错误说明)。"""
     from app.core.models.models import (
         PcpEnclosure,
         PcpFoundation,
         PcpPrecipitation,
         PcpWidth,
     )
+
+    pe_side = (
+        _resolve_by_name(session, PcpEnclosure, _side_name(element, "right"))
+        or _resolve_by_name(session, PcpEnclosure, _side_name(element, "left"))
+        or _first_of(session, PcpEnclosure)
+    )
+    pf = _resolve_by_name(session, PcpFoundation, element.pf_name) or _first_of(session, PcpFoundation)
+    pp = _resolve_by_name(session, PcpPrecipitation, element.pp_name) or _first_of(session, PcpPrecipitation)
+    pw = _resolve_by_name(session, PcpWidth, element.pw_name) or _first_of(session, PcpWidth)
+    if pe_side is None or pf is None or pp is None or pw is None:
+        return None, "缺少围护 / 地基 / 降水 / 面宽原则。"
+    info = build_element_input(element, pe_side, pf, pp, pw)
+    if info.amount == 0:
+        return None, "数量为 0，未生成工程量。"
+    # 图集 / 基础侧原则：build_element_input 已按 foundation_side 落到左右侧
+    material_pe = info.pe or pe_side
+    at = resolve_atlas(build_atlas_query(info, material_pe, pw))
+    ad = atlas_dims(info, at)
+    if ad.c1.v == 0:
+        ad = ad.replace(c1=cushion_dim(material_pe))
+    depth = info.depth_dim + (foundation_dim(pf) + ad.t + ad.c1) / 1000
+    base_width = info.size_b_dim + scale_sum((ad.t, ad.a), 2.0) / 1000
+    work_width = dim(workwidth_of(pw, info)) / 1000
+    return (
+        _Member(
+            element=element,
+            info=info,
+            ad=ad,
+            pe_r=material_pe,
+            depth=depth,
+            base_width=base_width,
+            work_width=work_width,
+        ),
+        None,
+    )
+
+
+def member_depths(group: TrenchGroup) -> dict[int, float]:
+    """组内各构件的实际槽底深度（埋深 + 基础 + 壁厚 + 垫层）；算不出的跳过。"""
+    session = orm.session()
+    depths: dict[int, float] = {}
+    for element in sorted(group.members, key=lambda item: (item.order_no, item.id)):
+        member, _error = _resolve_member(session, element)
+        if member is not None:
+            depths[element.id] = member.depth.v
+    return depths
+
+
+def group_side_plan(group: TrenchGroup) -> dict[int, tuple[bool, bool]]:
+    """组内每条构件的 (左侧可编辑, 右侧可编辑)。
+
+    * 首构件左侧 / 末构件右侧恒可编辑（合槽外边缘）；
+    * 其余侧只有**比相邻构件更深**时才可编辑（深侧放坡原则）；
+    * 等深 / 更浅的一侧围护强制 "-"（规则 4 / 5）。
+    """
+    members = sorted(group.members, key=lambda item: (item.order_no, item.id))
+    depths = member_depths(group)
+    n = len(members)
+    plan: dict[int, tuple[bool, bool]] = {}
+    for index, element in enumerate(members):
+        depth = depths.get(element.id)
+        left_active = True
+        if index > 0:
+            neighbor = depths.get(members[index - 1].id)
+            left_active = depth is None or neighbor is None or depth > neighbor + 1e-9
+        right_active = True
+        if index < n - 1:
+            neighbor = depths.get(members[index + 1].id)
+            right_active = depth is None or neighbor is None or depth > neighbor + 1e-9
+        plan[element.id] = (left_active, right_active)
+    return plan
+
+
+def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]:
+    """计算一个合槽组：返回 (构件 id → 工程量, 构件 id → 错误说明)。
+
+    组员按 order_no 从左到右；父节点不参与（零工程量、无围护 / 面宽原则）。
+    原则缺失 / 无做法时整组带错误说明，错误字符串挂在行上展示。
+    """
+    from app.core.models.models import PcpEnclosure
 
     session = orm.session()
     members = sorted(group.members, key=lambda item: (item.order_no, item.id))
@@ -247,97 +329,132 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             errors[member.id] = "合槽组至少需要两条构件。"
         return results, errors
 
-    # 逐成员快照（右 PE / PF / PP / PW 各自解析，失效回退第一条）
+    # 逐成员快照：原则一律取子构件自己的（父节点不持有原则）
     snapshots: list[_Member] = []
     for element in members:
-        pe_r = _resolve_by_name(session, PcpEnclosure, element.pe_right_name) or _first_of(session, PcpEnclosure)
-        pf = _resolve_by_name(session, PcpFoundation, element.pf_name) or _first_of(session, PcpFoundation)
-        pp = _resolve_by_name(session, PcpPrecipitation, element.pp_name) or _first_of(session, PcpPrecipitation)
-        pw = _resolve_by_name(session, PcpWidth, element.pw_name) or _first_of(session, PcpWidth)
-        if pe_r is None or pf is None or pp is None or pw is None:
-            errors[element.id] = "缺少围护 / 地基 / 降水 / 面宽原则。"
-            continue
-        info = build_element_input(element, pe_r, pf, pp, pw)
-        if info.amount == 0:
-            errors[element.id] = "数量为 0，未生成工程量。"
-            continue
-        at = resolve_atlas(build_atlas_query(info, pe_r, pw))
-        ad = atlas_dims(info, at)
-        if ad.c1.v == 0:
-            ad = ad.replace(c1=cushion_dim(pe_r))
-        depth = info.depth_dim + (foundation_dim(pf) + ad.t + ad.c1) / 1000
-        base_width = info.size_b_dim + scale_sum((ad.t, ad.a), 2.0) / 1000
-        snapshots.append(
-            _Member(element=element, info=info, ad=ad, pe_r=pe_r, depth=depth, base_width=base_width)
-        )
-    if len(snapshots) < 2:
+        member, error = _resolve_member(session, element)
+        if member is None:
+            errors[element.id] = error or "无效成员。"
+        else:
+            snapshots.append(member)
+    if len(snapshots) != len(members):
         for element in members:
             errors.setdefault(element.id, "合槽组存在无效成员，整组未计算。")
         return results, errors
 
-    # 父节点原则（左边缘）；缺失回退第一条
-    pe_group = _resolve_by_name(session, PcpEnclosure, group.pe_name) or _first_of(session, PcpEnclosure)
-    pw_group = _resolve_by_name(session, PcpWidth, group.pw_name) or _first_of(session, PcpWidth)
-    if pe_group is None or pw_group is None:
-        for member in snapshots:
-            errors[member.element.id] = "父节点缺少围护 / 工作面宽原则。"
-        return results, errors
-
     n = len(snapshots)
-    # 间距 g_i = 子 i 的 PW 按其管径查（mm→m）；wL = 父 PW 按构件 1 查；
-    # wR = 最右子 PW 按其自身管径查
-    gaps = [
-        dim(workwidth_of(snapshots[i].info.pw, snapshots[i].info)) / 1000
-        for i in range(n - 1)
-    ]
-    w_left = dim(workwidth_of(pw_group, snapshots[0].info)) / 1000
-    w_right = dim(workwidth_of(snapshots[n - 1].info.pw, snapshots[n - 1].info)) / 1000
-
-    # 左 / 右边坡做法（按各自槽深选择）
-    work_left = choice_work(pe_group, snapshots[0].depth.v)
-    work_right = choice_work(snapshots[n - 1].pe_r, snapshots[n - 1].depth.v)
+    # 边缘（规则 3）：左边坡 = 首构件左原则；右边坡 = 末构件右原则
+    first, last = snapshots[0], snapshots[n - 1]
+    pe_left = _resolve_by_name(session, PcpEnclosure, _side_name(first.element, "left")) or _first_of(
+        session, PcpEnclosure
+    )
+    pe_right = _resolve_by_name(session, PcpEnclosure, _side_name(last.element, "right")) or _first_of(
+        session, PcpEnclosure
+    )
+    work_left = choice_work(pe_left, first.depth.v) if pe_left is not None else None
+    work_right = choice_work(pe_right, last.depth.v) if pe_right is not None else None
     if work_left is None or work_right is None:
         for member in snapshots:
             errors[member.element.id] = "边缘围护原则没有任何围护分级。"
         return results, errors
 
-    # 中间坡（埋深差）：做法按坡高 ΔH 选自左构件的右原则
-    mid_works: list = []
-    mid_slopes: list[float] = []
+    # 相邻区（规则 4 / 5）：等深 → 两侧均为 "-"；异深 → 深侧选原则放坡
+    pairs: list[_Pair] = []
     for i in range(n - 1):
-        delta = abs(snapshots[i + 1].depth.v - snapshots[i].depth.v)
-        work = choice_work(snapshots[i].pe_r, delta) if delta > 0 else None
-        mid_works.append(work)
-        mid_slopes.append(_mid_slope_of(work, delta) if work is not None else 0.0)
+        left, right = snapshots[i], snapshots[i + 1]
+        h_left, h_right = left.depth.v, right.depth.v
+        if abs(h_right - h_left) <= 1e-9:
+            pairs.append(
+                _Pair(
+                    deep=None,
+                    run=0.0,
+                    work=None,
+                    pe=None,
+                    left_width=left.work_width,
+                    right_width=right.work_width,
+                )
+            )
+            continue
+        if h_right > h_left:  # 右深：用右构件的左侧原则
+            deep, shallow = right, left
+            deep_pe = _resolve_by_name(
+                session, PcpEnclosure, _side_name(deep.element, "left")
+            ) or _first_of(session, PcpEnclosure)
+        else:  # 左深：用左构件的右侧原则
+            deep, shallow = left, right
+            deep_pe = _resolve_by_name(
+                session, PcpEnclosure, _side_name(deep.element, "right")
+            ) or _first_of(session, PcpEnclosure)
+        delta = abs(h_right - h_left)
+        work = choice_work(deep_pe, delta) if deep_pe is not None else None
+        if work is None:
+            for member in snapshots:
+                errors[member.element.id] = "深侧围护原则没有任何围护分级。"
+            return results, errors
+        run = _internal_run(work, deep.depth.v, shallow.depth.v)
+        if h_right > h_left:
+            pairs.append(
+                _Pair(
+                    deep=deep,
+                    run=run,
+                    work=work,
+                    pe=deep_pe,
+                    left_width=left.work_width,
+                    right_width=dim(run),
+                )
+            )
+        else:
+            pairs.append(
+                _Pair(
+                    deep=deep,
+                    run=run,
+                    work=work,
+                    pe=deep_pe,
+                    left_width=dim(run),
+                    right_width=right.work_width,
+                )
+            )
 
-    # 逐构件的归属区 + 平面归属带宽
+    # 逐构件的归属区 + 平面归属带宽（规则 6：工作面宽用自己的 PW）
     for i, member in enumerate(snapshots):
         member.zones.append(_RectZone(member.base_width, member.depth.v, "本体"))
         if i == 0:
-            member.zones.append(_RectZone(w_left, snapshots[0].depth.v, "左工作面"))
-            member.zones.append(_SlopeZone(_slope_points(work_left, snapshots[0].depth.v), "左边坡"))
+            member.zones.append(_RectZone(member.work_width, member.depth.v, "左工作面"))
+            member.zones.append(_SlopeZone(_slope_points(work_left, member.depth.v), "左边坡"))
+        else:
+            pair = pairs[i - 1]
+            if pair.deep is member:  # 自身更深：左侧内侧放坡
+                member.zones.append(
+                    _SlopeZone(
+                        _internal_slope_points(pair.work, member.depth.v, snapshots[i - 1].depth.v),
+                        "左侧中间坡",
+                    )
+                )
+            else:  # 自身更浅 / 等深：左侧工作面（虚拟垂直围护）
+                member.zones.append(_RectZone(member.work_width, member.depth.v, "左工作面"))
         if i == n - 1:
-            member.zones.append(_RectZone(w_right, snapshots[n - 1].depth.v, "右工作面"))
-            member.zones.append(_SlopeZone(_slope_points(work_right, snapshots[n - 1].depth.v), "右边坡"))
-        if i > 0:  # 左邻中间区的右半
-            left = snapshots[i - 1]
-            h_s = min(left.depth.v, member.depth.v)
-            h_d = max(left.depth.v, member.depth.v)
-            member.zones.append(_MidZone(gaps[i - 1], h_s, h_d, mid_slopes[i - 1], "左中间区半宽"))
-        if i < n - 1:  # 右邻中间区的左半
-            right = snapshots[i + 1]
-            h_s = min(member.depth.v, right.depth.v)
-            h_d = max(member.depth.v, right.depth.v)
-            member.zones.append(_MidZone(gaps[i], h_s, h_d, mid_slopes[i], "右中间区半宽"))
+            member.zones.append(_RectZone(member.work_width, member.depth.v, "右工作面"))
+            member.zones.append(_SlopeZone(_slope_points(work_right, member.depth.v), "右边坡"))
+        else:
+            pair = pairs[i]
+            if pair.deep is member:  # 自身更深：右侧内侧放坡
+                member.zones.append(
+                    _SlopeZone(
+                        _internal_slope_points(pair.work, member.depth.v, snapshots[i + 1].depth.v),
+                        "右侧中间坡",
+                    )
+                )
+            else:  # 自身更浅 / 等深：右侧工作面（虚拟垂直围护）
+                member.zones.append(_RectZone(member.work_width, member.depth.v, "右工作面"))
         flat = member.base_width
         if i == 0:
-            flat = flat + w_left
+            flat = flat + member.work_width
+        else:
+            flat = flat + pairs[i - 1].left_width
         if i == n - 1:
-            flat = flat + w_right
-        if i > 0:
-            flat = flat + gaps[i - 1] / 2
-        if i < n - 1:
-            flat = flat + gaps[i] / 2
+            flat = flat + member.work_width
+        else:
+            flat = flat + pairs[i].right_width
         member.flat_width = flat
 
     # 挖方 / 回填（带积分）
@@ -348,11 +465,7 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
         results[member.element.id] = out
 
     # 围护量（每面 ×1）+ 支撑
-    flat_total = w_left + w_right
-    for i, member in enumerate(snapshots):
-        flat_total = flat_total + member.base_width
-        if i < n - 1:
-            flat_total = flat_total + gaps[i]
+    flat_total = _dim_sum(*(member.flat_width for member in snapshots))
     amount_dim = snapshots[0].info.amount_dim
 
     strut_emitted = False
@@ -385,21 +498,16 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
                     )
                 strut_emitted = True
 
-    _emit_face(pe_group, work_left, snapshots[0].depth, snapshots[0], "围护·左侧", "support_left")
-    _emit_face(snapshots[n - 1].pe_r, work_right, snapshots[n - 1].depth, snapshots[n - 1], "围护·右侧", "support_right")
-    for i in range(n - 1):
-        work = mid_works[i]
-        if work is None:
-            continue
-        left, right = snapshots[i], snapshots[i + 1]
-        delta = abs(right.depth.v - left.depth.v)
-        if delta <= 0:
-            continue
-        # 中间坡挂深度更深一侧的构件；支撑勾选 = 深侧构件朝向该面的勾选
-        deep, support_flag = (
-            (left, "support_right") if left.depth.v >= right.depth.v else (right, "support_left")
-        )
-        _emit_face(snapshots[i].pe_r, work, dim(delta), deep, f"围护·中间坡{i + 1}", support_flag)
+    _emit_face(pe_left, work_left, first.depth, first, "围护·左侧", "support_left")
+    _emit_face(pe_right, work_right, last.depth, last, "围护·右侧", "support_right")
+    for i, pair in enumerate(pairs):
+        if pair.deep is None:
+            continue  # 等深相邻面：两侧均为 "-"，不出围护量
+        deep = pair.deep
+        delta = abs(snapshots[i + 1].depth.v - snapshots[i].depth.v)
+        # 内侧坡挂深侧构件；支撑勾选 = 深侧构件朝向该面的勾选
+        support_flag = "support_right" if deep is snapshots[i] else "support_left"
+        _emit_face(pair.pe, pair.work, dim(delta), deep, f"围护·中间坡{i + 1}", support_flag)
 
     # 逐构件：降水 / 特殊地基 / 管道基础 / 管材
     for member in snapshots:

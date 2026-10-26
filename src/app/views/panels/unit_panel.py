@@ -63,6 +63,7 @@ from app.viewmodels.unit_vm import (
     QuantityRow,
     SINGLE_PIPE_CATEGORIES,
     UnitViewModel,
+    group_side_plan,
 )
 from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.views.widgets.panel_splitter import SPLITTER_HANDLE_WIDTH, LineSplitter
@@ -923,7 +924,29 @@ class UnitPanel(QWidget):
             self._clear_detail()
             return
         self._fill_quantities()
+        self._refresh_grouped_lr_tab()
         self._section_view.set_element(self._current_element_id())
+
+    def _refresh_grouped_lr_tab(self) -> None:
+        """埋深变化后刷新合槽子节点的「围护原则」tab 左右侧可编辑状态。
+
+        同一条构件重新加载时选中行不变，``_sync_detail_to_selection`` 只刷新
+        工程量、不会重建 LR tab；而合槽子节点的某一侧是否可选取决于与相邻
+        构件的槽底深度比较（规则 4 / 5），埋深一改就必须重建。
+        """
+        element_id = self._current_element_id()
+        if element_id is None:
+            return
+        from app.viewmodels.unit_vm import _element
+
+        element = _element(element_id)
+        if element is None or element.group_id is None:
+            return
+        self._loading = True
+        try:
+            self._fill_lr_tab(element)
+        finally:
+            self._loading = False
 
     def _fill_quantities(self) -> None:
         """填充工程量表：显示主表格当前选中行的工程量与计算表达式。
@@ -1105,7 +1128,7 @@ class UnitPanel(QWidget):
         width_names: list[str],
     ) -> None:
         if isinstance(row, GroupRow):
-            self._fill_group_row(index, row, enclosure_names, width_names)
+            self._fill_group_row(index, row)
             return
         name_item = QTableWidgetItem(row.name)
         name_item.setData(_ELEMENT_ROLE, row.id)
@@ -1143,21 +1166,26 @@ class UnitPanel(QWidget):
         self._element_table.setItem(index, _COL_AMOUNT, amount_item)
         _apply_expression_hint(amount_item, row.amount, row.amount_error)
 
-        pe_combo = QComboBox()
-        # 普通构件：库原则 + 「左右分设」占位；合槽子节点：下拉即右原则
-        # （左原则由父节点 / 左邻构件接管，在「围护原则」tab 里置灰展示）
-        pe_combo.addItems(enclosure_names + ([] if LR_PE_TEXT in enclosure_names else [LR_PE_TEXT]))
-        pe_combo.setCurrentText(row.pe_right_name if row.group_id is not None else row.pe_name)
-        pe_combo.currentTextChanged.connect(
-            lambda text, element_id=row.id, grouped=row.group_id is not None: self._vm.set_element_field(
-                element_id,
-                "pe_right_name" if grouped and text != LR_PE_TEXT else "pe_name",
-                text,
-            )
-        )
         if row.group_id is not None:
-            pe_combo.setToolTip("合槽子节点的围护原则 = 其右侧面（中间坡 / 右边坡）的做法。")
-        self._element_table.setCellWidget(index, _COL_PE, pe_combo)
+            # 合槽子节点：围护原则强制「左右分设」，具体左右侧在「围护原则」tab 选
+            pe_item = QTableWidgetItem(LR_PE_TEXT)
+            pe_item.setFlags(pe_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            pe_item.setForeground(QBrush(_secondary_color()))
+            pe_item.setToolTip(
+                "合槽子节点强制左右分设：左右侧围护原则在下方「围护原则」tab 选择。"
+            )
+            self._element_table.setItem(index, _COL_PE, pe_item)
+        else:
+            pe_combo = QComboBox()
+            # 普通构件：库原则 + 「左右分设」占位
+            pe_combo.addItems(enclosure_names + ([] if LR_PE_TEXT in enclosure_names else [LR_PE_TEXT]))
+            pe_combo.setCurrentText(row.pe_name)
+            pe_combo.currentTextChanged.connect(
+                lambda text, element_id=row.id: self._vm.set_element_field(
+                    element_id, "pe_name", text
+                )
+            )
+            self._element_table.setCellWidget(index, _COL_PE, pe_combo)
 
         pf_combo = QComboBox()
         pf_combo.addItems(foundation_names)
@@ -1188,14 +1216,8 @@ class UnitPanel(QWidget):
         source_item.setForeground(QBrush(_secondary_color()))
         self._element_table.setItem(index, _COL_SOURCE, source_item)
 
-    def _fill_group_row(
-        self,
-        index: int,
-        row: GroupRow,
-        enclosure_names: list[str],
-        width_names: list[str],
-    ) -> None:
-        """合槽父节点行：名称可编辑；PE / PW = 左边缘原则；PF / PP 恒 '-'。"""
+    def _fill_group_row(self, index: int, row: GroupRow) -> None:
+        """合槽父节点行：名称可编辑；不持有围护 / 面宽原则（显示 "-"）。"""
         name_item = QTableWidgetItem(row.name)
         name_item.setData(_ELEMENT_ROLE, (_GROUP_ROLE_TAG, row.id))
         name_item.setData(
@@ -1204,7 +1226,7 @@ class UnitPanel(QWidget):
         )
         name_item.setToolTip(
             f"合槽组（{row.member_count} 条构件，从上到下 = 从左到右）。"
-            "父节点不持有工程量，仅作子构件合计视图；围护 / 工作面宽原则只管最左一侧。"
+            "父节点不持有工程量，仅作子构件合计视图；围护 / 面宽原则全部由子构件自己决定。"
             "点击 +/- 展开或收起成员行。"
         )
         brush = QBrush(QColor(ThemeManager.instance().current().primary_soft))
@@ -1234,23 +1256,16 @@ class UnitPanel(QWidget):
         amount_item.setToolTip("L_组 = 组员数量（编组时校验一致）。")
         amount_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        pe_combo = QComboBox()
-        pe_combo.addItems(enclosure_names)
-        pe_combo.setCurrentText(row.pe_name)
-        pe_combo.currentTextChanged.connect(
-            lambda text, group_id=row.id: self._vm.set_group_field(group_id, "pe_name", text)
-        )
-        pe_combo.setToolTip("左边缘围护原则（左边坡 + 左工作面）。")
-        self._element_table.setCellWidget(index, _COL_PE, pe_combo)
-
-        pw_combo = QComboBox()
-        pw_combo.addItems(width_names)
-        pw_combo.setCurrentText(row.pw_name)
-        pw_combo.currentTextChanged.connect(
-            lambda text, group_id=row.id: self._vm.set_group_field(group_id, "pw_name", text)
-        )
-        pw_combo.setToolTip("左边缘工作面宽原则（查工作面宽度表取 wL）。")
-        self._element_table.setCellWidget(index, _COL_PW, pw_combo)
+        # 父节点不选围护 / 工作面宽原则：显示 "-"，无下拉框
+        for column, tooltip in (
+            (_COL_PE, "父节点不选围护原则：左边坡取首构件左原则、右边坡取末构件右原则。"),
+            (_COL_PW, "父节点不选工作面宽原则：每条构件按自己的面宽原则确定工作面。"),
+        ):
+            item = self._element_table.item(index, column)
+            item.setText("-")
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setForeground(QBrush(_secondary_color()))
+            item.setToolTip(tooltip)
 
     def _on_group_toggle_requested(self, row_index: int) -> None:
         """点击合槽父行 +/- 方框：切换该组成员行的显示/隐藏（Quotor 组合定额同款）。"""
@@ -2013,8 +2028,9 @@ class UnitPanel(QWidget):
     def _fill_lr_tab(self, element) -> None:
         """「围护原则」tab：分设构件显示六行设置，其余显示占位说明。
 
-        合槽子节点：左侧围护、取侧"按左侧"由父节点 / 左邻构件接管 → 置灰；
-        左右支撑勾选均有效（语义 = 该构件左 / 右面的支撑）。
+        合槽子节点：只有首构件左侧、末构件右侧、以及比相邻构件更深的一侧
+        可编辑；等深 / 更浅的一侧强制 "-"（虚拟垂直空围护），对应支撑勾选
+        同步禁用。左右支撑语义 = 该构件朝向该面的支撑。
         """
         is_lr = element is not None and element.pe_name == LR_PE_TEXT
         grouped = is_lr and element.group_id is not None
@@ -2025,28 +2041,38 @@ class UnitPanel(QWidget):
             return
         element_id = element.id
         names = project_io.enclosure_names() or [""]
-
-        left = QComboBox()
-        left.addItems([name for name in names if name != LR_PE_TEXT])
-        left.setCurrentText(element.pe_left_name or "")
-        left.currentTextChanged.connect(
-            lambda text, eid=element_id: self._vm.set_element_field(eid, "pe_left_name", text)
-        )
-        left.setToolTip("左侧围护原则（左边坡做法、放坡系数取其围护分级）。")
+        left_active = right_active = True
         if grouped:
-            left.setEnabled(False)
-            left.setToolTip(
-                "合槽内左侧围护由父节点 / 左侧相邻构件的右原则接管，不参与计算。"
-            )
+            left_active, right_active = group_side_plan(element.group_id).get(element.id, (True, True))
 
-        right = QComboBox()
-        right.addItems([name for name in names if name != LR_PE_TEXT])
-        right.setCurrentText(element.pe_right_name or "")
-        right.currentTextChanged.connect(
-            lambda text, eid=element_id: self._vm.set_element_field(eid, "pe_right_name", text)
+        def _side_combo(active: bool, field: str, current: str, active_tip: str, forced_tip: str) -> QComboBox:
+            combo = QComboBox()
+            if active:
+                combo.addItems([name for name in names if name != LR_PE_TEXT])
+                combo.setCurrentText(current or "")
+                combo.currentTextChanged.connect(
+                    lambda text, eid=element_id, f=field: self._vm.set_element_field(eid, f, text)
+                )
+                combo.setToolTip(active_tip)
+            else:
+                combo.addItem("-")
+                combo.setEnabled(False)
+                combo.setToolTip(forced_tip)
+            return combo
+
+        left = _side_combo(
+            left_active,
+            "pe_left_name",
+            element.pe_left_name,
+            "左侧围护原则（合槽首构件 = 左边坡；其余 = 比左邻更深时的内侧放坡）。",
+            "等深 / 更浅的一侧不设围护：强制 \"-\"，由自身工作面宽 + 虚拟垂直空围护承担。",
         )
-        right.setToolTip(
-            "右侧围护原则（单管 = 右边坡；合槽 = 构件右侧中间坡 / 右边缘的做法）。"
+        right = _side_combo(
+            right_active,
+            "pe_right_name",
+            element.pe_right_name,
+            "右侧围护原则（合槽末构件 = 右边坡；其余 = 比右邻更深时的内侧放坡）。",
+            "等深 / 更浅的一侧不设围护：强制 \"-\"，由自身工作面宽 + 虚拟垂直空围护承担。",
         )
 
         support_left = QCheckBox("计算支撑（Z 类公式）")
@@ -2054,19 +2080,30 @@ class UnitPanel(QWidget):
         support_left.toggled.connect(
             lambda checked, eid=element_id: self._vm.set_element_field(eid, "support_left", checked)
         )
-        support_left.setToolTip(
-            "勾选 = 左侧做法的支撑 / 围檩公式参与计算（单管 = 左边坡支撑；"
-            "合槽 = 该构件左面的中间坡支撑，当自己是该面深侧构件时）。"
-        )
+        if grouped and not left_active:
+            support_left.setEnabled(False)
+            support_left.setToolTip("该侧围护为 \"-\"（更浅 / 等深），不产生支撑量。")
+        else:
+            support_left.setToolTip(
+                "勾选 = 左侧做法的支撑 / 围檩公式参与计算（合槽首构件 = 左边坡支撑；"
+                "深侧构件 = 其左侧内侧坡支撑）。"
+            )
 
         support_right = QCheckBox("计算支撑（Z 类公式）")
         support_right.setChecked(bool(element.support_right))
         support_right.toggled.connect(
             lambda checked, eid=element_id: self._vm.set_element_field(eid, "support_right", checked)
         )
-        support_right.setToolTip("勾选 = 右侧做法的支撑 / 围檩公式参与计算。")
+        if grouped and not right_active:
+            support_right.setEnabled(False)
+            support_right.setToolTip("该侧围护为 \"-\"（更浅 / 等深），不产生支撑量。")
+        else:
+            support_right.setToolTip(
+                "勾选 = 右侧做法的支撑 / 围檩公式参与计算（合槽末构件 = 右边坡支撑；"
+                "深侧构件 = 其右侧内侧坡支撑）。"
+            )
 
-        def _side_combo(field: str, current: str):
+        def _side_combo_choice(field: str, current: str):
             combo = QComboBox()
             combo.addItems(list(_LR_SIDE_CHOICES))
             combo.setCurrentText(_LR_SIDE_CHOICES[1] if current == "R" else _LR_SIDE_CHOICES[0])
@@ -2080,9 +2117,9 @@ class UnitPanel(QWidget):
                 combo.setCurrentText(_LR_SIDE_CHOICES[1])
             return combo
 
-        excvt = _side_combo("excvt_side", element.excvt_side or "L")
+        excvt = _side_combo_choice("excvt_side", element.excvt_side or "L")
         excvt.setToolTip("开挖土质与回填材质按哪一侧原则计算（单构件只能有唯一的挖填类型）。")
-        foundation = _side_combo("foundation_side", element.foundation_side or "L")
+        foundation = _side_combo_choice("foundation_side", element.foundation_side or "L")
         foundation.setToolTip(
             "砼基础 / 基础角度 / 垫层按哪一侧原则计算（决定图集查询与候选匹配）。"
         )

@@ -558,13 +558,17 @@ def _build_trench_scene_lr(
 
 
 def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene | None, str]:
-    """合槽整槽全景断面：左边坡（父 PE）+ 各构件本体 + 中间坡 + 右边坡。
+    """合槽整槽全景断面（与 :func:`app.core.calc.trench_group.compute_group` 同口径）。
 
-    几何与 :mod:`app.core.calc.trench_group` 同一套口径（间距 / 边缘工作面 /
-    中间坡等效坡 / 边坡折线），只出折线不出量。折线坐标：x 相对槽中心
-    （右正）、y 自**最深槽底**向上，单位 m。
+    * 父节点不参与几何：左边坡 = 首构件左原则，右边坡 = 末构件右原则；
+    * 每个构件按**自己的**面宽原则取工作面宽；
+    * 相邻等深 → 两侧围护均为 "-"，平底直接相连；
+    * 相邻异深 → 浅侧工作面 + 深侧放坡（深侧所选原则）；坡到浅槽底后竖直
+      向上即浅侧虚拟垂直围护，也是挖填拆分的分界线。
+
+    折线坐标：x 相对槽中心（右正）、y 自**最深槽底**向上，单位 m。
     """
-    from app.core.calc.trench_group import _mid_slope_of, _slope_points
+    from app.core.calc.trench_group import _internal_run, _side_name, _slope_points
 
     session = orm.session()
     group = session.get(TrenchGroup, group_id)
@@ -573,111 +577,167 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
     members = sorted(group.members, key=lambda item: (item.order_no, item.id))
     if len(members) < 2:
         return None, "合槽组至少需要两条构件。"
-    pe_group = _enclosure_by_name(session, group.pe_name) or _first_of(session, PcpEnclosure)
-    pw_group = (
-        session.scalars(select(PcpWidth).where(PcpWidth.name == group.pw_name)).first()
-        if group.pw_name
-        else None
-    ) or _first_of(session, PcpWidth)
-    if pe_group is None or pw_group is None:
-        return None, "父节点缺少围护 / 工作面宽原则，无法绘制断面。"
 
-    # 成员快照（右原则 / PF / PW 各自解析）
+    # 成员快照：原则一律取子构件自己的（父节点不持有 PE / PW）
     snapshots = []
     for element in members:
-        pe_r = (
-            _enclosure_by_name(session, element.pe_right_name)
-            or _enclosure_by_name(session, element.pe_name)
-            or _first_of(session, PcpEnclosure)
-        )
         pf = _foundation_by_name(session, element.pf_name) or _first_of(session, PcpFoundation)
         pw = (
             session.scalars(select(PcpWidth).where(PcpWidth.name == element.pw_name)).first()
             if element.pw_name
             else None
         ) or _first_of(session, PcpWidth)
-        if pe_r is None or pf is None or pw is None:
-            return None, f"构件「{element.name}」缺少围护 / 地基 / 面宽原则。"
-        info = build_element_input(element, pe_r, pf, pw=pw)
-        at = resolve_atlas(build_atlas_query(info, pe_r, pw))
+        if pf is None or pw is None:
+            return None, f"构件「{element.name}」缺少地基 / 面宽原则。"
+        info = build_element_input(element, None, pf, pw=pw)
+        # 分设构件的材质 / 基础原则 = 基础取侧（编组时恒 "R"）
+        pe_found = info.pe or _first_of(session, PcpEnclosure)
+        if pe_found is None:
+            return None, f"构件「{element.name}」缺少围护原则。"
+        at = resolve_atlas(build_atlas_query(info, pe_found, pw))
         ad = atlas_dims(info, at)
-        c1_original = at.c1
-        c1_display = c1_original if c1_original != 0 else cushion_thickness(pe_r).v
+        c1_display = at.c1 if at.c1 != 0 else cushion_thickness(pe_found)
         depth = info.depth + groove.mm2m(foundation_thickness(pf) + ad.t.v + c1_display)
         base_width = (info.size_b_dim + scale_sum((ad.t, ad.a), 2.0) / 1000).v
         snapshots.append(
             {
                 "element": element,
                 "info": info,
-                "pe_r": pe_r,
                 "pf": pf,
                 "at": at,
                 "c1_display": c1_display,
                 "depth": depth,
                 "base_width": base_width,
+                "work_width": workwidth_of(pw, info) / 1000,
             }
         )
 
     n = len(snapshots)
-    gaps = [workwidth_of(snap["info"].pw, snap["info"]) / 1000 for snap in snapshots[:-1]]
-    w_left = workwidth_of(pw_group, snapshots[0]["info"]) / 1000
-    w_right = workwidth_of(snapshots[n - 1]["info"].pw, snapshots[n - 1]["info"]) / 1000
-    work_left = choice_work(pe_group, snapshots[0]["depth"])
-    work_right = choice_work(snapshots[n - 1]["pe_r"], snapshots[n - 1]["depth"])
+    first, last = snapshots[0], snapshots[n - 1]
+    pe_left = _enclosure_by_name(session, _side_name(first["element"], "left")) or _first_of(
+        session, PcpEnclosure
+    )
+    pe_right = _enclosure_by_name(session, _side_name(last["element"], "right")) or _first_of(
+        session, PcpEnclosure
+    )
+    work_left = choice_work(pe_left, first["depth"]) if pe_left is not None else None
+    work_right = choice_work(pe_right, last["depth"]) if pe_right is not None else None
     if work_left is None or work_right is None:
         return None, "边缘围护原则没有任何围护分级，无法绘制断面。"
 
-    # 底部折线（自左向右）：工作面 / 本体平段 + 中间坡（浅底 → 坡 → 深底）
-    bottoms: list[tuple[float, float]] = []  # (x 自左平底缘, 自地面深度)
-    x = 0.0
-    bottoms.append((0.0, snapshots[0]["depth"]))
-    x += w_left
+    # 相邻区（规则 4 / 5）：等深两侧 "-"；异深时深侧选原则放坡到浅槽底
+    pairs: list[dict] = []
+    for i in range(n - 1):
+        left, right = snapshots[i], snapshots[i + 1]
+        h_left, h_right = left["depth"], right["depth"]
+        if abs(h_right - h_left) <= 1e-9:
+            pairs.append(
+                {
+                    "deep_index": None,
+                    "run": 0.0,
+                    "work": None,
+                    "left_width": left["work_width"],
+                    "right_width": right["work_width"],
+                }
+            )
+            continue
+        if h_right > h_left:
+            deep_index, deep = i + 1, right
+            pe_name = _side_name(deep["element"], "left")
+        else:
+            deep_index, deep = i, left
+            pe_name = _side_name(deep["element"], "right")
+        pe_deep = _enclosure_by_name(session, pe_name) or _first_of(session, PcpEnclosure)
+        delta = abs(h_right - h_left)
+        work = choice_work(pe_deep, delta) if pe_deep is not None else None
+        if work is None:
+            return None, "深侧围护原则没有任何围护分级，无法绘制断面。"
+        run = _internal_run(work, deep["depth"], min(h_left, h_right))
+        deep_is_right = h_right > h_left
+        pairs.append(
+            {
+                "deep_index": deep_index,
+                "run": run,
+                "work": work,
+                "left_width": left["work_width"] if deep_is_right else run,
+                "right_width": run if deep_is_right else right["work_width"],
+            }
+        )
+
+    # 各构件在平面上的归属区间（自左平底缘起算）：
+    # 首构件左工作面 / 末构件右工作面由自身 PW 决定，相邻区宽 = 左构件右宽 + 右构件左宽
+    extents: list[tuple[float, float]] = []
+    cursor = 0.0
     for i, snap in enumerate(snapshots):
-        bottoms.append((x, snap["depth"]))
-        x += snap["base_width"]
-        bottoms.append((x, snap["depth"]))
-        if i < n - 1:
-            delta = abs(snapshots[i + 1]["depth"] - snap["depth"])
-            work_mid = choice_work(snap["pe_r"], delta) if delta > 0 else None
-            slope = _mid_slope_of(work_mid, delta) if work_mid is not None else 0.0
-            run = delta * slope
-            if run > 0 and run < gaps[i]:
-                # 坡靠浅侧：浅底平段 → 坡 → 深底
-                bottoms.append((x + gaps[i] - run, min(snap["depth"], snapshots[i + 1]["depth"])))
-            x += gaps[i]
-            bottoms.append((x, snapshots[i + 1]["depth"]))
-    x += w_right
-    total_flat = x
+        left_ext = first["work_width"] if i == 0 else pairs[i - 1]["right_width"]
+        right_ext = snap["work_width"] if i == n - 1 else pairs[i]["left_width"]
+        cursor += left_ext
+        base_left = cursor
+        cursor += snap["base_width"]
+        base_right = cursor
+        cursor += right_ext
+        extents.append((base_left, base_right))
+    total_flat = cursor
+
+    # 槽底折线（自左向右）：工作面 / 本体平段 + 异深内侧坡（浅底 → 坡 → 深底）
+    bottoms: list[tuple[float, float]] = [(0.0, first["depth"])]
+    for i, snap in enumerate(snapshots):
+        base_left, base_right = extents[i]
+        if i == 0:
+            bottoms.append((base_left, snap["depth"]))
+        else:
+            pair = pairs[i - 1]
+            prev_right = extents[i - 1][1]
+            h_prev = snapshots[i - 1]["depth"]
+            if pair["deep_index"] == i:  # 自身更深（右深）：浅侧工作面 + 自身放坡
+                h_shallow = h_prev
+                bottoms.append((prev_right + pair["left_width"], h_shallow))
+                for d_rel, run in reversed(_slope_points(pair["work"], snap["depth"] - h_shallow)):
+                    bottoms.append((base_left - run, h_shallow + d_rel))
+            elif pair["deep_index"] == i - 1:  # 左邻更深：自身工作面在坡脚，坡自深底向上
+                h_shallow = snap["depth"]
+                for d_rel, run in _slope_points(pair["work"], h_prev - h_shallow):
+                    bottoms.append((prev_right + run, h_shallow + d_rel))
+            # 等深：平底直接连到 base_left
+        bottoms.append((base_left, snap["depth"]))
+        bottoms.append((base_right, snap["depth"]))
+        if i == n - 1:
+            bottoms.append((base_right + snap["work_width"], snap["depth"]))
+
     half = total_flat / 2.0
     h_max = max(snap["depth"] for snap in snapshots)
-
     outline: list[tuple[float, float]] = []
     # 左边坡：自地面向下（depth 升序），x = −half − 外扩
-    for d, run in sorted(_slope_points(work_left, snapshots[0]["depth"]), key=lambda p: p[0]):
+    for d, run in sorted(_slope_points(work_left, first["depth"]), key=lambda p: p[0]):
         outline.append((-half - run, h_max - d))
-    # 槽底折线（x 自左平底缘 → 相对中心）
-    for bx, d in bottoms:
-        outline.append((bx - half, h_max - d))
+    for base_x, d in bottoms:
+        outline.append((base_x - half, h_max - d))
     # 右边坡：自槽底向上（depth 降序），x = +half + 外扩
-    for d, run in sorted(_slope_points(work_right, snapshots[n - 1]["depth"]), key=lambda p: -p[0]):
+    for d, run in sorted(_slope_points(work_right, last["depth"]), key=lambda p: -p[0]):
         outline.append((half + run, h_max - d))
 
-    # 各构件本体：偏移到各自中心（x 相对槽中心），抬升量同单管 shift
+    # 各构件本体：偏移到各自本体中心（shape 的 x 轴在屏幕上向左，故取负偏移），
+    # 抬升 = 自身槽底到最深槽底的高差 + 同单管的换填 / 垫层抬升
     shapes: list[_Shape] = []
-    cursor = w_left
     for i, snap in enumerate(snapshots):
-        center_x = cursor + snap["base_width"] / 2 - half
+        base_left, base_right = extents[i]
+        center_x = (base_left + base_right) / 2.0 - half
+        depth_raise_mm = (h_max - snap["depth"]) * 1000.0
         raise_mm = foundation_thickness(snap["pf"]) + snap["c1_display"] - snap["at"].c1
         for shape in _ontology_shapes(snap["info"], snap["at"], snap["at"].c1):
             shapes.append(
-                _Shape(shape.kind, shape.x + center_x * 1000.0, shape.y + raise_mm, shape.w, shape.h)
+                _Shape(
+                    shape.kind,
+                    shape.x - center_x * 1000.0,
+                    shape.y + depth_raise_mm + raise_mm,
+                    shape.w,
+                    shape.h,
+                )
             )
-        if i < n - 1:
-            cursor += snap["base_width"] + gaps[i]
 
     total_w = total_flat + max(
-        run for _d, run in _slope_points(work_left, snapshots[0]["depth"])
-    ) + max(run for _d, run in _slope_points(work_right, snapshots[n - 1]["depth"]))
+        (run for _d, run in _slope_points(work_left, first["depth"])), default=0.0
+    ) + max((run for _d, run in _slope_points(work_right, last["depth"])), default=0.0)
     zoom = min(
         1.0,
         (width - _MARGIN * 2) / (total_w * 1000.0),
