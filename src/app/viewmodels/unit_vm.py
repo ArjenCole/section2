@@ -62,8 +62,6 @@ _ELEMENT_FIELDS = {
     "pe_right_name",
     "support_left",
     "support_right",
-    "excvt_side",
-    "foundation_side",
 }
 _PIPE_FIELDS = {"mat", "cat", "dn", "content", "t"}
 _PARAM_FIELDS = {"key", "unit", "value"}
@@ -103,13 +101,11 @@ class ElementRow:
     spec: str = ""
     #: 来源（旧版主表格“来源”列，构件库插入时记录模板出处）
     source: str = ""
-    #: 左右分设（v3）：左右围护原则 / 支撑勾选 / 挖填·基础取侧
+    #: 左右分设（v3）：左右围护原则 / 支撑勾选
     pe_left_name: str = ""
     pe_right_name: str = ""
     support_left: bool = True
     support_right: bool = True
-    excvt_side: str = "L"
-    foundation_side: str = "L"
     #: 合槽编组（v3）：所属组的 id；None = 独立构件
     group_id: int | None = None
     #: 组内位置（从左到右 0 起）；独立构件恒 0
@@ -481,8 +477,6 @@ def _element_row(element: Element) -> ElementRow:
         pe_right_name=element.pe_right_name or "",
         support_left=bool(element.support_left),
         support_right=bool(element.support_right),
-        excvt_side=element.excvt_side or "L",
-        foundation_side=element.foundation_side or "L",
         group_id=element.group_id,
     )
 
@@ -559,14 +553,14 @@ def auto_atlas_params(element: Element) -> dict[str, float]:
 
     if not atlas_param_rows(element.category):
         return {}
-    pe, _pf, _pp, pw = resolve_element_principles(element, orm.session())
-    if pe is None:
+    pe, pf, _pp, pw = resolve_element_principles(element, orm.session())
+    if pe is None or pf is None:
         return {}
-    info = build_element_input(element, pe, None)
-    at = resolve_atlas(build_atlas_query(info, pe, pw))
+    info = build_element_input(element, pe, pf)
+    at = resolve_atlas(build_atlas_query(info, pf, pw))
     values = {
         PARAM_A_NAME: at.a,
-        PARAM_C1_NAME: at.c1 if at.c1 != 0 else cushion_thickness(pe),
+        PARAM_C1_NAME: at.c1 if at.c1 != 0 else cushion_thickness(pf),
         PARAM_C2_NAME: at.c2,
     }
     # 管道壁厚只在图集查得到时给灰字（0 = 该组合无数据，不显示"0"）
@@ -588,13 +582,13 @@ def auto_pipe_thicknesses(element: Element) -> dict[int, float]:
 
     if element.category in (CATEGORY_BOX_CULVERT, CATEGORY_GALLERY):
         return {pipe.id: 0.0 for pipe in element.pipes}
-    pe, _pf, _pp, pw = resolve_element_principles(element, orm.session())
-    if pe is None:
+    pe, pf, _pp, pw = resolve_element_principles(element, orm.session())
+    if pe is None or pf is None:
         return {}
-    info = build_element_input(element, pe, None)
+    info = build_element_input(element, pe, pf)
     result: dict[int, float] = {}
     for pipe in element.pipes:
-        probe = build_atlas_query(info, pe, pw)
+        probe = build_atlas_query(info, pf, pw)
         # 壁厚留空才显示图集值，所以这里刻意不传 t（传了就会走快照短路返回它本身）
         probe.pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn, cat=pipe.pipe_category)]
         if element.category == CATEGORY_ENCASED:
@@ -709,8 +703,6 @@ def create_element(
     pe_right_name: str = "",
     support_left: bool = True,
     support_right: bool = True,
-    excvt_side: str = "L",
-    foundation_side: str = "L",
 ) -> Element | None:
     """新增构件条目；未指定原则时取库中第一条（旧版 mcElement.GetData 的做法）。
 
@@ -747,8 +739,6 @@ def create_element(
         pe_right_name=pe_right_name or "",
         support_left=bool(support_left),
         support_right=bool(support_right),
-        excvt_side="R" if excvt_side == "R" else "L",
-        foundation_side="R" if foundation_side == "R" else "L",
         order_no=order_no
         if order_no is not None
         else project_io.next_order_no(Element, unit_id=unit_id),
@@ -841,8 +831,6 @@ def element_snapshot(element_id: int) -> dict | None:
         "pe_right_name": element.pe_right_name or "",
         "support_left": bool(element.support_left),
         "support_right": bool(element.support_right),
-        "excvt_side": element.excvt_side or "L",
-        "foundation_side": element.foundation_side or "L",
         "pipes": [
             (pipe.mat, pipe.pipe_category, pipe.dn, pipe.content, pipe.t)
             for pipe in element.pipes
@@ -897,25 +885,23 @@ def insert_element_data(
         pe_right_name=str(data.get("pe_right_name") or ""),
         support_left=bool(data.get("support_left", True)),
         support_right=bool(data.get("support_right", True)),
-        excvt_side=str(data.get("excvt_side") or "L"),
-        foundation_side=str(data.get("foundation_side") or "L"),
     )
 
 
-def _first_enclosure_pair() -> tuple[bool, int]:
-    """项目第一条围护原则的 (砼基础开关, 基础角度)；库为空时 (True, 120)。
+def _first_foundation_pair() -> tuple[bool, int]:
+    """项目第一条地基原则的 (砼基础开关, 基础角度)；库为空时 (True, 120)。
 
     构件库插入时构件还没建，先按它取每根管的图集壁厚快照；插入完成后
-    :func:`match_atlas_candidates` 会按构件自己的围护原则重新选组。
+    :func:`match_atlas_candidates` 会按构件自己的地基原则重新选组。
     """
     from sqlalchemy import select
 
-    from app.core.models.models import PcpEnclosure
+    from app.core.models.models import PcpFoundation
 
-    pe = orm.session().scalars(
-        select(PcpEnclosure).order_by(PcpEnclosure.order_no, PcpEnclosure.id)
+    pf = orm.session().scalars(
+        select(PcpFoundation).order_by(PcpFoundation.order_no, PcpFoundation.id)
     ).first()
-    return (bool(pe.con_found), int(pe.found_angle)) if pe is not None else (True, 120)
+    return (bool(pf.con_found), int(pf.found_angle)) if pf is not None else (True, 120)
 
 
 def insert_element_template(unit_id: int, template, before_element_id: int | None = None) -> Element | None:
@@ -930,7 +916,7 @@ def insert_element_template(unit_id: int, template, before_element_id: int | Non
     """
     params, quantities = _convert_legacy_params(template.category, list(template.params))
     legacy_quantities = quantities if template.category == CATEGORY_STRUCTURE else []
-    con_found, angle = _first_enclosure_pair()
+    con_found, angle = _first_foundation_pair()
     pipes = [
         [pipe.mat, pipe.cat, pipe.dn, pipe.content, pipe.thickness_at(con_found, angle)]
         for pipe in template.pipes
@@ -986,8 +972,8 @@ def update_element(element_id: int, **fields) -> Element | None:
 
     pe_name 的左右分设语义（v3）：选「左右分设」占位即进入分设模式，左右
     原则初始化为当前具体原则名（两列皆空时）；从占位改选具体原则则清空
-    左右字段退出分设。``support_left`` / ``support_right`` 存布尔，
-    ``excvt_side`` / ``foundation_side`` 收敛为 "L"/"R"。
+    左右字段退出分设。``support_left`` / ``support_right`` 存布尔。
+    ``pf_name`` 切换会触发图集候选重选（v10 起基础/角度属地基原则）。
     类别改为构筑物时清空管材并重置默认参数与工程量行；从构筑物切回其它
     类别时同样重置；其余类别之间切换时按新类别增删图集参数行。
     """
@@ -1032,8 +1018,6 @@ def update_element(element_id: int, **fields) -> Element | None:
             setattr(element, key, int(value))
         elif key in ("support_left", "support_right"):
             setattr(element, key, bool(value) if not isinstance(value, bool) else value)
-        elif key in ("excvt_side", "foundation_side"):
-            setattr(element, key, "R" if str(value).strip().upper() == "R" else "L")
         else:
             setattr(element, key, str(value))
     if category_changed and element.category == CATEGORY_STRUCTURE:
@@ -1066,14 +1050,8 @@ def update_element(element_id: int, **fields) -> Element | None:
             from app.services.atlas_match import match_atlas_candidates
 
             match_atlas_candidates(element, commit=False)
-    elif fields.keys() & {
-        "pe_name",
-        "pe_left_name",
-        "pe_right_name",
-        "excvt_side",
-        "foundation_side",
-    }:
-        # 围护原则切换（con_found / 角度可能变了；分设模式含基础取侧变化）：
+    elif "pf_name" in fields:
+        # 地基原则切换（con_found / 基础角度可能变了；v10 起属地基原则）：
         # 从候选自动重选一组
         if element.category == CATEGORY_BURIED:
             from app.services.atlas_match import match_atlas_candidates
@@ -1228,8 +1206,6 @@ def create_trench_group(element_ids: list[int]) -> tuple[TrenchGroup | None, str
             else (internal or _original_side_name(element, "right"))
         )
         element.pe_name = LR_PE_TEXT
-        element.excvt_side = "R"
-        element.foundation_side = "R"
         # 数量统一取父节点（首成员的值；组员不单独持有数量）
         element.amount = group.amount
     for index, member in enumerate(members):
@@ -1297,8 +1273,6 @@ def add_to_group(element_id: int, group_id: int) -> tuple[bool, str | None]:
     element.pe_left_name = internal or _original_side_name(element, "left")
     element.pe_right_name = _original_side_name(element, "right")
     element.pe_name = LR_PE_TEXT
-    element.excvt_side = "R"
-    element.foundation_side = "R"
     # 新成员数量强制取父节点数量
     if not group.amount:
         group.amount = members[0].amount or element.amount or ""

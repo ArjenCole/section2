@@ -41,6 +41,17 @@ def _main_pe(element):
     return orm.session().scalar(select(PcpEnclosure).where(PcpEnclosure.name == name))
 
 
+def _main_pf(element):
+    """构件的地基原则对象（v10：管道基础 / 角度挂在地基原则下）。"""
+    from sqlalchemy import select
+
+    from app.core.models import base as orm
+    from app.core.models.models import PcpFoundation
+
+    name = element.pf_name
+    return orm.session().scalar(select(PcpFoundation).where(PcpFoundation.name == name))
+
+
 @pytest.mark.parametrize(
     ("mat", "expected"),
     [
@@ -156,14 +167,14 @@ def test_insert_template_writes_candidates_and_matches(project) -> None:
     # 候选 8 组整组入库（来自资产，不查图集）
     assert len(element.atlas_candidates) == 8
 
-    # 参数值 = 按当前主围护原则自动选组的结果（金属管固定走 plain 组）
-    pe = _main_pe(element)
-    assert pe is not None
-    expected = template.atlas_at(False, int(pe.found_angle))
+    # 参数值 = 按当前主地基原则自动选组的结果（金属管固定走 plain 组）
+    pf = _main_pf(element)
+    assert pf is not None
+    expected = template.atlas_at(False, int(pf.found_angle))
     assert expected is not None
     key, level = selected_combo(element)
-    assert key == f"plain{int(pe.found_angle)}" and level is not None
-    row = nearest_candidate(element.atlas_candidates, False, int(pe.found_angle))
+    assert key == f"plain{int(pf.found_angle)}" and level is not None
+    row = nearest_candidate(element.atlas_candidates, False, int(pf.found_angle))
     assert row is not None
 
     params = {(param.key, param.unit): param.value for param in element.params}
@@ -179,8 +190,8 @@ def test_insert_template_writes_candidates_and_matches(project) -> None:
     assert params[("基础厚", "mm")] == fmt(row.c2)
 
 
-def test_candidates_auto_rematch_on_enclosure_change(project) -> None:
-    """换围护原则（角度/砼基础变了）→ 参数值自动从候选里重选，候选本身不变。"""
+def test_candidates_auto_rematch_on_foundation_change(project) -> None:
+    """换地基原则（角度/砼基础变了）→ 参数值自动从候选里重选，候选本身不变。"""
     from app.core.atlas_candidates import nearest_candidate
     from app.services import project_io as pio
 
@@ -190,15 +201,15 @@ def test_candidates_auto_rematch_on_enclosure_change(project) -> None:
     assert element is not None
     before = {(c.con_found, c.angle, c.a, c.c1, c.c2) for c in element.atlas_candidates}
 
-    pe = _main_pe(element)
-    assert pe is not None
-    old_angle = int(pe.found_angle)
+    pf = _main_pf(element)
+    assert pf is not None
+    old_angle = int(pf.found_angle)
     new_angle = 180 if old_angle != 180 else 90
-    from app.services.principle_edit import apply_enclosure_fields
+    from app.services.principle_edit import apply_foundation
 
-    apply_enclosure_fields(pe.id, {"found_angle": new_angle})
+    apply_foundation(pf.id, fields={"found_angle": new_angle})
 
-    row = nearest_candidate(element.atlas_candidates, bool(pe.con_found), new_angle)
+    row = nearest_candidate(element.atlas_candidates, bool(pf.con_found), new_angle)
     params = {(param.key, param.unit): param.value for param in element.params}
     if row is None:
         assert params[("基础厚", "mm")] == ""  # 全空组 → 回退自动
@@ -220,11 +231,11 @@ def test_candidates_auto_rematch_on_category_change(project) -> None:
     assert element is not None
 
     pipe = element.pipes[0]
-    pe = _main_pe(element)
-    assert pe is not None
+    pf = _main_pf(element)
+    assert pf is not None
 
     unit_vm.update_pipe(pipe.id, cat=PIPE_CAT_METAL)
-    row, _level = select_candidate(element.atlas_candidates, False, int(pe.found_angle))
+    row, _level = select_candidate(element.atlas_candidates, False, int(pf.found_angle))
     params = {(param.key, param.unit): param.value for param in element.params}
     if row is None:
         # 四级都不命中 → 参数清空（不再保留旧组的值），交给引擎按图集回退
@@ -300,12 +311,12 @@ def test_match_clears_params_when_no_candidate_usable(project) -> None:
     template = element_library().find("直埋混凝土管", "Ⅱ级混凝土管", 0)
     element = unit_vm.insert_element_template(unit.id, template)
     assert element is not None
-    pe = _main_pe(element)
-    assert pe is not None
+    pf = _main_pf(element)
+    assert pf is not None
 
     # 插入后应立即匹配到本组该角度的格子
     key, level = selected_combo(element)
-    assert key == f"{'con' if pe.con_found else 'plain'}{int(pe.found_angle)}"
+    assert key == f"{'con' if pf.con_found else 'plain'}{int(pf.found_angle)}"
     assert level is not None
 
     # 造出"上一次匹配的旧值"
@@ -334,8 +345,8 @@ def test_match_borrows_other_group_when_same_group_empty(project) -> None:
     element = unit_vm.create_element(unit.id, category=1, name="排管")
     assert element is not None
     unit_vm.create_pipe(element.id, mat="Ⅱ级混凝土管", dn=600, content="1")
-    pe = _main_pe(element)
-    assert pe is not None
+    pf = _main_pf(element)
+    assert pf is not None
 
     # 本组（砼基础）全部改空 → 只剩另一组（砂基础）有数据
     for candidate in element.atlas_candidates:
@@ -346,12 +357,12 @@ def test_match_borrows_other_group_when_same_group_empty(project) -> None:
     match_atlas_candidates(element)
     key, level = selected_combo(element)
     assert level == MATCH_CROSS_EXACT
-    assert key == f"plain{int(pe.found_angle)}"
+    assert key == f"plain{int(pf.found_angle)}"
 
     borrowed = next(
         c
         for c in element.atlas_candidates
-        if not c.con_found and int(c.angle) == int(pe.found_angle)
+        if not c.con_found and int(c.angle) == int(pf.found_angle)
     )
     params = {(param.key, param.unit): param.value for param in element.params}
     assert params[("基础厚", "mm")] == format_number(borrowed.c2)
@@ -410,17 +421,17 @@ def test_fill_missing_candidate_creates_row_and_matches(project) -> None:
     """手填空白候选格：就地建行，并立刻成为匹配目标（补图集缺口）。"""
     from app.core.atlas_candidates import MATCH_SAME_EXACT, MATCH_SAME_NEAREST
     from app.services.atlas_match import selected_combo
-    from app.services.principle_edit import apply_enclosure_fields
+    from app.services.principle_edit import apply_foundation
 
     unit = project_io.units(project_io.segments()[0].id)[0]
     element = unit_vm.create_element(unit.id, category=1, name="排管")
     assert element is not None
     unit_vm.create_pipe(element.id, mat="Ⅱ级混凝土管", dn=600, content="1")
-    pe = _main_pe(element)
-    assert pe is not None
+    pf = _main_pf(element)
+    assert pf is not None
 
     # 原则改成 150° 砼基础：图集没有这一行 → 就近取 120°
-    apply_enclosure_fields(pe.id, {"found_angle": 150})
+    apply_foundation(pf.id, fields={"found_angle": 150})
     assert selected_combo(unit_vm._element(element.id))[1] == MATCH_SAME_NEAREST
 
     # 手填 con150 的基础厚 → 建行，且立刻变成本组精确匹配
@@ -497,17 +508,17 @@ def test_thickness_falls_back_to_concrete_table_for_sand_foundation(project) -> 
     界面显示"手填覆盖 0mm"，外径/工程量跟着少算 2t。
     """
     from app.services.atlas_match import _principles  # noqa: PLC0415
-    from app.services.principle_edit import apply_enclosure_fields
+    from app.services.principle_edit import apply_foundation
 
     unit = project_io.units(project_io.segments()[0].id)[0]
     element = unit_vm.create_element(unit.id, category=1, name="排管")
     assert element is not None
     unit_vm.create_pipe(element.id, mat="Ⅱ级混凝土管", dn=150, content="1")
-    pe, _pw = _principles(element)
-    assert pe is not None
+    _pe, pf, _pw = _principles(element)
+    assert pf is not None
 
-    # 围护原则改成不采用砼基础（砂基础）：图集砂基础表没有 Dn150
-    apply_enclosure_fields(pe.id, {"con_found": False})
+    # 地基原则改成不采用砼基础（砂基础）：图集砂基础表没有 Dn150
+    apply_foundation(pf.id, fields={"con_found": False})
     element = unit_vm._element(element.id)
     pipe = element.pipes[0]
     assert pipe.t in (None, 25.0), f"壁厚不能是 0/空：{pipe.t!r}"
@@ -524,7 +535,7 @@ def test_thickness_falls_back_to_concrete_table_for_sand_foundation(project) -> 
 
 def test_pipe_thickness_is_first_param_and_drives_pipe(project) -> None:
     """管道壁厚并入参数行（直埋第一行）：候选驱动、参数值锁定、同步到管材行。"""
-    from app.services.principle_edit import apply_enclosure_fields
+    from app.services.principle_edit import apply_foundation
 
     unit = project_io.units(project_io.segments()[0].id)[0]
     template = element_library().find("直埋混凝土管", "Ⅱ级混凝土管", 8)  # Dn600
@@ -550,9 +561,9 @@ def test_pipe_thickness_is_first_param_and_drives_pipe(project) -> None:
     assert unit_vm._element(element.id).pipes[0].t == 70.0
 
     # 换角度 → 参数值跟着候选组走（con180 仍是图集值 65）
-    pe = _main_pe(element)
-    assert pe is not None
-    apply_enclosure_fields(pe.id, {"found_angle": 180})
+    pf = _main_pf(element)
+    assert pf is not None
+    apply_foundation(pf.id, fields={"found_angle": 180})
     assert unit_vm.param_rows(element.id)[0].value == "65"
     assert unit_vm._element(element.id).pipes[0].t == 65.0
 
@@ -572,58 +583,31 @@ def test_editing_pipe_category_is_normalized(project) -> None:
     assert unit_vm.update_pipe(pipe.id).pipe_category == PIPE_CAT_CONCRETE_RIGID
 
 
-def test_enclosure_dialog_save_rematches_candidates(project, qapp) -> None:
-    """围护原则编辑对话框保存（UI 路径）→ 引用它的直埋构件自动重选候选组。
+def test_foundation_dialog_save_rematches_candidates(project, qapp) -> None:
+    """地基原则编辑对话框保存（UI 路径）→ 引用它的直埋构件自动重选候选组。
 
-    回归：对话框曾直接给 con_found / found_angle 赋值、绕过
-    apply_enclosure_fields，导致原则修改后参数值不自动更新。
+    回归：对话框曾直接给 con_found / found_angle 赋值、绕过 apply_foundation，
+    导致原则修改后参数值不自动更新。（v10：管道基础 / 角度已从围护原则移到
+    地基原则，故改走地基原则对话框。）
     """
-    from app.views.dialogs.enclosure_edit_dialog import EnclosureEditDialog
+    from app.core.atlas_candidates import nearest_candidate
+    from app.views.dialogs.foundation_edit_dialog import FoundationEditDialog
 
     unit = project_io.units(project_io.segments()[0].id)[0]
     template = element_library().find("直埋混凝土管", "Ⅱ级混凝土管", 0)
     element = unit_vm.insert_element_template(unit.id, template)
-    pe = _main_pe(element)
-    old_angle = int(pe.found_angle)
+    pf = _main_pf(element)
+    assert pf is not None
+    old_angle = int(pf.found_angle)
     new_angle = 180 if old_angle != 180 else 90
 
-    dialog = EnclosureEditDialog(pe.id)
+    dialog = FoundationEditDialog(pf.id)
     dialog._angle.setCurrentText(str(new_angle))
     dialog._confirm()
 
-    from app.core.atlas_candidates import nearest_candidate
-
-    row = nearest_candidate(element.atlas_candidates, bool(pe.con_found), new_angle)
-    params = {(param.key, param.unit): param.value for param in element.params}
-    expected = format_number(row.c2) if row is not None and row.c2 is not None else ""
-    assert params[("基础厚", "mm")] == expected
-    # 就近选组生效：角度真的换到了新值那一组（参数值不再是旧角度的值）
-    if row is not None:
-        assert params[("基础厚", "mm")] != "" or row.c2 is None
-
-
-def test_enclosure_dialog_save_rematches_candidates(project, qapp) -> None:
-    """围护原则编辑对话框保存（UI 路径）→ 引用它的直埋构件自动重选候选组。
-
-    回归：对话框曾直接给 con_found / found_angle 赋值、绕过
-    apply_enclosure_fields，导致原则修改后参数值不自动更新。
-    """
-    from app.views.dialogs.enclosure_edit_dialog import EnclosureEditDialog
-
-    unit = project_io.units(project_io.segments()[0].id)[0]
-    template = element_library().find("直埋混凝土管", "Ⅱ级混凝土管", 0)
-    element = unit_vm.insert_element_template(unit.id, template)
-    pe = _main_pe(element)
-    old_angle = int(pe.found_angle)
-    new_angle = 180 if old_angle != 180 else 90
-
-    dialog = EnclosureEditDialog(pe.id)
-    dialog._angle.setCurrentText(str(new_angle))
-    dialog._confirm()
-
-    from app.core.atlas_candidates import nearest_candidate
-
-    row = nearest_candidate(element.atlas_candidates, bool(pe.con_found), new_angle)
+    pf = _main_pf(element)
+    element = unit_vm._element(element.id)
+    row = nearest_candidate(element.atlas_candidates, bool(pf.con_found), new_angle)
     params = {(param.key, param.unit): param.value for param in element.params}
     expected = format_number(row.c2) if row is not None and row.c2 is not None else ""
     assert params[("基础厚", "mm")] == expected

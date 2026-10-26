@@ -2,18 +2,16 @@
 
 布局与交互照抄 FormPE / FormPE.Designer：
 
-* 顶部「原则名称」；GroupBox「挖填类型」（开挖类型 / 坞塝材质 / 坞塝回填 / 顶部回填）、
-  「管道基础」（混凝土基础 / 基础角度 / 垫层材质 / 厚度 mm）；右侧竖排
-  「确认修改 / 取消修改」（v4 起降水/面宽已独立成原则，原「降水措施」板块取消）；
+* 顶部「原则名称」；右侧竖排「确认修改 / 取消修改」；v10 起围护原则仅管围护
+  做法：原「挖填类型」板块移到挖填降水原则、原「管道基础」板块移到地基原则；
 * 主表格 7 列：埋深 / 范围 / 围护类型 / 围护形式描述 / 止水类型 / 止水形式描述 /
   按钮列（「+」在按钮列表头格，每行行尾「-」删该行，见 RowButtonColumn），
   首行埋深恒 0 且只读，Insert 插入做法（埋深取值规则与旧版一致），
   Delete 删除（全删时提示“至少需要一种围护做法。”）；
 * 双击“围护形式描述”：多级围护 → 做法编辑（FormEcls），单构件 → 构件公式编辑
   （FormCpntEdit）；双击“止水形式描述” → 构件公式编辑；
-* 「确认修改」才落库（原版“编辑副本、确认生效”）：顶部参数本就确认时写回，
-  做法表与子编辑器的编辑也只写共享会话、不 commit；「取消修改」回滚会话，
-  本次编辑（含子编辑器）整体丢弃。
+* 「确认修改」才落库（原版“编辑副本、确认生效”）：做法表与子编辑器的编辑
+  只写共享会话、不 commit；「取消修改」回滚会话，本次编辑（含子编辑器）整体丢弃。
 """
 
 from __future__ import annotations
@@ -23,8 +21,6 @@ from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -49,11 +45,6 @@ from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessage
 from app.views.widgets.row_button_column import RowButtonColumn
 from app.views.widgets.table_width import fixed_width_behavior
 
-_EXCVT_CHOICES = ("Ⅰ、Ⅱ类土", "Ⅲ类土", "Ⅳ类土", "松石", "次坚石", "普坚石", "特坚石")
-_DOCK_CHOICES = ("至管顶50cm", "至管顶标高", "至管中心标高", "至沟槽顶标高")
-_CONFOUND_CHOICES = ("采用混凝土基础", "不采用混凝土基础")
-_ANGLE_CHOICES = ("90", "120", "150", "180")
-
 _COL_DEPTH, _COL_RANGE, _COL_ECLS_CAT, _COL_ECLS_DIS, _COL_WS_CAT, _COL_WS_DIS = range(6)
 #: 止水形式描述列的下限：可视区减其余列不足这么多时钳回来（宁出横向滚动条）
 _DESC_MIN_WIDTH = 80
@@ -64,7 +55,7 @@ class EnclosureEditDialog(FramelessDialog):
 
     def __init__(self, enclosure_id: int, parent: QWidget | None = None) -> None:
         super().__init__(parent, "围护原则编辑")
-        self.resize(660, 581)
+        self.resize(660, 470)
         self._enclosure_id = enclosure_id
         self._loading = False
         self._build_ui()
@@ -83,9 +74,10 @@ class EnclosureEditDialog(FramelessDialog):
         name_row.addWidget(self._name, 1)
         root.addLayout(name_row)
 
+        # v10 起围护原则仅管围护做法：挖填类型 → 挖填降水原则、管道基础 → 地基原则，
+        # 因此这里只剩确认 / 取消按钮（右侧竖排，与做法表同排）
         detail_row = QHBoxLayout()
-        detail_row.addWidget(self._build_excavation_box())
-        detail_row.addWidget(self._build_foundation_box())
+        detail_row.addStretch(1)
         detail_row.addWidget(self._build_confirm_buttons())
         root.addLayout(detail_row)
 
@@ -109,36 +101,6 @@ class EnclosureEditDialog(FramelessDialog):
         )
         self._work_buttons.attach()
         root.addLayout(table_row, 1)
-
-    def _build_excavation_box(self) -> QGroupBox:
-        box = QGroupBox("挖填类型")
-        form = QFormLayout(box)
-        self._excvt = QComboBox()
-        self._excvt.addItems(_EXCVT_CHOICES)
-        self._dock_material = QLineEdit()
-        self._dock_mode = QComboBox()
-        self._dock_mode.addItems(_DOCK_CHOICES)
-        self._cover = QLineEdit()
-        form.addRow("开挖类型", self._excvt)
-        form.addRow("坞塝材质", self._dock_material)
-        form.addRow("坞塝回填", self._dock_mode)
-        form.addRow("顶部回填", self._cover)
-        return box
-
-    def _build_foundation_box(self) -> QGroupBox:
-        box = QGroupBox("管道基础")
-        form = QFormLayout(box)
-        self._con_found = QComboBox()
-        self._con_found.addItems(_CONFOUND_CHOICES)
-        self._angle = QComboBox()
-        self._angle.addItems(_ANGLE_CHOICES)
-        self._cushion_name = QLineEdit()
-        self._cushion_h = QLineEdit()
-        form.addRow("基础类型", self._con_found)
-        form.addRow("基础角度", self._angle)
-        form.addRow("垫层材质", self._cushion_name)
-        form.addRow("厚度mm", self._cushion_h)
-        return box
 
     def _build_confirm_buttons(self) -> QWidget:
         column = QWidget()
@@ -175,31 +137,11 @@ class EnclosureEditDialog(FramelessDialog):
         return enclosure
 
     def _reload(self) -> None:
-        """SetDropItems + FlashFm：填顶部参数与做法表格。"""
+        """填顶部原则名称（v10 起围护原则不再有挖填 / 基础参数）。"""
         enclosure = self._enclosure()
         if enclosure is None:
             return
         self._name.setText(enclosure.name)
-        self._excvt.setCurrentText(enclosure.excvt)
-        self._dock_material.setText(enclosure.dock_l)
-        self._cover.setText(enclosure.cover)
-        # CBOdock 反向映射（FlashDetail 原版条件判断；至沟槽顶标高时顶部回填强制“素土”）
-        if enclosure.dock_h == enclosure.dock_l:
-            if enclosure.cover50 == enclosure.dock_l:
-                if enclosure.cover == enclosure.dock_l:
-                    self._dock_mode.setCurrentText("至沟槽顶标高")
-                    self._cover.setText("素土")
-                else:
-                    self._dock_mode.setCurrentText("至管顶50cm")
-            else:
-                self._dock_mode.setCurrentText("至管顶标高")
-        else:
-            self._dock_mode.setCurrentText("至管中心标高")
-        self._con_found.setCurrentIndex(0 if enclosure.con_found else 1)
-        self._angle.setCurrentText(str(enclosure.found_angle))
-        cushion = enclosure.cushions[0] if enclosure.cushions else None
-        self._cushion_name.setText(cushion.name if cushion else "")
-        self._cushion_h.setText(f"{cushion.h:g}" if cushion else "0")
 
     def _fill(self) -> None:
         """FlashdGVPE：重建做法表格。"""
@@ -439,7 +381,7 @@ class EnclosureEditDialog(FramelessDialog):
         super().reject()
 
     def _confirm(self) -> None:
-        """BTNyes：GetDetailFormFm + mscCtrl.Set（确认修改才写回）。
+        """BTNyes：改名 + 提交（确认修改才写回）。
 
         编辑过程中（做法表、子编辑器）不广播，点击确认修改后统一刷新
         工程量与断面图；改名时再广播 tree_structure_changed 同步原则横条与引用名。
@@ -455,45 +397,7 @@ class EnclosureEditDialog(FramelessDialog):
         renamed = name != enclosure.name
         if renamed:
             project_io.rename_enclosure(enclosure.id, name)
-            enclosure = self._enclosure()
-        dock_mode = self._dock_mode.currentText()
-        dock = self._dock_material.text().strip()
-        cover = self._cover.text().strip()
-        # GetDetailFormFm 原版映射
-        if dock_mode == "至管顶50cm":
-            dock_h, cover50, cover_value = dock, dock, cover
-        elif dock_mode == "至管顶标高":
-            dock_h, cover50, cover_value = dock, cover, cover
-        elif dock_mode == "至管中心标高":
-            dock_h, cover50, cover_value = cover, cover, cover
-        else:  # 至沟槽顶标高
-            dock_h, cover50, cover_value = dock, dock, dock
-        # 顶部参数统一走 principle_edit.apply_enclosure_fields：
-        # 砼基础开关 / 基础角度变化时它会对引用该原则的直埋构件自动重选候选组
-        # （v9 候选参数列的自动匹配只挂这一处，不能绕过）
-        from app.services.principle_edit import apply_enclosure_fields
-
-        fields = {
-            "excvt": self._excvt.currentText(),
-            "dock_l": dock,
-            "dock_h": dock_h,
-            "cover50": cover50,
-            "cover": cover_value,
-            "con_found": "不" not in self._con_found.currentText(),
-        }
-        try:
-            fields["found_angle"] = int(self._angle.currentText())
-        except ValueError:
-            pass
-        apply_enclosure_fields(enclosure.id, fields)
-        cushion = enclosure.cushions[0] if enclosure.cushions else None
-        if cushion is not None:
-            cushion.name = self._cushion_name.text().strip()
-            try:
-                cushion.h = float(self._cushion_h.text() or 0)
-            except ValueError:
-                pass
-        # 本次编辑（做法表、子编辑器、垫层）随这次提交统一落库
+        # 本次编辑（做法表、子编辑器）随这次提交统一落库
         project_io.commit()
         if renamed:
             bus().tree_structure_changed.emit()

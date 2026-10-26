@@ -15,16 +15,18 @@
   "created_at": "…", "saved_at": "…",
   "basic_info": {"project_name": "…", "project_index": "…", "author": "…", "atlas_name": "…"},
   "principles": {
-    "enclosures":    [{"name": "…", "con_found": true, "excvt": "…", "found_angle": 120,
-                       "dock_l": "…", "dock_h": "…", "cover50": "…", "cover": "…",
-                       "cushions": [{"name": "中粗砂", "h": 200.0}],
+    "enclosures":    [{"name": "…",
                        "works": [{"min_depth": 0.0, "cpnt_cat": "放坡",
                                   "levels": [{"name": "放坡", "h": -1.0, "step_width": 1.0,
                                               "component": {"name": "…", "formula": "…",
                                                             "params": {"A": "显示名|算式"}}}],
                                   "waterstop": {"name": "…", "formula": "…", "params": {}}}]}],
-    "foundations":   [{"name": "…", "replacements": [{"name": "…", "h": 200.0}], "component": {…}}],
-    "precipitations": [{"name": "…", "wet_soil": "0|0|0", …}],
+    "foundations":   [{"name": "…", "con_found": true, "found_angle": 120,
+                       "cushions": [{"name": "中粗砂", "h": 200.0}],
+                       "replacements": [{"name": "…", "h": 200.0}], "component": {…}}],
+    "precipitations": [{"name": "…", "wet_soil": "0|0|0", …,
+                        "excvt": "Ⅲ类土", "dock_l": "…", "dock_h": "…",
+                        "cover50": "…", "cover": "…"}],
     "widths":        [{"name": "…", "groove_width": "WorkWidth",
                        "tables": {"work": {"承插式": {"300": 1.06}}, "groove_b": {…}}}]
   },
@@ -41,9 +43,11 @@
 ``atlas_candidates``（``[{"con_found","angle","t","a","c1","c2"}]``，值为 null
 表示图集该组合无数据）。
 v3 起左右分设构件（``pe_name == "左右分设"``）另带 ``pe_left_name`` /
-``pe_right_name`` / ``support_left`` / ``support_right`` / ``excvt_side`` /
-``foundation_side``，编组成员另带 ``group``（单位工程 ``groups`` 数组的下标）；
-这些字段全部可缺省，缺省即普通构件 / 无编组（v2 文件兼容读入）。
+``pe_right_name`` / ``support_left`` / ``support_right``，编组成员另带
+``group``（单位工程 ``groups`` 数组的下标）；这些字段全部可缺省，缺省即
+普通构件 / 无编组（v2 文件兼容读入）。v10 起挖填类型与管道基础不再随左右
+围护不一致而分侧取用，旧文件里的 ``excvt_side`` / ``foundation_side`` 读取
+时忽略。
 
 file_version 1 的文件带 ``main_pe_name`` / ``pe_refs`` / ``pf_refs``（多原则
 引用，2.0 已取消该功能）：读取时按主原则降级成单引用，见 :func:`_load_element`。
@@ -68,9 +72,9 @@ from app.core.models.models import (
     ElementAtlasCandidate,
     ElementParam,
     ElementQuantity,
-    EnclosureCushion,
     EnclosureLevel,
     EnclosureWork,
+    FoundationCushion,
     FoundationReplacement,
     PcpEnclosure,
     PcpFoundation,
@@ -83,6 +87,27 @@ from app.core.models.models import (
     Unit,
     WidthItem,
 )
+
+#: 挖填类型字段（v10 起并入挖填降水原则）及其缺省值
+_EXCAVATION_FIELDS = (
+    ("excvt", "Ⅲ类土"),
+    ("dock_l", "中粗砂"),
+    ("dock_h", "中粗砂"),
+    ("cover50", "中粗砂"),
+    ("cover", "素土"),
+)
+#: v10 前挂在围护原则 payload 下、现属挖填降水 / 地基原则的字段（旧文件兜底用）
+_LEGACY_PE_KEYS = (
+    "con_found",
+    "excvt",
+    "found_angle",
+    "dock_l",
+    "dock_h",
+    "cover50",
+    "cover",
+    "cushions",
+)
+
 
 # --------------------------------------------------------------------------- #
 # 导出：数据库 → JSON
@@ -131,17 +156,6 @@ def _dump_enclosure(item: PcpEnclosure) -> dict:
     works = sorted(item.works, key=lambda work: (work.order_no, work.id))
     return {
         "name": item.name or "",
-        "con_found": bool(item.con_found),
-        "excvt": item.excvt or "",
-        "found_angle": int(item.found_angle or 0),
-        "dock_l": item.dock_l or "",
-        "dock_h": item.dock_h or "",
-        "cover50": item.cover50 or "",
-        "cover": item.cover or "",
-        "cushions": [
-            {"name": cushion.name or "", "h": float(cushion.h or 0.0)}
-            for cushion in sorted(item.cushions, key=lambda row: (row.order_no, row.id))
-        ],
         "works": [_dump_work(work) for work in works],
     }
 
@@ -169,6 +183,12 @@ def _dump_foundation(item: PcpFoundation) -> dict:
     component = next(iter(item.components), None)
     return {
         "name": item.name or "",
+        "con_found": bool(item.con_found),
+        "found_angle": int(item.found_angle or 0),
+        "cushions": [
+            {"name": cushion.name or "", "h": float(cushion.h or 0.0)}
+            for cushion in sorted(item.cushions, key=lambda row: (row.order_no, row.id))
+        ],
         "replacements": [
             {"name": row.name or "", "h": float(row.h or 0.0)}
             for row in sorted(item.replacements, key=lambda row: (row.order_no, row.id))
@@ -181,6 +201,11 @@ def _dump_precipitation(item: PcpPrecipitation) -> dict:
     return {
         "name": item.name or "",
         **{key: getattr(item, key) or "" for key in PRECIPITATION_COLUMNS},
+        "excvt": item.excvt or "",
+        "dock_l": item.dock_l or "",
+        "dock_h": item.dock_h or "",
+        "cover50": item.cover50 or "",
+        "cover": item.cover or "",
     }
 
 
@@ -300,8 +325,6 @@ def _dump_element(element: Element, group_index: int | None = None) -> dict:
         data["pe_right_name"] = element.pe_right_name or ""
         data["support_left"] = bool(element.support_left)
         data["support_right"] = bool(element.support_right)
-        data["excvt_side"] = element.excvt_side or "L"
-        data["foundation_side"] = element.foundation_side or "L"
     if group_index is not None:
         data["group"] = int(group_index)
     return data
@@ -326,18 +349,23 @@ def load_database(data: dict) -> None:
     )
 
     principles = data.get("principles") or {}
-    for index, item in enumerate(principles.get("enclosures") or []):
+    enclosure_items = principles.get("enclosures") or []
+    # v10 前旧文件把挖填类型 / 管道基础 / 垫层挂在围护原则下：按名索引旧 payload
+    # 作兜底（新结构文件里这些字段已不在 enclosures 里，索引为空即无兜底）
+    legacy_pe_by_name = {
+        str(item.get("name") or ""): item
+        for item in enclosure_items
+        if any(key in item for key in _LEGACY_PE_KEYS)
+    }
+    legacy_pe_default = next(iter(legacy_pe_by_name.values()), None)
+    for index, item in enumerate(enclosure_items):
         _load_enclosure(session, item, order_no=index)
     for index, item in enumerate(principles.get("foundations") or []):
-        _load_foundation(session, item, order_no=index)
+        legacy_pe = legacy_pe_by_name.get(str(item.get("name") or ""), legacy_pe_default)
+        _load_foundation(session, item, order_no=index, legacy_pe=legacy_pe)
     for index, item in enumerate(principles.get("precipitations") or []):
-        session.add(
-            PcpPrecipitation(
-                name=item.get("name") or "新降水原则",
-                order_no=index,
-                **{key: str(item.get(key) or "0|0|0") for key in PRECIPITATION_COLUMNS},
-            )
-        )
+        legacy_pe = legacy_pe_by_name.get(str(item.get("name") or ""), legacy_pe_default)
+        _load_precipitation(session, item, order_no=index, legacy_pe=legacy_pe)
     for index, item in enumerate(principles.get("widths") or []):
         _load_width(session, item, order_no=index)
 
@@ -413,25 +441,11 @@ def _attach_component(parent, component: Component) -> None:
 
 
 def _load_enclosure(session, data: dict, *, order_no: int) -> None:
+    """围护原则：v10 起只剩名称与做法；旧 payload 里的挖填/基础字段一律忽略。"""
     enclosure = PcpEnclosure(
         name=data.get("name") or "新围护原则",
-        con_found=bool(data.get("con_found", True)),
-        excvt=data.get("excvt") or "Ⅲ类土",
-        found_angle=int(data.get("found_angle") or 120),
-        dock_l=data.get("dock_l") or "中粗砂",
-        dock_h=data.get("dock_h") or "中粗砂",
-        cover50=data.get("cover50") or "中粗砂",
-        cover=data.get("cover") or "素土",
         order_no=order_no,
     )
-    for cushion_index, cushion in enumerate(data.get("cushions") or []):
-        enclosure.cushions.append(
-            EnclosureCushion(
-                name=cushion.get("name") or "中粗砂",
-                h=float(cushion.get("h") or 0.0),
-                order_no=cushion_index,
-            )
-        )
     session.add(enclosure)
     session.flush()
     for work_index, work_data in enumerate(data.get("works") or []):
@@ -457,10 +471,46 @@ def _load_enclosure(session, data: dict, *, order_no: int) -> None:
         _load_component(work, work_data.get("waterstop"))
 
 
-def _load_foundation(session, data: dict, *, order_no: int) -> None:
-    foundation = PcpFoundation(name=data.get("name") or "新地基原则", order_no=order_no)
+def _load_precipitation(session, data: dict, *, order_no: int, legacy_pe: dict | None) -> None:
+    """挖填降水原则：井型 + 挖填类型；旧文件缺挖填字段时按旧围护原则 payload 兜底。"""
+    legacy_pe = legacy_pe or {}
+    precipitation = PcpPrecipitation(
+        name=data.get("name") or "新挖填降水原则",
+        order_no=order_no,
+        **{key: str(data.get(key) or "0|0|0") for key in PRECIPITATION_COLUMNS},
+    )
+    for key, default in _EXCAVATION_FIELDS:
+        value = data.get(key) or legacy_pe.get(key)
+        setattr(precipitation, key, str(value) if value else default)
+    session.add(precipitation)
+
+
+def _load_foundation(session, data: dict, *, order_no: int, legacy_pe: dict | None) -> None:
+    """地基原则：管道基础（砼基础 / 角度 / 垫层）+ 换填层 + 特殊地基构件。
+
+    旧文件的管道基础与垫层挂在围护原则下，``legacy_pe`` 为同名（或第一条）
+    旧围护原则 payload，用于兜底；新结构文件里 ``data`` 自带这些字段。
+    """
+    legacy_pe = legacy_pe or {}
+    foundation = PcpFoundation(
+        name=data.get("name") or "新地基原则",
+        order_no=order_no,
+        con_found=bool(data.get("con_found", legacy_pe.get("con_found", True))),
+        found_angle=int(data.get("found_angle") or legacy_pe.get("found_angle") or 120),
+    )
     session.add(foundation)
     session.flush()
+    for cushion_index, cushion in enumerate(
+        data.get("cushions", legacy_pe.get("cushions")) or []
+    ):
+        session.add(
+            FoundationCushion(
+                foundation_id=foundation.id,
+                name=cushion.get("name") or "中粗砂",
+                h=float(cushion.get("h") or 0.0),
+                order_no=cushion_index,
+            )
+        )
     for replace_index, replacement in enumerate(data.get("replacements") or []):
         session.add(
             FoundationReplacement(
@@ -531,8 +581,6 @@ def _load_element(data: dict, *, order_no: int) -> Element:
         pe_right_name=str(data.get("pe_right_name") or ""),
         support_left=bool(data.get("support_left", True)),
         support_right=bool(data.get("support_right", True)),
-        excvt_side="R" if str(data.get("excvt_side") or "L") == "R" else "L",
-        foundation_side="R" if str(data.get("foundation_side") or "L") == "R" else "L",
         source=data.get("source") or "",
         order_no=order_no,
     )

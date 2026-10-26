@@ -55,29 +55,33 @@ def _outside_dn(info, ad: AtlasDims) -> Dim:
     return ad.od / 1000
 
 
-def cal_found(info, pe, ad: AtlasDims, out: QDict) -> None:
-    """管道基础 / 包封 / 箱涵 / 管廊本体量与占土扣减（每延米）。"""
+def cal_found(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
+    """管道基础 / 包封 / 箱涵 / 管廊本体量与占土扣减（每延米）。
+
+    ``pf``（地基原则）提供砼基础开关 / 基础角度 / 垫层，``pp``（挖填降水原则）
+    提供回填材质（坞膀下半 / 上半）。
+    """
     if info.category == CATEGORY_BURIED:
-        _found_pipe(info, pe, ad, out)
+        _found_pipe(info, pf, pp, ad, out)
     elif info.category == CATEGORY_ENCASED:
-        _found_encased(info, pe, ad, out)
+        _found_encased(info, pf, pp, ad, out)
     elif info.category == CATEGORY_BOX_CULVERT:
-        _found_box(info, pe, ad, out, prefix="箱涵", wall_key="箱涵壁")
+        _found_box(info, pf, pp, ad, out, prefix="箱涵", wall_key="箱涵壁")
     elif info.category == CATEGORY_GALLERY:
-        _found_box(info, pe, ad, out, prefix="管廊", wall_key="管廊壁")
+        _found_box(info, pf, pp, ad, out, prefix="管廊", wall_key="管廊壁")
 
 
-def _found_pipe(info, pe, ad: AtlasDims, out: QDict) -> None:
+def _found_pipe(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
     """直埋管道基础（旧版 mcE1.cal_found）。"""
     if not info.pipes:
         return
     outside = _outside_dn(info, ad)
     half_circle = _circle(outside.v) / 2.0
-    angle = float(pe.found_angle)
-    cushion_name = pe.cushions[0].name if pe.cushions else "中粗砂"
+    angle = float(pf.found_angle)
+    cushion_name = pf.cushions[0].name if pf.cushions else "中粗砂"
     remain = info.depth_dim + (ad.t + ad.c1) / 1000
 
-    if pe.con_found and ("混凝土" in info.pipes[0].mat or "砼" in info.pipes[0].mat):
+    if pf.con_found and ("混凝土" in info.pipes[0].mat or "砼" in info.pipes[0].mat):
         width = info.size_b_dim + scale_sum((ad.t, ad.a), 2.0) / 1000
         found_h = (ad.c1 + ad.c2) / 1000
         found = found_h * width
@@ -103,7 +107,7 @@ def _found_pipe(info, pe, ad: AtlasDims, out: QDict) -> None:
 
     add_dim(
         out,
-        f"回填|{pe.dock_l}|m3",
+        f"回填|{pp.dock_l}|m3",
         Dim(
             -(half_circle - _bow(outside.v, angle)),
             f"PI()*{wrap(outside.e)}*{wrap(outside.e)}/8-({_bow_expr(outside, angle)})",
@@ -112,15 +116,15 @@ def _found_pipe(info, pe, ad: AtlasDims, out: QDict) -> None:
     )
     add_dim(
         out,
-        f"回填|{pe.dock_h}|m3",
+        f"回填|{pp.dock_h}|m3",
         Dim(-half_circle, f"PI()*{wrap(outside.e)}*{wrap(outside.e)}/8"),
         "上半回填扣半圆",
     )
 
 
-def _found_encased(info, pe, ad: AtlasDims, out: QDict) -> None:
+def _found_encased(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
     """包封埋管（旧版 mcE2.cal_found）。"""
-    cushion_name = pe.cushions[0].name if pe.cushions else "中粗砂"
+    cushion_name = pf.cushions[0].name if pf.cushions else "中粗砂"
     remain = info.depth_dim + (ad.t + ad.c1) / 1000
 
     add_dim(out, "垫层|混凝土|m3", ad.c1 / 1000 * (info.size_b_dim + ad.a / 1000 * 2))
@@ -135,13 +139,13 @@ def _found_encased(info, pe, ad: AtlasDims, out: QDict) -> None:
     add_dim(out, "包封|模板|m2", info.size_h_dim * 2, "包封模板")
 
     used = dim_min(remain, info.size_h_dim / 2)
-    add_dim(out, f"回填|{pe.dock_l}|m3", -(info.size_b_dim * used), "坞膀扣包封")
+    add_dim(out, f"回填|{pp.dock_l}|m3", -(info.size_b_dim * used), "坞膀扣包封")
     remain = remain - used
     used = dim_min(remain, info.size_h_dim / 2)
-    add_dim(out, f"回填|{pe.dock_h}|m3", -(info.size_b_dim * used), "上半扣包封")
+    add_dim(out, f"回填|{pp.dock_h}|m3", -(info.size_b_dim * used), "上半扣包封")
 
 
-def _found_box(info, pe, ad: AtlasDims, out: QDict, *, prefix: str, wall_key: str) -> None:
+def _found_box(info, pf, pp, ad: AtlasDims, out: QDict, *, prefix: str, wall_key: str) -> None:
     """箱涵 / 管廊（旧版 mcE3 / mcE6.cal_found）。"""
     bt = info.param_dim("底板厚", 400) / 1000
     tt = info.param_dim("顶板厚", 300) / 1000
@@ -150,7 +154,7 @@ def _found_box(info, pe, ad: AtlasDims, out: QDict, *, prefix: str, wall_key: st
     ic = info.param_dim("内壁", 0)
     steel_rate = info.param_dim("含钢量", 150) / 1000
 
-    cushion_name = pe.cushions[0].name if pe.cushions else "中粗砂"
+    cushion_name = pf.cushions[0].name if pf.cushions else "中粗砂"
     remain = info.depth_dim + (ad.t + ad.c1) / 1000
 
     add_dim(out, f"{prefix}|垫层|m3", ad.c1 / 1000 * (info.size_b_dim + ad.a / 1000 * 2))
@@ -175,10 +179,10 @@ def _found_box(info, pe, ad: AtlasDims, out: QDict, *, prefix: str, wall_key: st
     add_dim(out, f"{prefix}|钢筋|t", steel_rate * (bottom + wall + roof), "钢筋 = 含钢量 × 混凝土合计")
 
     used = dim_min(remain, info.size_h_dim / 2)
-    add_dim(out, f"回填|{pe.dock_l}|m3", -(info.size_b_dim * used), "坞膀扣箱涵")
+    add_dim(out, f"回填|{pp.dock_l}|m3", -(info.size_b_dim * used), "坞膀扣箱涵")
     remain = remain - used
     used = dim_min(remain, info.size_h_dim / 2)
-    add_dim(out, f"回填|{pe.dock_h}|m3", -(info.size_b_dim * used), "上半扣箱涵")
+    add_dim(out, f"回填|{pp.dock_h}|m3", -(info.size_b_dim * used), "上半扣箱涵")
 
 
 def cal_pipes(info, out: QDict, cat: str = "管材") -> None:
@@ -201,7 +205,7 @@ def encased_pipe_deduction(info, out: QDict) -> None:
     for pipe, content in zip(info.pipes, info.pipe_content_dims):
         if content.v == 0:
             continue
-        query = build_atlas_query(info, info.pe, info.pw)
+        query = build_atlas_query(info, info.pf, info.pw)
         query.category = 1  # 直埋管道图集
         query.pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn, t=pipe.t, cat=pipe.cat)]
         at = resolve_atlas(query)

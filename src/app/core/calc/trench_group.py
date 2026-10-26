@@ -189,7 +189,7 @@ class _Member:
     element: Element
     info: ElementInput
     ad: AtlasDims
-    pe_r: object  # 自身材质 / 基础原则（右 → 左 → 库首条；与几何侧原则分开）
+    pe_r: object  # 自身围护原则（右 → 左 → 库首条；与几何侧原则分开）
     depth: Dim  # 槽底深 H_i（埋深 + 换填 + 壁厚 + 垫层）
     base_width: Dim  # 基础外皮宽 b_i（= 单管槽底宽去掉两侧工作面）
     work_width: Dim  # 自身面宽原则按自身管径查到的单侧工作面宽
@@ -253,12 +253,12 @@ def _resolve_member(session, element: Element) -> tuple[_Member | None, str | No
     info = build_element_input(element, pe_side, pf, pp, pw)
     if info.amount == 0:
         return None, "数量为 0，未生成工程量。"
-    # 图集 / 基础侧原则：build_element_input 已按 foundation_side 落到左右侧
+    # v10 起图集 / 基础参数取地基原则 pf（不再按左右围护分侧）
     material_pe = info.pe or pe_side
-    at = resolve_atlas(build_atlas_query(info, material_pe, pw))
+    at = resolve_atlas(build_atlas_query(info, pf, pw))
     ad = atlas_dims(info, at)
     if ad.c1.v == 0:
-        ad = ad.replace(c1=cushion_dim(material_pe))
+        ad = ad.replace(c1=cushion_dim(pf))
     depth = info.depth_dim + (foundation_dim(pf) + ad.t + ad.c1) / 1000
     base_width = info.size_b_dim + scale_sum((ad.t, ad.a), 2.0) / 1000
     work_width = dim(workwidth_of(pw, info)) / 1000
@@ -514,13 +514,13 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
         out = results.setdefault(member.element.id, QDict())
         info = member.info
         pf = info.pf
-        pe_excvt = member.pe_r  # 编组时挖填 / 基础取侧自动置"R"
+        pp = info.pp
         work_well = choice_work(member.pe_r, member.depth.v)
-        if info.pp is not None and work_well is not None:
+        if pp is not None and work_well is not None:
             # 湿土排水 = 归属带宽 ×（槽深−1m）的简化断面
             wet = member.flat_width * (member.depth - dim(1.0)) if member.depth.v > 1 else None
             precipitation.cal_precipitation(
-                info.pp, pe_excvt, work_well, pf, member.ad, info, member.depth, out,
+                pp, work_well, pf, member.ad, info, member.depth, out,
                 wet_dig=wet,
             )
         special = pf.components[0] if pf.components else None
@@ -528,7 +528,7 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             component_quantities(
                 special, member.depth, member.flat_width, info.amount_dim, "F", out, "特殊地基"
             )
-        foundation.cal_found(info, pe_excvt, member.ad, out)
+        foundation.cal_found(info, pf, pp, member.ad, out)
         if info.category == CATEGORY_ENCASED:
             foundation.encased_pipe_deduction(info, out)
         foundation.cal_pipes(info, out)
@@ -544,10 +544,10 @@ def _member_dig_fill(member: _Member, out: QDict) -> bool:
     （说明 = 层名），与单管路径同风格。
     """
     info = member.info
-    pe = member.pe_r
+    pp = info.pp
     pf = info.pf
-    cushion_name = pe.cushions[0].name if pe.cushions else "中粗砂"
-    layers = backfill_layers(pe, pf, member.ad, info.size_h_dim, member.depth, cushion_name)
+    cushion_name = pf.cushions[0].name if pf.cushions else "中粗砂"
+    layers = backfill_layers(pp, pf, member.ad, info.size_h_dim, member.depth, cushion_name)
     # 层的绝对深度带 (浅端, 深端)：层列表自槽底向上累计，第 k 层占据
     # [H−Σh, H−Σh+h]（自地面起算的深度区间）
     bands: list[tuple[str, float, float, str]] = []
@@ -566,11 +566,11 @@ def _member_dig_fill(member: _Member, out: QDict) -> bool:
     max_depth = max(max_depth, member.depth.v)
     # 比槽底更深的归属区（中间坡楔形）：按覆土层追加
     if max_depth > member.depth.v + 1e-9:
-        bands.append((f"回填|{pe.cover}|m3", member.depth.v, max_depth, "覆土(深区)"))
+        bands.append((f"回填|{pp.cover}|m3", member.depth.v, max_depth, "覆土(深区)"))
     if not bands:
         return False
 
-    dig_key = f"开挖|{pe.excvt}|m3"
+    dig_key = f"开挖|{pp.excvt}|m3"
     dig = out.add(dig_key, 0.0)
     dig.terms.clear()
     dig.value = 0.0

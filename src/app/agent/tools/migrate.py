@@ -34,7 +34,7 @@ def _legacy_counts(legacy) -> dict:
         "foundations": len(legacy.foundations),
         "prices": len(legacy.prices),
         "principle_names": [item.name for item in legacy.enclosures]
-        + [name for name, _replacements, _component in legacy.foundations],
+        + [entry[0] for entry in legacy.foundations],
     }
 
 

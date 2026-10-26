@@ -46,9 +46,9 @@ class AtlasDims:
         return replace(self, **changes)
 
 
-def cushion_thickness(pe) -> Dim:
-    """垫层厚 mm（旧版 PE.Cush.H）的算式伴随：原则垫层的表值。"""
-    return dim(pe.cushions[0].h if pe.cushions else 0.0)
+def cushion_thickness(pf) -> Dim:
+    """垫层厚 mm（垫层 v10 起属地基原则）的算式伴随：原则垫层的表值。"""
+    return dim(pf.cushions[0].h if pf.cushions else 0.0)
 
 
 def foundation_thickness(pf) -> Dim:

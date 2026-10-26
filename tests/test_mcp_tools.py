@@ -161,8 +161,12 @@ def test_enclosure_principles(project) -> None:
     work_id = detail["works"][0]["work_id"]
 
     assert REG.execute(
-        "set_enclosure_fields",
-        {"name": "默认围护原则", "excvt": "Ⅳ类土", "cushions": [{"name": "碎石", "h": 150}]},
+        "set_foundation_fields",
+        {"name": "默认地基原则", "cushions": [{"name": "碎石", "h": 150}]},
+    )["ok"]
+    assert REG.execute(
+        "set_precipitation_excavation",
+        {"name": "默认挖填原则", "excvt": "Ⅳ类土"},
     )["ok"]
     works = [
         {

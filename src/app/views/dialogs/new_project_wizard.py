@@ -38,10 +38,10 @@ _MAJORS = ("雨水工程", "污水工程", "给水工程", "中水工程")
 #: 直接取 NewProjectSpec 的默认值，保证与 project_io 实际建库用的缺省一致。
 _DEFAULTS = NewProjectSpec()
 
-#: 默认围护原则的固定缺省（原第二页的初始值）
-_DEFAULT_EXCVT = "Ⅲ类土"
+#: 默认原则（管道基础归地基原则、挖填类型归挖填降水原则）的固定缺省
 _DEFAULT_FOUND_ANGLE = 120
 _DEFAULT_CON_FOUND = True
+_DEFAULT_EXCVT = "Ⅲ类土"
 
 
 class BasicInfoPage(QWizardPage):
@@ -127,11 +127,11 @@ class NewProjectWizardCore(QWizard):
             "segment_names": [_DEFAULTS.segment_names[0]] * segment_count,
             "unit_names": self._basic_page.unit_names(),
             "enclosure_name": _DEFAULTS.enclosure_name,
-            "enclosure_excvt": _DEFAULT_EXCVT,
-            "enclosure_found_angle": _DEFAULT_FOUND_ANGLE,
-            "enclosure_con_found": _DEFAULT_CON_FOUND,
             "foundation_name": _DEFAULTS.foundation_name,
+            "foundation_found_angle": _DEFAULT_FOUND_ANGLE,
+            "foundation_con_found": _DEFAULT_CON_FOUND,
             "precipitation_name": _DEFAULTS.precipitation_name,
+            "precipitation_excvt": _DEFAULT_EXCVT,
             "width_name": _DEFAULTS.width_name,
         }
 

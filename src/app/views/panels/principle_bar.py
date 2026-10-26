@@ -1,8 +1,9 @@
 """原则横条（复刻旧版 FormMdi 的 panelPrincple，位于主表格上方）。
 
-布局：左侧竖排四个单选「沟槽围护 / 地基处理 / 降水措施 / 工作面宽」（原版
-RBmPE / RBmPF 上下排列，v4 起降水与面宽独立成原则）+ 原则名标签横排
-（围护底色 #448AFF、地基底色 #455A64、降水底色 #26A69A、面宽底色 #7E57C2、
+布局：左侧竖排四个单选「沟槽围护 / 地基处理 / 挖填降水 / 工作面宽」（原版
+RBmPE / RBmPF 上下排列，v4 起降水与面宽独立成原则，v10 起降水原则并入挖填
+类型并改名挖填降水）+ 原则名标签横排
+（围护底色 #448AFF、地基底色 #455A64、挖填降水土黄 #B8860B、面宽底色 #7E57C2、
 白字居中），「+」按钮紧贴最右侧原则块（原版 BTNaddPCP 与标签同处一个滚动区）。
 
 交互照抄原版：
@@ -46,29 +47,29 @@ _KIND_WIDTH = "width"
 
 #: 原版 NewPrincpleLab 的标签样式
 _LABEL_SIZE = (200, 40)
-#: 四类原则的卡片底色：围护蓝 / 地基石板 / 降水青 / 面宽紫
+#: 四类原则的卡片底色：围护蓝 / 地基石板 / 挖填降水土黄 / 面宽紫
 _KIND_COLORS = {
     _KIND_ENCLOSURE: "#448AFF",
     _KIND_FOUNDATION: "#455A64",
-    _KIND_PRECIPITATION: "#26A69A",
+    _KIND_PRECIPITATION: "#B8860B",
     _KIND_WIDTH: "#7E57C2",
 }
 _KIND_RADIO_TEXT = {
     _KIND_ENCLOSURE: "沟槽围护",
     _KIND_FOUNDATION: "地基处理",
-    _KIND_PRECIPITATION: "降水措施",
+    _KIND_PRECIPITATION: "挖填降水",
     _KIND_WIDTH: "工作面宽",
 }
 _KIND_ADD_MENU_TEXT = {
     _KIND_ENCLOSURE: "添加沟槽围护原则",
     _KIND_FOUNDATION: "添加地基处理原则",
-    _KIND_PRECIPITATION: "添加降水原则",
+    _KIND_PRECIPITATION: "添加挖填降水原则",
     _KIND_WIDTH: "添加面宽原则",
 }
 _KIND_MIN_TEXT = {
     _KIND_ENCLOSURE: "至少需要一种沟槽围护原则。",
     _KIND_FOUNDATION: "至少需要一种地基处理原则。",
-    _KIND_PRECIPITATION: "至少需要一种降水原则。",
+    _KIND_PRECIPITATION: "至少需要一种挖填降水原则。",
     _KIND_WIDTH: "至少需要一种面宽原则。",
 }
 
@@ -210,7 +211,7 @@ class PrincipleBar(QWidget):
         self._add_principle()
 
     def add_precipitation(self) -> None:
-        """菜单「添加降水原则」入口。"""
+        """菜单「添加挖填降水原则」入口。"""
         self._radios[_KIND_PRECIPITATION].setChecked(True)
         self._add_principle()
 

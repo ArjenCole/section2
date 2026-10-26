@@ -79,15 +79,14 @@ _TREE_ROLE = Qt.ItemDataRole.UserRole + 2
 #: 合槽父节点行的标记（name item 的 UserRole 数据 = ("group", 组 id)）
 _GROUP_ROLE_TAG = "group"
 _COL_NAME, _COL_CATEGORY, _COL_SPEC, _COL_DEPTH, _COL_UNIT, _COL_AMOUNT, _COL_PE, _COL_PF, _COL_PP, _COL_PW, _COL_SOURCE = range(11)
-_ELEMENT_HEADERS = ["名称", "类型", "规格", "埋深", "单位", "数量", "沟槽围护原则", "地基处理原则", "降水原则", "工作面宽原则", "来源"]
+_ELEMENT_HEADERS = ["名称", "类型", "规格", "埋深", "单位", "数量", "沟槽围护原则", "地基处理原则", "挖填降水", "工作面宽原则", "来源"]
 #: 复刻旧版 dGVmain 列结构（类型 / 规格 / 来源列只读）
 #: 围护/地基原则两列等宽（下拉框完整显示 6 个字）；
 #: 规格列两倍宽；埋深=数量列宽；类型/单位列容得下表头两字；埋深/单位/数量居中
 _ELEMENT_WIDTHS = [130, 48, 280, 70, 48, 70, 130, 130, 130, 130, 80]
 
-#: 详情面板「围护原则」tab（左右分设构件显示）：6 行的行头与取侧下拉项
-_LR_ROWS = ("左侧围护", "右侧围护", "左侧支撑", "右侧支撑", "挖填类型", "管道基础")
-_LR_SIDE_CHOICES = ("按左侧原则", "按右侧原则")
+#: 详情面板「围护原则」tab（左右分设构件显示）：四行的行头
+_LR_ROWS = ("左侧围护", "右侧围护", "左侧支撑", "右侧支撑")
 
 #: 类型列简称（仅显示层，数据库 / 工程量 / 导出等仍用完整类别名）：
 #: 直埋管道→直；包封埋管/箱涵/管廊（构件库“混凝土结构”组）→箱；
@@ -601,9 +600,10 @@ class UnitPanel(QWidget):
         self._qty_placeholder.setVisible(False)
         qty_layout.addWidget(self._qty_placeholder, 1)
 
-        # 左右分设构件的「围护原则」页（v3）：六行（行头见 _LR_ROWS），
-        # 未选分设的构件整页隐藏（setTabVisible）。合槽子节点的左侧行 /
-        # 取侧"按左侧"由父节点接管，置灰展示。
+        # 左右分设构件的「围护原则」页（v3）：四行（行头见 _LR_ROWS），
+        # 未选分设的构件整页隐藏（setTabVisible）。合槽子节点的左侧行由父节点
+        # 接管，置灰展示。v10 起挖填类型 / 管道基础分别归挖填降水原则与地基原则，
+        # 不再因左右围护不一致而分侧取值，故本页不再出现这两项。
         lr_page = QWidget()
         lr_page.setProperty("role", "panel")
         lr_page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -624,8 +624,7 @@ class UnitPanel(QWidget):
         lr_layout.addWidget(self._lr_table, 1)
         self._lr_placeholder = QLabel(
             "该构件未使用左右分设。\n"
-            "在主表格「沟槽围护原则」列选择「左右分设」后在此设置左右原则、"
-            "支撑与挖填 / 管道基础的取侧。"
+            "在主表格「沟槽围护原则」列选择「左右分设」后在此设置左右原则与支撑。"
         )
         self._lr_placeholder.setProperty("role", "placeholder")
         self._lr_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -2041,11 +2040,12 @@ class UnitPanel(QWidget):
             self._section_view.set_element(None)
 
     def _fill_lr_tab(self, element) -> None:
-        """「围护原则」tab：分设构件显示六行设置，其余显示占位说明。
+        """「围护原则」tab：分设构件显示四行设置，其余显示占位说明。
 
         合槽子节点：只有首构件左侧、末构件右侧、以及比相邻构件更深的一侧
         可编辑；等深 / 更浅的一侧强制 "-"（虚拟垂直空围护），对应支撑勾选
         同步禁用。左右支撑语义 = 该构件朝向该面的支撑。
+        v10 起挖填类型 / 管道基础归各自原则，不再在此分侧取值。
         """
         is_lr = element is not None and element.pe_name == LR_PE_TEXT
         grouped = is_lr and element.group_id is not None
@@ -2118,28 +2118,7 @@ class UnitPanel(QWidget):
                 "深侧构件 = 其右侧内侧坡支撑）。"
             )
 
-        def _side_combo_choice(field: str, current: str):
-            combo = QComboBox()
-            combo.addItems(list(_LR_SIDE_CHOICES))
-            combo.setCurrentText(_LR_SIDE_CHOICES[1] if current == "R" else _LR_SIDE_CHOICES[0])
-            combo.currentTextChanged.connect(
-                lambda text, eid=element_id, f=field: self._vm.set_element_field(
-                    eid, f, "R" if text == _LR_SIDE_CHOICES[1] else "L"
-                )
-            )
-            if grouped:
-                combo.setEnabled(False)
-                combo.setCurrentText(_LR_SIDE_CHOICES[1])
-            return combo
-
-        excvt = _side_combo_choice("excvt_side", element.excvt_side or "L")
-        excvt.setToolTip("开挖土质与回填材质按哪一侧原则计算（单构件只能有唯一的挖填类型）。")
-        foundation = _side_combo_choice("foundation_side", element.foundation_side or "L")
-        foundation.setToolTip(
-            "砼基础 / 基础角度 / 垫层按哪一侧原则计算（决定图集查询与候选匹配）。"
-        )
-
-        widgets = (left, right, support_left, support_right, excvt, foundation)
+        widgets = (left, right, support_left, support_right)
         self._lr_table.setRowCount(len(widgets))
         self._lr_table.setVerticalHeaderLabels(list(_LR_ROWS))
         for row, widget in enumerate(widgets):

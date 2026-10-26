@@ -94,9 +94,13 @@ class _Segment:
 
 
 def backfill_layers(
-    pe, pf, ad: AtlasDims, size_h: Dim, depth: Dim, cushion_name: str
+    pp, pf, ad: AtlasDims, size_h: Dim, depth: Dim, cushion_name: str
 ) -> list[tuple[str, Dim, str]]:
-    """分层回填列表（旧版 cal_groove 的 Backfill），返回 (定额键, 层厚, 说明)。"""
+    """分层回填列表（旧版 cal_groove 的 Backfill），返回 (定额键, 层厚, 说明)。
+
+    换填层 / 垫层厚度取自 ``pf``（地基原则），坞膀与覆土的材质取自 ``pp``
+    （挖填降水原则，v10 起挖填类型不再随左右围护分侧）。
+    """
     layers: list[tuple[str, Dim, str]] = []
     for replacement in reversed(list(pf.replacements)):
         h = dim(replacement.h) / 1000
@@ -107,14 +111,14 @@ def backfill_layers(
     height, remaining = min_h((ad.c1 + ad.c2) / 1000, remaining)
     layers.append((f"垫层|{cushion_name}|m3", height, "垫层"))
     height, remaining = min_h(size_h / 2 + (ad.t - ad.c2) / 1000, remaining)
-    layers.append((f"回填|{pe.dock_l}|m3", height, "坞膀下半"))
+    layers.append((f"回填|{pp.dock_l}|m3", height, "坞膀下半"))
     height, remaining = min_h(size_h / 2 + ad.t / 1000, remaining)
-    layers.append((f"回填|{pe.dock_h}|m3", height, "坞膀上半"))
+    layers.append((f"回填|{pp.dock_h}|m3", height, "坞膀上半"))
     height, remaining = min_h(dim(0.5), remaining)
-    layers.append((f"回填|{pe.cover50}|m3", height, "管顶50cm"))
+    layers.append((f"回填|{pp.cover50}|m3", height, "管顶50cm"))
     cover = total - size_h - (foundation_thickness(pf) + ad.t * 2 + ad.c1) / 1000 - dim(0.5)
     height, remaining = min_h(cover, remaining)
-    layers.append((f"回填|{pe.cover}|m3", height, "覆土"))
+    layers.append((f"回填|{pp.cover}|m3", height, "覆土"))
     return layers
 
 
@@ -126,14 +130,16 @@ def groove_width(ad: AtlasDims, size_b: Dim) -> Dim:
 
 
 def cal_groove(
-    pe, work, pf, ad: AtlasDims, size_b: Dim, size_h: Dim, depth: Dim, out: QDict
+    pp, work, pf, ad: AtlasDims, size_b: Dim, size_h: Dim, depth: Dim, out: QDict
 ) -> bool:
     """计算沟槽断面工程量（每延米），结果写入 ``out``。
 
     返回 False 表示没有产生任何土方（覆土不足 / 深度为 0）。
+    挖填类型（开挖土质 / 回填材质）取自 ``pp``（挖填降水原则），垫层与
+    换填取自 ``pf``（地基原则）——v10 起均不再挂在围护原则下。
     """
-    cushion_name = pe.cushions[0].name if pe.cushions else "中粗砂"
-    layers = backfill_layers(pe, pf, ad, size_h, depth, cushion_name)
+    cushion_name = pf.cushions[0].name if pf.cushions else "中粗砂"
+    layers = backfill_layers(pp, pf, ad, size_h, depth, cushion_name)
     bottom = groove_width(ad, size_b)
     step_heights = split_h_by_step(list(work.levels), depth)
     if not step_heights:
@@ -141,7 +147,7 @@ def cal_groove(
     step = len(work.levels) - 1
 
     current = dim(0.0)
-    dig_key = f"开挖|{pe.excvt}|m3"
+    dig_key = f"开挖|{pp.excvt}|m3"
     dig_segments: list[_Segment] = []
     jump_pending = False
     for key, layer, note in layers:
@@ -295,7 +301,7 @@ class _SideSegment:
 
 
 def cal_groove_sided(
-    pe,
+    pp,
     work_l,
     work_r,
     pf,
@@ -310,12 +316,12 @@ def cal_groove_sided(
 
     与 :func:`cal_groove` 同构，区别在两侧各自的围护做法：级标高取**并集**切段，
     每段梯形按 ``(2B+H*sL+H*sR)*H/2``，切级时平台加宽只加发生切级的一侧。
-    ``pe`` 提供挖填类型（开挖土质与回填材质）；分设模式下垫层材质与基础参数
-    取**管道基础侧**原则，由 ``cushion_name`` 显式传入。
+    挖填类型取 ``pp``（挖填降水原则，v10 起不再分侧）；垫层材质与基础参数取
+    ``pf``（地基原则），材质名由 ``cushion_name`` 显式传入。
     """
     if cushion_name is None:
-        cushion_name = pe.cushions[0].name if pe.cushions else "中粗砂"
-    layers = backfill_layers(pe, pf, ad, size_h, depth, cushion_name)
+        cushion_name = pf.cushions[0].name if pf.cushions else "中粗砂"
+    layers = backfill_layers(pp, pf, ad, size_h, depth, cushion_name)
     bottom = groove_width(ad, size_b)
     heights_l = split_h_by_step(list(work_l.levels), depth)
     heights_r = split_h_by_step(list(work_r.levels), depth)
@@ -325,7 +331,7 @@ def cal_groove_sided(
     step_r = len(work_r.levels) - 1
 
     current = dim(0.0)
-    dig_key = f"开挖|{pe.excvt}|m3"
+    dig_key = f"开挖|{pp.excvt}|m3"
     dig_segments: list[_SideSegment] = []
     jump_pending = False
     for key, layer, note in layers:

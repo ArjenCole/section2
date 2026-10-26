@@ -55,8 +55,6 @@ def element_row_dict(row) -> dict:
         "pe_right_name": getattr(row, "pe_right_name", ""),
         "support_left": getattr(row, "support_left", True),
         "support_right": getattr(row, "support_right", True),
-        "excvt_side": getattr(row, "excvt_side", "L"),
-        "foundation_side": getattr(row, "foundation_side", "L"),
         "group_id": getattr(row, "group_id", None),
         "source": row.source,
         "order_no": row.order_no,
@@ -294,19 +292,9 @@ def enclosure_dict(enclosure: PcpEnclosure) -> dict:
                 "levels": levels,
             }
         )
+    # v10 起围护原则只带围护做法（挖填类型 → 挖填降水原则、管道基础 → 地基原则）
     return {
         "name": enclosure.name,
-        "excvt": enclosure.excvt,
-        "found_angle": enclosure.found_angle,
-        "con_found": enclosure.con_found,
-        "dock_l": enclosure.dock_l,
-        "dock_h": enclosure.dock_h,
-        "cover50": enclosure.cover50,
-        "cover": enclosure.cover,
-        "cushions": [
-            {"name": cushion.name, "h": cushion.h}
-            for cushion in sorted(enclosure.cushions, key=lambda item: (item.order_no, item.id))
-        ],
         "works": works,
     }
 
@@ -315,6 +303,13 @@ def foundation_dict(foundation: PcpFoundation) -> dict:
     component = foundation.components[0] if foundation.components else None
     return {
         "name": foundation.name,
+        # v10 起管道基础（砼基础开关 / 基础角度 / 垫层）并入地基原则
+        "con_found": bool(foundation.con_found),
+        "found_angle": int(foundation.found_angle),
+        "cushions": [
+            {"name": cushion.name, "h": cushion.h}
+            for cushion in sorted(foundation.cushions, key=lambda item: (item.order_no, item.id))
+        ],
         "replacements": [
             {"name": item.name, "h": item.h}
             for item in sorted(foundation.replacements, key=lambda row: (row.order_no, row.id))
@@ -334,7 +329,16 @@ def precipitation_dict(precipitation: PcpPrecipitation) -> dict:
             "gap": gap,
             "sides": sides,
         }
-    return {"name": precipitation.name, "wells": wells}
+    # v10 起挖填类型（开挖土质 / 回填材质）并入挖填降水原则
+    return {
+        "name": precipitation.name,
+        "excvt": precipitation.excvt,
+        "dock_l": precipitation.dock_l,
+        "dock_h": precipitation.dock_h,
+        "cover50": precipitation.cover50,
+        "cover": precipitation.cover,
+        "wells": wells,
+    }
 
 
 def width_dict(width: PcpWidth) -> dict:

@@ -238,9 +238,9 @@ class Element(Base):
 
     左右分设（v3）：``pe_name`` 存 :data:`LR_PE_TEXT` 占位时为分设模式，
     左右两条围护原则按名引用（``pe_left_name`` / ``pe_right_name``，两列
-    皆空 = 普通单原则模式，现状语义）；挖填类型 / 管道基础各自由
-    ``excvt_side`` / ``foundation_side`` 指定取哪一侧的原则计算；
-    左右支撑是否参与计算由 ``support_left`` / ``support_right`` 勾选。
+    皆空 = 普通单原则模式，现状语义）；挖填类型在挖填降水原则、管道基础在
+    地基原则里，均与左右围护无关，故不再需要取侧字段；左右支撑是否参与计算
+    由 ``support_left`` / ``support_right`` 勾选。
 
     合槽编组（v3）：``group_id`` 指向所属合槽组（父节点），组内 ``order_no``
     即沟槽从左到右的顺序；父节点本体是 :class:`TrenchGroup` 行，不持有工程量。
@@ -268,9 +268,6 @@ class Element(Base):
     #: 左侧 / 右侧支撑（Z 类公式）是否参与计算（左右分设模式）
     support_left: Mapped[bool] = mapped_column(Boolean, default=True)
     support_right: Mapped[bool] = mapped_column(Boolean, default=True)
-    #: 挖填类型 / 管道基础取哪一侧原则（"L"/"R"；仅左右分设模式有意义）
-    excvt_side: Mapped[str] = mapped_column(String(1), default="L")
-    foundation_side: Mapped[str] = mapped_column(String(1), default="L")
     #: 所属合槽组（父节点）；空 = 独立构件
     group_id: Mapped[int | None] = mapped_column(
         ForeignKey("trench_group.id", ondelete="CASCADE"), index=True, nullable=True
@@ -443,9 +440,9 @@ class ElementAtlasCandidate(Base):
     该组合没有数据（如砼管**砼基础表没有 150° 行**）。混凝土管 8 组都用，
     其他管材的 con/plain 两组值相同、界面只展示"不采用混凝土基础"的 4 列。
 
-    参数值（工作面加宽 / 垫层厚 / 基础厚三行参数）按当前围护原则的
+    参数值（工作面加宽 / 垫层厚 / 基础厚三行参数）按当前地基原则的
     ``con_found + found_angle`` 从这里自动选（:func:`unit_vm.match_atlas_candidates`）；
-    围护原则 / 管材类别变化时自动重新匹配，但候选行本身永不自动改写。
+    地基原则 / 管材类别变化时自动重新匹配，但候选行本身永不自动改写。
     """
 
     __tablename__ = "element_atlas_candidate"
@@ -454,7 +451,7 @@ class ElementAtlasCandidate(Base):
     element_id: Mapped[int] = mapped_column(
         ForeignKey("element.id", ondelete="CASCADE"), index=True
     )
-    #: 是否采用混凝土基础（对应围护原则 con_found）
+    #: 是否采用混凝土基础（对应地基原则 con_found）
     con_found: Mapped[bool] = mapped_column(Boolean, default=True)
     #: 基础角度 °（90 / 120 / 150 / 180）
     angle: Mapped[int] = mapped_column(Integer, default=120)
@@ -472,38 +469,21 @@ class ElementAtlasCandidate(Base):
 
 
 class PcpEnclosure(Base):
-    """围护原则 PE（对应旧版 mcPcpEnclosure）。
+    """围护原则 PE（对应旧版 mcPcpEnclosure），只保留围护做法相关内容。
 
-    旧版挂在围护原则下的降水参数与工作面/沟槽宽度表，v4 起独立成
-    :class:`PcpPrecipitation` / :class:`PcpWidth` 原则，本表只留开挖、回填
-    材质、基础与垫层等沟槽结构参数。
+    1.0 里围护原则囊括降水、工作面/沟槽宽度表、挖填材质、管道基础等大量参数；
+    2.0 逐项拆出：降水（并入:class:`PcpPrecipitation`）、工作面/沟槽宽度表
+    （:class:`PcpWidth`）、管道基础与垫层（:class:`PcpFoundation`）、
+    挖填类型（并入:class:`PcpPrecipitation`）都已独立成原则或挂到别的原则下。
+    本表只剩名称与围护做法列表（``works``）。
     """
 
     __tablename__ = "principle_enclosure"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(200), default="新围护原则")
-    #: 是否砼基础
-    con_found: Mapped[bool] = mapped_column(Boolean, default=True)
-    #: 开挖土质
-    excvt: Mapped[str] = mapped_column(String(50), default="Ⅲ类土")
-    #: 基础角度 °（120 / 180 …）
-    found_angle: Mapped[int] = mapped_column(Integer, default=120)
-    #: 坞塝：管道下半 / 上半回填材料
-    dock_l: Mapped[str] = mapped_column(String(50), default="中粗砂")
-    dock_h: Mapped[str] = mapped_column(String(50), default="中粗砂")
-    #: 管顶 50cm 以内回填材料
-    cover50: Mapped[str] = mapped_column(String(50), default="中粗砂")
-    #: 覆土材料
-    cover: Mapped[str] = mapped_column(String(50), default="素土")
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
-    cushions: Mapped[list["EnclosureCushion"]] = relationship(
-        back_populates="enclosure",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        order_by="EnclosureCushion.order_no",
-    )
     works: Mapped[list["EnclosureWork"]] = relationship(
         cascade="all, delete-orphan",
         passive_deletes=True,
@@ -515,39 +495,34 @@ class PcpEnclosure(Base):
         """做法列表（按 order_no）；计算时按此顺序取最后一个 min_depth ≤ 深度的做法。"""
         return sorted(self.works, key=lambda work: (work.order_no, work.id))
 
-class EnclosureCushion(Base):
-    """围护原则下的垫层 / 换填层（对应旧版 mcReplacement Cush）。
-
-    旧版围护原则只带一层垫层，这里按列表实现，语义一致。
-    """
-
-    __tablename__ = "enclosure_cushion"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    enclosure_id: Mapped[int] = mapped_column(
-        ForeignKey("principle_enclosure.id", ondelete="CASCADE"), index=True
-    )
-    name: Mapped[str] = mapped_column(String(100), default="中粗砂")
-    #: 厚度 mm（旧版 mcReplacement.H 默认 200）
-    h: Mapped[float] = mapped_column(Float, default=200.0)
-    order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-
-    enclosure: Mapped[PcpEnclosure] = relationship(back_populates="cushions")
-
 
 class PcpPrecipitation(Base):
-    """降水原则（旧版降水参数在围护原则里，v4 起独立成原则，与 PE/PF 同级）。"""
+    """挖填降水原则（旧版降水参数在围护原则里，v4 起独立成原则，与 PE/PF 同级）。
+
+    除降水井型参数外，v10 起还接收原本挂在围护原则里的**挖填类型**
+    （开挖土质与回填材质），这两组参数与左右围护不一致无关，独立成原则后
+    不必再区分取左 / 取右。
+    """
 
     __tablename__ = "principle_precipitation"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(200), default="新降水原则")
+    name: Mapped[str] = mapped_column(String(200), default="新挖填降水原则")
     #: 降水参数，列名即井型；值为 "elevation|gap|sides"（见 parse_precipitation）
     wet_soil: Mapped[str] = mapped_column(String(50), default="0|0|0")
     light_well: Mapped[str] = mapped_column(String(50), default="3.5|1.2|2")
     jet_well: Mapped[str] = mapped_column(String(50), default="6|2.5|2")
     big_well: Mapped[str] = mapped_column(String(50), default="10|10|2")
     deep_well: Mapped[str] = mapped_column(String(50), default="15|20|1")
+    #: 开挖土质（旧版 PE.excvt）
+    excvt: Mapped[str] = mapped_column(String(50), default="Ⅲ类土")
+    #: 坞塝：管道下半 / 上半回填材料
+    dock_l: Mapped[str] = mapped_column(String(50), default="中粗砂")
+    dock_h: Mapped[str] = mapped_column(String(50), default="中粗砂")
+    #: 管顶 50cm 以内回填材料
+    cover50: Mapped[str] = mapped_column(String(50), default="中粗砂")
+    #: 覆土材料
+    cover: Mapped[str] = mapped_column(String(50), default="素土")
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
@@ -590,14 +565,29 @@ class WidthItem(Base):
 
 
 class PcpFoundation(Base):
-    """地基原则 PF（对应旧版 mcPcpFoundation）：换填层列表 + 特殊地基构件。"""
+    """地基原则 PF（对应旧版 mcPcpFoundation）。
+
+    内容：管道基础（砼基础开关 / 基础角度 / 垫层） + 换填层列表 + 特殊地基构件。
+    其中管道基础与垫层原本挂在围护原则下，v10 起移到本表（与左右围护不一致
+    无关，独立成一条口径）。
+    """
 
     __tablename__ = "principle_foundation"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(200), default="新地基原则")
+    #: 是否砼基础（旧版 PE.con_found）
+    con_found: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: 基础角度 °（旧版 PE.found_angle；120 / 180 …）
+    found_angle: Mapped[int] = mapped_column(Integer, default=120)
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    cushions: Mapped[list["FoundationCushion"]] = relationship(
+        back_populates="foundation",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="FoundationCushion.order_no",
+    )
     replacements: Mapped[list["FoundationReplacement"]] = relationship(
         back_populates="foundation",
         cascade="all, delete-orphan",
@@ -611,6 +601,27 @@ class PcpFoundation(Base):
         order_by="Component.order_no",
         primaryjoin="PcpFoundation.id == Component.foundation_id",
     )
+
+
+class FoundationCushion(Base):
+    """地基原则下的垫层（对应旧版 mcReplacement Cush）。
+
+    旧版围护原则只带一层垫层，这里按列表实现，语义一致；v10 起随管道基础
+    一起挂到地基原则（PF）下。
+    """
+
+    __tablename__ = "foundation_cushion"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    foundation_id: Mapped[int] = mapped_column(
+        ForeignKey("principle_foundation.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(100), default="中粗砂")
+    #: 厚度 mm（旧版 mcReplacement.H 默认 200）
+    h: Mapped[float] = mapped_column(Float, default=200.0)
+    order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    foundation: Mapped[PcpFoundation] = relationship(back_populates="cushions")
 
 
 class FoundationReplacement(Base):

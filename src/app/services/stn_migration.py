@@ -52,9 +52,9 @@ from app.core.models.models import (
     Element,
     ElementParam,
     ElementQuantity,
-    EnclosureCushion,
     EnclosureLevel,
     EnclosureWork,
+    FoundationCushion,
     PcpEnclosure,
     PcpFoundation,
     PcpPrecipitation,
@@ -208,7 +208,7 @@ class LegacyProject:
     author: str = ""
     atlas_name: str = "06MS201-1"
     enclosures: list[_LegacyEnclosure] = field(default_factory=list)
-    foundations: list[tuple[str, list[tuple[str, float]], _LegacyComponent]] = field(default_factory=list)
+    foundations: list[tuple[str, list[tuple[str, float]], _LegacyComponent, dict | None]] = field(default_factory=list)
     segments: list[_LegacySegment] = field(default_factory=list)
     prices: list[tuple[str, float]] = field(default_factory=list)
 
@@ -356,14 +356,33 @@ def _parse_enclosure(node, version: str) -> _LegacyEnclosure:
     return enclosure
 
 
-def _parse_foundation(node) -> tuple[str, list[tuple[str, float]], _LegacyComponent]:
+def _parse_foundation(node) -> tuple[str, list[tuple[str, float]], _LegacyComponent, dict | None]:
+    """解析地基原则节点。
+
+    返回 ``(名称, 换填层列表, 特殊地基构件, 管道基础)``；管道基础形如
+    ``{"con_found": bool, "found_angle": int, "cushion": (name, h)}``，
+    旧 1.0 ``.stn`` 的地基节点不带这些字段（v10 前挂在围护原则下）时返回
+    ``None``；新版 ``.spcp`` 导出会带上，供导入时还原。
+    """
     name = _text(node, "Name", "新地基原则")
     replacements = [
         (_text(child, "Name", "中粗砂"), float(_text(child, "H", "200") or 200))
         for child in node.findall("msReplacement")
     ]
     foundation_component = _parse_component(node.find("Foundation/mcComponent"))
-    return name, replacements, foundation_component
+    pipe_base: dict | None = None
+    if node.find("ConFound") is not None or node.find("FoundAngle") is not None or node.find("Cush") is not None:
+        cushion_node = node.find("Cush/msReplacement")
+        cushion = (
+            _text(cushion_node, "Name", "中粗砂"),
+            float(_text(cushion_node, "H", "200") or 200),
+        ) if cushion_node is not None else None
+        pipe_base = {
+            "con_found": _text(node, "ConFound", "true").lower() != "false",
+            "found_angle": int(float(_text(node, "FoundAngle", "120") or 120)),
+            "cushion": cushion,
+        }
+    return name, replacements, foundation_component, pipe_base
 
 
 def _parse_segment(node) -> _LegacySegment:
@@ -480,10 +499,21 @@ def build_legacy_database(source: str | Path) -> MigrationReport:
         report.enclosures += 1
         report.principle_names.append(legacy_pe.name)
 
-    # 地基原则
-    for index, (name, replacements, component) in enumerate(legacy.foundations):
+    # 地基原则（管道基础 v10 起挂在围护原则名下，按旧 PE 值迁出）
+    pipe_source = legacy.enclosures[0] if legacy.enclosures else None
+    pipe_base = (
+        {
+            "con_found": pipe_source.con_found,
+            "found_angle": pipe_source.found_angle,
+            "cushion": pipe_source.cushion,
+        }
+        if pipe_source is not None
+        else None
+    )
+    for index, (name, replacements, component, _node_pipe_base) in enumerate(legacy.foundations):
         write_legacy_foundation(
-            session, (name, replacements, component), library, report, order_no=index
+            session, (name, replacements, component), library, report,
+            order_no=index, pipe_base=pipe_base,
         )
         report.foundations += 1
         report.principle_names.append(name)
@@ -574,7 +604,7 @@ def _pe_names(legacy: LegacyProject) -> set[str]:
 
 
 def _pf_names(legacy: LegacyProject) -> set[str]:
-    return {name for name, _replacements, _component in legacy.foundations}
+    return {entry[0] for entry in legacy.foundations}
 
 
 def _valid_principle_refs(
@@ -824,30 +854,28 @@ def write_legacy_enclosure(session, legacy_pe: _LegacyEnclosure, library, report
                            order_no: int = 0) -> PcpEnclosure:
     """把旧版围护原则（mcPcpEnclosure 解析结果）写入当前会话并返回。
 
-    迁移与 *.spcp 单原则导入共用；原则本体、垫层、做法/级别/构件全套写入。
+    迁移与 *.spcp 单原则导入共用；原则本体与做法/级别/构件全套写入。
     旧版挂在围护原则下的降水参数与宽度表，v4 起拆成与围护同名的独立
-    降水/面宽原则一并写入（旧 PE 名在其各自表内即原则名）。
+    降水/面宽原则一并写入（旧 PE 名在其各自表内即原则名）；v10 起原本挂在
+    围护原则下的挖填类型（开挖土质 / 回填材质）也并入该同名挖填降水原则，
+    管道基础与垫层则随 :func:`write_legacy_foundation` 落到地基原则（旧版
+    地基原则本身不带这些字段，由调用方按旧 PE 值传入 ``pipe_base``）。
     """
     from app.core.models.models import PRECIPITATION_COLUMNS
 
     report = report or MigrationReport()
-    enclosure = PcpEnclosure(
+    enclosure = PcpEnclosure(name=legacy_pe.name, order_no=order_no)
+    session.add(enclosure)
+    session.flush()
+    precipitation = PcpPrecipitation(
         name=legacy_pe.name,
-        con_found=legacy_pe.con_found,
+        order_no=order_no,
         excvt=legacy_pe.excvt,
-        found_angle=legacy_pe.found_angle,
         dock_l=legacy_pe.dock_l,
         dock_h=legacy_pe.dock_h,
         cover50=legacy_pe.cover50,
         cover=legacy_pe.cover,
-        order_no=order_no,
     )
-    enclosure.cushions.append(
-        EnclosureCushion(name=legacy_pe.cushion[0], h=legacy_pe.cushion[1], order_no=0)
-    )
-    session.add(enclosure)
-    session.flush()
-    precipitation = PcpPrecipitation(name=legacy_pe.name, order_no=order_no)
     for key in PRECIPITATION_COLUMNS:
         setattr(precipitation, key, legacy_pe.precipitation.get(key, _PRECIP_DEFAULT_TEXT[key]))
     session.add(precipitation)
@@ -896,15 +924,32 @@ def write_legacy_enclosure(session, legacy_pe: _LegacyEnclosure, library, report
 
 def write_legacy_foundation(session, legacy_pf: tuple[str, list[tuple[str, float]], _LegacyComponent],
                             library, report: MigrationReport | None = None,
-                            order_no: int = 0) -> PcpFoundation:
-    """把旧版地基原则（(名称, 换填层列表, 特殊地基构件)）写入当前会话并返回。"""
+                            order_no: int = 0, pipe_base: dict | None = None) -> PcpFoundation:
+    """把旧版地基原则（(名称, 换填层列表, 特殊地基构件)）写入当前会话并返回。
+
+    ``pipe_base`` 为 v10 起自旧版围护原则迁出的管道基础数据，形如
+    ``{"con_found": bool, "found_angle": int, "cushion": (name, h)}``；
+    旧版地基原则本身不带这些字段，由调用方按旧 PE 值传入。
+    """
     from app.core.models.models import FoundationReplacement
 
     report = report or MigrationReport()
     name, replacements, component = legacy_pf
-    foundation = PcpFoundation(name=name, order_no=order_no)
+    pipe_base = pipe_base or {}
+    foundation = PcpFoundation(
+        name=name,
+        order_no=order_no,
+        con_found=bool(pipe_base.get("con_found", True)),
+        found_angle=int(pipe_base.get("found_angle", 120)),
+    )
     session.add(foundation)
     session.flush()
+    cushion = pipe_base.get("cushion")
+    if cushion:
+        cushion_name, cushion_h = cushion
+        session.add(
+            FoundationCushion(foundation_id=foundation.id, name=cushion_name, h=cushion_h, order_no=0)
+        )
     for replace_index, (material, thickness) in enumerate(replacements):
         session.add(
             FoundationReplacement(foundation_id=foundation.id, name=material, h=thickness,

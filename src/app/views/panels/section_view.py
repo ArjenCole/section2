@@ -39,6 +39,7 @@ from app.core.models.models import (
     Element,
     PcpEnclosure,
     PcpFoundation,
+    PcpPrecipitation,
     PcpWidth,
     TrenchGroup,
 )
@@ -330,8 +331,9 @@ def _build_scene(
     pw = session.scalars(select(PcpWidth).where(PcpWidth.name == pw_name)).first() if pw_name else None
     if pw is None:
         pw = _first_of(session, PcpWidth)
-    info = build_element_input(element, pe, pf, pw=pw)
-    at = resolve_atlas(build_atlas_query(info, pe, pw))
+    pp = _precipitation_for(session, element)
+    info = build_element_input(element, pe, pf, pp=pp, pw=pw)
+    at = resolve_atlas(build_atlas_query(info, pf, pw))
     c1_original = at.c1
     if info.category in (CATEGORY_JACKING, CATEGORY_PULLING):
         # 旧版 mcE4/mcE5：不画沟槽，只按管径 + 换填厚自适应缩放画管体
@@ -368,21 +370,33 @@ def _first_of(session, model):
     return session.scalars(_select(model).order_by(model.order_no, model.id)).first()
 
 
+def _precipitation_for(session, element) -> PcpPrecipitation | None:
+    """构件引用的挖填降水原则（失效回退第一条），与计算引擎同口径。"""
+    name = element.pp_name
+    pp = (
+        session.scalars(select(PcpPrecipitation).where(PcpPrecipitation.name == name)).first()
+        if name
+        else None
+    )
+    return pp or _first_of(session, PcpPrecipitation)
+
+
 def _build_trench_scene(
     info: ElementInput, pe: PcpEnclosure, pf: PcpFoundation, at, c1_original: float,
     width: int, height: int,
 ) -> tuple[_Scene | None, str]:
     """沟槽断面（直埋/包封/箱涵/管廊）：旧版 PaintBackFilled + PaintOntology。"""
-    c1_display = c1_original if c1_original != 0 else cushion_thickness(pe)
+    # 垫层 / 管道基础取地基原则 pf（v10 起）；回填材质取挖填降水原则 info.pp
+    c1_display = c1_original if c1_original != 0 else cushion_thickness(pf)
     at_display = replace(at, c1=c1_display)
     depth = info.depth + groove.mm2m(foundation_thickness(pf) + at_display.t + c1_display)
     work = choice_work(pe, depth)
     if work is None:
         return None, "该围护原则没有任何围护分级，无法绘制断面。"
 
-    cushion_name = pe.cushions[0].name if pe.cushions else "中粗砂"
+    cushion_name = pf.cushions[0].name if pf.cushions else "中粗砂"
     ad_display = atlas_dims(info, at_display)  # 图集参数的算式伴随（这里只取数值）
-    layers = groove.backfill_layers(pe, pf, ad_display, info.size_h_dim, dim(depth), cushion_name)
+    layers = groove.backfill_layers(info.pp, pf, ad_display, info.size_h_dim, dim(depth), cushion_name)
     bottom = groove.groove_width(ad_display, info.size_b_dim).v
     segments = _walk_layers(list(work.levels), layers, bottom, depth)
     total_h = segments[-1].h_current + segments[-1].h_delta if segments else 0.0
@@ -511,12 +525,11 @@ def _build_trench_scene_lr(
         if pw_name
         else None
     ) or _first_of(session, PcpWidth)
-    pe_found = pe_r if element.foundation_side == "R" else pe_l
-    pe_excvt = pe_r if element.excvt_side == "R" else pe_l
-    info = build_element_input(element, pe_found, pf, pw=pw)
-    at = resolve_atlas(build_atlas_query(info, pe_found, pw))
+    # 垫层 / 管道基础取地基原则 pf、回填材质取挖填降水原则（v10 起不再分侧）
+    info = build_element_input(element, pe_l, pf, pp=_precipitation_for(session, element), pw=pw)
+    at = resolve_atlas(build_atlas_query(info, pf, pw))
     c1_original = at.c1
-    c1_display = c1_original if c1_original != 0 else cushion_thickness(pe_found)
+    c1_display = c1_original if c1_original != 0 else cushion_thickness(pf)
     at_display = replace(at, c1=c1_display)
     depth = info.depth + groove.mm2m(foundation_thickness(pf) + at_display.t + c1_display)
     work_l = choice_work(pe_l, depth)
@@ -525,9 +538,9 @@ def _build_trench_scene_lr(
         return None, "左右任一侧围护原则没有任何围护分级，无法绘制断面。"
 
     ad_display = atlas_dims(info, at_display)
-    cushion_name = pe_found.cushions[0].name if pe_found.cushions else "中粗砂"
+    cushion_name = pf.cushions[0].name if pf.cushions else "中粗砂"
     layers = groove.backfill_layers(
-        pe_excvt, pf, ad_display, info.size_h_dim, dim(depth), cushion_name
+        info.pp, pf, ad_display, info.size_h_dim, dim(depth), cushion_name
     )
     bottom = groove.groove_width(ad_display, info.size_b_dim).v
     segments_l, segments_r = _walk_layers_sided(
@@ -589,14 +602,11 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
         ) or _first_of(session, PcpWidth)
         if pf is None or pw is None:
             return None, f"构件「{element.name}」缺少地基 / 面宽原则。"
-        info = build_element_input(element, None, pf, pw=pw)
-        # 分设构件的材质 / 基础原则 = 基础取侧（编组时恒 "R"）
-        pe_found = info.pe or _first_of(session, PcpEnclosure)
-        if pe_found is None:
-            return None, f"构件「{element.name}」缺少围护原则。"
-        at = resolve_atlas(build_atlas_query(info, pe_found, pw))
+        info = build_element_input(element, None, pf, pp=_precipitation_for(session, element), pw=pw)
+        # 垫层 / 管道基础取地基原则 pf（v10 起；图集查询同计算引擎）
+        at = resolve_atlas(build_atlas_query(info, pf, pw))
         ad = atlas_dims(info, at)
-        c1_display = at.c1 if at.c1 != 0 else cushion_thickness(pe_found)
+        c1_display = at.c1 if at.c1 != 0 else cushion_thickness(pf)
         depth = info.depth + groove.mm2m(foundation_thickness(pf) + ad.t.v + c1_display)
         base_width = (info.size_b_dim + scale_sum((ad.t, ad.a), 2.0) / 1000).v
         snapshots.append(
@@ -770,7 +780,7 @@ def _ontology_shapes(info: ElementInput, at, c1: float) -> list[_Shape]:
         return shapes
     if category == CATEGORY_BURIED:
         dn = info.pipes[0].dn
-        if pe_con_found(info) and is_concrete_pipe(info) and "预应力" not in info.pipes[0].mat:
+        if pf_con_found(info) and is_concrete_pipe(info) and "预应力" not in info.pipes[0].mat:
             width = info.size_b * 1000 + at.t * 2 + at.a * 2
             shapes.append(_Shape("Rectangle", -width / 2.0, 0.0, width, at.c1 + at.c2))
         shapes.append(_Shape("Ellipse", -dn / 2.0 - at.t, at.c1, dn + 2 * at.t, dn + 2 * at.t))
@@ -803,9 +813,9 @@ def _ontology_shapes(info: ElementInput, at, c1: float) -> list[_Shape]:
     return shapes
 
 
-def pe_con_found(info: ElementInput) -> bool:
-    """围护原则是否采用砼基础（旧版 PE.ConFound，从 info.pe 取）。"""
-    return bool(info.pe is not None and info.pe.con_found)
+def pf_con_found(info: ElementInput) -> bool:
+    """地基原则是否采用砼基础（旧版 PE.ConFound，v10 起从 info.pf 取）。"""
+    return bool(info.pf is not None and info.pf.con_found)
 
 
 def _atlas_text(at, c1_display: float) -> str:

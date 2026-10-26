@@ -16,11 +16,11 @@ CATEGORY_ENUM: list[str] = [CATEGORY_NAMES[value] for value in CATEGORY_CHOICES]
 PRINCIPLE_KINDS: dict[str, str] = {
     "enclosure": "沟槽围护原则",
     "foundation": "地基处理原则",
-    "precipitation": "降水原则",
+    "precipitation": "挖填降水原则",
     "width": "面宽原则",
 }
 
-#: 开挖土质枚举（围护原则 excvt）
+#: 开挖土质枚举（挖填降水原则 excvt，v10 起由围护原则移入）
 EXCVT_CHOICES: tuple[str, ...] = (
     "Ⅰ、Ⅱ类土",
     "Ⅲ类土",

@@ -101,7 +101,7 @@ class LegacyImportDialog(FramelessDialog):
     def _show_preview(self) -> None:
         legacy = self._legacy
         names = [enclosure.name for enclosure in legacy.enclosures]
-        names += [name for name, _r, _c in legacy.foundations]
+        names += [entry[0] for entry in legacy.foundations]
         self._summary.setPlainText(
             f"源文件：{self._source}\n"
             f"旧版程序版本：{legacy.version or '未知'}\n"

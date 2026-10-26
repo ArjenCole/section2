@@ -45,9 +45,9 @@ from app.core.models.models import (
     BasicInfo,
     Component,
     ComponentParam,
-    EnclosureCushion,
     EnclosureLevel,
     EnclosureWork,
+    FoundationCushion,
     PcpEnclosure,
     PcpFoundation,
     PcpPrecipitation,
@@ -91,15 +91,15 @@ class NewProjectSpec:
     segment_names: list[str] = field(default_factory=lambda: ["新建标段"])
     #: 每个标段下默认建的单位工程名称（对应旧版“涵盖专业”勾选项）
     unit_names: list[str] = field(default_factory=list)
-    #: 默认围护原则
+    #: 默认围护原则（v10 起只剩名称与围护做法）
     enclosure_name: str = "默认围护原则"
-    enclosure_excvt: str = "Ⅲ类土"
-    enclosure_found_angle: int = 120
-    enclosure_con_found: bool = True
-    #: 默认地基原则
+    #: 默认地基原则（含管道基础：砼基础开关 / 基础角度 / 垫层）
     foundation_name: str = "默认地基原则"
-    #: 默认降水 / 面宽原则（v4 起与围护、地基同级）
-    precipitation_name: str = "默认降水原则"
+    foundation_found_angle: int = 120
+    foundation_con_found: bool = True
+    #: 默认挖填降水 / 面宽原则（v4 起与围护、地基同级）
+    precipitation_name: str = "默认挖填原则"
+    precipitation_excvt: str = "Ⅲ类土"
     width_name: str = "默认面宽原则"
 
 
@@ -723,7 +723,6 @@ def create_enclosure(name: str = "新围护原则") -> PcpEnclosure | None:
         name=unique_principle_name(name or "新围护原则", enclosure_names()),
         order_no=next_order_no(PcpEnclosure),
     )
-    enclosure.cushions.append(EnclosureCushion(name="中粗砂", h=200.0, order_no=0))
     session.add(enclosure)
     orm.session().flush()
     new_enclosure_work(session, enclosure, library, order_no=0)
@@ -731,13 +730,13 @@ def create_enclosure(name: str = "新围护原则") -> PcpEnclosure | None:
     return enclosure
 
 
-def create_precipitation(name: str = "新降水原则") -> PcpPrecipitation | None:
-    """新建降水原则（井型取旧版构造函数默认值）。重名自动加后缀。"""
+def create_precipitation(name: str = "新挖填降水原则") -> PcpPrecipitation | None:
+    """新建挖填降水原则（井型取旧版构造函数默认值，挖填类型取列默认）。重名自动加后缀。"""
     if not orm.is_open():
         return None
     session = orm.session()
     precipitation = PcpPrecipitation(
-        name=unique_principle_name(name or "新降水原则", precipitation_names()),
+        name=unique_principle_name(name or "新挖填降水原则", precipitation_names()),
         order_no=next_order_no(PcpPrecipitation),
     )
     for key, (elevation, gap, sides) in PRECIPITATION_DEFAULTS.items():
@@ -764,14 +763,17 @@ def create_width(name: str = "新面宽原则") -> PcpWidth | None:
 
 
 def create_foundation(name: str = "新地基原则") -> PcpFoundation | None:
-    """新建地基原则（换填层为空 + 特殊地基构件“无”）。重名自动加后缀。"""
+    """新建地基原则（管道基础默认 + 垫层“中粗砂 200mm” + 换填层为空 + 特殊地基“无”）。"""
     if not orm.is_open():
         return None
     session = orm.session()
     foundation = PcpFoundation(
         name=unique_principle_name(name or "新地基原则", foundation_names()),
         order_no=next_order_no(PcpFoundation),
+        con_found=True,
+        found_angle=120,
     )
+    foundation.cushions.append(FoundationCushion(name="中粗砂", h=200.0, order_no=0))
     session.add(foundation)
     orm.session().flush()
     attach_foundation_component(session, foundation, component_library())
@@ -951,29 +953,23 @@ _PRECIPITATION_XML_KEYS = (
     ("big_well", "bigwell"),
     ("deep_well", "deepwell"),
 )
+#: 挖填类型字段（v10 起并入挖填降水原则；拼写沿用旧版围护原则）
+_EXCAVATION_XML_KEYS = (
+    ("excvt", "Excvt", "Ⅲ类土"),
+    ("dock_l", "DockL", "中粗砂"),
+    ("dock_h", "DockH", "中粗砂"),
+    ("cover50", "Cover50", "中粗砂"),
+    ("cover", "Cover", "素土"),
+)
 
 
 def export_enclosure_spcp(enclosure_id: int, path: str | Path) -> Path:
-    """导出围护原则为 *.spcp（旧版 mcPcpEnclosure.toXML 格式；降水/面宽已独立）。"""
+    """导出围护原则为 *.spcp（v10 起只剩名称与围护做法；降水/面宽/挖填/基础已独立）。"""
     enclosure = orm.session().get(PcpEnclosure, enclosure_id)
     if enclosure is None:
         raise ProjectIoError("围护原则不存在。")
     root = ET.Element(_SPCP_PE_ROOT)
     SubElement(root, "Name").text = enclosure.name
-    SubElement(root, "ConFound").text = "true" if enclosure.con_found else "false"
-    SubElement(root, "Excvt").text = enclosure.excvt
-    SubElement(root, "FoundAngle").text = str(enclosure.found_angle)
-    SubElement(root, "Count").text = str(max(1, len(enclosure.cushions)))
-    cushion = root.makeelement("Cush", {})
-    for item in enclosure.cushions:
-        replacement = SubElement(cushion, "msReplacement")
-        SubElement(replacement, "Name").text = item.name
-        SubElement(replacement, "H").text = _number_text(item.h)
-    root.append(cushion)
-    SubElement(root, "DockL").text = enclosure.dock_l
-    SubElement(root, "DockH").text = enclosure.dock_h
-    SubElement(root, "Cover50").text = enclosure.cover50
-    SubElement(root, "Cover").text = enclosure.cover
     for work in enclosure.works:
         work_node = SubElement(root, "mcEnclosure")
         SubElement(work_node, "MinDepth").text = _number_text(work.min_depth)
@@ -992,12 +988,20 @@ def export_enclosure_spcp(enclosure_id: int, path: str | Path) -> Path:
 
 
 def export_foundation_spcp(foundation_id: int, path: str | Path) -> Path:
-    """导出地基处理原则为 *.spcp（旧版 mcPcpFoundation.toXML 格式）。"""
+    """导出地基处理原则为 *.spcp（v10 起含管道基础：砼基础开关 / 角度 / 垫层）。"""
     foundation = orm.session().get(PcpFoundation, foundation_id)
     if foundation is None:
         raise ProjectIoError("地基处理原则不存在。")
     root = ET.Element(_SPCP_PF_ROOT)
     SubElement(root, "Name").text = foundation.name
+    SubElement(root, "ConFound").text = "true" if foundation.con_found else "false"
+    SubElement(root, "FoundAngle").text = str(foundation.found_angle)
+    cushion = root.makeelement("Cush", {})
+    for item in foundation.cushions:
+        replacement = SubElement(cushion, "msReplacement")
+        SubElement(replacement, "Name").text = item.name
+        SubElement(replacement, "H").text = _number_text(item.h)
+    root.append(cushion)
     for item in foundation.replacements:
         replacement = SubElement(root, "msReplacement")
         SubElement(replacement, "Name").text = item.name
@@ -1009,13 +1013,15 @@ def export_foundation_spcp(foundation_id: int, path: str | Path) -> Path:
 
 
 def export_precipitation_spcp(precipitation_id: int, path: str | Path) -> Path:
-    """导出降水原则为 *.spcp（降水独立成原则后的 XML；井型字段沿用旧版拼写）。"""
+    """导出挖填降水原则为 *.spcp（井型 + v10 起并入的挖填类型，拼写沿用旧版）。"""
     precipitation = orm.session().get(PcpPrecipitation, precipitation_id)
     if precipitation is None:
         raise ProjectIoError("降水原则不存在。")
     root = ET.Element(_SPCP_PP_ROOT)
     SubElement(root, "Name").text = precipitation.name
     for field, tag in _PRECIPITATION_XML_KEYS:
+        SubElement(root, tag).text = getattr(precipitation, field)
+    for field, tag, _default in _EXCAVATION_XML_KEYS:
         SubElement(root, tag).text = getattr(precipitation, field)
     return _write_spcp(root, path)
 
@@ -1066,17 +1072,21 @@ def import_spcp(path: str | Path) -> tuple[str, str]:
         commit()
         return "enclosure", enclosure.name
     if root.tag == _SPCP_PF_ROOT:
-        legacy = stn_migration._parse_foundation(root)
-        legacy = (unique_principle_name(legacy[0], foundation_names()), legacy[1], legacy[2])
-        foundation = stn_migration.write_legacy_foundation(session, legacy, library,
-                                                           order_no=next_order_no(PcpFoundation))
+        name, replacements, component, pipe_base = stn_migration._parse_foundation(root)
+        name = unique_principle_name(name, foundation_names())
+        foundation = stn_migration.write_legacy_foundation(
+            session, (name, replacements, component), library,
+            order_no=next_order_no(PcpFoundation), pipe_base=pipe_base,
+        )
         commit()
         return "foundation", foundation.name
     if root.tag == _SPCP_PP_ROOT:
-        name = unique_principle_name(_text_of(root, "Name", "导入降水原则"), precipitation_names())
+        name = unique_principle_name(_text_of(root, "Name", "导入挖填降水原则"), precipitation_names())
         precipitation = PcpPrecipitation(name=name, order_no=next_order_no(PcpPrecipitation))
         for field, tag in _PRECIPITATION_XML_KEYS:
             setattr(precipitation, field, _text_of(root, tag, "0|0|0"))
+        for field, tag, default in _EXCAVATION_XML_KEYS:
+            setattr(precipitation, field, _text_of(root, tag, default))
         session.add(precipitation)
         commit()
         return "precipitation", precipitation.name
@@ -1200,30 +1210,36 @@ def _ensure_basic_info() -> None:
 def _seed_default_principles(session, spec: NewProjectSpec) -> None:
     """新工程按向导选定的名称建默认原则（复刻旧版构造函数的初始状态）。
 
-    降水 / 面宽 v4 起是独立原则：围护只带结构与垫层，宽度表挂在面宽原则下。
+    围护 / 地基 / 挖填降水 / 面宽 v10 起各司其职：围护只带围护做法，管道基础
+    与垫层挂在地基原则下，挖填类型与降水井型挂在挖填降水原则下，宽度表挂在
+    面宽原则下。
     """
     library = component_library()
     work_widths, groove_bs = default_width_tables()
 
     enclosure = PcpEnclosure(
         name=spec.enclosure_name or "默认围护原则",
-        excvt=spec.enclosure_excvt,
-        found_angle=int(spec.enclosure_found_angle),
-        con_found=bool(spec.enclosure_con_found),
         order_no=0,
     )
-    enclosure.cushions.append(EnclosureCushion(name="中粗砂", h=200.0, order_no=0))
     session.add(enclosure)
     session.flush()
     new_enclosure_work(session, enclosure, library, order_no=0)
 
-    foundation = PcpFoundation(name=spec.foundation_name or "默认地基原则", order_no=0)
+    foundation = PcpFoundation(
+        name=spec.foundation_name or "默认地基原则",
+        con_found=bool(spec.foundation_con_found),
+        found_angle=int(spec.foundation_found_angle),
+        order_no=0,
+    )
+    foundation.cushions.append(FoundationCushion(name="中粗砂", h=200.0, order_no=0))
     session.add(foundation)
     session.flush()
     attach_foundation_component(session, foundation, library)
 
     precipitation = PcpPrecipitation(
-        name=spec.precipitation_name or "默认降水原则", order_no=0
+        name=spec.precipitation_name or "默认挖填原则",
+        excvt=spec.precipitation_excvt or "Ⅲ类土",
+        order_no=0,
     )
     for key, (elevation, gap, sides) in PRECIPITATION_DEFAULTS.items():
         setattr(precipitation, key, format_precipitation(elevation, gap, sides))

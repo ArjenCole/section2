@@ -2,15 +2,15 @@
 
 候选参数（"候选参数列"）是构件库资产的一次性快照，存在
 ``element_atlas_candidate`` 表，允许用户改、**永不自动改写**；参数值
-（工作面加宽 / 垫层厚 / 基础厚三行参数）按当前围护原则的
+（工作面加宽 / 垫层厚 / 基础厚三行参数）按当前地基原则的
 ``con_found + found_angle`` 从候选里自动选组写进来。
 
 自动匹配的触发点（都在数据改动处调用 :func:`match_atlas_candidates`）：
 
 * 构件库插入条目 / AI 新增 / 空白新增（候选缺失时现场查图集补一次）；
-* 构件的围护原则切换（``update_element``）；
-* 围护原则本身修改（``principle_edit.apply_enclosure_fields`` →
-  :func:`match_for_enclosure`，对引用该原则的直埋构件逐条重匹配）；
+* 构件的围护或地基原则切换（``update_element``）；
+* 地基原则本身修改（``principle_edit.apply_foundation`` →
+  :func:`match_for_foundation`，对引用该原则的直埋构件逐条重匹配）；
 * 管材类别修改（``update_pipe``，混凝土 ↔ 非混凝土会换候选组）；
 * 候选格被手改（``update_atlas_candidate``）。
 
@@ -35,6 +35,7 @@ from app.core.models.models import (
     ElementAtlasCandidate,
     ElementParam,
     PcpEnclosure,
+    PcpFoundation,
 )
 from app.core.param_naming import (
     PARAM_A_NAME,
@@ -48,14 +49,14 @@ from app.services import project_io
 
 
 def _principles(element: Element):
-    """围护 / 面宽原则（同引擎：按引用名解析，失效取第一条）。"""
+    """围护 / 地基 / 面宽原则（同引擎：按引用名解析，失效取第一条）。"""
     from app.core.calc.engine import resolve_element_principles
 
-    pe, _pf, _pp, pw = resolve_element_principles(element, orm.session())
-    return pe, pw
+    pe, pf, _pp, pw = resolve_element_principles(element, orm.session())
+    return pe, pf, pw
 
 
-def _bare_query(element: Element, pe: PcpEnclosure, pw):
+def _bare_query(element: Element, pe: PcpEnclosure, pf: PcpFoundation, pw):
     """强制查表的图集查询：清掉参数覆盖值、管道壁厚留空（否则命中快照短路）。
 
     ``strict_angle=True``：图集没有该角度的行时按"无数据"记空，不把兜底就
@@ -64,16 +65,16 @@ def _bare_query(element: Element, pe: PcpEnclosure, pw):
     from app.core.calc.engine import build_atlas_query, build_element_input
     from app.services.atlas import PipeSpec
 
-    info = build_element_input(element, pe, None)
-    query = build_atlas_query(info, pe, pw)
+    info = build_element_input(element, pe, pf)
+    query = build_atlas_query(info, pf, pw)
     query.a = query.c1 = query.c2 = None
     query.pipes = [type(p)(mat=p.mat, dn=p.dn, cat=p.cat) for p in info.pipes]
     query.strict_angle = True
     return query
 
 
-def _match_con_found(element: Element, pe: PcpEnclosure) -> bool:
-    """参与匹配的砼基础开关。
+def _match_con_found(element: Element, pf: PcpFoundation) -> bool:
+    """参与匹配的砼基础开关（取地基原则 ``pf.con_found``）。
 
     非混凝土管（金属 / 化学建材）的图集查表不看砼基础开关，界面也只给
     "不采用混凝土基础"的 4 列（见 ``atlas_candidates.columns_for``）。匹配
@@ -83,9 +84,9 @@ def _match_con_found(element: Element, pe: PcpEnclosure) -> bool:
     from app.core.pipe_category import is_concrete
 
     if not element.pipes:
-        return bool(pe.con_found)
+        return bool(pf.con_found)
     pipe = element.pipes[0]
-    return bool(pe.con_found) if is_concrete(pipe.cat, mat=pipe.mat) else False
+    return bool(pf.con_found) if is_concrete(pipe.cat, mat=pipe.mat) else False
 
 
 def _has_pipes(element: Element) -> bool:
@@ -117,12 +118,12 @@ def ensure_atlas_candidates(element: Element) -> bool:
         return False
     if not _has_pipes(element):
         return False
-    pe, pw = _principles(element)
-    if pe is None:
+    pe, pf, pw = _principles(element)
+    if pf is None:
         return False
     for con_found in (True, False):
         for angle in CANDIDATE_ANGLES:
-            query = _bare_query(element, pe, pw)
+            query = _bare_query(element, pe, pf, pw)
             query.con_found = con_found
             query.found_angle = int(angle)
             at = resolve_atlas(query)
@@ -141,7 +142,7 @@ def ensure_atlas_candidates(element: Element) -> bool:
 
 
 def match_atlas_candidates(element: Element, *, commit: bool = True) -> bool:
-    """按当前围护原则自动选组，把 a / C1 / C2 写进参数行。
+    """按当前地基原则自动选组，把 a / C1 / C2 写进参数行。
 
     只对直埋构件生效（其他类别的参数值仍由用户自由编辑）；候选行缺失时先
     补（见 :func:`ensure_atlas_candidates`）。选组顺序见
@@ -154,12 +155,12 @@ def match_atlas_candidates(element: Element, *, commit: bool = True) -> bool:
     """
     if element.category != CATEGORY_BURIED:
         return False
-    pe, _pw = _principles(element)
-    if pe is None:
+    _pe, pf, _pw = _principles(element)
+    if pf is None:
         return False
     ensure_atlas_candidates(element)
     row, _level = select_candidate(
-        element.atlas_candidates, _match_con_found(element, pe), int(pe.found_angle)
+        element.atlas_candidates, _match_con_found(element, pf), int(pf.found_angle)
     )
     values = (
         {PARAM_T_NAME: None, PARAM_A_NAME: None, PARAM_C1_NAME: None, PARAM_C2_NAME: None}
@@ -215,19 +216,19 @@ def selected_combo(element: Element) -> tuple[str | None, str | None]:
     """
     if element.category != CATEGORY_BURIED or not element.atlas_candidates:
         return None, None
-    pe, _pw = _principles(element)
-    if pe is None:
+    _pe, pf, _pw = _principles(element)
+    if pf is None:
         return None, None
     row, level = select_candidate(
-        element.atlas_candidates, _match_con_found(element, pe), int(pe.found_angle)
+        element.atlas_candidates, _match_con_found(element, pf), int(pf.found_angle)
     )
     if row is None:
         return None, None
     return combo_key(row.con_found, row.angle), level
 
 
-def match_for_enclosure(enclosure_name: str) -> int:
-    """围护原则被修改后，对引用它的直埋构件逐条重匹配（原则面板保存时调用）。
+def match_for_foundation(foundation_name: str) -> int:
+    """地基原则被修改后，对引用它的直埋构件逐条重匹配（原则面板保存时调用）。
 
     返回重新匹配的构件数。匹配是"从候选选组"，不改动候选本身。
     """
@@ -239,7 +240,7 @@ def match_for_enclosure(enclosure_name: str) -> int:
             select(Element)
             .where(
                 Element.category == CATEGORY_BURIED,
-                Element.pe_name == enclosure_name,
+                Element.pf_name == foundation_name,
             )
             .order_by(Element.order_no, Element.id)
         )
@@ -267,6 +268,6 @@ def _expire(element: Element) -> None:
 __all__ = [
     "ensure_atlas_candidates",
     "match_atlas_candidates",
-    "match_for_enclosure",
+    "match_for_foundation",
     "selected_combo",
 ]

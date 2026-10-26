@@ -66,20 +66,17 @@ def tool_get_principle_detail(arguments: dict) -> dict:
     return {"ok": True, "data": _detail(kind, obj)}
 
 
+#: 管道基础（v10 起归地基原则）与挖填类型（v10 起归挖填降水原则）的字段名
+_FOUNDATION_FIELDS = ("con_found", "found_angle")
+_EXCAVATION_FIELDS = ("excvt", "dock_l", "dock_h", "cover50", "cover")
+
+
 def tool_create_enclosure(arguments: dict) -> dict:
     require_open()
     name = str(arguments.get("name") or "新围护原则")
     enclosure = project_io.create_enclosure(name)
     if enclosure is None:
         raise ToolError("新建围护原则失败：请确认已打开工程。")
-    fields = {
-        key: arguments[key]
-        for key in ("excvt", "found_angle", "con_found", "dock_l", "dock_h", "cover50", "cover")
-        if arguments.get(key) is not None
-    }
-    cushions = arguments.get("cushions")
-    if fields or cushions is not None:
-        call_edit(principle_edit.apply_enclosure_fields, enclosure.id, fields, cushions)
     works = arguments.get("works")
     if works is not None:
         call_edit(principle_edit.apply_enclosure_works, enclosure.id, works)
@@ -93,23 +90,31 @@ def tool_create_foundation(arguments: dict) -> dict:
     foundation = project_io.create_foundation(name)
     if foundation is None:
         raise ToolError("新建地基原则失败：请确认已打开工程。")
+    fields = {key: arguments[key] for key in _FOUNDATION_FIELDS if arguments.get(key) is not None}
     layers = arguments.get("layers")
     component = arguments.get("component")
-    if layers is not None or component is not None:
-        call_edit(principle_edit.apply_foundation, foundation.id, layers, component)
+    cushions = arguments.get("cushions")
+    if fields or layers is not None or component is not None or cushions is not None:
+        call_edit(
+            principle_edit.apply_foundation, foundation.id,
+            layers, component, fields or None, cushions,
+        )
     _notify(renamed=True)
     return {"ok": True, "data": foundation_dict(foundation)}
 
 
 def tool_create_precipitation(arguments: dict) -> dict:
     require_open()
-    name = str(arguments.get("name") or "新降水原则")
+    name = str(arguments.get("name") or "新挖填降水原则")
     precipitation = project_io.create_precipitation(name)
     if precipitation is None:
-        raise ToolError("新建降水原则失败：请确认已打开工程。")
+        raise ToolError("新建挖填降水原则失败：请确认已打开工程。")
     wells = arguments.get("wells")
     if wells:
         call_edit(principle_edit.apply_precipitation_wells, precipitation.id, wells)
+    fields = {key: arguments[key] for key in _EXCAVATION_FIELDS if arguments.get(key) is not None}
+    if fields:
+        call_edit(principle_edit.apply_precipitation_excavation, precipitation.id, fields)
     _notify(renamed=True)
     return {"ok": True, "data": precipitation_dict(precipitation)}
 
@@ -169,20 +174,32 @@ def tool_delete_principle(arguments: dict) -> dict:
                                  "merged_into": replacement or "（自动选择）"}}
 
 
-def tool_set_enclosure_fields(arguments: dict) -> dict:
+def tool_set_foundation_fields(arguments: dict) -> dict:
+    """修改地基原则的管道基础字段（砼基础开关 / 基础角度 / 垫层整表）。"""
     require_open()
-    enclosure = find_principle("enclosure", arguments.get("name"))
-    fields = {
-        key: arguments[key]
-        for key in ("excvt", "found_angle", "con_found", "dock_l", "dock_h", "cover50", "cover")
-        if arguments.get(key) is not None
-    }
+    foundation = find_principle("foundation", arguments.get("name"))
+    fields = {key: arguments[key] for key in _FOUNDATION_FIELDS if arguments.get(key) is not None}
     cushions = arguments.get("cushions")
     if not fields and cushions is None:
         raise ToolError("没有给出要修改的字段。")
-    call_edit(principle_edit.apply_enclosure_fields, enclosure.id, fields, cushions)
+    call_edit(
+        principle_edit.apply_foundation, foundation.id,
+        None, None, fields or None, cushions,
+    )
     _notify()
-    return {"ok": True, "data": enclosure_dict(enclosure)}
+    return {"ok": True, "data": foundation_dict(foundation)}
+
+
+def tool_set_precipitation_excavation(arguments: dict) -> dict:
+    """修改挖填降水原则的「挖填类型」字段（开挖土质 / 坞塝 / 覆土）。"""
+    require_open()
+    precipitation = find_principle("precipitation", arguments.get("name"))
+    fields = {key: arguments[key] for key in _EXCAVATION_FIELDS if arguments.get(key) is not None}
+    if not fields:
+        raise ToolError("没有给出要修改的字段。")
+    call_edit(principle_edit.apply_precipitation_excavation, precipitation.id, fields)
+    _notify()
+    return {"ok": True, "data": precipitation_dict(precipitation)}
 
 
 def tool_set_enclosure_works(arguments: dict) -> dict:
@@ -363,24 +380,21 @@ def register(registry: ToolRegistry) -> None:
     )
     registry.register(
         Tool(
-            "create_enclosure", "新建围护原则（可一次提交顶部字段/垫层/做法表）。写操作。",
+            "create_enclosure", "新建围护原则（可一次提交做法表）。写操作。",
             {"type": "object", "properties": {
                 "name": {"type": "string"},
-                "excvt": {"type": "string"}, "found_angle": {"type": "integer"},
-                "con_found": {"type": "boolean"}, "dock_l": {"type": "string"},
-                "dock_h": {"type": "string"}, "cover50": {"type": "string"},
-                "cover": {"type": "string"},
-                "cushions": {"type": "array", "items": {"type": "object"},
-                             "description": "[{name, h}] 垫层"},
                 "works": _WORKS_SCHEMA}, "required": ["name"]},
             tool_create_enclosure,
         )
     )
     registry.register(
         Tool(
-            "create_foundation", "新建地基原则（换填层 + 特殊地基构件）。写操作。",
+            "create_foundation", "新建地基原则（含管道基础：砼基础开关/基础角度/垫层 + 换填层 + 特殊地基构件）。写操作。",
             {"type": "object", "properties": {
                 "name": {"type": "string"},
+                "con_found": {"type": "boolean"}, "found_angle": {"type": "integer"},
+                "cushions": {"type": "array", "items": {"type": "object"},
+                             "description": "[{name, h}] 垫层"},
                 "layers": {"type": "array", "items": {"type": "object"},
                            "description": "[{name, h}] 换填层"},
                 "component": {"type": "object",
@@ -391,8 +405,13 @@ def register(registry: ToolRegistry) -> None:
     )
     registry.register(
         Tool(
-            "create_precipitation", "新建降水原则（五井型参数）。写操作。",
-            {"type": "object", "properties": {"name": {"type": "string"}, "wells": _WELLS_SCHEMA},
+            "create_precipitation", "新建挖填降水原则（五井型参数 + 挖填类型）。写操作。",
+            {"type": "object", "properties": {
+                "name": {"type": "string"},
+                "wells": _WELLS_SCHEMA,
+                "excvt": {"type": "string"}, "dock_l": {"type": "string"},
+                "dock_h": {"type": "string"}, "cover50": {"type": "string"},
+                "cover": {"type": "string"}},
              "required": ["name"]},
             tool_create_precipitation,
         )
@@ -430,15 +449,24 @@ def register(registry: ToolRegistry) -> None:
     )
     registry.register(
         Tool(
-            "set_enclosure_fields", "修改围护原则顶部字段（土质/角度/坞塝/覆土/垫层整表）。写操作。",
+            "set_foundation_fields", "修改地基原则的管道基础字段（砼基础开关/基础角度/垫层整表）。写操作。",
             {"type": "object", "properties": {
-                "name": {"type": "string"}, "excvt": {"type": "string"},
+                "name": {"type": "string"},
                 "found_angle": {"type": "integer"}, "con_found": {"type": "boolean"},
-                "dock_l": {"type": "string"}, "dock_h": {"type": "string"},
-                "cover50": {"type": "string"}, "cover": {"type": "string"},
                 "cushions": {"type": "array", "items": {"type": "object"}}},
              "required": ["name"]},
-            tool_set_enclosure_fields,
+            tool_set_foundation_fields,
+        )
+    )
+    registry.register(
+        Tool(
+            "set_precipitation_excavation", "修改挖填降水原则的挖填类型字段（土质/坞塝/覆土）。写操作。",
+            {"type": "object", "properties": {
+                "name": {"type": "string"}, "excvt": {"type": "string"},
+                "dock_l": {"type": "string"}, "dock_h": {"type": "string"},
+                "cover50": {"type": "string"}, "cover": {"type": "string"}},
+             "required": ["name"]},
+            tool_set_precipitation_excavation,
         )
     )
     registry.register(

@@ -110,10 +110,12 @@ def test_spcp_roundtrip(project, tmp_path: Path) -> None:
     kind, name = project_io.import_spcp(out_pf)
     assert (kind, name) == ("foundation", "默认地基原则1")
     original, cloned = project_io.enclosures()[0], project_io.enclosures()[1]
-    for field in ("con_found", "excvt", "found_angle", "dock_l", "dock_h",
-                  "cover50", "cover"):
-        assert getattr(original, field) == getattr(cloned, field), field
+    # v10：围护原则只带名称与做法表（管道基础归地基、挖填类型归挖填降水）
     assert len(original.works) == len(cloned.works)
+    # 地基原则随 spcp 往返保留管道基础字段与垫层
+    orig_pf, clone_pf = project_io.foundations()[0], project_io.foundations()[1]
+    assert (orig_pf.con_found, orig_pf.found_angle) == (clone_pf.con_found, clone_pf.found_angle)
+    assert [c.name for c in orig_pf.cushions] == [c.name for c in clone_pf.cushions]
     # 旧版 mcPcpEnclosure 文件随围护导入拆出同名降水/面宽原则；
     # 新版围护导出已不含降水/宽度数据 → 拆出的是旧版默认井型与默认宽度表
     pp = next(p for p in project_io.precipitations() if p.name == "默认围护原则1")
@@ -171,7 +173,7 @@ def test_principle_dialog_titles(qapp, project) -> None:
 
 
 def test_enclosure_dialog_no_precipitation_box_and_button_position(qapp, project) -> None:
-    """围护原则编辑：降水/面宽板块取消，确认/取消按钮列紧跟管道基础板块。"""
+    """围护原则编辑：v10 起只留围护做法表，无任何板块（挖填类型归挖填降水、管道基础归地基）。"""
     from PySide6.QtWidgets import QGroupBox
 
     from app.views.dialogs.enclosure_edit_dialog import EnclosureEditDialog
@@ -179,7 +181,7 @@ def test_enclosure_dialog_no_precipitation_box_and_button_position(qapp, project
     dialog = EnclosureEditDialog(project_io.enclosures()[0].id)
     try:
         boxes = [box.title() for box in dialog.findChildren(QGroupBox)]
-        assert boxes == ["挖填类型", "管道基础"]
+        assert boxes == []
     finally:
         dialog.close()
 

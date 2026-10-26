@@ -215,7 +215,7 @@ def tool_update_element(arguments: dict) -> dict:
     fields: dict = {}
     for key in (
         "name", "depth", "amount", "pe_name", "pf_name", "pp_name", "pw_name", "source",
-        "pe_left_name", "pe_right_name", "excvt_side", "foundation_side",
+        "pe_left_name", "pe_right_name",
     ):
         if arguments.get(key) is not None:
             fields[key] = str(arguments[key])
@@ -227,7 +227,7 @@ def tool_update_element(arguments: dict) -> dict:
     if not fields:
         raise ToolError(
             "没有给出要修改的字段。可改：name/category/depth/amount/pe_name/pf_name/pp_name/pw_name/source"
-            "/pe_left_name/pe_right_name/support_left/support_right/excvt_side/foundation_side。"
+            "/pe_left_name/pe_right_name/support_left/support_right。"
         )
     validate_principle_names(
         fields.get("pe_name"), fields.get("pf_name"), fields.get("pp_name"), fields.get("pw_name")
@@ -380,10 +380,6 @@ def register(registry: ToolRegistry) -> None:
                     "pe_right_name": {"type": "string", "description": "右侧围护原则（左右分设模式）"},
                     "support_left": {"type": "boolean", "description": "左侧支撑（Z 类公式）是否计算"},
                     "support_right": {"type": "boolean", "description": "右侧支撑是否计算"},
-                    "excvt_side": {"type": "string", "enum": ["L", "R"],
-                                   "description": "挖填类型（土质/回填材质）取侧"},
-                    "foundation_side": {"type": "string", "enum": ["L", "R"],
-                                        "description": "管道基础（砼基础/角度/垫层）取侧"},
                 },
             },
             tool_update_element,

@@ -21,9 +21,9 @@ from app.core.models.models import (
     WIDTH_KIND_GROOVE_B,
     WIDTH_KIND_WORK,
     Component,
-    EnclosureCushion,
     EnclosureLevel,
     EnclosureWork,
+    FoundationCushion,
     FoundationReplacement,
     PcpEnclosure,
     PcpFoundation,
@@ -119,53 +119,9 @@ def _component(component_id: int) -> Component:
 # --------------------------------------------------------------------------- #
 # 围护原则
 # --------------------------------------------------------------------------- #
-def apply_enclosure_fields(
-    enclosure_id: int,
-    fields: dict | None = None,
-    cushions: list[dict] | None = None,
-) -> PcpEnclosure:
-    """修改围护原则顶部参数；cushions 非 None 时整表替换垫层。"""
-    enclosure = _enclosure(enclosure_id)
-    session = orm.session()
-    fields = fields or {}
-    for key in ("excvt", "dock_l", "dock_h", "cover50", "cover"):
-        if fields.get(key) is not None:
-            setattr(enclosure, key, str(fields[key]))
-    if fields.get("found_angle") is not None:
-        try:
-            enclosure.found_angle = int(fields["found_angle"])
-        except (TypeError, ValueError) as error:
-            raise PrincipleEditError("found_angle 需为整数（90/120/150/180）。") from error
-    if fields.get("con_found") is not None:
-        enclosure.con_found = bool(fields["con_found"])
-    if cushions is not None:
-        if not cushions:
-            raise PrincipleEditError("至少需要一层垫层。")
-        for cushion in list(enclosure.cushions):
-            session.delete(cushion)
-        session.flush()
-        for index, item in enumerate(cushions):
-            name = str(item.get("name") or "").strip()
-            if not name:
-                raise PrincipleEditError("垫层材质不能为空。")
-            try:
-                height = float(item.get("h", 0) or 0)
-            except (TypeError, ValueError) as error:
-                raise PrincipleEditError("垫层厚度 h 需为数字（mm）。") from error
-            session.add(
-                EnclosureCushion(
-                    enclosure_id=enclosure.id, name=name, h=height, order_no=index
-                )
-            )
-        session.flush()
-        session.expire(enclosure)
-    project_io.commit()
-    session.expire(enclosure)
-    # 围护原则的 砼基础开关 / 基础角度 变了：引用它的直埋构件自动重选候选组
-    from app.services.atlas_match import match_for_enclosure
-
-    match_for_enclosure(enclosure.name)
-    return enclosure
+# 围护原则（PE）v10 起只剩名称与做法列表：挖填类型并入挖填降水原则（见
+# apply_precipitation_excavation），管道基础与垫层并入地基原则（见 apply_foundation）。
+# 做法表整表替换见 apply_enclosure_works，分级见 apply_work_levels。
 
 
 def _normalize_levels(levels: list[dict], library) -> list[dict]:
@@ -314,14 +270,56 @@ def apply_foundation(
     foundation_id: int,
     layers: list[dict] | None = None,
     component: dict | None = None,
+    fields: dict | None = None,
+    cushions: list[dict] | None = None,
 ) -> PcpFoundation:
-    """修改地基原则：layers 整表替换换填层；component 指定特殊地基模板。
+    """修改地基原则：管道基础字段 + 换填层 + 特殊地基构件。
 
-    component 形如 ``{template_name, params: {key: {display, expression}}}``；
-    None = 不修改。传 ``{"remove": true}`` 删除特殊地基构件。
+    * ``fields``：``{"con_found": bool, "found_angle": int}``（管道基础面板）；
+    * ``cushions``：``[{name, h}]`` 整表替换垫层（None = 不修改）；
+    * ``layers``：``[{name, h}]`` 整表替换换填层（None = 不修改）；
+    * ``component``：特殊地基模板，形如
+      ``{template_name, params: {key: {display, expression}}}``；
+      None = 不修改。传 ``{"remove": true}`` 删除特殊地基构件。
+
+    管道基础的砼基础开关 / 角度变化时，引用该地基原则的直埋构件自动重选
+    图集候选组（v9 候选参数列的唯一自动匹配入口，见
+    :func:`app.services.atlas_match.match_for_foundation`）。
     """
     foundation = _foundation(foundation_id)
     session = orm.session()
+    fields = fields or {}
+    rematch = False
+    if fields.get("con_found") is not None:
+        foundation.con_found = bool(fields["con_found"])
+        rematch = True
+    if fields.get("found_angle") is not None:
+        try:
+            foundation.found_angle = int(fields["found_angle"])
+        except (TypeError, ValueError) as error:
+            raise PrincipleEditError("found_angle 需为整数（90/120/150/180）。") from error
+        rematch = True
+    if cushions is not None:
+        if not cushions:
+            raise PrincipleEditError("至少需要一层垫层。")
+        for cushion in list(foundation.cushions):
+            session.delete(cushion)
+        session.flush()
+        for index, item in enumerate(cushions):
+            name = str(item.get("name") or "").strip()
+            if not name:
+                raise PrincipleEditError("垫层材质不能为空。")
+            try:
+                height = float(item.get("h", 0) or 0)
+            except (TypeError, ValueError) as error:
+                raise PrincipleEditError("垫层厚度 h 需为数字（mm）。") from error
+            session.add(
+                FoundationCushion(
+                    foundation_id=foundation.id, name=name, h=height, order_no=index
+                )
+            )
+        session.flush()
+        session.expire(foundation)
     if layers is not None:
         for layer in list(foundation.replacements):
             session.delete(layer)
@@ -365,12 +363,28 @@ def apply_foundation(
         session.expire(foundation)
     project_io.commit()
     session.expire(foundation)
+    if rematch:
+        from app.services.atlas_match import match_for_foundation
+
+        match_for_foundation(foundation.name)
     return foundation
 
 
 # --------------------------------------------------------------------------- #
-# 降水 / 面宽
+# 挖填降水 / 面宽
 # --------------------------------------------------------------------------- #
+def apply_precipitation_excavation(precipitation_id: int, fields: dict | None = None) -> PcpPrecipitation:
+    """修改挖填降水原则的「挖填类型」字段（开挖土质 / 回填材质）。"""
+    precipitation = _precipitation(precipitation_id)
+    for key in ("excvt", "dock_l", "dock_h", "cover50", "cover"):
+        value = (fields or {}).get(key)
+        if value is not None:
+            setattr(precipitation, key, str(value))
+    project_io.commit()
+    orm.session().expire(precipitation)
+    return precipitation
+
+
 def apply_precipitation_wells(precipitation_id: int, wells: dict) -> PcpPrecipitation:
     """按井型标签或列名整体/增量设置降水参数。"""
     precipitation = _precipitation(precipitation_id)

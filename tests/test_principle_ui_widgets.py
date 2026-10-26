@@ -92,17 +92,26 @@ def project_io_enclosure_id():
     return project_io.enclosures()[0].id
 
 
-def test_enclosure_dialog_dock_mapping_roundtrip(qapp, project):
-    from app.views.dialogs.enclosure_edit_dialog import EnclosureEditDialog
+def project_io_precipitation_id():
+    from app.services import project_io
 
-    dialog = EnclosureEditDialog(project_io_enclosure_id())
+    return project_io.precipitations()[0].id
+
+
+def test_precipitation_dialog_dock_mapping_roundtrip(qapp, project):
+    """挖填类型面板（v10 起并入挖填降水原则）：坞塝回填双向映射往返一致。"""
+    from app.views.dialogs.principle_dialogs import PrecipitationEditDialog
+
+    dialog = PrecipitationEditDialog(project_io_precipitation_id())
     dialog._dock_material.setText("中粗砂")
     dialog._cover.setText("素土")
     dialog._dock_mode.setCurrentText("至管中心标高")
     dialog._confirm()
-    enclosure = dialog._enclosure()
-    assert (enclosure.dock_h, enclosure.cover50, enclosure.cover) == ("素土", "素土", "素土")
-    reopened = EnclosureEditDialog(enclosure.id)
+    precipitation = dialog._precipitation()
+    assert (precipitation.dock_h, precipitation.cover50, precipitation.cover) == (
+        "素土", "素土", "素土",
+    )
+    reopened = PrecipitationEditDialog(precipitation.id)
     assert reopened._dock_mode.currentText() == "至管中心标高"
     reopened.close()
 
@@ -336,9 +345,9 @@ def test_candidate_column_highlight_follows_match(qapp, project):
     from sqlalchemy import select
 
     from app.core.models import base as orm
-    from app.core.models.models import PcpEnclosure
+    from app.core.models.models import PcpFoundation
     from app.services import project_io
-    from app.services.principle_edit import apply_enclosure_fields
+    from app.services.principle_edit import apply_foundation
     from app.viewmodels import unit_vm
     from app.viewmodels.unit_vm import selected_candidate_combo
     from app.views.panels.unit_panel import (
@@ -380,15 +389,15 @@ def test_candidate_column_highlight_follows_match(qapp, project):
             assert cell.data(_MATCH_BG_ROLE) == _MATCH_BG_SAME
             assert "当前选中" in cell.toolTip()
 
-        # 换围护原则的基础角度 → 匹配换组，高亮列跟着走
-        pe = orm.session().scalar(
-            select(PcpEnclosure).where(
-                PcpEnclosure.name == element.pe_name
+        # 换地基原则的基础角度 → 匹配换组，高亮列跟着走
+        pf = orm.session().scalar(
+            select(PcpFoundation).where(
+                PcpFoundation.name == element.pf_name
             )
         )
-        assert pe is not None
-        new_angle = 180 if int(pe.found_angle) != 180 else 90
-        apply_enclosure_fields(pe.id, {"found_angle": new_angle})
+        assert pf is not None
+        new_angle = 180 if int(pf.found_angle) != 180 else 90
+        apply_foundation(pf.id, fields={"found_angle": new_angle})
         qapp.processEvents()
         qapp.processEvents()
 

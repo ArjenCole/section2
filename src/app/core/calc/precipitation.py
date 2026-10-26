@@ -29,7 +29,6 @@ def _enabled(text: str, key: str) -> tuple[bool, float, float, float]:
 
 def cal_precipitation(
     pp,
-    pe,
     work,
     pf,
     ad: AtlasDims,
@@ -40,11 +39,11 @@ def cal_precipitation(
     cushion_name: str | None = None,
     wet_dig=None,
 ) -> None:
-    """降水工程量（每延米），结果写入 ``out``；井型配置取降水原则 ``pp``。
+    """降水工程量（每延米），结果写入 ``out``；井型与挖填类型都取挖填降水原则 ``pp``。
 
-    湿土排水的沟槽断面（深度−1m）仍按围护原则 ``pe`` 的开挖/回填结构算；
-    左右分设模式传 ``work_r``（右做法）时走双侧几何，垫层材质由
-    ``cushion_name`` 显式传入（管道基础侧原则）。
+    湿土排水的沟槽断面（深度−1m）按 ``pp`` 的开挖/回填结构算（挖填类型 v10
+    起属 ``pp``）；左右分设模式传 ``work_r``（右做法）时走双侧几何，垫层材质
+    由 ``cushion_name`` 显式传入（地基原则）。
 
     ``wet_dig``（合槽用）：预计算的湿土排水量（Dim，按归属带宽的简化断面），
     传入时跳过单管断面副调用直接采用。
@@ -89,14 +88,14 @@ def cal_precipitation(
         sub = QDict()
         if work_r is None:
             groove.cal_groove(
-                pe, work, pf, ad, info.size_b_dim, info.size_h_dim, groove_depth - dim(1.0), sub
+                pp, work, pf, ad, info.size_b_dim, info.size_h_dim, groove_depth - dim(1.0), sub
             )
         else:
             groove.cal_groove_sided(
-                pe, work, work_r, pf, ad, info.size_b_dim, info.size_h_dim,
+                pp, work, work_r, pf, ad, info.size_b_dim, info.size_h_dim,
                 groove_depth - dim(1.0), sub, cushion_name,
             )
-        dig = sub.get(f"开挖|{pe.excvt}|m3")
+        dig = sub.get(f"开挖|{pp.excvt}|m3")
         if dig is not None:
             out.add(
                 "降水|湿土排水|m3",

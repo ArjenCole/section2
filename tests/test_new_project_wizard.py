@@ -59,11 +59,11 @@ def test_values_align_with_spec_and_use_defaults(qapp):
     assert values["segment_names"] == ["新建标段"]
     assert values["unit_names"] == ["雨水工程"]
     assert values["enclosure_name"] == "默认围护原则"
-    assert values["enclosure_excvt"] == "Ⅲ类土"
-    assert values["enclosure_found_angle"] == 120
-    assert values["enclosure_con_found"] is True
+    assert values["precipitation_excvt"] == "Ⅲ类土"
+    assert values["foundation_found_angle"] == 120
+    assert values["foundation_con_found"] is True
     assert values["foundation_name"] == "默认地基原则"
-    assert values["precipitation_name"] == "默认降水原则"
+    assert values["precipitation_name"] == "默认挖填原则"
     assert values["width_name"] == "默认面宽原则"
     assert values["atlas_name"] == spec.atlas_name
 

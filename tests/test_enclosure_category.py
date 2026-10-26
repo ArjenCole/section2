@@ -102,7 +102,7 @@ def test_sloped_vs_vertical_dig_and_enclosure_quantities(project) -> None:
     dig = next(q for q in result.items() if q.key.startswith("开挖|"))
     # 放坡系数 0 → 直壁：挖方 = 槽底宽 × 沟槽深度（没有梯形加宽项），槽底宽本身
     # 仍按 断面宽+2×(壁厚+工作面加宽+工作面) 展开写在算式里
-    at = resolve_atlas(build_atlas_query(info, info.pe, info.pw))
+    at = resolve_atlas(build_atlas_query(info, info.pf, info.pw))
     bottom = info.size_b + (at.t * 2 + at.a * 2 + at.workwidth * 2) / 1000
     depth = info.depth + (at.t + at.c1) / 1000
     assert dig.value / info.amount == pytest.approx(bottom * depth, rel=1e-9)

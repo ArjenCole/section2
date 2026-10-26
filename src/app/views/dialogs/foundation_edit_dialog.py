@@ -2,7 +2,9 @@
 
 布局与交互照抄 FormPF / FormPF.Designer：
 
-* 顶部「原则名称」；换填层表（换填材质 / 厚度 mm / 行尾「-」删行按钮列，
+* 顶部「原则名称」；v10 起「管道基础」板块（基础类型 / 基础角度 / 垫层材质 /
+  厚度 mm，原在围护原则窗体里）并入本窗体，放在换填层板块上方；
+* 换填层表（换填材质 / 厚度 mm / 行尾「-」删行按钮列，
   「+」在按钮列表头格，见 RowButtonColumn），板块高度至少容得下 3 行，
   4 行起出纵向滚动条；Insert 插入默认换填行（碎石，200）、Delete 删除选中行
   （无最少条数限制）；
@@ -44,6 +46,10 @@ from app.views.widgets.table_width import fixed_width_behavior
 
 _COL_MATERIAL, _COL_THICKNESS = 0, 1
 
+#: 「管道基础」板块选项（原围护原则窗体同款；v10 起并入地基原则）
+_CONFOUND_CHOICES = ("采用混凝土基础", "不采用混凝土基础")
+_ANGLE_CHOICES = ("90", "120", "150", "180")
+
 #: 换填层板块最少要完整显示的行数（4 行起出纵向滚动条）
 _MIN_VISIBLE_ROWS = 3
 _ROW_HEIGHT = 32
@@ -54,7 +60,7 @@ class FoundationEditDialog(FramelessDialog):
 
     def __init__(self, foundation_id: int, parent: QWidget | None = None) -> None:
         super().__init__(parent, "地基原则编辑")
-        self.resize(460, 390)
+        self.resize(460, 510)
         self._foundation_id = foundation_id
         self._loading = False
         self._build_ui()
@@ -81,6 +87,21 @@ class FoundationEditDialog(FramelessDialog):
         self._name = QLineEdit()
         name_row.addWidget(self._name, 1)
         root.addLayout(name_row)
+
+        # 「管道基础」（原属围护原则窗体，v10 起并入地基原则），放在换填层上方
+        pipe_box = QGroupBox("管道基础")
+        pipe_form = QFormLayout(pipe_box)
+        self._con_found = QComboBox()
+        self._con_found.addItems(_CONFOUND_CHOICES)
+        self._angle = QComboBox()
+        self._angle.addItems(_ANGLE_CHOICES)
+        self._cushion_name = QLineEdit()
+        self._cushion_h = QLineEdit()
+        pipe_form.addRow("基础类型", self._con_found)
+        pipe_form.addRow("基础角度", self._angle)
+        pipe_form.addRow("垫层材质", self._cushion_name)
+        pipe_form.addRow("厚度mm", self._cushion_h)
+        root.addWidget(pipe_box)
 
         replace_box = QGroupBox("换填层")
         replace_layout = QVBoxLayout(replace_box)
@@ -156,6 +177,11 @@ class FoundationEditDialog(FramelessDialog):
             if foundation is None:
                 return
             self._name.setText(foundation.name)
+            self._con_found.setCurrentIndex(0 if foundation.con_found else 1)
+            self._angle.setCurrentText(str(foundation.found_angle))
+            cushion = foundation.cushions[0] if foundation.cushions else None
+            self._cushion_name.setText(cushion.name if cushion else "")
+            self._cushion_h.setText(f"{cushion.h:g}" if cushion else "0")
             replacements = list(foundation.replacements)
             self._replace_buttons.clear_row_buttons()
             self._replace_table.setRowCount(len(replacements))
@@ -282,10 +308,11 @@ class FoundationEditDialog(FramelessDialog):
         super().reject()
 
     def _confirm(self) -> None:
-        """BTNyes：名称写回（mscCtrl.Set 同步引用）。
+        """BTNyes：名称 + 管道基础写回（mscCtrl.Set 同步引用）。
 
         编辑过程中（换填层、特殊地基构件）不广播，点击确认修改后统一刷新
         工程量与断面图；改名时再广播 tree_structure_changed 同步引用名。
+        管道基础的砼基础开关 / 角度变化经 apply_foundation 触发候选组重选。
         """
         foundation = self._foundation()
         if foundation is None:
@@ -295,9 +322,32 @@ class FoundationEditDialog(FramelessDialog):
         if not name:
             FramelessMessageBox.warning(self, "提示", "原则名称不得为空。")
             return
+        cushion_name = self._cushion_name.text().strip()
+        if not cushion_name:
+            FramelessMessageBox.warning(self, "提示", "垫层材质不能为空。")
+            return
+        try:
+            cushion_h = float(self._cushion_h.text() or 0)
+        except ValueError:
+            FramelessMessageBox.warning(self, "提示", "垫层厚度需为数字（mm）。")
+            return
         if name != foundation.name:
             project_io.rename_foundation(foundation.id, name)
             bus().tree_structure_changed.emit()
+        # 管道基础字段 / 垫层走 principle_edit.apply_foundation：砼基础开关 /
+        # 基础角度变化时它会对引用该原则的直埋构件自动重选候选组
+        from app.services.principle_edit import apply_foundation
+
+        fields: dict = {"con_found": "不" not in self._con_found.currentText()}
+        try:
+            fields["found_angle"] = int(self._angle.currentText())
+        except ValueError:
+            pass
+        apply_foundation(
+            foundation.id,
+            fields=fields,
+            cushions=[{"name": cushion_name, "h": cushion_h}],
+        )
         # 本次编辑（换填层、特殊地基构件）随这次提交统一落库
         project_io.commit()
         bus().principle_changed.emit()
