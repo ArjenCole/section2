@@ -67,7 +67,7 @@ _EVENT_NAMES = {
 _WATCHED_EVENTS: set = set()
 
 #: 单独用得上的几个事件类型（在 _init_watched_events 里填充）
-_EV_SHOW = _EV_HIDE = _EV_CLOSE = None
+_EV_SHOW = _EV_HIDE = _EV_CLOSE = _EV_QUIT = None
 
 #: 一个会话最多落盘几份 dump（防止异常循环把磁盘写满）
 _MAX_DUMPS = 20
@@ -124,7 +124,7 @@ else:  # pragma: no cover - 非 Windows 只保证 import 不炸
 
 def _init_watched_events() -> None:
     """把需要记录的 QEvent 类型装进集合（延迟到真正启用时再 import PySide6）。"""
-    global _EV_SHOW, _EV_HIDE, _EV_CLOSE
+    global _EV_SHOW, _EV_HIDE, _EV_CLOSE, _EV_QUIT
     if _WATCHED_EVENTS:
         return
     from PySide6.QtCore import QEvent
@@ -132,6 +132,7 @@ def _init_watched_events() -> None:
     _EV_SHOW = QEvent.Type.Show
     _EV_HIDE = QEvent.Type.Hide
     _EV_CLOSE = QEvent.Type.Close
+    _EV_QUIT = getattr(QEvent.Type, "Quit", None)
     for name in (
         "Show",
         "Hide",
@@ -173,7 +174,11 @@ def enabled() -> bool:
 
 
 def install(app) -> "WindowDiag | None":
-    """按需安装诊断（只有 Windows + 真实的 windows 平台插件 + 开了开关才生效）。"""
+    """安装诊断（Windows + 真实 windows 平台插件；默认开启）。
+
+    屏幕上的"主窗体+弹窗一起消失、进程还在"目前只能靠这套记录定位，所以默认常开；
+    不想要时设环境变量 ``SECTION2_DIAG=0`` 关掉（离屏测试里也自动不启用）。
+    """
     global _INSTANCE
     if _INSTANCE is not None:
         return _INSTANCE
@@ -184,7 +189,7 @@ def install(app) -> "WindowDiag | None":
             return None
     except Exception:  # noqa: BLE001
         return None
-    if os.environ.get(ENV_FLAG, "").strip().lower() not in {"1", "true", "yes", "on"}:
+    if os.environ.get(ENV_FLAG, "").strip().lower() in {"0", "false", "no", "off"}:
         return None
     _INSTANCE = WindowDiag(app)
     return _INSTANCE
@@ -220,6 +225,12 @@ class WindowDiag:  # pragma: no cover - 需要真实 Windows 窗口
         self._dump_count = 0
         self._pid = _kernel32.GetCurrentProcessId()
         self._log_path = log_dir() / "window_diag.log"
+        # 每启动一次追加一份；超过 8MB 就滚动成 .1（诊断期间默认常开，别让它无限长）
+        try:
+            if self._log_path.exists() and self._log_path.stat().st_size > 8 * 1024 * 1024:
+                self._log_path.replace(self._log_path.with_suffix(".log.1"))
+        except OSError:
+            pass
         self._log_file = open(self._log_path, "a", encoding="utf-8", buffering=1)
 
         # ctypes 回调必须持有引用：临时对象被回收后，钩子会调到野指针上，直接崩进程
@@ -238,6 +249,25 @@ class WindowDiag:  # pragma: no cover - 需要真实 Windows 窗口
                 return False
 
         self._filter = _Filter(self)
+
+        class _AppFilter(QObject):
+            """应用级事件：收到 Quit 说明有人调了 quit()/closeAllWindows()。"""
+
+            def __init__(self, owner: "WindowDiag") -> None:
+                super().__init__()
+                self._owner = owner
+
+            def eventFilter(self, obj, event):  # noqa: N802 - Qt 命名
+                if _EV_QUIT is not None and event.type() == _EV_QUIT:
+                    self._owner.record("app.quit", "收到 QEvent::Quit", stack=8)
+                    self._owner._dump("应用收到 Quit（窗口即将集体消失）")
+                return False
+
+        self._app_filter = _AppFilter(self)
+        try:
+            app.installEventFilter(self._app_filter)
+        except Exception:  # noqa: BLE001
+            self._app_filter = None
 
         self._hook = _user32.SetWinEventHook(
             _EVENT_OBJECT_DESTROY,
@@ -328,9 +358,15 @@ class WindowDiag:  # pragma: no cover - 需要真实 Windows 窗口
             if not widget.isWindow():
                 return
             hwnd = int(widget.winId())
+            tracked = hwnd in self._hwnds
+            # 被跟踪的窗口收到 Close / Hide 时把调用栈一起记下来：
+            # 实测本机 PySide6 6.11 下 close() 会**销毁**原生窗口（hide() 不会），
+            # 所以"主窗体消失"等价于"有人 close/hide 了它"，栈能直接指出是谁干的。
             self.record(
                 f"qt.{etype.name}",
-                f"{type(widget).__name__} hwnd={hwnd} title={widget.windowTitle()!r}",
+                f"{type(widget).__name__} hwnd={hwnd} title={widget.windowTitle()!r}"
+                + (f"  跟踪中：{self._hwnds[hwnd]}" if tracked else ""),
+                stack=8 if tracked and etype in (_EV_HIDE, _EV_CLOSE) else 0,
             )
             # 记录"Qt 侧已主动关窗"的信号：这类 DESTROY 属正常，不落盘
             if etype in (_EV_HIDE, _EV_CLOSE):
@@ -447,6 +483,13 @@ class WindowDiag:  # pragma: no cover - 需要真实 Windows 窗口
             self._timer.stop()
         except Exception:  # noqa: BLE001
             pass
+        app_filter = getattr(self, "_app_filter", None)
+        if app_filter is not None:
+            try:
+                self._app.removeEventFilter(app_filter)
+            except Exception:  # noqa: BLE001
+                pass
+            self._app_filter = None
         try:
             import faulthandler
 
