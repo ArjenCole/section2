@@ -1600,15 +1600,19 @@ class UnitPanel(QWidget):
     def _delete_selected_elements(self) -> None:
         """Delete 键：删除选中行（与原版一致，不经确认）。
 
-        合槽父节点行的删除语义 = 解散合槽（父节点删掉、子构件还原保留）。
+        合槽父节点行的删除语义 = 父节点连同全部子节点一并删除；只想删父节点
+        而保留子节点时用右键「解散合槽」。
         """
-        from app.viewmodels.unit_vm import dissolve_trench_group
+        from app.viewmodels.unit_vm import delete_trench_group
 
-        for row in sorted({index.row() for index in self._element_table.selectedIndexes()}, reverse=True):
-            group_id = self._group_id_at(row)
-            if group_id is not None:
-                dissolve_trench_group(group_id)
-        for element_id in self._selected_element_ids():
+        # 先把选中行快照成 id：删除会经 unit_changed 触发整表重载，行号随即失效
+        rows = sorted({index.row() for index in self._element_table.selectedIndexes()})
+        group_ids = [group_id for row in rows if (group_id := self._group_id_at(row)) is not None]
+        element_ids = [element_id for row in rows if (element_id := self._element_id_at(row)) is not None]
+        for group_id in group_ids:
+            self._collapsed_group_ids.discard(group_id)
+            delete_trench_group(group_id)
+        for element_id in element_ids:
             self._vm.remove_element(element_id)
 
     def _selected_group_row_id(self) -> int | None:

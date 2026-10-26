@@ -540,6 +540,20 @@ def test_group_dissolve_reverts_members(project) -> None:
     assert m1.pe_left_name == ""
 
 
+def test_delete_group_removes_all_members(project) -> None:
+    """删除合槽父节点 = 连同全部子节点一并删除。"""
+    from app.core.models import base as orm
+    from app.core.models.models import Element, TrenchGroup
+    from app.viewmodels import unit_vm
+
+    group, (e1, e2) = _group_fixture(project)
+    unit_vm.delete_trench_group(group.id)
+    session = orm.session()
+    assert session.get(TrenchGroup, group.id) is None
+    assert session.get(Element, e1) is None
+    assert session.get(Element, e2) is None
+
+
 def test_group_member_reorder_and_remove(project) -> None:
     from app.core.models import base as orm
     from app.core.models.models import Element

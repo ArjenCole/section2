@@ -20,7 +20,7 @@
 | 降水 | `precipitation.py`：`work_r`/`cushion_name`（分设双侧湿土排水）、`wet_dig`（合槽简化断面） |
 | 合槽计算 | `trench_group.py`（新）：**分段线性带积分**模型——每构件一套归属区（本体 / 工作面 / 半中间区 / 边坡折线），宽度函数分段线性、梯形精确；挖填按各自分层界面归类；围护量每面 ×1；父节点零工程量 |
 | 视图模型 | `unit_vm.py`：`table_rows`（父行+缩进子行）、编组操作（`create_trench_group` 校验/转换/连续化、`dissolve`/`add`/`remove`/`move` 组内换序）、`compute_unit` 走组路径 |
-| 主表格 / 详情 | `unit_panel.py`：PE 下拉「左右分设」占位、父行（▣ 前缀、PE/PW=左边缘、PF/PP 恒"-"、删除=解散）、子行缩进、右键编组菜单、详情「围护原则」tab（6 行：左右围护 / 左右支撑勾选 / 挖填·基础取侧，合槽子节点左侧行置灰） |
+| 主表格 / 详情 | `unit_panel.py`：PE 下拉「左右分设」占位、父行（▣ 前缀、PE/PW=左边缘、PF/PP 恒"-"、删除=连同子节点一并删除）、子行缩进、右键编组菜单、详情「围护原则」tab（6 行：左右围护 / 左右支撑勾选 / 挖填·基础取侧，合槽子节点左侧行置灰） |
 | 断面图 | `section_view.py`：分设双侧折线（`_walk_layers_sided`）、合槽整槽全景（`_build_group_scene`：边坡折线 + 槽底折线 + 中间坡 + 各构件本体偏移） |
 | AI/MCP | `serializers.py` 分设字段；`tools/element.py`：update_element 新字段 + 5 个组工具（list_trench_groups / group_elements / update_group / dissolve_group / group_membership） |
 

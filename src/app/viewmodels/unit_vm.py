@@ -1188,6 +1188,20 @@ def dissolve_trench_group(group_id: int) -> None:
     bus().tree_structure_changed.emit()
 
 
+def delete_trench_group(group_id: int) -> None:
+    """删除合槽组及其全部组员（父节点与子节点一并删除）。"""
+    group = orm.session().get(TrenchGroup, group_id) if project_io.is_open() else None
+    if group is None:
+        return
+    unit_id = group.unit_id
+    for member in list(group.members):
+        orm.session().delete(member)  # 管材 / 参数 / 工程量随 ORM 级联删除
+    orm.session().delete(group)
+    project_io.commit()
+    bus().unit_changed.emit(unit_id)
+    bus().tree_structure_changed.emit()
+
+
 def add_to_group(element_id: int, group_id: int) -> tuple[bool, str | None]:
     """把构件加入已有合槽组（追加为最右成员，挪到组块末尾）。"""
     element = _element(element_id)
