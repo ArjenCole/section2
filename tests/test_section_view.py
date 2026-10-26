@@ -64,6 +64,29 @@ def test_trench_scene_geometry(qapp, project_with_element) -> None:
     assert kinds.count("Ellipse") == 2
 
 
+def test_lr_walk_layers_keeps_each_side_aligned() -> None:
+    """左右放坡系数不同：每侧折线连续，槽顶半宽按本侧坡度累加（不取两侧平均）。"""
+    from types import SimpleNamespace as NS
+
+    from app.core.calc.tracer import dim
+    from app.views.panels.section_view import _walk_layers_sided
+
+    def level(height, slope, step_width=0.0):
+        component = NS(params=[NS(key="A", value=f"放坡系数 1:X|{slope}")])
+        return NS(h=height, step_width=step_width, components=[component])
+
+    layers = [("a", dim(1.5), ""), ("b", dim(1.5), "")]
+    left, right = _walk_layers_sided(
+        [level(-1, 0.5)], [level(-1, 0.0)], layers, bottom=1.0, depth=3.0
+    )
+    for segments, slope in ((left, 0.5), (right, 0.0)):
+        for previous, segment in zip(segments, segments[1:]):
+            start = previous.bottom / 2 + previous.h_delta * previous.slope
+            assert segment.bottom / 2 == pytest.approx(start)
+        top_half = segments[-1].bottom / 2 + segments[-1].h_delta * segments[-1].slope
+        assert top_half == pytest.approx(1.0 / 2 + 3.0 * slope)
+
+
 def test_view_renders_offscreen(qapp, project_with_element) -> None:
     """离屏渲染不崩，且选中清空后回到占位提示。"""
     view = _make_view(qapp, project_with_element)

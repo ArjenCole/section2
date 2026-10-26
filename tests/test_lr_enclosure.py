@@ -724,3 +724,47 @@ def test_unit_panel_group_rows_and_lr_tab(project, qapp) -> None:
     # 多选占位（分设 tab 内容切回占位说明）
     panel._show_multi_detail()
     assert panel._lr_table.rowCount() == 0
+
+
+def test_lr_tab_combos_follow_principle_changes(project, qapp) -> None:
+    """原则增删改名后，「围护原则」tab 的左右下拉按新原则表重建。
+
+    回归：_on_tree_structure_changed 原先只 refresh() 主表格；重新选中同一构件时
+    _sync_detail_to_selection 因 id 相同跳过 _show_single_detail，LR 下拉停在旧
+    名单——新增的原则选不到，界面只剩「默认围护原则」一条。
+    """
+    from sqlalchemy import select
+
+    from app.core.event_bus import bus
+    from app.core.models import base as orm
+    from app.core.models.models import LR_PE_TEXT, Unit
+    from app.services import project_io
+    from app.viewmodels.project_vm import TreeNode
+    from app.views.panels.unit_panel import UnitPanel
+
+    left_pe = _make_enclosure("刷新左原则", "放坡", slope=0.5)
+    right_pe = _make_enclosure("刷新右原则", "钢板桩")
+    lr = _make_lr(_element("刷新分设", pe_name=left_pe.name), left_pe.name, right_pe.name)
+
+    panel = UnitPanel()
+    unit = orm.session().scalar(select(Unit))
+    panel._on_node_selected(TreeNode(kind="unit", id=unit.id, name=unit.name))
+    panel._show_single_detail(lr)
+
+    def combo_texts(row: int) -> list[str]:
+        combo = panel._lr_table.cellWidget(row, 0)
+        return [combo.itemText(index) for index in range(combo.count())]
+
+    assert left_pe.name in combo_texts(0) and right_pe.name in combo_texts(1)
+
+    # 用户点原则横条「+」新增原则 → 广播 tree_structure_changed
+    created = project_io.create_enclosure("新增围护原则")
+    bus().tree_structure_changed.emit()
+
+    for row in (0, 1):
+        texts = combo_texts(row)
+        assert created.name in texts, texts
+        assert LR_PE_TEXT not in texts  # 占位项不进左右下拉
+    # 下拉重建后仍保持原选中值（未被静默改成第一条）
+    assert panel._lr_table.cellWidget(0, 0).currentText() == left_pe.name
+    assert panel._lr_table.cellWidget(1, 0).currentText() == right_pe.name

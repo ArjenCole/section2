@@ -445,8 +445,11 @@ def _walk_layers_sided(
 ) -> tuple[list[_Segment], list[_Segment]]:
     """左右分设的逐层递推（与 cal_groove_sided 同构，只出几何不出量）。
 
-    返回 (左段列表, 右段列表)：两列共享底宽序列（bottom 随两侧坡度之和
-    外扩、平台按发生切级的一侧加宽），各自的 ``slope`` 是该侧放坡系数。
+    返回 (左段列表, 右段列表)：切段口径与 :func:`cal_groove_sided` 相同（级标高
+    取两侧并集），但绘图必须让每侧**各自**维护半宽——两列 ``bottom`` 分别是
+    ``2×该侧半宽``（随该侧坡度外扩、平台只加发生切级的一侧）。若两列共用按
+    ``sL+sR`` 外扩的总底宽，坡度不等时下一段 ``bottom/2`` 会跳过上一段终点，
+    折线随之错位折断。
     """
     heights_l = [step.v for step in groove.split_h_by_step(levels_l, dim(depth))]
     heights_r = [step.v for step in groove.split_h_by_step(levels_r, dim(depth))]
@@ -456,6 +459,7 @@ def _walk_layers_sided(
 
     segments_l: list[_Segment] = []
     segments_r: list[_Segment] = []
+    half_l = half_r = bottom / 2.0
     current = 0.0
     for key, layer, _note in layers:
         layer_h = layer.v
@@ -467,23 +471,24 @@ def _walk_layers_sided(
             slope_l = level_slope(levels_l[step_l]).v
             slope_r = level_slope(levels_r[step_r]).v
             segments_l.append(
-                _Segment(key, bottom, current, delta, slope_l,
+                _Segment(key, half_l * 2.0, current, delta, slope_l,
                          bool(segments_l) and segments_l[-1].key == key)
             )
             segments_r.append(
-                _Segment(key, bottom, current, delta, slope_r,
+                _Segment(key, half_r * 2.0, current, delta, slope_r,
                          bool(segments_r) and segments_r[-1].key == key)
             )
             current += delta
-            bottom += delta * (slope_l + slope_r)
+            half_l += delta * slope_l
+            half_r += delta * slope_r
             if current == top_l and step_l > 0:
                 step_l -= 1
                 if heights_l[step_l] != heights_l[step_l + 1] and heights_l[step_l + 1] != 0:
-                    bottom += levels_l[step_l].step_width
+                    half_l += levels_l[step_l].step_width
             if current == top_r and step_r > 0:
                 step_r -= 1
                 if heights_r[step_r] != heights_r[step_r + 1] and heights_r[step_r + 1] != 0:
-                    bottom += levels_r[step_r].step_width
+                    half_r += levels_r[step_r].step_width
             if current - target >= -0.0001:
                 break
     return segments_l, segments_r

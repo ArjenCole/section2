@@ -854,6 +854,12 @@ class UnitPanel(QWidget):
             self._show_unit(None)
             return
         self.refresh()
+        # 明细区（尤其「围护原则」tab 的左右下拉）也要按新原则表重建：refresh()
+        # 只重载主表格，重新选中同一构件时 _sync_detail_to_selection 不再重填明细，
+        # 下拉项会停留在旧原则列表——新增的原则选不到，只剩默认那一条。
+        element_id = self._current_element_id()
+        if element_id is not None and not self._multi_detail:
+            self._show_single_detail(element_id)
 
     def _show_unit(self, unit_id: int | None, name: str = "") -> None:
         self._unit_id = unit_id
