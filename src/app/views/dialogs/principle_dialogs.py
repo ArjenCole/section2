@@ -629,7 +629,7 @@ class WidthEditDialog(FramelessDialog):
     )
 
     def __init__(self, width_id: int, parent: QWidget | None = None) -> None:
-        super().__init__(parent, "面宽原则编辑")
+        super().__init__(parent, "工作面宽原则编辑")
         self.resize(860, 460)
         self._width_id = width_id
         self._loading = False

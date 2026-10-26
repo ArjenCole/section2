@@ -134,8 +134,8 @@ class GroupRow:
     category: int = 0
     depth: str = ""
     amount: str = ""
-    pf_name: str = "-"
-    pp_name: str = "-"
+    pf_name: str = ""
+    pp_name: str = ""
     source: str = "合槽编组"
     spec: str = ""
     unit: str = "m"

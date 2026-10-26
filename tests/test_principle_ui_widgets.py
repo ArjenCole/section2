@@ -625,3 +625,80 @@ def test_pipe_add_delete_buttons_follow_category(qapp, project):
     assert buried.pipes
     # 构筑物加管材被拒
     assert unit_vm.create_pipe(structure.id, mat="钢管", dn=200) is None
+
+
+def test_combo_names_skip_dash_placeholder():
+    """合槽父行的 "-" 占位不进原则下拉项（本项目不存在 "-" 类型的原则）。"""
+    from app.viewmodels.unit_vm import GroupRow
+    from app.views.panels.unit_panel import _combo_names
+
+    group_row = GroupRow(
+        id=1, name="组", pe_name="", pw_name="", order_no=0, member_count=2
+    )
+    group_row.pf_name = "-"
+    group_row.pp_name = "-"
+    assert _combo_names(["默认地基原则"], [group_row], "pf_name") == ["默认地基原则"]
+    assert _combo_names(["-"], [group_row], "pp_name") == [""]
+
+
+def test_insert_template_after_group(qapp, project):
+    """构件库插入：选中合槽父行 / 子条目 / 收起的父行，都插到整组合槽之后。"""
+    from app.core.event_bus import bus
+    from app.services import project_io
+    from app.services.element_library import element_library
+    from app.viewmodels import unit_vm
+    from app.viewmodels.unit_vm import ElementRow, GroupRow
+    from app.views.main_window import MainWindow
+
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    first = unit_vm.insert_blank_element(unit.id)
+    second = unit_vm.insert_blank_element(unit.id)
+    third = unit_vm.insert_blank_element(unit.id)
+    group, error = unit_vm.create_trench_group([first.id, second.id])
+    assert group is not None and error is None
+    template = element_library().units_of("直埋混凝土管")[0].elements[0]
+
+    def row_index(predicate) -> int:
+        rows = unit_vm.table_rows(unit.id)
+        return next(index for index, row in enumerate(rows) if predicate(row))
+
+    def element_ids() -> list[int]:
+        return [row.id for row in unit_vm.element_rows(unit.id)]
+
+    window = MainWindow()
+    try:
+        bus().project_opened.emit(str(project))
+        window._tree_panel.vm.load()
+        qapp.processEvents()
+        root = window._tree_panel._tree.topLevelItem(0)
+        window._tree_panel._tree.setCurrentItem(root.child(0).child(0))
+        qapp.processEvents()
+        panel = window._unit_panel
+
+        # 1) 选中展开的合槽父行 → 插到整组之后（third 之前）
+        panel._element_table.setCurrentCell(row_index(lambda row: isinstance(row, GroupRow)), 0)
+        panel.insert_template(template)
+        qapp.processEvents()
+        ids = element_ids()
+        assert len(ids) == 4 and ids[0] == first.id and ids[1] == second.id and ids[3] == third.id
+
+        # 2) 选中合槽子条目 → 仍插到整组之后（上一步新增条目之前）
+        panel._element_table.setCurrentCell(
+            row_index(lambda row: isinstance(row, ElementRow) and row.group_id is not None), 0
+        )
+        panel.insert_template(template)
+        qapp.processEvents()
+        ids = element_ids()
+        assert len(ids) == 5 and ids[0] == first.id and ids[1] == second.id and ids[-1] == third.id
+
+        # 3) 收起合槽后选中父行 → 仍插到整组之后
+        parent_index = row_index(lambda row: isinstance(row, GroupRow))
+        panel._on_group_toggle_requested(parent_index)
+        qapp.processEvents()
+        panel._element_table.setCurrentCell(row_index(lambda row: isinstance(row, GroupRow)), 0)
+        panel.insert_template(template)
+        qapp.processEvents()
+        ids = element_ids()
+        assert len(ids) == 6 and ids[0] == first.id and ids[1] == second.id and ids[-1] == third.id
+    finally:
+        window.close()

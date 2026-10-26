@@ -59,7 +59,7 @@ class FoundationEditDialog(FramelessDialog):
     """地基处理原则编辑（FormPF，无边框自绘标题栏）。"""
 
     def __init__(self, foundation_id: int, parent: QWidget | None = None) -> None:
-        super().__init__(parent, "地基原则编辑")
+        super().__init__(parent, "地基处理原则编辑")
         self.resize(460, 510)
         self._foundation_id = foundation_id
         self._loading = False

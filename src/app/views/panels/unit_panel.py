@@ -79,7 +79,7 @@ _TREE_ROLE = Qt.ItemDataRole.UserRole + 2
 #: 合槽父节点行的标记（name item 的 UserRole 数据 = ("group", 组 id)）
 _GROUP_ROLE_TAG = "group"
 _COL_NAME, _COL_CATEGORY, _COL_SPEC, _COL_DEPTH, _COL_UNIT, _COL_AMOUNT, _COL_PE, _COL_PF, _COL_PP, _COL_PW, _COL_SOURCE = range(11)
-_ELEMENT_HEADERS = ["名称", "类型", "规格", "埋深", "单位", "数量", "沟槽围护原则", "地基处理原则", "挖填降水", "工作面宽原则", "来源"]
+_ELEMENT_HEADERS = ["名称", "类型", "规格", "埋深", "单位", "数量", "沟槽围护原则", "地基处理原则", "挖填降水原则", "工作面宽原则", "来源"]
 #: 复刻旧版 dGVmain 列结构（类型 / 规格 / 来源列只读）
 #: 围护/地基原则两列等宽（下拉框完整显示 6 个字）；
 #: 规格列两倍宽；埋深=数量列宽；类型/单位列容得下表头两字；埋深/单位/数量居中
@@ -322,16 +322,13 @@ class _ElementNameDelegate(_FocusCellDelegate):
 
         painter.save()
         # 底色自绘（Quotor ResourceSeqDelegate 同款）：选中行 = QSS ::item:selected
-        # 的 table_selected_bg；未选中行按行奇偶 = 表背景 bg_card / 交替行 table_alt_row，
-        # 与视图的 alternate-background-color 条纹保持连续
+        # 的 table_selected_bg；未选中行统一 = 表背景 bg_card（主表格不画交替行条纹）
         theme = ThemeManager.instance().current()
         if option.state & QStyle.StateFlag.State_Selected:
             painter.fillRect(option.rect, QColor(theme.table_selected_bg))
         else:
-            painter.fillRect(
-                option.rect,
-                QColor(theme.table_alt_row if index.row() % 2 == 1 else theme.bg_card),
-            )
+            # 主表格不使用交替行底色：未选中行统一取两种条纹色中更浅的 bg_card
+            painter.fillRect(option.rect, QColor(theme.bg_card))
 
         rect = option.rect
         # 缩进竖线（成员行）：在该级图标槽位之后
@@ -487,6 +484,8 @@ class UnitPanel(QWidget):
 
     def _build_element_table(self) -> QTableWidget:
         self._element_table = self._make_table(_ELEMENT_HEADERS)
+        # 主表格不画交替行条纹：所有单元格统一用更浅的底色（见 _ElementNameDelegate）
+        self._element_table.setAlternatingRowColors(False)
         # 全部列都按 _ELEMENT_WIDTHS 定宽（含末列「来源」）：表格总宽即各列之和，
         # 不随父控件拉伸（固定列宽约定见 table_width 模块）
         for index, width in enumerate(_ELEMENT_WIDTHS):
@@ -1264,13 +1263,16 @@ class UnitPanel(QWidget):
         amount_item.setFlags(amount_item.flags() | Qt.ItemFlag.ItemIsEditable)
         _apply_expression_hint(amount_item, row.amount, row.amount_error)
 
-        # 父节点不选围护 / 工作面宽原则：显示 "-"，无下拉框
+        # 父节点四个原则单元格一律留空：围护 / 地基 / 挖填降水 / 面宽
+        # 全部由子构件自己的原则决定
         for column, tooltip in (
             (_COL_PE, "父节点不选围护原则：左边坡取首构件左原则、右边坡取末构件右原则。"),
+            (_COL_PF, "父节点不选地基处理原则：每条构件按自己的地基处理原则计算。"),
+            (_COL_PP, "父节点不选挖填降水原则：每条构件按自己的挖填降水原则计算。"),
             (_COL_PW, "父节点不选工作面宽原则：每条构件按自己的面宽原则确定工作面。"),
         ):
             item = self._element_table.item(index, column)
-            item.setText("-")
+            item.setText("")
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item.setForeground(QBrush(_secondary_color()))
             item.setToolTip(tooltip)
@@ -1518,9 +1520,38 @@ class UnitPanel(QWidget):
             return int(data[1])
         return None
 
-    def _next_element_id(self) -> int | None:
-        """当前选中行下一行的构件 id；当前已是末行（或未选中行）时为 None。"""
-        return self._element_id_at(self._element_table.currentRow() + 1)
+    def _insert_anchor_element_id(self) -> int | None:
+        """构件库插入锚点（新条目插到该构件之前）；None = 追加末尾。
+
+        普通构件取当前行下一行的构件；选中合槽父行或合槽子条目时，锚点取
+        整组合槽所有条目之后的下一条构件，新条目不会插进合槽组内部。
+        """
+        row_index = self._element_table.currentRow()
+        if row_index < 0 or row_index >= len(self._rows_cache):
+            return None
+        row = self._rows_cache[row_index]
+        if isinstance(row, GroupRow):
+            return self._element_id_after_group(row.id)
+        if isinstance(row, ElementRow) and row.group_id is not None:
+            return self._element_id_after_group(row.group_id)
+        return self._element_id_at(row_index + 1)
+
+    def _element_id_after_group(self, group_id: int) -> int | None:
+        """合槽组最后一条成员之后的下一条构件 id；组在末尾时为 None。"""
+        last_index = -1
+        for index, row in enumerate(self._rows_cache):
+            if isinstance(row, GroupRow):
+                if row.id == group_id:
+                    last_index = index
+            elif isinstance(row, ElementRow) and row.group_id == group_id:
+                last_index = index
+        if last_index < 0:
+            return None
+        for index in range(last_index + 1, len(self._rows_cache)):
+            row = self._rows_cache[index]
+            if isinstance(row, ElementRow):
+                return row.id
+        return None
 
     def _restore_current_element(self, element_id: int | None, column: int) -> None:
         """重建表格后恢复选中行；本来没有选中就选第一行，让明细区直接可用。"""
@@ -1785,16 +1816,23 @@ class UnitPanel(QWidget):
 
     # ------------------------------------------------------------------ 构件库插入（原版 FormMdi 构件库双击）
     def insert_template(self, template) -> None:
-        """把构件库模板插入当前单位工程主表格（当前选中行的下一行），并选中新条目。"""
+        """把构件库模板插入当前单位工程主表格，并选中新条目。
+
+        普通构件插到当前选中行的下一行；选中合槽父行或其子条目时插到整组
+        合槽所有条目之后（合槽组在末尾则追加到末尾）。
+        """
         if self._unit_id is None:
             bus().status_message.emit("请先选中单位工程，再从构件库插入。", 4000)
             return
         from app.viewmodels.unit_vm import insert_element_template
 
-        # 插入语义是“锚点行之前”：锚点取下一行即插到当前行之后（末行时锚点为空 → 追加末尾）。
+        # 插入语义是“锚点行之前”：锚点由 _insert_anchor_element_id 计算
+        # （选中合槽相关行时取整组之后，避免插进组内部或替换父行）。
         # 表格刷新经 unit_changed → QTimer.singleShot(0) 延后，此处只记下新 id，
         # 由 _on_unit_loaded 在重载落地后选中新行
-        element = insert_element_template(self._unit_id, template, self._next_element_id())
+        element = insert_element_template(
+            self._unit_id, template, self._insert_anchor_element_id()
+        )
         if element is not None:
             self._pending_select_id = element.id
 
@@ -2276,11 +2314,15 @@ def _pipe_panel_editable(element) -> bool:
 
 
 def _combo_names(names: list[str], rows: list[ElementRow], field: str) -> list[str]:
-    """下拉项 = 库中原则名；若某构件引用的名字已不在库里也保留，避免显示为空。"""
-    result = list(names)
+    """下拉项 = 库中原则名；若某构件引用的名字已不在库里也保留，避免显示为空。
+
+    "-" 是合槽父节点的占位文本、不是原则名，不进入下拉项（本项目不存在
+    "-" 类型的原则）。
+    """
+    result = [name for name in names if name and name != "-"]
     for row in rows:
         value = getattr(row, field)
-        if value and value not in result:
+        if value and value != "-" and value not in result:
             result.append(value)
     if not result:
         result = [""]

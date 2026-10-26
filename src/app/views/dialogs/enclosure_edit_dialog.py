@@ -54,7 +54,7 @@ class EnclosureEditDialog(FramelessDialog):
     """围护原则编辑（FormPE，无边框自绘标题栏）。"""
 
     def __init__(self, enclosure_id: int, parent: QWidget | None = None) -> None:
-        super().__init__(parent, "围护原则编辑")
+        super().__init__(parent, "沟槽围护原则编辑")
         self.resize(660, 470)
         self._enclosure_id = enclosure_id
         self._loading = False

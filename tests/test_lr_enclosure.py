@@ -778,6 +778,8 @@ def test_unit_panel_group_rows_and_lr_tab(project, qapp) -> None:
         _COL_AMOUNT,
         _COL_DEPTH,
         _COL_PE,
+        _COL_PF,
+        _COL_PP,
         _COL_PW,
         _TREE_ROLE,
         _select_row,
@@ -786,15 +788,15 @@ def test_unit_panel_group_rows_and_lr_tab(project, qapp) -> None:
     metas = [table.item(row, 0).data(_TREE_ROLE) for row in range(table.rowCount())]
     assert any(meta and meta["has_children"] for meta in metas)
     assert sum(1 for meta in metas if meta and meta["indent"] == 1) == 2
-    # 父行不持有围护 / 面宽原则：两列显示 "-" 且没有下拉框；
+    # 父行四个原则单元格一律留空且没有下拉框；
     # 埋深恒 "-"（不参与计算），数量 = L_组 且可编辑
     group_row_index = next(
         row for row in range(table.rowCount())
         if (table.item(row, 0).data(_TREE_ROLE) or {}).get("has_children")
     )
-    assert table.item(group_row_index, _COL_PE).text() == "-"
-    assert table.item(group_row_index, _COL_PW).text() == "-"
-    assert table.cellWidget(group_row_index, _COL_PE) is None
+    for column in (_COL_PE, _COL_PF, _COL_PP, _COL_PW):
+        assert table.item(group_row_index, column).text() == ""
+        assert table.cellWidget(group_row_index, column) is None
     assert table.item(group_row_index, _COL_DEPTH).text() == "-"
     assert table.item(group_row_index, _COL_AMOUNT).text() == "120"
     from PySide6.QtCore import Qt

@@ -154,7 +154,7 @@ def test_spcp_rejects_wrong_root(project, tmp_path: Path) -> None:
 # 原则编辑窗体 UI 调整（2026-10）：标题、按钮文案与顺序、板块布局、1.0 列头
 # --------------------------------------------------------------------------- #
 def test_principle_dialog_titles(qapp, project) -> None:
-    """窗体标题：围护原则编辑 / 多级围护编辑窗体 / 地基原则编辑。"""
+    """窗体标题：沟槽围护原则编辑 / 多级围护编辑窗体 / 地基处理原则编辑。"""
     from app.views.dialogs.enclosure_edit_dialog import EnclosureEditDialog
     from app.views.dialogs.foundation_edit_dialog import FoundationEditDialog
     from app.views.dialogs.principle_dialogs import EnclosureWorkDialog
@@ -163,13 +163,30 @@ def test_principle_dialog_titles(qapp, project) -> None:
     work_dialog = EnclosureWorkDialog(project_io.enclosures()[0].works_sorted()[0])
     foundation = FoundationEditDialog(project_io.foundations()[0].id)
     try:
-        assert enclosure.windowTitle() == "围护原则编辑"
+        assert enclosure.windowTitle() == "沟槽围护原则编辑"
         assert work_dialog.windowTitle() == "多级围护编辑窗体"
-        assert foundation.windowTitle() == "地基原则编辑"
+        assert foundation.windowTitle() == "地基处理原则编辑"
     finally:
         enclosure.close()
         work_dialog.close()
         foundation.close()
+
+
+def test_width_and_precipitation_dialog_titles(qapp, project) -> None:
+    """工作面宽 / 挖填降水原则编辑窗体的全称标题。"""
+    from app.views.dialogs.principle_dialogs import (
+        PrecipitationEditDialog,
+        WidthEditDialog,
+    )
+
+    width = WidthEditDialog(project_io.width_principles()[0].id)
+    precipitation = PrecipitationEditDialog(project_io.precipitations()[0].id)
+    try:
+        assert width.windowTitle() == "工作面宽原则编辑"
+        assert precipitation.windowTitle() == "挖填降水原则编辑"
+    finally:
+        width.close()
+        precipitation.close()
 
 
 def test_enclosure_dialog_no_precipitation_box_and_button_position(qapp, project) -> None:
