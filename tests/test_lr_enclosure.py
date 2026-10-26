@@ -896,3 +896,128 @@ def test_lr_tab_combos_follow_principle_changes(project, qapp) -> None:
     # 下拉重建后仍保持原选中值（未被静默改成第一条）
     assert panel._lr_table.cellWidget(0, 0).currentText() == left_pe.name
     assert panel._lr_table.cellWidget(1, 0).currentText() == right_pe.name
+
+
+def _edit_group_parent_amount(panel, group_id: int, text: str) -> None:
+    """真实编辑（Enter 提交）合槽父行数量：打开内嵌编辑器 → 输入 → 回车。
+
+    不能用 item.setText 代替：Enter 走的是编辑器 commitData，整表重载由
+    unit_changed 触发 QTimer 延后执行，必须让事件循环跑起来。
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication, QLineEdit
+
+    from app.views.panels.unit_panel import _COL_AMOUNT
+
+    table = panel._element_table
+    row = next(index for index in range(table.rowCount()) if panel._group_id_at(index) == group_id)
+    table.setCurrentCell(row, _COL_AMOUNT)
+    table.editItem(table.item(row, _COL_AMOUNT))
+    QApplication.processEvents()
+    editor = table.findChild(QLineEdit)
+    editor.setText(text)
+    QTest.keyClick(editor, Qt.Key.Key_Return)
+    QApplication.processEvents()
+    QTest.qWait(30)
+    QApplication.processEvents()
+
+
+def _show_group_panel(elements: list[int]) -> tuple:
+    """建面板并编组，返回 (panel, group, unit)。"""
+    from sqlalchemy import select
+
+    from app.core.models import base as orm
+    from app.core.models.models import Unit
+    from app.viewmodels import unit_vm
+    from app.viewmodels.project_vm import TreeNode
+    from app.views.panels.unit_panel import UnitPanel
+
+    unit = orm.session().scalar(select(Unit))
+    panel = UnitPanel()
+    panel._on_node_selected(TreeNode(kind="unit", id=unit.id, name=unit.name))
+    group, error = unit_vm.create_trench_group(elements)
+    assert group is not None and error is None
+    panel.refresh()
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.processEvents()
+    return panel, group, unit
+
+
+def test_group_parent_amount_edit_keeps_group_detail(project, qapp) -> None:
+    """改合槽父节点数量后仍选中父行：成员合计工程量与整槽断面不被清空。
+
+    回归：父行不是构件（``_current_element_id`` 恒 None），整表重载原先会
+    回落到第 0 行，随后的空态清理又把明细清掉。
+    """
+    from app.views.panels.unit_panel import _select_row
+
+    _element("父行前构件")  # 让合槽父行不在第 0 行
+    e1 = _element("父行组员1")
+    e2 = _element("父行组员2")
+    panel, group, _unit = _show_group_panel([e1, e2])
+
+    table = panel._element_table
+    group_row = next(
+        row for row in range(table.rowCount()) if panel._group_id_at(row) == group.id
+    )
+    _select_row(table, group_row, 0)
+    panel._sync_detail_to_selection()
+    _edit_group_parent_amount(panel, group.id, "150")
+
+    assert table.currentRow() == group_row
+    assert panel._group_member_ids == [e1, e2]
+    assert panel._section_view._canvas._group_id == group.id
+    assert panel._pipe_table.item(0, 0).text() == "*多种管材"
+    assert panel._quantity_tables["定额工程量"].rowCount() > 0
+    listing = panel._quantity_tables["清单工程量"]
+    assert listing.rowCount() > 0
+    # 数量已按父节点新值重算（而不是停留在编辑前的 120）
+    assert any(
+        listing.item(row, 4) is not None and listing.item(row, 4).text() == "150"
+        for row in range(listing.rowCount())
+    )
+
+
+def test_group_parent_amount_edit_first_row_not_stale(project, qapp) -> None:
+    """父行位于第 0 行时，改数量后不能被上一个构件的过期明细覆盖。
+
+    回归：明细目标停留在末条子构件时改父节点数量，重载先清空再补发
+    过期 detail_loaded，整个下方面板会刷成末条子构件的内容、定额/清单清空。
+    """
+    from app.views.panels.unit_panel import _select_row
+
+    e1 = _element("首行组员1")
+    e2 = _element("首行组员2")
+    panel, group, _unit = _show_group_panel([e1, e2])
+
+    table = panel._element_table
+    group_row = next(
+        row for row in range(table.rowCount()) if panel._group_id_at(row) == group.id
+    )
+    assert group_row == 0
+    # 先选末条子构件（明细目标停在它），再选父行编辑
+    last_child_row = next(
+        row for row in range(table.rowCount()) if panel._element_id_at(row) == e2
+    )
+    _select_row(table, last_child_row, 0)
+    panel._sync_detail_to_selection()
+    _select_row(table, group_row, 0)
+    panel._sync_detail_to_selection()
+    _edit_group_parent_amount(panel, group.id, "150")
+
+    assert table.currentRow() == group_row
+    assert panel._current_element_id() is None
+    assert panel._multi_detail is True
+    assert panel._group_member_ids == [e1, e2]
+    assert panel._section_view._canvas._group_id == group.id
+    assert panel._pipe_table.item(0, 0).text() == "*多种管材"
+    assert panel._quantity_tables["定额工程量"].rowCount() > 0
+    listing = panel._quantity_tables["清单工程量"]
+    assert listing.rowCount() > 0
+    # 数量已按父节点新值重算（而不是停留在编辑前的 120）
+    assert any(
+        listing.item(row, 4) is not None and listing.item(row, 4).text() == "150"
+        for row in range(listing.rowCount())
+    )

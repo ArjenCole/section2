@@ -1722,6 +1722,15 @@ class UnitViewModel(QObject):
             element_id, pipe_rows(element_id), param_rows(element_id), quantity_rows(element_id)
         )
 
+    def clear_detail(self) -> None:
+        """明细区切到合槽父行 / 多选 / 空态：清掉明细目标（不发信号）。
+
+        合槽父行、多选和空态都没有具体构件，若继续保留上一个构件的 id，
+        之后任何一次整表重载（如改合槽父节点数量）都会在 ``unit_loaded``
+        之后补发那份过期明细，把下方面板刷成上一个构件的内容。
+        """
+        self._element_id = None
+
     def _on_unit_changed(self, unit_id: int) -> None:
         """任何来源（界面 / AI 工具）改了构件都重新加载当前单位工程。
 

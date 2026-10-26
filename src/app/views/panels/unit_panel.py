@@ -888,12 +888,14 @@ class UnitPanel(QWidget):
         if unit_id != self._unit_id:
             return
         keep_element = self._current_element_id()
+        keep_group = self._group_id_at(self._element_table.currentRow())
         keep_column = self._element_table.currentColumn()
         if self._ids_stale:
             # 撤销 / 重做重建了工作库：旧 id 在新库里要么缺失（_restore_current_element
             # 会回落第 0 行）要么撞到别的构件（选中跳到毫不相干的行）——一律不信，
             # 选中由撤销快照按行号恢复（restore_ui_state 紧随其后）
             keep_element = None
+            keep_group = None
             self._ids_stale = False
         pending = self._pending_select_id
         self._pending_select_id = None
@@ -913,15 +915,30 @@ class UnitPanel(QWidget):
             self._apply_group_visibility()
         finally:
             self._loading = False
-        self._restore_current_element(
-            pending if pending is not None else keep_element, keep_column
-        )
+        self._loading = True
+        try:
+            self._restore_current_element(
+                pending if pending is not None else keep_element,
+                keep_column,
+                None
+                if (pending is not None or keep_element is not None)
+                else keep_group,
+            )
+        finally:
+            self._loading = False
+        # 恢复出的选中索引可能与重载前完全相同（不发 currentCellChanged），
+        # 这里显式同步一次，保证父行/构件的明细一定按最新数据重算。
+        self._sync_detail_to_selection()
+        # 合槽父行：上一步已重建占位、成员合计工程量与整槽断面；不能再走下面
+        # 按构件 id 的分支（_current_element_id() 为 None 会触发 _clear_detail，
+        # 把刚填好的父行明细与断面全部清掉）。
+        if self._group_id_at(self._element_table.currentRow()) is not None:
+            return
         if self._current_element_id() is None:
             # 表格空（撤销 / 重做到没有构件的状态，或构件被删光）：明细面板
             # 不能停留在上一个构件的内容上
             self._clear_detail()
             return
-        self._fill_quantities()
         self._refresh_grouped_lr_tab()
         self._section_view.set_element(self._current_element_id())
 
@@ -1396,6 +1413,7 @@ class UnitPanel(QWidget):
         from app.core.models.models import TrenchGroup
 
         self._multi_detail = True
+        self._vm.clear_detail()  # 父行没有构件明细，别让后续重载补发上一个构件的内容
         self._current_detail_id = None
         group = orm.session().get(TrenchGroup, group_id)
         self._group_member_ids = (
@@ -1428,6 +1446,7 @@ class UnitPanel(QWidget):
 
     def _show_multi_detail(self) -> None:
         self._multi_detail = True
+        self._vm.clear_detail()  # 多选没有单一构件明细（同上）
         self._current_detail_id = None
         self._group_member_ids = []
         # 多选显示占位行：增删没有明确目标构件，按钮一律禁用
@@ -1474,6 +1493,7 @@ class UnitPanel(QWidget):
         上下文一并复位。
         """
         self._multi_detail = False
+        self._vm.clear_detail()  # 无选中构件：清掉明细目标，避免重载补发过期明细
         self._current_detail_id = None
         self._group_member_ids = []
         self._pipe_buttons.clear_row_buttons()
@@ -1553,15 +1573,25 @@ class UnitPanel(QWidget):
                 return row.id
         return None
 
-    def _restore_current_element(self, element_id: int | None, column: int) -> None:
-        """重建表格后恢复选中行；本来没有选中就选第一行，让明细区直接可用。"""
+    def _restore_current_element(
+        self, element_id: int | None, column: int, group_id: int | None = None
+    ) -> None:
+        """重建表格后恢复选中行；本来没有选中就选第一行，让明细区直接可用。
+
+        ``group_id`` 用于恢复合槽父行的选中：父行不是构件（``_element_id_at``
+        恒为 None），只按构件 id 恢复会让编辑父节点后选中跳到第 0 行。
+        """
         if self._element_table.rowCount() == 0:
             return
-        if element_id is None:
+        if element_id is None and group_id is None:
             _select_row(self._element_table, 0, max(0, column))
             return
         for row in range(self._element_table.rowCount()):
-            if self._element_id_at(row) == element_id:
+            if element_id is not None:
+                if self._element_id_at(row) == element_id:
+                    _select_row(self._element_table, row, max(0, column))
+                    return
+            elif self._group_id_at(row) == group_id:
                 _select_row(self._element_table, row, max(0, column))
                 return
         _select_row(self._element_table, 0, max(0, column))
