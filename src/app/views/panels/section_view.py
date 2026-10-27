@@ -662,7 +662,7 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
         work = choice_work(pe_deep, delta) if pe_deep is not None else None
         if work is None:
             return None, "深侧围护原则没有任何围护分级，无法绘制断面。"
-        run = _internal_run(work, deep["depth"], min(h_left, h_right))
+        run = _internal_run(work, deep["depth"], min(h_left, h_right)).v
         deep_is_right = h_right > h_left
         pairs.append(
             {
