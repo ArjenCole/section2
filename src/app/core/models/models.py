@@ -265,7 +265,7 @@ class Element(Base):
     #: 左侧 / 右侧围护原则名（左右分设模式；两列皆空 = 普通单原则模式）
     pe_left_name: Mapped[str] = mapped_column(String(200), default="")
     pe_right_name: Mapped[str] = mapped_column(String(200), default="")
-    #: 左侧 / 右侧支撑（Z 类公式）是否参与计算（左右分设模式）
+    #: 左侧 / 右侧支撑（类别为“支撑”的公式）是否参与计算（左右分设模式）
     support_left: Mapped[bool] = mapped_column(Boolean, default=True)
     support_right: Mapped[bool] = mapped_column(Boolean, default=True)
     #: 所属合槽组（父节点）；空 = 独立构件
@@ -678,7 +678,8 @@ class Component(Base):
 class ComponentParam(Base):
     """构件参数。
 
-    对应旧版 mcComponent.param：key 为参数字母（A~Z、FA~FZ 为工程量公式、ZA~ZZ），
+    对应旧版 mcComponent.param：key 为参数字母（A~Z 为一般参数，FA~FZ 为
+    构件公式——围护 / 支撑只由显示名类别区分），
     value 保持旧版 ``"显示名|表达式"`` 的写法，便于与旧数据一一对应。
     """
 

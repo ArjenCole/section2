@@ -1,7 +1,10 @@
 """计算总入口（复刻旧版 mscGroove.Cal + mcElement.getDQ）。
 
-一个构件条目的工程量 = 沟槽断面（挖方/换填/垫层/回填） + 降水 + 围护 + 特殊地基
-+ 支撑（Z 类公式） + 管道基础（扣占土） + 管材，全部按“每延米”计算后 ×数量。
+一个构件条目的工程量 = 沟槽断面（挖方/换填/垫层/回填） + 降水 + 围护/支撑公式
++ 特殊地基 + 管道基础（扣占土） + 管材，全部按“每延米”计算后 ×数量。
+
+构件公式统一以 F 开头（FA~FZ）：围护、支撑只是公式显示名的类别
+（``围护|…`` / ``支撑|…``），计算时一次全部代入，不再按键前缀区分。
 
 例外（同旧版）：附属构筑物（mcE7）只算自己的工程量行（见 compute_structure）；
 顶管 / 牵引管（mcE4 / mcE5）不开槽，只有管材（见 compute_trenchless）。
@@ -531,15 +534,36 @@ def pre_sub(expression: str, height: Dim, width: Dim, count: Dim, sides: int = 2
     return text
 
 
+def _display_category(display: str) -> str:
+    """公式行的显示名类别（``围护|喷射砼|m3`` → ``围护``）。"""
+    return (display or "").split("|", 1)[0].strip()
+
+
 def component_quantities(
-    component, height: Dim, width: Dim, count: Dim, cat: str, out: QDict, note: str = "", sides: int = 2
+    component,
+    height: Dim,
+    width: Dim,
+    count: Dim,
+    cat: str,
+    out: QDict,
+    note: str = "",
+    sides: int = 2,
+    categories: set[str] | frozenset[str] | None = None,
 ) -> None:
-    """构件公式求值（旧版 mcComponent.Q）：cat="F" 工程量公式，"Z" 支撑公式。"""
+    """构件公式求值（旧版 mcComponent.Q）：cat 目前只有 "F"（公式统一 F 开头）。
+
+    ``categories`` 按公式显示名的类别（竖线前一段，如"围护"/"支撑"）筛选；
+    None = 全部代入（普通单原则路径：匹配到做法后一次算出该做法下所有公式，
+    不再区分围护与支撑）。
+    """
     if component is None:
         return
     params = load_params(component)
     for key in params:
         if not key.startswith(cat) or len(key) <= 1:
+            continue
+        display = params[key][0]
+        if categories is not None and _display_category(display) not in categories:
             continue
         substituted = value_exp(params, key)
         if substituted == _CYCLE or substituted == "":
@@ -550,28 +574,35 @@ def component_quantities(
             out.add(key_exp(params, key), value, numeric, note)
 
 
-def component_support_quantities(
-    component, height: Dim, width: Dim, count: Dim, out: QDict, note: str = "", emit_strut: bool = True
+def component_side_quantities(
+    component,
+    height: Dim,
+    width: Dim,
+    count: Dim,
+    out: QDict,
+    note: str = "",
+    category: str = "支撑",
+    emit_without_sides: bool = True,
 ) -> None:
-    """Z 类（支撑）公式的"围檩 / 贯通支撑"分流输出（v3 库拆行后）。
+    """按公式类别筛选的单侧量（支撑）：公式含 ``sides`` 的按调用侧 ×1（围檩），
+    不含 ``sides`` 的是整槽量（贯通支撑 / 支撑模板），只在
+    ``emit_without_sides=True`` 的调用（首个勾选面）输出一次。
 
-    库里 Z 类已拆成独立行（同定额键，QDict 同 key 合并）：公式含 ``sides``
-    变量的行是**围护侧量**（围檩），按调用侧 ×1（``sides=1``）；不含
-    ``sides`` 的行是**整槽量**（贯通支撑 / 支撑模板），只在 ``emit_strut=True``
-    的调用（首个勾选面）输出一次，避免左右分设 / 合槽多面重复。
-    普通单原则路径不走这里（works_quantities 全行 sides=2，与旧版一致）。
+    行归属只看显示名类别（``支撑|…``），不再依赖 Z 键前缀。
     """
     if component is None:
         return
     params = load_params(component)
     for key in params:
-        if not key.startswith("Z") or len(key) <= 1:
+        if not key.startswith("F") or len(key) <= 1:
+            continue
+        if _display_category(params[key][0]) != category:
             continue
         substituted = value_exp(params, key)
         if substituted == _CYCLE or substituted == "":
             continue
         has_sides = re.search(r"\bsides\b", substituted) is not None
-        if not has_sides and not emit_strut:
+        if not has_sides and not emit_without_sides:
             continue  # 贯通支撑行：整槽只出一次
         numeric = prettify_formula(pre_sub(substituted, height, width, count, 1))
         value = evaluate_or_default(numeric)
@@ -580,16 +611,25 @@ def component_support_quantities(
 
 
 def support_quantities_sided(
-    works, depth: Dim, count: Dim, ad: AtlasDims, info: ElementInput, out: QDict, width: Dim | None = None
+    works,
+    depth: Dim,
+    count: Dim,
+    ad: AtlasDims,
+    info: ElementInput,
+    out: QDict,
+    width: Dim | None = None,
+    note: str = "",
+    emit_strut: bool = True,
 ) -> None:
-    """左右分设 / 合槽的支撑（Z 类）输出：``works`` = [(做法, 勾选了支撑)]。
+    """左右分设 / 合槽的支撑输出：``works`` = [(做法, 勾选了支撑)]。
 
-    围檩行：每个勾选面各出一次（×1）；贯通支撑行：只在第一个勾选面出
-    一次（左优先，勾选顺序即列表顺序）。级高划分同 works_quantities。
+    支撑行按公式类别（``支撑|…``）识别：围檩行每个勾选面各出一次（×1）；
+    贯通支撑行只在第一个勾选面出一次（左优先，勾选顺序即列表顺序）。
+    级高划分同 works_quantities。
     """
     if width is None:
         width = groove.groove_width(ad, info.size_b_dim)
-    strut_emitted = False
+    strut_emitted = not emit_strut
     for work, checked in works:
         if not checked or work is None:
             continue
@@ -604,9 +644,9 @@ def support_quantities_sided(
             else:
                 height = depth
             component = level.components[0] if level.components else None
-            component_support_quantities(
+            component_side_quantities(
                 component, height, width, count, out,
-                note="", emit_strut=not strut_emitted,
+                note=note, emit_without_sides=not strut_emitted,
             )
             strut_emitted = True  # 首个勾选面之后不再出贯通支撑行
 
@@ -640,9 +680,12 @@ def compute_element(info: ElementInput) -> QDict | None:
     """计算一个构件条目的工程量；数量为 0 或原则缺失时返回 None。
 
     顶管 / 牵引管不开槽，只有管材（见 :func:`compute_trenchless`）；
-    沟槽断面 + 降水 + 围护(F) + 特殊地基按构件引用的单条 pe × pf 计算
-    （旧版多原则的按比例组合在迁移时已拆成独立条目）；支撑(Z) 与围护用
-    pe，管道基础 / 图集查询 / 垫层用 pf，挖填类型与降水用 pp（v10 归属）。
+    沟槽断面 + 降水 + 围护/支撑公式(F) + 特殊地基按构件引用的单条 pe × pf
+    计算（旧版多原则的按比例组合在迁移时已拆成独立条目）；围护做法用 pe，
+    管道基础 / 图集查询 / 垫层用 pf，挖填类型与降水用 pp（v10 归属）。
+
+    做法档位统一按**含换填层厚度**的 ``groove_depth`` 匹配；匹配到做法后
+    一次代入该做法下的全部公式（围护与支撑不再分开取深度 / 选做法）。
     """
     if info.category == CATEGORY_STRUCTURE:
         return compute_structure(info)
@@ -684,12 +727,6 @@ def compute_element(info: ElementInput) -> QDict | None:
             "特殊地基",
         )
 
-    # 支撑（Z 类公式）：不考虑换填层厚度（旧版 Cal 末尾）
-    support_depth = depth_dim + (ad.t + ad.c1) / 1000
-    support_work = choice_work(pe, support_depth.v)
-    if support_work is not None:
-        works_quantities(support_work, support_depth, amount_dim, "Z", ad, info, per_meter, "支撑")
-
     # 管道基础（扣弓形占土）+ 管材
     foundation.cal_found(info, pf, info.pp, ad, per_meter)
     if info.category == CATEGORY_ENCASED:
@@ -707,8 +744,10 @@ def compute_element_lr(info: ElementInput) -> QDict | None:
       不再随左右围护不一致而分侧）；管道基础（砼基础 / 角度 / 垫层，决定图集
       查询）取 ``pf``（地基原则）；
     * 断面几何走 :func:`groove.cal_groove_sided`（两侧级标高并集切段）；
-    * F 类（围护量）每侧各调一次 ×1；Z 类（支撑/围檩）按左右支撑勾选，
-      深度不含换填层（同旧版支撑口径）；
+    * 做法档位统一按含换填层厚度的 ``groove_depth`` 匹配；围护行（类别
+      ``围护``）每侧各调一次 ×1；支撑行按公式类别（``支撑``）识别，按左右
+      支撑勾选输出（围檩每侧一次、贯通支撑整槽一次，见
+      :func:`support_quantities_sided`）；
     * 降水的湿土排水副调用也走双侧几何；特殊地基 / 管道基础 / 管材同单原则路径。
     """
     pe_l, pe_r = info.pe_left, info.pe_right
@@ -740,17 +779,19 @@ def compute_element_lr(info: ElementInput) -> QDict | None:
     ):
         return None
     width = groove.groove_width(ad, info.size_b_dim)
-    # 围护量：每侧 ×1（库公式 *sides 代入 1；放坡模板无公式天然不出量）
-    works_quantities(work_l, groove_depth, amount_dim, "F", ad, info, per_meter, "围护·左侧", sides=1)
-    works_quantities(work_r, groove_depth, amount_dim, "F", ad, info, per_meter, "围护·右侧", sides=1)
-    # 支撑（Z 类）：深度不含换填层（同旧版 Cal 末尾）；围檩行每侧 ×1、
-    # 贯通支撑行整槽一次（左优先），见 support_quantities_sided
-    support_depth = depth_dim + (ad.t + ad.c1) / 1000
-    support_work_l = choice_work(pe_l, support_depth.v)
-    support_work_r = choice_work(pe_r, support_depth.v)
+    # 围护行：每侧 ×1（库公式 *sides 代入 1；放坡模板无公式天然不出量）
+    works_quantities(
+        work_l, groove_depth, amount_dim, "F", ad, info, per_meter,
+        "围护·左侧", sides=1, categories={"围护"},
+    )
+    works_quantities(
+        work_r, groove_depth, amount_dim, "F", ad, info, per_meter,
+        "围护·右侧", sides=1, categories={"围护"},
+    )
+    # 支撑行按公式类别识别（不再看 Z 键前缀）：围檩每侧 ×1、贯通支撑整槽一次
     support_quantities_sided(
-        [(support_work_l, info.support_left), (support_work_r, info.support_right)],
-        support_depth, amount_dim, ad, info, per_meter,
+        [(work_l, info.support_left), (work_r, info.support_right)],
+        groove_depth, amount_dim, ad, info, per_meter, note="支撑",
     )
     # 降水（湿土排水的断面副调用也走双侧几何，垫层材质取地基原则）
     precipitation.cal_precipitation(
@@ -845,6 +886,7 @@ def works_quantities(
     note: str,
     sides: int = 2,
     width: Dim | None = None,
+    categories: set[str] | frozenset[str] | None = None,
 ) -> None:
     """围护做法各级构件 + 止水构件的公式量（旧版 cal_Ecpnts）。
 
@@ -855,13 +897,15 @@ def works_quantities(
     ``sides`` 是围护公式的侧数代入（v3，见 :func:`pre_sub`）：普通构件 2，
     左右分设 / 合槽的每个面 1。
 
+    ``categories`` 按公式显示名类别筛选（左右分设 / 合槽的围护面传
+    ``{"围护"}``，避免支撑行被每侧重复计入）；普通路径 None = 全部公式。
+
     与旧版的偏差（修正旧版缺陷）：旧版 cal_Ecpnts 写的是
     ``D10E3(SizeB + t*2 + a*2 + workwidth*2)``，把米制的断面宽混进毫米的和里
     整体除 1000，断面宽被抹掉（cal_groove / cal_Fcpnts 用的是
-    ``SizeB + D10E3(…)``，三处只有这里漏了）；结果支撑类做法的 width 偏小——
-    直埋管少算约一个管径，箱涵 / 管廊能少到只有应有槽底宽的 1/4~1/3。
-    凡公式里引用 ``width`` 的做法（钢板桩 / 横列板 / SMW工法桩 的 ZA、
-    钻孔灌注桩 的 ZA~ZD，均属支撑量）修正后数值会比旧版大，属有意偏差。
+    ``SizeB + D10E3(…)``，三处只有这里漏了）；结果引用 width 的公式偏小——
+    直埋管少算约一个管径，箱涵 / 管廊能少到只有应有槽底宽的 1/4~1/3，
+    属有意偏差。
     """
     levels = list(work.levels)
     fixed_h = dim_sum(*(dim(level.h) for level in levels if level.h >= 0))
@@ -876,7 +920,9 @@ def works_quantities(
         else:
             height = depth
         component = level.components[0] if level.components else None
-        component_quantities(component, height, width, count, cat, out, note, sides)
+        component_quantities(
+            component, height, width, count, cat, out, note, sides, categories=categories
+        )
     waterstop = work.waterstops[0] if work.waterstops else None
     if waterstop is not None:
         component_quantities(waterstop, depth, width, count, "F", out, "止水", sides)

@@ -418,12 +418,43 @@ def load_database(data: dict) -> None:
     orm.commit()
 
 
+def _upgrade_param_keys(params: dict[str, str]) -> dict[str, str]:
+    """旧版 Z 类支撑公式键（ZA~ZZ）转写为下一个空闲 F 键（FA~FZ）。
+
+    构件公式已统一为 F 类（围护 / 支撑只由显示名类别区分）；旧工程文件里
+    的 Z 行按原顺序依次占用最小的空闲 F 键，与当前构件库模板的编号一致
+    （如 钢板桩 FA + ZA/ZB → FA/FB/FC）。
+    """
+    if not any(len(key) == 2 and key.startswith("Z") for key in params):
+        return params
+    used = set(params)
+    upgraded: dict[str, str] = {}
+    for key, value in params.items():
+        if len(key) == 2 and key.startswith("Z"):
+            candidate = next(
+                (
+                    "F" + chr(code)
+                    for code in range(ord("A"), ord("Z") + 1)
+                    if "F" + chr(code) not in used
+                ),
+                None,
+            )
+            if candidate is None:  # 旧数据异常（F 键已用尽）：原样保留，避免丢行
+                upgraded[key] = value
+                continue
+            used.add(candidate)
+            upgraded[candidate] = value
+        else:
+            upgraded[key] = value
+    return upgraded
+
+
 def _load_component(parent, data: dict | None) -> None:
     """在 parent（构件的三种所有者之一）下建构件；data 为 None 时保持无构件。"""
     if data is None:
         return
     component = Component(name=data.get("name") or "", formula=data.get("formula") or "")
-    for key, value in (data.get("params") or {}).items():
+    for key, value in _upgrade_param_keys(dict(data.get("params") or {})).items():
         component.params.append(ComponentParam(key=key, value=value))
     _attach_component(parent, component)
 

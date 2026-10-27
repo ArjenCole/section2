@@ -240,15 +240,13 @@ def describe_component(component: Component | None) -> str:
 
 def component_dict(component: Component) -> dict:
     params: list[dict] = []
-    f_formulas: list[dict] = []
-    z_formulas: list[dict] = []
+    formulas: list[dict] = []
     for param in component.params:
-        display, _, expression = (param.value or "").partition("|")
+        # 值格式统一为 显示名|表达式；显示名本身可能是 类别|名称|单位
+        display, _, expression = (param.value or "").rpartition("|")
         entry = {"key": param.key, "display": display, "expression": expression}
         if len(param.key) == 2 and param.key.startswith("F"):
-            f_formulas.append(entry)
-        elif len(param.key) == 2 and param.key.startswith("Z"):
-            z_formulas.append(entry)
+            formulas.append(entry)
         else:
             params.append(entry)
     return {
@@ -257,8 +255,7 @@ def component_dict(component: Component) -> dict:
         "describe": describe_component(component),
         "formula": component.formula,
         "params": params,
-        "f_formulas": f_formulas,
-        "z_formulas": z_formulas,
+        "formulas": formulas,
         "owner": {
             "foundation_id": component.foundation_id,
             "enclosure_level_id": component.enclosure_level_id,

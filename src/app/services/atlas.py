@@ -6,7 +6,7 @@
   管径 + 角度 + 级别 查 ``oD/t/a/C1/C2``；
 * **构件库** ``app/resources/inventory/ComponentInventory.xlsx`` —— 复刻旧版
   mscInventory.LoadCpnti：Ei(围护)/WSi(止水)/Fi(地基) 三页，每个构件两行
-  （discribe=显示名 / value=公式值），参数键 A~Z、FA~FZ、ZA~ZZ；
+  （discribe=显示名 / value=公式值），参数键 A~Z、FA~FZ；
 * **宽度默认表** ``GB 50268-2008.xlsx`` 的 WorkWidth / GrooveB 两页 —— 新建
   围护原则时的初始工作面宽度 / 沟槽宽度表。
 

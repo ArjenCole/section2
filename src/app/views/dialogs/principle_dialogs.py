@@ -6,7 +6,7 @@ FoundationEditDialog，复刻 FormPE / FormPF）与横条等处复用：
 * :class:`EnclosureWorkDialog` —— 多级围护编辑窗体（FormEcls：围护构件分级表 +
   右侧确认/取消，做法埋深与止水构件在原则主窗体编辑）；
 * :class:`ComponentEditDialog` —— 构件编辑器（FormCpntEdit：左参数表、
-  右上围护公式、右下支撑公式，行头显示键名）；
+  右公式表（围护 F 与支撑 Z 上下接续合并成一张表），行头显示键名）；
 * :class:`WidthEditDialog` —— 面宽原则编辑（FormWorkWidth：按工作面宽度 /
   按沟槽总宽度两个 tab，各自一张宽度表，当前 tab 即取值方式）；
 * :class:`PrecipitationEditDialog` —— 挖填降水原则编辑（FormPrecipitation：
@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialogButtonBox,
     QFormLayout,
-    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -516,38 +515,31 @@ class _LevelTable(CellFillTable):
         super().keyPressEvent(event)
 
 
-def _separator(vertical: bool) -> QFrame:
-    """1px 面板分割线（theme QSS 的 role="hline"/"vline"，颜色随主题边框色）。"""
-    line = QFrame()
-    line.setFrameShape(QFrame.Shape.VLine if vertical else QFrame.Shape.HLine)
-    line.setProperty("role", "vline" if vertical else "hline")
-    return line
-
-
 class ComponentEditDialog(PrincipleSubDialog):
-    """构件编辑器（旧版 FormCpntEdit）：左参数表（A~Z），右上围护公式（FA~FZ）、
-    右下支撑公式（ZA~ZZ），面板之间画分割线，底部确认/取消修改。
+    """构件编辑器（旧版 FormCpntEdit）：左「参数」表（A~Z），右「公式」表
+    （全部构件公式统一 FA~FZ，围护 / 支撑只靠显示名类别区分），两个板块
+    各用圆角线框框住，底部确认/取消修改。
 
-    三张表行头均显示参数键，行尾带「+ / -」按钮列（管材面板同款）：
-    参数表与两张工程量表都允许用户增删行。工程量表的「类别 / 名称 / 单位」
-    三列在库内仍拼成 ``类别|名称|单位`` 作为定额键（计算与导出沿用该格式）。
+    两张表行头均显示参数键，行尾带「+ / -」按钮列（管材面板同款）：
+    参数表与公式表都允许用户增删行。公式表的「类别 / 名称 / 单位」三列在
+    库内仍拼成 ``类别|名称|单位`` 作为定额键（计算与导出沿用该格式）。
 
     悬空引用（方案三）：公式引用了已不存在的参数键时，该公式单元格标红并
     以悬停提示列出缺失键，计算按 0（引擎既有语义）；新增参数取最小未占用
     且未被任何公式引用的字母，避免旧公式误绑到新参数。
     """
 
-    #: (键前缀, 数据列表头)；末列固定为空表头，留给「+ / -」按钮列
+    #: (表键, 数据列表头)；末列固定为空表头，留给「+ / -」按钮列。
+    #: "Q" = 公式表（所有构件公式统一 F 键）
     _GROUPS = (
-        ("", ("参数名称", "单位", "参数值")),
-        ("F", ("类别", "名称", "单位", "计算公式")),
-        ("Z", ("类别", "名称", "单位", "计算公式")),
+        ("", ("名称", "单位", "值")),
+        ("Q", ("类别", "名称", "单位", "计算公式")),
     )
     #: 各表用于铺满面板宽度的列（按钮列固定宽，不参与拉伸）
-    _STRETCH_COLUMNS = {"": 2, "F": 3, "Z": 3}
+    _STRETCH_COLUMNS = {"": 2, "Q": 3}
     #: 各表「公式 / 参数值」所在列（悬空引用检查读取这里）
-    _EXPRESSION_COLUMNS = {"": 2, "F": 3, "Z": 3}
-    #: 参数键字母表（参数表 A~Z，工程量表 FA~FZ / ZA~ZZ）
+    _EXPRESSION_COLUMNS = {"": 2, "Q": 3}
+    #: 参数键字母表（参数表 A~Z，公式表 FA~FZ）
     _ALPHABET = tuple(chr(code) for code in range(ord("A"), ord("Z") + 1))
     #: 公式里的函数 / 常量名（允许出现，不算“不存在的参数”）
     _FORMULA_NAMES = frozenset(
@@ -557,7 +549,7 @@ class ComponentEditDialog(PrincipleSubDialog):
             "CEIL", "CEILING", "SIN", "COS", "PI",
         }
     )
-    #: 参数键形态：1~2 个大写字母（A~Z / FA~FZ / ZA~ZZ）
+    #: 参数键形态：1~2 个大写字母（A~Z / FA~FZ）
     _KEY_PATTERN = re.compile(r"^[A-Z]{1,2}$")
     #: 悬空引用告警色（浅色 / 深色主题下都足够醒目）
     _WARN_COLOR = QColor("#d93025")
@@ -577,6 +569,7 @@ class ComponentEditDialog(PrincipleSubDialog):
     def _build(self) -> None:
         grid = QGridLayout()
         grid.setSpacing(6)
+        boxes: dict[str, QGroupBox] = {}
         for prefix, headers in self._GROUPS:
             # 末列空表头 = 按钮列（「+」在表头格，行尾「-」删行）
             table = CellFillTable(0, len(headers) + 1)
@@ -595,7 +588,11 @@ class ComponentEditDialog(PrincipleSubDialog):
                 add_tooltip="新增一行",
                 delete_tooltip="删除该行",
             )
-            buttons.add_clicked.connect(lambda p=prefix: self._add_row(p))
+            if prefix == "":
+                buttons.add_clicked.connect(lambda: self._add_row(""))
+            else:
+                # 公式统一 F 键：新增行固定取下一个 FA~FZ
+                buttons.add_clicked.connect(lambda: self._add_row("F"))
             buttons.delete_clicked.connect(
                 lambda row, p=prefix: self._delete_row(p, row)
             )
@@ -615,20 +612,18 @@ class ComponentEditDialog(PrincipleSubDialog):
                 table.setColumnWidth(1, 150)
                 table.setColumnWidth(2, 60)
 
-        # 左：参数表跨全部行（上下撑满窗体）；右：围护公式（上）、支撑公式
-        # （下）；面板之间画 1px 分割线（theme QSS 的 role="hline"/"vline"）：
-        # 竖线隔开左面板与右列，横线隔开右上与右下
-        grid.addWidget(self._tables[""], 0, 0, 3, 1)
-        grid.addWidget(_separator(True), 0, 1, 3, 1)
-        grid.addWidget(self._tables["F"], 0, 2)
-        grid.addWidget(_separator(False), 1, 2)
-        grid.addWidget(self._tables["Z"], 2, 2)
+            # 每个表格套一个圆角线框（与地基处理原则窗体的「管道基础 /
+            # 换填层」同款 QGroupBox）
+            box = QGroupBox("参数" if prefix == "" else "公式")
+            box_layout = QVBoxLayout(box)
+            box_layout.addWidget(table, 1)
+            boxes[prefix] = box
+
+        grid.addWidget(boxes[""], 0, 0)
+        grid.addWidget(boxes["Q"], 0, 1)
         grid.setColumnStretch(0, 2)
-        grid.setColumnStretch(1, 0)  # 分割线列不参与拉伸
-        grid.setColumnStretch(2, 3)
+        grid.setColumnStretch(1, 3)
         grid.setRowStretch(0, 1)
-        grid.setRowStretch(1, 0)  # 分割线行不参与拉伸
-        grid.setRowStretch(2, 1)
         self._body.addLayout(grid, 1)
 
     # ------------------------------------------------------------------ 数据
@@ -661,9 +656,11 @@ class ComponentEditDialog(PrincipleSubDialog):
                 prefix: [] for prefix, _headers in self._GROUPS
             }
             for key, (display, expression) in params.items():
-                # 旧版 FlashdGV：F/Z 开头且键长为 2 的进公式表，其余进参数表
-                prefix = key[:1] if key[:1] in ("F", "Z") and len(key) == 2 else ""
+                # 旧版 FlashdGV：长度 2 且 F 开头的进公式表，其余进参数表
+                prefix = "Q" if key.startswith("F") and len(key) == 2 else ""
                 groups[prefix].append((key, display, expression))
+            # 公式表按公式键顺序排列（FA、FB…；围护 / 支撑只看类别列）
+            groups["Q"].sort(key=lambda row: row[0])
             for prefix, table in self._tables.items():
                 self._buttons[prefix].clear_row_buttons()
                 rows = groups[prefix]
@@ -699,10 +696,8 @@ class ComponentEditDialog(PrincipleSubDialog):
         referenced = self._referenced_identifiers()
         if prefix == "":
             candidates = self._ALPHABET
-        elif prefix == "F":
-            candidates = tuple("F" + letter for letter in self._ALPHABET)
         else:
-            candidates = tuple("Z" + letter for letter in self._ALPHABET)
+            candidates = tuple("F" + letter for letter in self._ALPHABET)
         for key in candidates:
             if key not in used and key not in referenced:
                 return key
@@ -715,13 +710,15 @@ class ComponentEditDialog(PrincipleSubDialog):
                 self, "提示", "该表已没有可用的参数键（已被现有行或公式占用）。"
             )
             return
-        table = self._tables[prefix]
+        table_key = "" if prefix == "" else "Q"
+        table = self._tables[table_key]
         row = table.rowCount()
         table.insertRow(row)
         table.setVerticalHeaderItem(row, QTableWidgetItem(key))
         for column in range(table.columnCount() - 1):
             table.setItem(row, column, QTableWidgetItem(""))
-        self._buttons[prefix].add_row_button(row)
+        # 行号变化会让已绑定行号的「-」按钮失效，统一按新行号重建
+        self._rebuild_row_buttons(table_key)
         table.setCurrentCell(row, 0)
         table.scrollToItem(table.item(row, 0))
         self._refresh_formula_warnings()
@@ -774,7 +771,7 @@ class ComponentEditDialog(PrincipleSubDialog):
         }
 
     def _missing_identifiers(self, expression: str) -> list[str]:
-        """公式里引用了但当前表中不存在的参数键（只认 A~Z / FA~FZ / ZA~ZZ）。"""
+        """公式里引用了但当前表中不存在的参数键（只认 A~Z / FA~FZ）。"""
         defined = self._defined_keys()
         missing: list[str] = []
         for identifier in sorted(set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", expression or ""))):
@@ -795,24 +792,21 @@ class ComponentEditDialog(PrincipleSubDialog):
         """工程量公式引用不存在的参数时标红并给出提示；引用修正后自动恢复。"""
         if self._loading or self._warn_updating:
             return
+        table = self._tables["Q"]
+        column = self._EXPRESSION_COLUMNS["Q"]
         self._warn_updating = True
         try:
-            for prefix in ("F", "Z"):
-                table = self._tables[prefix]
-                column = self._EXPRESSION_COLUMNS[prefix]
-                for row in range(table.rowCount()):
-                    item = table.item(row, column)
-                    if item is None:
-                        continue
-                    missing = self._missing_identifiers(item.text())
-                    if missing:
-                        item.setForeground(self._WARN_COLOR)
-                        item.setToolTip(
-                            "引用了不存在的参数：" + "、".join(missing)
-                        )
-                    else:
-                        item.setData(Qt.ItemDataRole.ForegroundRole, None)
-                        item.setToolTip("")
+            for row in range(table.rowCount()):
+                item = table.item(row, column)
+                if item is None:
+                    continue
+                missing = self._missing_identifiers(item.text())
+                if missing:
+                    item.setForeground(self._WARN_COLOR)
+                    item.setToolTip("引用了不存在的参数：" + "、".join(missing))
+                else:
+                    item.setData(Qt.ItemDataRole.ForegroundRole, None)
+                    item.setToolTip("")
         finally:
             self._warn_updating = False
 

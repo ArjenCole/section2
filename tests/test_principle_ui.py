@@ -501,9 +501,9 @@ def test_enclosure_work_dialog_cancel_restores_levels(qapp, project) -> None:
 
 
 def test_component_editor_layout_fills_and_separators(qapp, project) -> None:
-    """构件编辑器：左参数表上下撑满整窗、右侧围护/支撑表向右撑满、
-    三面板之间画分割线（左右之间竖线、围护与支撑之间横线）。"""
-    from PySide6.QtWidgets import QFrame, QHeaderView
+    """构件编辑器：左「参数」表与右「公式」表各自套一个圆角线框，
+    表格撑满线框、末列按钮列固定宽。"""
+    from PySide6.QtWidgets import QGroupBox, QHeaderView
 
     from app.views.dialogs.principle_dialogs import ComponentEditDialog
 
@@ -513,28 +513,23 @@ def test_component_editor_layout_fills_and_separators(qapp, project) -> None:
         dialog.show()
         qapp.processEvents()
         param = dialog._tables[""]
-        enclosure_table = dialog._tables["F"]
-        support_table = dialog._tables["Z"]
-        # 左参数表跨满右侧两行：顶对齐围护表、底对齐支撑表（上下撑满）
-        assert param.geometry().top() == enclosure_table.geometry().top()
-        assert param.geometry().bottom() == support_table.geometry().bottom()
-        # 右侧两表右缘一致，末列被拉伸到面板宽（右侧不留整块空白）
-        assert enclosure_table.geometry().right() == support_table.geometry().right()
-        # 工程量表首列已拆成 类别 / 名称 / 单位 + 计算公式，末列为按钮列
+        formula_table = dialog._tables["Q"]
+        # 两个圆角线框的标题
+        assert {box.title() for box in dialog.findChildren(QGroupBox)} == {"参数", "公式"}
+        # 左右两表顶底一致（同一行、行高一致）
+        assert param.geometry().top() == formula_table.geometry().top()
+        assert param.geometry().bottom() == formula_table.geometry().bottom()
+        # 公式表：全部公式统一 F 键，围护 / 支撑只由「类别」列区分
         assert [
-            enclosure_table.horizontalHeaderItem(col).text()
-            for col in range(enclosure_table.columnCount())
+            formula_table.horizontalHeaderItem(col).text()
+            for col in range(formula_table.columnCount())
         ] == ["类别", "名称", "单位", "计算公式", ""]
-        assert [
-            support_table.horizontalHeaderItem(col).text()
-            for col in range(support_table.columnCount())
-        ] == ["类别", "名称", "单位", "计算公式", ""]
-        # 参数表把「名称 + 单位」拆成两列
+        # 参数表：名称 / 单位 / 值 + 按钮列
         assert [
             param.horizontalHeaderItem(col).text()
             for col in range(param.columnCount())
-        ] == ["参数名称", "单位", "参数值", ""]
-        for table, stretch_col in ((param, 2), (enclosure_table, 3), (support_table, 3)):
+        ] == ["名称", "单位", "值", ""]
+        for table, stretch_col in ((param, 2), (formula_table, 3)):
             header = table.horizontalHeader()
             assert not header.stretchLastSection()
             assert header.sectionResizeMode(stretch_col) == QHeaderView.ResizeMode.Stretch
@@ -543,28 +538,13 @@ def test_component_editor_layout_fills_and_separators(qapp, project) -> None:
             assert table.columnWidth(table.columnCount() - 1) == 40
             # 行头带标记：主题据此给最后一节补回右分割线
             assert table.verticalHeader().property("headerKind") == "vertical"
-        # 分割线：竖线在左面板与右列之间，横线在围护与支撑表之间
-        lines = [
-            frame
-            for frame in dialog.findChildren(QFrame)
-            if frame.property("role") in ("hline", "vline")
-        ]
-        assert len(lines) == 2
-        vline = next(line for line in lines if line.property("role") == "vline")
-        hline = next(line for line in lines if line.property("role") == "hline")
-        assert param.geometry().right() < vline.geometry().x() < enclosure_table.geometry().x()
-        assert (
-            enclosure_table.geometry().bottom()
-            < hline.geometry().y()
-            < support_table.geometry().y()
-        )
     finally:
         dialog.close()
 
 
 def test_component_editor_add_delete_rows_and_dangling_warning(qapp, project) -> None:
-    """构件编辑器增删行：工程量行按 类别|名称|单位 入库；删除被公式引用的参数
-    后公式标红告警，新增参数不复用该字母。"""
+    """构件编辑器增删行：公式行按 类别|名称|单位 入库；删除被公式引用的参数
+    后公式标红告警，新增参数不复用该字母；公式键统一为 F 类。"""
     from app.views.dialogs.principle_dialogs import ComponentEditDialog
 
     component = project_io.enclosures()[0].works_sorted()[0].levels[0].components[0]
@@ -572,28 +552,36 @@ def test_component_editor_add_delete_rows_and_dangling_warning(qapp, project) ->
     try:
         qapp.processEvents()
         param_table = dialog._tables[""]
-        enclosure_table = dialog._tables["F"]
+        formula_table = dialog._tables["Q"]
 
         # 参数显示名「放坡系数 1:X」已拆成 名称 / 单位 / 值 三列
         assert [
             param_table.item(0, col).text() for col in range(3)
         ] == ["放坡系数", "1:X", "1"]
 
-        # 新增围护工程量行：键 FA，填写拆开的 类别/名称/单位 + 公式
+        # 新增公式行：键 FA（公式统一 F 键）
         dialog._add_row("F")
-        assert enclosure_table.rowCount() == 1
-        assert enclosure_table.verticalHeaderItem(0).text() == "FA"
-        assert enclosure_table.cellWidget(0, enclosure_table.columnCount() - 1) is not None
-        enclosure_table.item(0, 0).setText("围护")
-        enclosure_table.item(0, 1).setText("喷射砼")
-        enclosure_table.item(0, 2).setText("m3")
-        enclosure_table.item(0, 3).setText("A*2")
-        assert enclosure_table.item(0, 3).toolTip() == ""
+        assert formula_table.rowCount() == 1
+        assert formula_table.verticalHeaderItem(0).text() == "FA"
+        assert formula_table.cellWidget(0, formula_table.columnCount() - 1) is not None
+        formula_table.item(0, 0).setText("围护")
+        formula_table.item(0, 1).setText("喷射砼")
+        formula_table.item(0, 2).setText("m3")
+        formula_table.item(0, 3).setText("A*2")
+        assert formula_table.item(0, 3).toolTip() == ""
 
         # 删除参数 A：公式悬空 → 标红 + 悬停提示
         dialog._delete_row("", 0)
-        assert enclosure_table.item(0, 3).foreground().color().name() == "#d93025"
-        assert enclosure_table.item(0, 3).toolTip() == "引用了不存在的参数：A"
+        assert formula_table.item(0, 3).foreground().color().name() == "#d93025"
+        assert formula_table.item(0, 3).toolTip() == "引用了不存在的参数：A"
+
+        # 公式键全部为 F 类：第二行取 FB（不再出现 Z 行）
+        dialog._add_row("F")
+        assert [
+            formula_table.verticalHeaderItem(row).text()
+            for row in range(formula_table.rowCount())
+        ] == ["FA", "FB"]
+        dialog._delete_row("Q", 1)
 
         # 新增参数不复用仍被公式引用的字母 A
         dialog._add_row("")

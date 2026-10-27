@@ -378,7 +378,7 @@ def register(registry: ToolRegistry) -> None:
                     "source": {"type": "string"},
                     "pe_left_name": {"type": "string", "description": "左侧围护原则（左右分设模式）"},
                     "pe_right_name": {"type": "string", "description": "右侧围护原则（左右分设模式）"},
-                    "support_left": {"type": "boolean", "description": "左侧支撑（Z 类公式）是否计算"},
+                    "support_left": {"type": "boolean", "description": "左侧支撑（类别为“支撑”的公式）是否计算"},
                     "support_right": {"type": "boolean", "description": "右侧支撑是否计算"},
                 },
             },

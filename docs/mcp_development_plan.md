@@ -497,8 +497,8 @@ streamable_http_client` + `ClientSession`（`async with`）连接运行中桌面
 | T49 | `set_precipitation_wells` | 写 | `precipitation_name*`、`wells{…}` 整体替换 | |
 | T50 | `set_width_items` | 写 | `width_name*`、`mode?`、`items[{pipe_type, dn(0~3000 步长100), width_mm}]` 增量替换 | pipe_type 6 枚举：混凝土管-刚性接口/混凝土管-柔性接口/金属类管道/化学建材管道/包封埋管/箱涵-管廊 |
 | T51 | `reset_width_to_atlas` | 写 | `width_name*` | 恢复图集默认（界面按钮等价物） |
-| T52 | `get_component_detail` | 读 | `component_id*` | `{name, params:[{key,display,expression}], f_formulas, z_formulas}`；值格式 `显示名\|表达式` 拆开返回 |
-| T53 | `update_component_params` | 写 | `component_id*`、`params{key:{display,expression}}` | 只允许改模板键集内的键（A~Z/FA~FZ/ZA~ZZ；不增删行，现成语义） |
+| T52 | `get_component_detail` | 读 | `component_id*` | `{name, params:[{key,display,expression}], formulas}`；值格式 `显示名\|表达式` 拆开返回（公式键统一 FA~FZ） |
+| T53 | `update_component_params` | 写 | `component_id*`、`params{key:{display,expression}}` | 只允许改模板键集内的键（A~Z/FA~FZ；不增删行，现成语义） |
 | T54 | `export_principle` | 写(文件) | `kind*`、`name*`、`path*`（*.spcp） | `project_io.export_*_spcp` |
 | T55 | `import_principle` | 写 | `path*` | `{kind, name}`；重名加后缀 |
 

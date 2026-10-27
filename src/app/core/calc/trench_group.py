@@ -32,8 +32,8 @@
   foundation 现状函数以同 key 负项合并。
 * **围护量每面 ×1**（``sides=1``）：左边坡挂首构件（其左原则）、右边坡
   挂末构件（其右原则）、内侧坡挂深侧构件（其朝向该面的原则）；等深相邻
-  面不出围护量。支撑（Z 类）按归属构件朝向该面的支撑勾选，深度按面深
-  减该构件换填（同单管支撑口径）。
+  面不出围护量。支撑行按公式类别（``支撑``）识别，按归属构件朝向该面的
+  支撑勾选输出；做法档位与围护面共用同一个**含换填层厚度**的面深。
 * **降水逐构件**（湿土排水 = 归属带宽 ×（槽深−1m）的简化断面）；特殊地基
   按归属带宽代入 width。
 * **父节点零工程量**：全部输出挂在子构件名下，每构件量 × L_组（编组时
@@ -52,7 +52,7 @@ from app.core.calc.engine import (
     build_element_input,
     choice_work,
     component_quantities,
-    component_support_quantities,
+    component_side_quantities,
     workwidth_of,
     works_quantities,
 )
@@ -204,7 +204,6 @@ class _Pair:
     deep: _Member | None  # 更深一侧；None = 等深
     run: float  # 深侧放坡水平投影（m）；等深为 0
     work: object | None  # 深侧内侧坡做法
-    pe: object | None  # 深侧围护原则（支撑深度选择用）
     left_width: Dim  # 左构件在该相邻面的归属宽（浅侧 = 工作面，深侧 = 放坡投影）
     right_width: Dim  # 右构件在该相邻面的归属宽
 
@@ -369,7 +368,6 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
                     deep=None,
                     run=0.0,
                     work=None,
-                    pe=None,
                     left_width=left.work_width,
                     right_width=right.work_width,
                 )
@@ -398,7 +396,6 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
                     deep=deep,
                     run=run,
                     work=work,
-                    pe=deep_pe,
                     left_width=left.work_width,
                     right_width=dim(run),
                 )
@@ -409,7 +406,6 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
                     deep=deep,
                     run=run,
                     work=work,
-                    pe=deep_pe,
                     left_width=dim(run),
                     right_width=right.work_width,
                 )
@@ -470,36 +466,36 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
 
     strut_emitted = False
 
-    def _emit_face(face_pe, work, face_depth: Dim, owner: _Member, note: str, support_flag: str) -> None:
-        """一个面的围护量（F 类 ×1）与支撑（围檩 ×1；贯通支撑整槽一次）。"""
+    def _emit_face(face_work, face_depth: Dim, owner: _Member, note: str, support_flag: str) -> None:
+        """一个面的围护量（类别 ``围护`` ×1）与支撑（围檩 ×1；贯通支撑整槽一次）。"""
         nonlocal strut_emitted
         out = results.setdefault(owner.element.id, QDict())
-        works_quantities(work, face_depth, amount_dim, "F", owner.ad, owner.info, out, note, sides=1, width=flat_total)
+        works_quantities(
+            face_work, face_depth, amount_dim, "F", owner.ad, owner.info, out, note,
+            sides=1, width=flat_total, categories={"围护"},
+        )
         if getattr(owner.element, support_flag):
-            # 支撑深度按面深减该构件换填（同单管支撑口径），≤0 不算；
-            # 贯通支撑行只在首个勾选面出一次（左 → 右 → 中间坡的顺序）
-            support_depth = face_depth - foundation_dim(owner.info.pf) / 1000
-            support_work = choice_work(face_pe, support_depth.v)
-            if support_work is not None and support_depth.v > 0:
-                levels = list(support_work.levels)
-                fixed_h = _dim_sum(*(dim(level.h) for level in levels if level.h >= 0))
-                fixed_cnt = sum(1 for level in levels if level.h >= 0)
-                for level in levels:
-                    if level.h >= 0:
-                        height = dim(level.h)
-                    elif len(levels) > fixed_cnt:
-                        height = (support_depth - fixed_h) / (len(levels) - fixed_cnt)
-                    else:
-                        height = support_depth
-                    component = level.components[0] if level.components else None
-                    component_support_quantities(
-                        component, height, flat_total, amount_dim, out,
-                        note=f"{note}·支撑", emit_strut=not strut_emitted,
-                    )
-                strut_emitted = True
+            # 支撑行按公式类别识别（不再看 Z 键前缀）；做法与围护面同一个
+            # （含换填层厚度的）档位，贯通支撑行只在首个勾选面出一次
+            levels = list(face_work.levels)
+            fixed_h = _dim_sum(*(dim(level.h) for level in levels if level.h >= 0))
+            fixed_cnt = sum(1 for level in levels if level.h >= 0)
+            for level in levels:
+                if level.h >= 0:
+                    height = dim(level.h)
+                elif len(levels) > fixed_cnt:
+                    height = (face_depth - fixed_h) / (len(levels) - fixed_cnt)
+                else:
+                    height = face_depth
+                component = level.components[0] if level.components else None
+                component_side_quantities(
+                    component, height, flat_total, amount_dim, out,
+                    note=f"{note}·支撑", emit_without_sides=not strut_emitted,
+                )
+            strut_emitted = True
 
-    _emit_face(pe_left, work_left, first.depth, first, "围护·左侧", "support_left")
-    _emit_face(pe_right, work_right, last.depth, last, "围护·右侧", "support_right")
+    _emit_face(work_left, first.depth, first, "围护·左侧", "support_left")
+    _emit_face(work_right, last.depth, last, "围护·右侧", "support_right")
     for i, pair in enumerate(pairs):
         if pair.deep is None:
             continue  # 等深相邻面：两侧均为 "-"，不出围护量
@@ -507,7 +503,7 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
         delta = abs(snapshots[i + 1].depth.v - snapshots[i].depth.v)
         # 内侧坡挂深侧构件；支撑勾选 = 深侧构件朝向该面的勾选
         support_flag = "support_right" if deep is snapshots[i] else "support_left"
-        _emit_face(pair.pe, pair.work, dim(delta), deep, f"围护·中间坡{i + 1}", support_flag)
+        _emit_face(pair.work, dim(delta), deep, f"围护·中间坡{i + 1}", support_flag)
 
     # 逐构件：降水 / 特殊地基 / 管道基础 / 管材
     for member in snapshots:

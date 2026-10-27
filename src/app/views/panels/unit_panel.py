@@ -2158,7 +2158,7 @@ class UnitPanel(QWidget):
             "等深 / 更浅的一侧不设围护：强制 \"-\"，由自身工作面宽 + 虚拟垂直空围护承担。",
         )
 
-        support_left = QCheckBox("计算支撑（Z 类公式）")
+        support_left = QCheckBox("计算支撑（类别“支撑”）")
         support_left.setChecked(bool(element.support_left))
         support_left.toggled.connect(
             lambda checked, eid=element_id: self._vm.set_element_field(eid, "support_left", checked)
@@ -2172,7 +2172,7 @@ class UnitPanel(QWidget):
                 "深侧构件 = 其左侧内侧坡支撑）。"
             )
 
-        support_right = QCheckBox("计算支撑（Z 类公式）")
+        support_right = QCheckBox("计算支撑（类别“支撑”）")
         support_right.setChecked(bool(element.support_right))
         support_right.toggled.connect(
             lambda checked, eid=element_id: self._vm.set_element_field(eid, "support_right", checked)

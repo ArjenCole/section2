@@ -3,7 +3,8 @@
 复刻语义：切换做法的围护类型时清空原有分级、按构件库模板重建一级
 （多级围护取库第一项）。构件库 Ei 里只有 放坡/喷锚护坡 的 A 参数是
 “放坡系数 1:X”，钢板桩/横列板/钻孔灌注桩/SMW工法桩等支护类型 A 非
-放坡系数 → 放坡系数按 0 处理，沟槽为直壁并走支护的 F/Z 公式出围护量。
+放坡系数 → 放坡系数按 0 处理，沟槽为直壁并走支护的 F 类公式（围护 / 支撑
+只按公式显示名类别区分）出围护量。
 """
 
 import math
@@ -108,7 +109,8 @@ def test_sloped_vs_vertical_dig_and_enclosure_quantities(project) -> None:
     assert dig.value / info.amount == pytest.approx(bottom * depth, rel=1e-9)
 
     # 支撑公式的 width = 槽底宽（与挖方同源）：
-    # 钢板桩 ZA = ROUND(count/G,0)/count*F*width*H/1000 + 1*2*2*F*I/1000
+    # 钢板桩 FA = 围护、FB = 贯通支撑、FC = 围檩，
+    # 支撑量 = ROUND(count/G,0)/count*F*width*H/1000 + 1*2*2*F*I/1000
     # （F=2 道、G=4m、H=233.988kg/m 支撑、I=38.49kg/m 钢围檩）
     support = result.get("支撑|钢支撑、钢围檩|t")
     amount = info.amount
@@ -121,6 +123,58 @@ def test_sloped_vs_vertical_dig_and_enclosure_quantities(project) -> None:
 
     assert any(key.startswith("围护|") for key in result.keys())
     assert any(key.startswith("支撑|") for key in result.keys())
+
+
+def test_work_matching_uses_depth_with_backfill_for_all_formulas(project) -> None:
+    """档位按含换填层深度匹配：2.9m + 0.2m 换填 → 3.1m 命中钢板桩，
+    围护与支撑都取钢板桩做法（支撑不再按 2.9m 落到放坡而漏算）。"""
+    from app.core.calc.engine import (
+        build_element_input,
+        compute_element,
+        resolve_element_principles,
+    )
+    from app.core.models import base as orm
+    from app.core.models.models import (
+        CATEGORY_BURIED,
+        Element,
+        FoundationReplacement,
+        PcpEnclosure,
+        PcpFoundation,
+    )
+    from app.services import project_io
+    from app.viewmodels import unit_vm
+
+    session = orm.session()
+    library = project_io.component_library()
+    pe = PcpEnclosure(name="分档原则", order_no=99)
+    session.add(pe)
+    session.flush()
+    project_io.new_enclosure_work(session, pe, library, min_depth=0.0, level_name="放坡", order_no=0)
+    project_io.new_enclosure_work(session, pe, library, min_depth=3.0, level_name="钢板桩", order_no=1)
+    pf = PcpFoundation(name="分档地基", order_no=99)
+    session.add(pf)
+    session.flush()
+    session.add(FoundationReplacement(foundation_id=pf.id, name="碎石", h=200.0, order_no=0))
+    project_io.commit()
+
+    unit_id = project_io.units(project_io.segments()[0].id)[0].id
+    element = unit_vm.create_element(
+        unit_id, category=CATEGORY_BURIED, name="", depth="2.9", amount="10",
+        pipes=[("Ⅰ级混凝土管", 600, "1")],
+        pe_name="分档原则", pf_name="分档地基",
+    )
+    assert element is not None
+
+    element = session.get(Element, element.id)
+    pe_ref, pf_ref, pp_ref, pw_ref = resolve_element_principles(element, session)
+    info = build_element_input(element, pe_ref, pf_ref, pp_ref, pw_ref)
+    assert info.depth + 0.2 > 3.0  # 含换填槽深越过 3m 档
+    result = compute_element(info)
+    assert result is not None
+    # 围护 + 支撑都来自钢板桩做法：放坡模板没有任何公式
+    assert any(key.startswith("围护|") for key in result.keys())
+    support = result.get("支撑|钢支撑、钢围檩|t")
+    assert support is not None and support.value > 0
 
 
 # --------------------------------------------------------------------------- #

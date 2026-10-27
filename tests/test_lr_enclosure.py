@@ -115,10 +115,10 @@ def test_library_templates_use_sides_variable() -> None:
     pile = lib.template("Ei", "钢板桩")
     assert pile.params["FA"][1].endswith("*sides")
     assert lib.template("Ei", "横列板").params["FA"][1] == "1*sides*height"
-    # ZA = 贯通支撑（无 sides）、ZB = 围檩（含 sides），display 同键合并
-    assert pile.params["ZA"][1] == "ROUND(count/G,0)/count*F*width*H/1000"
-    assert pile.params["ZB"][1] == "1*sides*2*F*I/1000"
-    assert pile.params["ZB"][0] == pile.params["ZA"][0] == "支撑|钢支撑、钢围檩|t"
+    # FB = 贯通支撑（无 sides）、FC = 围檩（含 sides），display 同键合并
+    assert pile.params["FB"][1] == "ROUND(count/G,0)/count*F*width*H/1000"
+    assert pile.params["FC"][1] == "1*sides*2*F*I/1000"
+    assert pile.params["FC"][0] == pile.params["FB"][0] == "支撑|钢支撑、钢围檩|t"
 
 
 def test_normal_element_formula_output_matches_legacy(project) -> None:
