@@ -230,8 +230,14 @@ def _first_of(session, model):
     return session.scalar(select(model).order_by(model.order_no, model.id))
 
 
-def _resolve_member(session, element: Element) -> tuple[_Member | None, str | None]:
-    """单个成员的计算快照；返回 (快照, 错误说明)。"""
+def _resolve_member(
+    session, element: Element, *, require_amount: bool = True
+) -> tuple[_Member | None, str | None]:
+    """单个成员的计算快照；返回 (快照, 错误说明)。
+
+    ``require_amount=False`` 时数量为 0 也照常生成快照：围护原则 tab 的
+    左右侧可编辑状态只取决于相邻构件的槽底深度，与合槽工程量无关。
+    """
     from app.core.models.models import (
         PcpEnclosure,
         PcpFoundation,
@@ -250,7 +256,7 @@ def _resolve_member(session, element: Element) -> tuple[_Member | None, str | No
     if pe_side is None or pf is None or pp is None or pw is None:
         return None, "缺少围护 / 地基 / 降水 / 面宽原则。"
     info = build_element_input(element, pe_side, pf, pp, pw)
-    if info.amount == 0:
+    if require_amount and info.amount == 0:
         return None, "数量为 0，未生成工程量。"
     # v10 起图集 / 基础参数取地基原则 pf（不再按左右围护分侧）
     material_pe = info.pe or pe_side
@@ -280,7 +286,7 @@ def member_depths(group: TrenchGroup) -> dict[int, float]:
     session = orm.session()
     depths: dict[int, float] = {}
     for element in sorted(group.members, key=lambda item: (item.order_no, item.id)):
-        member, _error = _resolve_member(session, element)
+        member, _error = _resolve_member(session, element, require_amount=False)
         if member is not None:
             depths[element.id] = member.depth.v
     return depths
