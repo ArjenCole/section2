@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -66,6 +68,7 @@ from app.core.models.models import (
 from app.services import project_io
 from app.views.widgets.cell_fill_table import CellFillTable
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
+from app.views.widgets.row_button_column import RowButtonColumn
 from app.views.widgets.table_width import fixed_width_behavior
 
 _WIDTH_DNS = tuple(range(0, 3100, 100))
@@ -525,39 +528,89 @@ class ComponentEditDialog(PrincipleSubDialog):
     """构件编辑器（旧版 FormCpntEdit）：左参数表（A~Z），右上围护公式（FA~FZ）、
     右下支撑公式（ZA~ZZ），面板之间画分割线，底部确认/取消修改。
 
-    行头显示参数键；表格只列构件已有的参数行（旧版不提供增删行，参数集
-    来自构件库模板）；描述公式为库数据，不在本窗体编辑。
+    三张表行头均显示参数键，行尾带「+ / -」按钮列（管材面板同款）：
+    参数表与两张工程量表都允许用户增删行。工程量表的「类别 / 名称 / 单位」
+    三列在库内仍拼成 ``类别|名称|单位`` 作为定额键（计算与导出沿用该格式）。
+
+    悬空引用（方案三）：公式引用了已不存在的参数键时，该公式单元格标红并
+    以悬停提示列出缺失键，计算按 0（引擎既有语义）；新增参数取最小未占用
+    且未被任何公式引用的字母，避免旧公式误绑到新参数。
     """
 
+    #: (键前缀, 数据列表头)；末列固定为空表头，留给「+ / -」按钮列
     _GROUPS = (
-        # (键前缀, 参数名列表头, 取值/公式列表头)；网格摆放见 _build
-        ("", "参数名称", "参数值"),
-        ("F", "围护工程量", "计算公式"),
-        ("Z", "支撑工程量", "计算公式"),
+        ("", ("参数名称", "参数值")),
+        ("F", ("类别", "名称", "单位", "计算公式")),
+        ("Z", ("类别", "名称", "单位", "计算公式")),
     )
+    #: 各表用于铺满面板宽度的列（按钮列固定宽，不参与拉伸）
+    _STRETCH_COLUMNS = {"": 1, "F": 3, "Z": 3}
+    #: 各表「公式 / 参数值」所在列（悬空引用检查读取这里）
+    _EXPRESSION_COLUMNS = {"": 1, "F": 3, "Z": 3}
+    #: 参数键字母表（参数表 A~Z，工程量表 FA~FZ / ZA~ZZ）
+    _ALPHABET = tuple(chr(code) for code in range(ord("A"), ord("Z") + 1))
+    #: 公式里的函数 / 常量名（允许出现，不算“不存在的参数”）
+    _FORMULA_NAMES = frozenset(
+        {
+            "HEIGHT", "WIDTH", "COUNT", "SIDES",
+            "ABS", "ROUND", "ROUNDUP", "SQRT", "POWER",
+            "CEIL", "CEILING", "SIN", "COS", "PI",
+        }
+    )
+    #: 参数键形态：1~2 个大写字母（A~Z / FA~FZ / ZA~ZZ）
+    _KEY_PATTERN = re.compile(r"^[A-Z]{1,2}$")
+    #: 悬空引用告警色（浅色 / 深色主题下都足够醒目）
+    _WARN_COLOR = QColor("#d93025")
 
     def __init__(self, component: Component, parent: QWidget | None = None) -> None:
         super().__init__("构件编辑器", parent)
         self.resize(940, 480)
         self._component = component
         self._tables: dict[str, QTableWidget] = {}
+        self._buttons: dict[str, RowButtonColumn] = {}
+        self._loading = False
+        self._warn_updating = False
+        self._deleted_keys: set[str] = set()
         self._build()
         self._fill()
 
     def _build(self) -> None:
         grid = QGridLayout()
         grid.setSpacing(6)
-        for prefix, header_key, header_value in self._GROUPS:
-            table = CellFillTable(0, 2)
-            table.setHorizontalHeaderLabels([header_key, header_value])
-            # 键名列固定宽（可拖动），末列撑满所在面板：本窗体是全项目
-            # 「表格不随父控件拉伸」约定（table_width 模块）的例外——三面板
-            # 必须铺满窗体，末列不拉伸就会在右侧留出整块空白
+        for prefix, headers in self._GROUPS:
+            # 末列空表头 = 按钮列（「+」在表头格，行尾「-」删行）
+            table = CellFillTable(0, len(headers) + 1)
+            table.setHorizontalHeaderLabels([*headers, ""])
             fixed_width_behavior(table)
-            table.horizontalHeader().setStretchLastSection(True)
-            table.setColumnWidth(0, 120)
             table.verticalHeader().setDefaultSectionSize(28)
+            table.itemChanged.connect(
+                lambda item, p=prefix: self._on_item_changed(p, item)
+            )
             self._tables[prefix] = table
+
+            buttons = RowButtonColumn(
+                table,
+                add_tooltip="新增一行",
+                delete_tooltip="删除该行",
+            )
+            buttons.add_clicked.connect(lambda p=prefix: self._add_row(p))
+            buttons.delete_clicked.connect(
+                lambda row, p=prefix: self._delete_row(p, row)
+            )
+            buttons.attach()
+            self._buttons[prefix] = buttons
+
+            # 按钮列固定宽；另一列用 Stretch 铺满面板（本窗体是全项目
+            # 「表格不随父控件拉伸」约定的例外，不能右侧留整块空白）
+            table.horizontalHeader().setSectionResizeMode(
+                self._STRETCH_COLUMNS[prefix], QHeaderView.ResizeMode.Stretch
+            )
+            if prefix == "":
+                table.setColumnWidth(0, 120)
+            else:
+                table.setColumnWidth(0, 90)
+                table.setColumnWidth(1, 150)
+                table.setColumnWidth(2, 60)
 
         # 左：参数表跨全部行（上下撑满窗体）；右：围护公式（上）、支撑公式
         # （下）；面板之间画 1px 分割线（theme QSS 的 role="hline"/"vline"）：
@@ -575,44 +628,227 @@ class ComponentEditDialog(PrincipleSubDialog):
         grid.setRowStretch(2, 1)
         self._body.addLayout(grid, 1)
 
+    # ------------------------------------------------------------------ 数据
+    @staticmethod
+    def _split_quantity_display(display: str) -> tuple[str, str, str]:
+        """``类别|名称|单位`` → 三列；缺段按空字符串补齐（兼容旧库两段 / 一段）。"""
+        parts = (display or "").split("|")
+        if len(parts) >= 3:
+            return parts[0], parts[1], parts[2]
+        if len(parts) == 2:
+            return parts[0], parts[1], ""
+        return "", parts[0] if parts else "", ""
+
     def _fill(self) -> None:
         from app.core.calc.engine import load_params
 
-        params = load_params(self._component)
-        groups: dict[str, list[tuple[str, tuple[str, str]]]] = {"": [], "F": [], "Z": []}
-        for key, pair in params.items():
-            # 旧版 FlashdGV：F/Z 开头且键长为 2 的进公式表，其余进参数表
-            prefix = key[:1] if key[:1] in ("F", "Z") and len(key) == 2 else ""
-            groups[prefix].append((key, pair))
-        for prefix, table in self._tables.items():
-            rows = groups[prefix]
-            table.setRowCount(len(rows))
-            for index, (key, (display, expression)) in enumerate(rows):
-                table.setVerticalHeaderItem(index, QTableWidgetItem(key))
-                table.setItem(index, 0, QTableWidgetItem(display))
-                table.setItem(index, 1, QTableWidgetItem(expression))
+        self._loading = True
+        try:
+            params = load_params(self._component)
+            groups: dict[str, list[tuple[str, str, str]]] = {
+                prefix: [] for prefix, _headers in self._GROUPS
+            }
+            for key, (display, expression) in params.items():
+                # 旧版 FlashdGV：F/Z 开头且键长为 2 的进公式表，其余进参数表
+                prefix = key[:1] if key[:1] in ("F", "Z") and len(key) == 2 else ""
+                groups[prefix].append((key, display, expression))
+            for prefix, table in self._tables.items():
+                self._buttons[prefix].clear_row_buttons()
+                rows = groups[prefix]
+                table.setRowCount(len(rows))
+                for index, (key, display, expression) in enumerate(rows):
+                    table.setVerticalHeaderItem(index, QTableWidgetItem(key))
+                    if prefix == "":
+                        table.setItem(index, 0, QTableWidgetItem(display))
+                        table.setItem(index, 1, QTableWidgetItem(expression))
+                    else:
+                        category, name, unit = self._split_quantity_display(display)
+                        table.setItem(index, 0, QTableWidgetItem(category))
+                        table.setItem(index, 1, QTableWidgetItem(name))
+                        table.setItem(index, 2, QTableWidgetItem(unit))
+                        table.setItem(index, 3, QTableWidgetItem(expression))
+                    self._buttons[prefix].add_row_button(index)
+        finally:
+            self._loading = False
+        self._refresh_formula_warnings()
 
+    # ------------------------------------------------------------------ 增删
+    def _next_key(self, prefix: str) -> str | None:
+        """该表下一个可用键：最小未占用、且未被任何公式引用（方案三）。"""
+        used = {param.key for param in self._component.params}
+        used |= self._deleted_keys
+        for table in self._tables.values():
+            for row in range(table.rowCount()):
+                header = table.verticalHeaderItem(row)
+                if header and header.text():
+                    used.add(header.text())
+        referenced = self._referenced_identifiers()
+        if prefix == "":
+            candidates = self._ALPHABET
+        elif prefix == "F":
+            candidates = tuple("F" + letter for letter in self._ALPHABET)
+        else:
+            candidates = tuple("Z" + letter for letter in self._ALPHABET)
+        for key in candidates:
+            if key not in used and key not in referenced:
+                return key
+        return None
+
+    def _add_row(self, prefix: str) -> None:
+        key = self._next_key(prefix)
+        if key is None:
+            FramelessMessageBox.information(
+                self, "提示", "该表已没有可用的参数键（已被现有行或公式占用）。"
+            )
+            return
+        table = self._tables[prefix]
+        row = table.rowCount()
+        table.insertRow(row)
+        table.setVerticalHeaderItem(row, QTableWidgetItem(key))
+        for column in range(table.columnCount() - 1):
+            table.setItem(row, column, QTableWidgetItem(""))
+        self._buttons[prefix].add_row_button(row)
+        table.setCurrentCell(row, 0)
+        table.scrollToItem(table.item(row, 0))
+        self._refresh_formula_warnings()
+
+    def _delete_row(self, prefix: str, row: int) -> None:
+        table = self._tables[prefix]
+        if row < 0 or row >= table.rowCount():
+            return
+        header = table.verticalHeaderItem(row)
+        key = header.text() if header else ""
+        table.removeRow(row)
+        if key:
+            # 只记下待删键，真正删库留到「确定」：单机关闭子窗体（取消）
+            # 不得把参数悄悄从工程里删掉
+            self._deleted_keys.add(key)
+        # 「-」回调闭包按行号绑定，删行后后续行的按钮必须按新行号重建
+        self._rebuild_row_buttons(prefix)
+        self._refresh_formula_warnings()
+
+    def _rebuild_row_buttons(self, prefix: str) -> None:
+        table = self._tables[prefix]
+        buttons = self._buttons[prefix]
+        buttons.clear_row_buttons()
+        for row in range(table.rowCount()):
+            buttons.add_row_button(row)
+
+    # -------------------------------------------------------------- 悬空引用
+    def _defined_keys(self) -> set[str]:
+        keys: set[str] = set()
+        for table in self._tables.values():
+            for row in range(table.rowCount()):
+                header = table.verticalHeaderItem(row)
+                if header and header.text():
+                    keys.add(header.text())
+        return keys
+
+    def _referenced_identifiers(self) -> set[str]:
+        """当前编辑内容里被引用的参数键（参数值 / 工程量公式 / 描述公式）。"""
+        texts = [self._component.formula or ""]
+        for prefix, table in self._tables.items():
+            column = self._EXPRESSION_COLUMNS[prefix]
+            for row in range(table.rowCount()):
+                item = table.item(row, column)
+                if item is not None:
+                    texts.append(item.text())
+        return {
+            identifier
+            for text in texts
+            for identifier in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text or "")
+        }
+
+    def _missing_identifiers(self, expression: str) -> list[str]:
+        """公式里引用了但当前表中不存在的参数键（只认 A~Z / FA~FZ / ZA~ZZ）。"""
+        defined = self._defined_keys()
+        missing: list[str] = []
+        for identifier in sorted(set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", expression or ""))):
+            if identifier.upper() in self._FORMULA_NAMES:
+                continue
+            if not self._KEY_PATTERN.match(identifier):
+                continue
+            if identifier not in defined:
+                missing.append(identifier)
+        return missing
+
+    def _on_item_changed(self, prefix: str, item: QTableWidgetItem) -> None:
+        if self._loading or self._warn_updating:
+            return
+        self._refresh_formula_warnings()
+
+    def _refresh_formula_warnings(self) -> None:
+        """工程量公式引用不存在的参数时标红并给出提示；引用修正后自动恢复。"""
+        if self._loading or self._warn_updating:
+            return
+        self._warn_updating = True
+        try:
+            for prefix in ("F", "Z"):
+                table = self._tables[prefix]
+                column = self._EXPRESSION_COLUMNS[prefix]
+                for row in range(table.rowCount()):
+                    item = table.item(row, column)
+                    if item is None:
+                        continue
+                    missing = self._missing_identifiers(item.text())
+                    if missing:
+                        item.setForeground(self._WARN_COLOR)
+                        item.setToolTip(
+                            "引用了不存在的参数：" + "、".join(missing)
+                        )
+                    else:
+                        item.setData(Qt.ItemDataRole.ForegroundRole, None)
+                        item.setToolTip("")
+        finally:
+            self._warn_updating = False
+
+    # ------------------------------------------------------------------ 保存
     def save(self) -> None:
         component = self._component
         existing = {param.key: param for param in component.params}
+        present_keys: set[str] = set()
         for prefix, table in self._tables.items():
+            expression_column = self._EXPRESSION_COLUMNS[prefix]
             for index in range(table.rowCount()):
                 header = table.verticalHeaderItem(index)
                 key = header.text() if header else ""
                 if not key:
                     continue
-                display_item = table.item(index, 0)
-                value_item = table.item(index, 1)
-                display = display_item.text().strip() if display_item else ""
-                value = value_item.text().strip() if value_item else ""
-                if display == "" and value == "":
+                present_keys.add(key)
+                expression_item = table.item(index, expression_column)
+                expression = expression_item.text().strip() if expression_item else ""
+                if prefix == "":
+                    name_item = table.item(index, 0)
+                    display = name_item.text().strip() if name_item else ""
+                    empty = display == "" and expression == ""
+                else:
+                    category_item = table.item(index, 0)
+                    name_item = table.item(index, 1)
+                    unit_item = table.item(index, 2)
+                    category = category_item.text().strip() if category_item else ""
+                    name = name_item.text().strip() if name_item else ""
+                    unit = unit_item.text().strip() if unit_item else ""
+                    display = "|".join([category, name, unit])
+                    empty = category == "" and name == "" and unit == "" and expression == ""
+                if empty:
                     if key in existing:
-                        orm.session().delete(existing.pop(key))
+                        self._drop_param(existing.pop(key))
                     continue
                 if key in existing:
-                    existing[key].value = f"{display}|{value}"
+                    existing[key].value = f"{display}|{expression}"
                 else:
-                    component.params.append(ComponentParam(key=key, value=f"{display}|{value}"))
+                    component.params.append(ComponentParam(key=key, value=f"{display}|{expression}"))
+        # 点「确定」才真正删除被「-」移除的参数行
+        for key in self._deleted_keys:
+            if key not in present_keys and key in existing:
+                self._drop_param(existing.pop(key))
+
+    def _drop_param(self, param: ComponentParam) -> None:
+        """立即从构件参数集合移除（delete-orphan 级联删库，取消则整体回滚）。"""
+        if param in self._component.params:
+            self._component.params.remove(param)
+        else:
+            orm.session().delete(param)
 
 
 class WidthEditDialog(FramelessDialog):

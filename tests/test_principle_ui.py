@@ -503,7 +503,7 @@ def test_enclosure_work_dialog_cancel_restores_levels(qapp, project) -> None:
 def test_component_editor_layout_fills_and_separators(qapp, project) -> None:
     """构件编辑器：左参数表上下撑满整窗、右侧围护/支撑表向右撑满、
     三面板之间画分割线（左右之间竖线、围护与支撑之间横线）。"""
-    from PySide6.QtWidgets import QFrame
+    from PySide6.QtWidgets import QFrame, QHeaderView
 
     from app.views.dialogs.principle_dialogs import ComponentEditDialog
 
@@ -520,8 +520,22 @@ def test_component_editor_layout_fills_and_separators(qapp, project) -> None:
         assert param.geometry().bottom() == support_table.geometry().bottom()
         # 右侧两表右缘一致，末列被拉伸到面板宽（右侧不留整块空白）
         assert enclosure_table.geometry().right() == support_table.geometry().right()
-        for table in (param, enclosure_table, support_table):
-            assert table.horizontalHeader().stretchLastSection()
+        # 工程量表首列已拆成 类别 / 名称 / 单位 + 计算公式，末列为按钮列
+        assert [
+            enclosure_table.horizontalHeaderItem(col).text()
+            for col in range(enclosure_table.columnCount())
+        ] == ["类别", "名称", "单位", "计算公式", ""]
+        assert [
+            support_table.horizontalHeaderItem(col).text()
+            for col in range(support_table.columnCount())
+        ] == ["类别", "名称", "单位", "计算公式", ""]
+        for table, stretch_col in ((param, 1), (enclosure_table, 3), (support_table, 3)):
+            header = table.horizontalHeader()
+            assert not header.stretchLastSection()
+            assert header.sectionResizeMode(stretch_col) == QHeaderView.ResizeMode.Stretch
+            buttons = header.sectionResizeMode(table.columnCount() - 1)
+            assert buttons == QHeaderView.ResizeMode.Interactive
+            assert table.columnWidth(table.columnCount() - 1) == 40
         # 分割线：竖线在左面板与右列之间，横线在围护与支撑表之间
         lines = [
             frame
@@ -537,5 +551,50 @@ def test_component_editor_layout_fills_and_separators(qapp, project) -> None:
             < hline.geometry().y()
             < support_table.geometry().y()
         )
+    finally:
+        dialog.close()
+
+
+def test_component_editor_add_delete_rows_and_dangling_warning(qapp, project) -> None:
+    """构件编辑器增删行：工程量行按 类别|名称|单位 入库；删除被公式引用的参数
+    后公式标红告警，新增参数不复用该字母。"""
+    from app.views.dialogs.principle_dialogs import ComponentEditDialog
+
+    component = project_io.enclosures()[0].works_sorted()[0].levels[0].components[0]
+    dialog = ComponentEditDialog(component)
+    try:
+        qapp.processEvents()
+        param_table = dialog._tables[""]
+        enclosure_table = dialog._tables["F"]
+
+        # 新增围护工程量行：键 FA，填写拆开的 类别/名称/单位 + 公式
+        dialog._add_row("F")
+        assert enclosure_table.rowCount() == 1
+        assert enclosure_table.verticalHeaderItem(0).text() == "FA"
+        assert enclosure_table.cellWidget(0, enclosure_table.columnCount() - 1) is not None
+        enclosure_table.item(0, 0).setText("围护")
+        enclosure_table.item(0, 1).setText("喷射砼")
+        enclosure_table.item(0, 2).setText("m3")
+        enclosure_table.item(0, 3).setText("A*2")
+        assert enclosure_table.item(0, 3).toolTip() == ""
+
+        # 删除参数 A：公式悬空 → 标红 + 悬停提示
+        dialog._delete_row("", 0)
+        assert enclosure_table.item(0, 3).foreground().color().name() == "#d93025"
+        assert enclosure_table.item(0, 3).toolTip() == "引用了不存在的参数：A"
+
+        # 新增参数不复用仍被公式引用的字母 A
+        dialog._add_row("")
+        assert param_table.rowCount() == 1
+        assert param_table.verticalHeaderItem(0).text() == "B"
+        param_table.item(0, 0).setText("深度")
+        param_table.item(0, 1).setText("1.5")
+
+        # 保存：工程量仍拼成 类别|名称|单位|公式，新参数以新键入库
+        dialog.save()
+        assert {(param.key, param.value) for param in component.params} == {
+            ("FA", "围护|喷射砼|m3|A*2"),
+            ("B", "深度|1.5"),
+        }
     finally:
         dialog.close()
