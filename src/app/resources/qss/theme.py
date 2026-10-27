@@ -480,6 +480,10 @@ QHeaderView::section {
     padding: 8px 10px;
 }
 QHeaderView::section:last { border-right: none; }
+/* 行头（竖向 QHeaderView）的「最后一节」也需要右分割线：上面的 :last
+   是为横向表头最右列去重边用的，但同时命中了竖向表头的最后一行，导致
+   最后一行与首列之间缺一条竖线（构件编辑器右侧两表尤为明显） */
+QHeaderView[headerKind="vertical"]::section:last { border-right: 1px solid $table_grid; }
 QHeaderView::section:hover { background-color: $bg_hover; }
 QTableCornerButton::section { background-color: $bg_window; border: none; }
 /* 明细面板页签里的表格（cardHeader=true）：行头 / 列头 / 左上角块底色与

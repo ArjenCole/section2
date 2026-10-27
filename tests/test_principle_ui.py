@@ -529,13 +529,20 @@ def test_component_editor_layout_fills_and_separators(qapp, project) -> None:
             support_table.horizontalHeaderItem(col).text()
             for col in range(support_table.columnCount())
         ] == ["类别", "名称", "单位", "计算公式", ""]
-        for table, stretch_col in ((param, 1), (enclosure_table, 3), (support_table, 3)):
+        # 参数表把「名称 + 单位」拆成两列
+        assert [
+            param.horizontalHeaderItem(col).text()
+            for col in range(param.columnCount())
+        ] == ["参数名称", "单位", "参数值", ""]
+        for table, stretch_col in ((param, 2), (enclosure_table, 3), (support_table, 3)):
             header = table.horizontalHeader()
             assert not header.stretchLastSection()
             assert header.sectionResizeMode(stretch_col) == QHeaderView.ResizeMode.Stretch
             buttons = header.sectionResizeMode(table.columnCount() - 1)
             assert buttons == QHeaderView.ResizeMode.Interactive
             assert table.columnWidth(table.columnCount() - 1) == 40
+            # 行头带标记：主题据此给最后一节补回右分割线
+            assert table.verticalHeader().property("headerKind") == "vertical"
         # 分割线：竖线在左面板与右列之间，横线在围护与支撑表之间
         lines = [
             frame
@@ -567,6 +574,11 @@ def test_component_editor_add_delete_rows_and_dangling_warning(qapp, project) ->
         param_table = dialog._tables[""]
         enclosure_table = dialog._tables["F"]
 
+        # 参数显示名「放坡系数 1:X」已拆成 名称 / 单位 / 值 三列
+        assert [
+            param_table.item(0, col).text() for col in range(3)
+        ] == ["放坡系数", "1:X", "1"]
+
         # 新增围护工程量行：键 FA，填写拆开的 类别/名称/单位 + 公式
         dialog._add_row("F")
         assert enclosure_table.rowCount() == 1
@@ -588,13 +600,14 @@ def test_component_editor_add_delete_rows_and_dangling_warning(qapp, project) ->
         assert param_table.rowCount() == 1
         assert param_table.verticalHeaderItem(0).text() == "B"
         param_table.item(0, 0).setText("深度")
-        param_table.item(0, 1).setText("1.5")
+        param_table.item(0, 1).setText("m")
+        param_table.item(0, 2).setText("1.5")
 
         # 保存：工程量仍拼成 类别|名称|单位|公式，新参数以新键入库
         dialog.save()
         assert {(param.key, param.value) for param in component.params} == {
             ("FA", "围护|喷射砼|m3|A*2"),
-            ("B", "深度|1.5"),
+            ("B", "深度 m|1.5"),
         }
     finally:
         dialog.close()

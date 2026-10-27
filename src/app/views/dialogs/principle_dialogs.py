@@ -539,14 +539,14 @@ class ComponentEditDialog(PrincipleSubDialog):
 
     #: (键前缀, 数据列表头)；末列固定为空表头，留给「+ / -」按钮列
     _GROUPS = (
-        ("", ("参数名称", "参数值")),
+        ("", ("参数名称", "单位", "参数值")),
         ("F", ("类别", "名称", "单位", "计算公式")),
         ("Z", ("类别", "名称", "单位", "计算公式")),
     )
     #: 各表用于铺满面板宽度的列（按钮列固定宽，不参与拉伸）
-    _STRETCH_COLUMNS = {"": 1, "F": 3, "Z": 3}
+    _STRETCH_COLUMNS = {"": 2, "F": 3, "Z": 3}
     #: 各表「公式 / 参数值」所在列（悬空引用检查读取这里）
-    _EXPRESSION_COLUMNS = {"": 1, "F": 3, "Z": 3}
+    _EXPRESSION_COLUMNS = {"": 2, "F": 3, "Z": 3}
     #: 参数键字母表（参数表 A~Z，工程量表 FA~FZ / ZA~ZZ）
     _ALPHABET = tuple(chr(code) for code in range(ord("A"), ord("Z") + 1))
     #: 公式里的函数 / 常量名（允许出现，不算“不存在的参数”）
@@ -582,6 +582,8 @@ class ComponentEditDialog(PrincipleSubDialog):
             table = CellFillTable(0, len(headers) + 1)
             table.setHorizontalHeaderLabels([*headers, ""])
             fixed_width_behavior(table)
+            # 行头最后一节也要保留右分割线（主题里 :last 会裁掉它）
+            table.verticalHeader().setProperty("headerKind", "vertical")
             table.verticalHeader().setDefaultSectionSize(28)
             table.itemChanged.connect(
                 lambda item, p=prefix: self._on_item_changed(p, item)
@@ -607,6 +609,7 @@ class ComponentEditDialog(PrincipleSubDialog):
             )
             if prefix == "":
                 table.setColumnWidth(0, 120)
+                table.setColumnWidth(1, 60)
             else:
                 table.setColumnWidth(0, 90)
                 table.setColumnWidth(1, 150)
@@ -639,6 +642,15 @@ class ComponentEditDialog(PrincipleSubDialog):
             return parts[0], parts[1], ""
         return "", parts[0] if parts else "", ""
 
+    @staticmethod
+    def _split_param_display(display: str) -> tuple[str, str]:
+        """参数显示名 ``名称 单位`` →（名称, 单位）；无空格时整串即名称。"""
+        text = (display or "").strip()
+        name, separator, unit = text.rpartition(" ")
+        if not separator:
+            return text, ""
+        return name, unit
+
     def _fill(self) -> None:
         from app.core.calc.engine import load_params
 
@@ -659,8 +671,10 @@ class ComponentEditDialog(PrincipleSubDialog):
                 for index, (key, display, expression) in enumerate(rows):
                     table.setVerticalHeaderItem(index, QTableWidgetItem(key))
                     if prefix == "":
-                        table.setItem(index, 0, QTableWidgetItem(display))
-                        table.setItem(index, 1, QTableWidgetItem(expression))
+                        name, unit = self._split_param_display(display)
+                        table.setItem(index, 0, QTableWidgetItem(name))
+                        table.setItem(index, 1, QTableWidgetItem(unit))
+                        table.setItem(index, 2, QTableWidgetItem(expression))
                     else:
                         category, name, unit = self._split_quantity_display(display)
                         table.setItem(index, 0, QTableWidgetItem(category))
@@ -819,8 +833,11 @@ class ComponentEditDialog(PrincipleSubDialog):
                 expression = expression_item.text().strip() if expression_item else ""
                 if prefix == "":
                     name_item = table.item(index, 0)
-                    display = name_item.text().strip() if name_item else ""
-                    empty = display == "" and expression == ""
+                    unit_item = table.item(index, 1)
+                    name = name_item.text().strip() if name_item else ""
+                    unit = unit_item.text().strip() if unit_item else ""
+                    display = f"{name} {unit}".strip()
+                    empty = name == "" and unit == "" and expression == ""
                 else:
                     category_item = table.item(index, 0)
                     name_item = table.item(index, 1)
