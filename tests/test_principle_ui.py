@@ -545,6 +545,8 @@ def test_component_editor_layout_fills_and_separators(qapp, project) -> None:
 def test_component_editor_add_delete_rows_and_dangling_warning(qapp, project) -> None:
     """构件编辑器增删行：公式行按 类别|名称|单位 入库；删除被公式引用的参数
     后公式标红告警，新增参数不复用该字母；公式键统一为 F 类。"""
+    from PySide6.QtCore import Qt
+
     from app.views.dialogs.principle_dialogs import ComponentEditDialog
 
     component = project_io.enclosures()[0].works_sorted()[0].levels[0].components[0]
@@ -559,10 +561,11 @@ def test_component_editor_add_delete_rows_and_dangling_warning(qapp, project) ->
             param_table.item(0, col).text() for col in range(3)
         ] == ["放坡系数", "1:X", "1"]
 
-        # 新增公式行：键 FA（公式统一 F 键）
+        # 新增公式行：界面显示序号 1，内部键 FA
         dialog._add_row("F")
         assert formula_table.rowCount() == 1
-        assert formula_table.verticalHeaderItem(0).text() == "FA"
+        assert formula_table.verticalHeaderItem(0).text() == "1"
+        assert formula_table.verticalHeaderItem(0).data(Qt.ItemDataRole.UserRole) == "FA"
         assert formula_table.cellWidget(0, formula_table.columnCount() - 1) is not None
         formula_table.item(0, 0).setText("围护")
         formula_table.item(0, 1).setText("喷射砼")
@@ -575,10 +578,14 @@ def test_component_editor_add_delete_rows_and_dangling_warning(qapp, project) ->
         assert formula_table.item(0, 3).foreground().color().name() == "#d93025"
         assert formula_table.item(0, 3).toolTip() == "引用了不存在的参数：A"
 
-        # 公式键全部为 F 类：第二行取 FB（不再出现 Z 行）
+        # 公式行行头显示 1、2（真实键仍按 F 类递增：FA、FB）
         dialog._add_row("F")
         assert [
             formula_table.verticalHeaderItem(row).text()
+            for row in range(formula_table.rowCount())
+        ] == ["1", "2"]
+        assert [
+            formula_table.verticalHeaderItem(row).data(Qt.ItemDataRole.UserRole)
             for row in range(formula_table.rowCount())
         ] == ["FA", "FB"]
         dialog._delete_row("Q", 1)

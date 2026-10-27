@@ -517,10 +517,11 @@ class _LevelTable(CellFillTable):
 
 class ComponentEditDialog(PrincipleSubDialog):
     """构件编辑器（旧版 FormCpntEdit）：左「参数」表（A~Z），右「公式」表
-    （全部构件公式统一 FA~FZ，围护 / 支撑只靠显示名类别区分），两个板块
-    各用圆角线框框住，底部确认/取消修改。
+    （内部键统一 FA~FZ，行头只显示 1、2、3…；围护 / 支撑只靠显示名类别
+    区分），两个板块各用圆角线框框住，底部确认/取消修改。
 
-    两张表行头均显示参数键，行尾带「+ / -」按钮列（管材面板同款）：
+    参数表行头显示参数键（A~Z），公式表行头显示序号（1、2、3…，真实键
+    藏在行头 UserRole 里），行尾带「+ / -」按钮列（管材面板同款）：
     参数表与公式表都允许用户增删行。公式表的「类别 / 名称 / 单位」三列在
     库内仍拼成 ``类别|名称|单位`` 作为定额键（计算与导出沿用该格式）。
 
@@ -530,7 +531,7 @@ class ComponentEditDialog(PrincipleSubDialog):
     """
 
     #: (表键, 数据列表头)；末列固定为空表头，留给「+ / -」按钮列。
-    #: "Q" = 公式表（所有构件公式统一 F 键）
+    #: "Q" = 公式表（内部键 FA~FZ，行头显示 1、2、3…）
     _GROUPS = (
         ("", ("名称", "单位", "值")),
         ("Q", ("类别", "名称", "单位", "计算公式")),
@@ -646,6 +647,15 @@ class ComponentEditDialog(PrincipleSubDialog):
             return text, ""
         return name, unit
 
+    @staticmethod
+    def _row_key(table: QTableWidget, row: int) -> str:
+        """行头隐藏的真实键（公式表行头显示序号，键存 UserRole）。"""
+        header = table.verticalHeaderItem(row)
+        if header is None:
+            return ""
+        key = header.data(Qt.ItemDataRole.UserRole)
+        return str(key) if key else header.text()
+
     def _fill(self) -> None:
         from app.core.calc.engine import load_params
 
@@ -666,7 +676,10 @@ class ComponentEditDialog(PrincipleSubDialog):
                 rows = groups[prefix]
                 table.setRowCount(len(rows))
                 for index, (key, display, expression) in enumerate(rows):
-                    table.setVerticalHeaderItem(index, QTableWidgetItem(key))
+                    # 公式表行头只显示 1、2、3…：键不再是用户可读/可引用的标识
+                    header = QTableWidgetItem(str(index + 1) if prefix else key)
+                    header.setData(Qt.ItemDataRole.UserRole, key)
+                    table.setVerticalHeaderItem(index, header)
                     if prefix == "":
                         name, unit = self._split_param_display(display)
                         table.setItem(index, 0, QTableWidgetItem(name))
@@ -690,9 +703,9 @@ class ComponentEditDialog(PrincipleSubDialog):
         used |= self._deleted_keys
         for table in self._tables.values():
             for row in range(table.rowCount()):
-                header = table.verticalHeaderItem(row)
-                if header and header.text():
-                    used.add(header.text())
+                key = self._row_key(table, row)
+                if key:
+                    used.add(key)
         referenced = self._referenced_identifiers()
         if prefix == "":
             candidates = self._ALPHABET
@@ -714,7 +727,9 @@ class ComponentEditDialog(PrincipleSubDialog):
         table = self._tables[table_key]
         row = table.rowCount()
         table.insertRow(row)
-        table.setVerticalHeaderItem(row, QTableWidgetItem(key))
+        header = QTableWidgetItem(str(row + 1) if table_key == "Q" else key)
+        header.setData(Qt.ItemDataRole.UserRole, key)
+        table.setVerticalHeaderItem(row, header)
         for column in range(table.columnCount() - 1):
             table.setItem(row, column, QTableWidgetItem(""))
         # 行号变化会让已绑定行号的「-」按钮失效，统一按新行号重建
@@ -727,8 +742,7 @@ class ComponentEditDialog(PrincipleSubDialog):
         table = self._tables[prefix]
         if row < 0 or row >= table.rowCount():
             return
-        header = table.verticalHeaderItem(row)
-        key = header.text() if header else ""
+        key = self._row_key(table, row)
         table.removeRow(row)
         if key:
             # 只记下待删键，真正删库留到「确定」：单机关闭子窗体（取消）
@@ -750,9 +764,9 @@ class ComponentEditDialog(PrincipleSubDialog):
         keys: set[str] = set()
         for table in self._tables.values():
             for row in range(table.rowCount()):
-                header = table.verticalHeaderItem(row)
-                if header and header.text():
-                    keys.add(header.text())
+                key = self._row_key(table, row)
+                if key:
+                    keys.add(key)
         return keys
 
     def _referenced_identifiers(self) -> set[str]:
@@ -818,8 +832,7 @@ class ComponentEditDialog(PrincipleSubDialog):
         for prefix, table in self._tables.items():
             expression_column = self._EXPRESSION_COLUMNS[prefix]
             for index in range(table.rowCount()):
-                header = table.verticalHeaderItem(index)
-                key = header.text() if header else ""
+                key = self._row_key(table, index)
                 if not key:
                     continue
                 present_keys.add(key)
