@@ -113,6 +113,103 @@ def test_group_member_copy_both_sides_active_keeps_lr(multi_enclosure_project) -
     assert snap["support_right"] is False
 
 
+def test_dissolve_group_keeps_lr_when_both_sides_active(multi_enclosure_project) -> None:
+    """解散合槽：两侧都有效的成员保持左右分设及支撑勾选。"""
+    from app.core.models.models import Element, LR_PE_TEXT, TrenchGroup
+
+    unit = multi_enclosure_project
+    deep = _make_pipe(unit.id, "深", depth="4")
+    shallow = _make_pipe(unit.id, "浅", dn=800, depth="3")
+    group, _error = unit_vm.create_trench_group([deep.id, shallow.id])
+    unit_vm.update_element(
+        deep.id,
+        pe_left_name="围护A",
+        pe_right_name="围护B",
+        support_left=True,
+        support_right=False,
+    )
+
+    unit_vm.dissolve_trench_group(group.id)
+    orm.session().expire_all()
+    member = orm.session().get(Element, deep.id)
+    assert orm.session().get(TrenchGroup, group.id) is None
+    assert member.group_id is None
+    assert member.pe_name == LR_PE_TEXT
+    assert member.pe_left_name == "围护A"
+    assert member.pe_right_name == "围护B"
+    assert member.support_left is True and member.support_right is False
+
+
+def test_remove_from_group_uses_member_side_state(multi_enclosure_project) -> None:
+    """移出合槽：单侧 "-" 取另一侧；两侧都有效则保留左右分设。"""
+    from app.core.models.models import Element, LR_PE_TEXT
+
+    unit = multi_enclosure_project
+    left = _make_pipe(unit.id, "左", depth="3")
+    middle = _make_pipe(unit.id, "中", depth="4")
+    right = _make_pipe(unit.id, "右", depth="3")
+    unit_vm.update_element(left.id, pe_name="围护B")
+    group, _error = unit_vm.create_trench_group([left.id, middle.id, right.id])
+
+    # 首成员右侧比邻居浅 → "-"；取左侧外侧原则
+    unit_vm.remove_from_group(left.id)
+    orm.session().expire_all()
+    m1 = orm.session().get(Element, left.id)
+    assert m1.group_id is None
+    assert m1.pe_name == "围护B"
+    assert m1.pe_left_name == "" and m1.pe_right_name == ""
+
+    # 中间成员比两侧都深 → 两侧都有效；保留左右分设
+    unit_vm.update_element(middle.id, pe_left_name="围护A", pe_right_name="围护B")
+    unit_vm.remove_from_group(middle.id)
+    orm.session().expire_all()
+    m2 = orm.session().get(Element, middle.id)
+    assert m2.group_id is None
+    assert m2.pe_name == LR_PE_TEXT
+    assert m2.pe_left_name == "围护A" and m2.pe_right_name == "围护B"
+
+
+def test_remove_middle_member_with_both_sides_dash_uses_first_principle(
+    multi_enclosure_project,
+) -> None:
+    """移出合槽：等深组的中间成员两侧都是 "-"，取项目第一条围护原则。"""
+    from app.core.models.models import Element
+
+    unit = multi_enclosure_project
+    e1 = _make_pipe(unit.id, "管A", depth="3")
+    e2 = _make_pipe(unit.id, "管B", depth="3")
+    e3 = _make_pipe(unit.id, "管C", depth="3")
+    group, _error = unit_vm.create_trench_group([e1.id, e2.id, e3.id])
+    unit_vm.update_element(e2.id, pe_left_name="围护B", pe_right_name="围护B")
+
+    unit_vm.remove_from_group(e2.id)
+    orm.session().expire_all()
+    member = orm.session().get(Element, e2.id)
+    assert member.group_id is None
+    assert member.pe_name == "围护A"
+    assert member.pe_left_name == "" and member.pe_right_name == ""
+
+
+def test_delete_member_dissolve_uses_pre_delete_state(multi_enclosure_project) -> None:
+    """删除组员导致整组解散：剩余成员按删除前的组内状态还原。"""
+    from app.core.models.models import Element, TrenchGroup
+
+    unit = multi_enclosure_project
+    deep = _make_pipe(unit.id, "深", depth="4")
+    shallow = _make_pipe(unit.id, "浅", dn=800, depth="3")
+    unit_vm.update_element(shallow.id, pe_name="围护B")
+    group, _error = unit_vm.create_trench_group([deep.id, shallow.id])
+
+    unit_vm.delete_element(deep.id)
+    orm.session().expire_all()
+    assert orm.session().get(TrenchGroup, group.id) is None
+    member = orm.session().get(Element, shallow.id)
+    assert member.group_id is None
+    # 删除前：末成员左侧 "-"、右侧外侧原则 → 取右侧
+    assert member.pe_name == "围护B"
+    assert member.pe_left_name == "" and member.pe_right_name == ""
+
+
 def test_group_snapshot_and_insert_roundtrip(two_unit_project) -> None:
     """合槽组整组复制 → 粘贴到另一单位工程：成员、名称、数量、左右分设一致。"""
     from app.core.models.models import TrenchGroup

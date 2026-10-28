@@ -888,6 +888,30 @@ def insert_element_data(
     )
 
 
+def _standalone_pe_fields(
+    element: Element, plan: dict[int, tuple[bool, bool]]
+) -> tuple[str, str, str]:
+    """合槽成员还原为组外构件时的 (pe_name, 左原则, 右原则)。
+
+    "-" 是 ``group_side_plan`` 按相邻构件深度算出的不可编辑侧，不看编组
+    前的历史选择：两侧都 "-" 取项目围护原则列表第一条；单侧 "-" 取另一
+    侧；两侧都不是 "-" 保持左右分设及两侧原值。
+    """
+    left_active, right_active = plan.get(element.id, (True, True))
+    left_name = element.pe_left_name or ""
+    right_name = element.pe_right_name or ""
+    if not left_active and not right_active:
+        names = project_io.enclosure_names()
+        return (names[0] if names else ""), "", ""
+    if not left_active or not right_active:
+        restore = right_name if not left_active else left_name
+        if not restore or restore == LR_PE_TEXT:
+            names = project_io.enclosure_names()
+            restore = names[0] if names else ""
+        return restore, "", ""
+    return LR_PE_TEXT, left_name, right_name
+
+
 def element_copy_snapshot(element_id: int) -> dict | None:
     """复制用快照：合槽成员按「在组内的实际围护状态」还原为组外构件。
 
@@ -905,26 +929,10 @@ def element_copy_snapshot(element_id: int) -> dict | None:
     element = _element(element_id)
     if element is not None and element.group_id is not None:
         plan = group_side_plan(element.group_id)
-        left_active, right_active = plan.get(element.id, (True, True))
-        left_name = element.pe_left_name or ""
-        right_name = element.pe_right_name or ""
-        names = project_io.enclosure_names()
-        first_name = names[0] if names else ""
-        if not left_active and not right_active:
-            data["pe_name"] = first_name
-            data["pe_left_name"] = ""
-            data["pe_right_name"] = ""
-        elif not left_active or not right_active:
-            restore = right_name if not left_active else left_name
-            if not restore or restore == LR_PE_TEXT:
-                restore = first_name
-            data["pe_name"] = restore
-            data["pe_left_name"] = ""
-            data["pe_right_name"] = ""
-        else:
-            data["pe_name"] = LR_PE_TEXT
-            data["pe_left_name"] = left_name
-            data["pe_right_name"] = right_name
+        pe_name, left_name, right_name = _standalone_pe_fields(element, plan)
+        data["pe_name"] = pe_name
+        data["pe_left_name"] = left_name
+        data["pe_right_name"] = right_name
     return data
 
 
@@ -1193,13 +1201,17 @@ def delete_element(element_id: int) -> None:
         return
     unit_id = element.unit_id
     group_id = element.group_id
+    group = orm.session().get(TrenchGroup, group_id) if group_id is not None else None
+    # 删除前先按当前组内状态取判定口径（与复制到组外同口径）
+    plan = group_side_plan(group.id) if group is not None else {}
+    siblings = list(group.members) if group is not None else []
     orm.session().delete(element)
     project_io.commit()
-    if group_id is not None:
+    if group is not None:
         # 组员少于 2 条：整组解散（父节点删除、其余组员还原）
-        group = orm.session().get(TrenchGroup, group_id)
-        if group is not None and len(group.members) < 2:
-            _revert_members(list(group.members))
+        remaining = [member for member in siblings if member.id != element_id]
+        if len(remaining) < 2:
+            _revert_members(remaining, plan)
             orm.session().delete(group)
             project_io.commit()
     bus().unit_changed.emit(unit_id)
@@ -1342,12 +1354,13 @@ def create_trench_group(element_ids: list[int]) -> tuple[TrenchGroup | None, str
 
 
 def dissolve_trench_group(group_id: int) -> None:
-    """解散合槽组：删除父节点，组员还原（左右同原则的退回普通构件）。"""
+    """解散合槽组：删除父节点，组员按组内实际围护状态还原为独立构件。"""
     group = orm.session().get(TrenchGroup, group_id) if project_io.is_open() else None
     if group is None:
         return
     unit_id = group.unit_id
-    _revert_members(list(group.members))
+    plan = group_side_plan(group.id)
+    _revert_members(list(group.members), plan)
     orm.session().delete(group)
     project_io.commit()
     bus().unit_changed.emit(unit_id)
@@ -1438,11 +1451,12 @@ def remove_from_group(element_id: int) -> None:
         return
     group = orm.session().get(TrenchGroup, element.group_id)
     unit_id = element.unit_id
+    # 按移出前的组内状态判定（与复制到组外同口径）
+    plan = group_side_plan(group.id) if group is not None else {}
     remaining = [member for member in (group.members if group else []) if member.id != element.id]
-    _revert_members([element])
-    element.group_id = None
+    _revert_members([element], plan)
     if len(remaining) < 2:
-        _revert_members(remaining)
+        _revert_members(remaining, plan)
         if group is not None:
             orm.session().delete(group)
     project_io.commit()
@@ -1450,29 +1464,28 @@ def remove_from_group(element_id: int) -> None:
     bus().tree_structure_changed.emit()
 
 
-def _revert_members(members: list[Element]) -> None:
-    """组员还原为独立构件：合槽内自动分配的左右侧不保留，退回普通单原则。
+def _revert_members(
+    members: list[Element],
+    plan: dict[int, tuple[bool, bool]] | None = None,
+) -> None:
+    """组员还原为独立构件：按组内实际围护状态决定单原则 / 左右分设。
 
-    首构件用其左原则、其余用右原则（与合槽外边缘 / 材质取侧一致）。
+    与复制到组外的口径一致（:func:`_standalone_pe_fields`）：两侧都是
+    "-" 取项目第一条原则，单侧 "-" 取另一侧，两侧都有效则保留左右分设
+    及左右原则、支撑勾选。``plan`` 由调用方在改动组员前算好传入，避免
+    移除成员后邻接关系变化影响判定。
     """
+    if not members:
+        return
+    if plan is None:
+        group = members[0].group
+        plan = group_side_plan(group.id) if group is not None else {}
     for member in members:
-        group = member.group
-        siblings = (
-            sorted(group.members, key=lambda item: (item.order_no, item.id))
-            if group is not None
-            else [member]
-        )
-        index = siblings.index(member) if member in siblings else 0
-        restore = (
-            member.pe_left_name or member.pe_right_name
-            if index == 0
-            else member.pe_right_name or member.pe_left_name
-        )
+        pe_name, left_name, right_name = _standalone_pe_fields(member, plan)
+        member.pe_name = pe_name
+        member.pe_left_name = left_name
+        member.pe_right_name = right_name
         member.group_id = None
-        if restore and restore != LR_PE_TEXT:
-            member.pe_name = restore
-            member.pe_left_name = ""
-            member.pe_right_name = ""
 
 
 def group_side_plan(group_id: int) -> dict[int, tuple[bool, bool]]:
