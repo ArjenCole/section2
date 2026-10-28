@@ -5,6 +5,7 @@
 Qt 测试统一用离屏平台，不弹窗口。
 """
 
+import gc
 import os
 import tempfile
 from pathlib import Path
@@ -19,6 +20,7 @@ os.environ.setdefault(
     "SECTION2_DATA_DIR", str(Path(tempfile.mkdtemp(prefix="section2-test-data-")))
 )
 
+from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication
 
 from app.services import project_io
@@ -31,12 +33,33 @@ def qapp():
     yield QApplication.instance() or QApplication([])
 
 
+def _dispose_top_level_widgets() -> None:
+    """销毁用例遗留的顶层控件，避免其信号连接跨用例累积。
+
+    用例里直接 ``UnitPanel()`` / ``MainWindow()`` 创建的窗体不会自动销毁，
+    它们仍连着全局事件总线；后续用例每发一次 ``unit_changed``，所有历史面板
+    都会重算一遍，整个套件越跑越慢（实测单个用例可从 3s 膨胀到 120s）。
+    """
+    application = QApplication.instance()
+    if application is None:
+        return
+    leftovers = [widget for widget in QApplication.allWidgets() if widget.parent() is None]
+    if not leftovers:
+        return
+    for widget in leftovers:
+        widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    application.processEvents()
+    gc.collect()
+
+
 @pytest.fixture(autouse=True)
 def _closed_project():
-    """每个用例前后都保证没有打开着的工程。"""
+    """每个用例前后都保证没有打开着的工程，并销毁遗留窗体。"""
     project_io.close_project()
     yield
     project_io.close_project()
+    _dispose_top_level_widgets()
 
 
 @pytest.fixture()
