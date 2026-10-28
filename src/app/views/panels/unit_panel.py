@@ -1457,7 +1457,7 @@ class UnitPanel(QWidget):
     def _set_format_painter_cursor(self, active: bool) -> None:
         """格式刷状态期间把鼠标换成刷形光标（应用级覆盖，退出即恢复原样）。
 
-        热点在刷毛尖端（图标左下 (3, 19)），点选的位置就是刷毛指的位置。
+        热点在刷毛外缘中点（图标左下 (6, 16)），点选的位置就是刷毛指的位置。
         """
         from PySide6.QtGui import QCursor
         from PySide6.QtWidgets import QApplication
@@ -1470,7 +1470,7 @@ class UnitPanel(QWidget):
             color = ThemeManager.instance().current().text_primary
             pixmap = load_icon("paintbrush", color=color, size=24).pixmap(24, 24)
             self._format_painter_cursor_active = True
-            QApplication.setOverrideCursor(QCursor(pixmap, 3, 19))
+            QApplication.setOverrideCursor(QCursor(pixmap, 6, 16))
         else:
             if not self._format_painter_cursor_active:
                 return
@@ -1518,7 +1518,7 @@ class UnitPanel(QWidget):
 
         source = _element(source_id)
         if source is None:
-            bus().status_message.emit("格式刷：样板构件已不存在，已退出。", 2000)
+            bus().status_message.emit("格式刷：样板构件已不存在，已退出。", 1000)
             return
         # 左右分设样板：把分设格式（占位 + 左右原则 + 支撑勾选）整体复制，
         # 而不是退化成单条左原则
@@ -1556,10 +1556,10 @@ class UnitPanel(QWidget):
             changed += 1
         if changed:
             bus().status_message.emit(
-                f"格式刷：已同步 {changed} 条构件的原则，已自动退出格式刷。", 2000
+                f"格式刷：已同步 {changed} 条构件的原则，已自动退出格式刷。", 1000
             )
         else:
-            bus().status_message.emit("格式刷：目标与样板原则一致，已退出。", 2000)
+            bus().status_message.emit("格式刷：目标与样板原则一致，已退出。", 1000)
 
     def _show_group_detail(self, group_id: int) -> None:
         """合槽父行选中：明细占位 + 成员合计工程量 + 整槽断面图。"""
