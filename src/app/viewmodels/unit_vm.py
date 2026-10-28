@@ -1106,13 +1106,14 @@ def update_element(element_id: int, **fields) -> Element | None:
     new_pe_name = str(fields.get("pe_name", element.pe_name or ""))
     if "pe_name" in fields:
         if new_pe_name == LR_PE_TEXT and not was_lr:
-            # 进入左右分设：左右原则初始化为当前具体原则（没有则取库中第一条）
+            # 进入左右分设：左右原则初始化为当前具体原则（没有则取库中第一条）；
+            # 调用方显式给了左右原则（格式刷复制分设格式）时按给定值
             original = element.pe_name if element.pe_name != LR_PE_TEXT else ""
             if not original:
                 names = project_io.enclosure_names()
                 original = names[0] if names else ""
-            fields["pe_left_name"] = original
-            fields["pe_right_name"] = original
+            fields.setdefault("pe_left_name", original)
+            fields.setdefault("pe_right_name", original)
         elif new_pe_name != LR_PE_TEXT and was_lr:
             # 退出左右分设：清空左右字段
             fields["pe_left_name"] = ""

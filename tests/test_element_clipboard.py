@@ -428,3 +428,50 @@ def test_section_follows_group_member(qapp, two_unit_project) -> None:
     assert canvas._group_id == group.id and canvas._element_id is None
     panel._refresh_section_for(standalone.id)
     assert canvas._element_id == standalone.id and canvas._group_id is None
+
+
+def test_format_painter_copies_lr_format(qapp, tmp_path) -> None:
+    """左右分设样板：格式刷把分设格式整体复制（占位 / 左右原则 / 支撑勾选）。"""
+    from app.core.models.models import Element, LR_PE_TEXT, PcpEnclosure
+
+    project_io.new_project(NewProjectSpec(path=tmp_path / "刷分设.stn", unit_names=["u"]))
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    orm.session().add_all([PcpEnclosure(name="围护A", order_no=0), PcpEnclosure(name="围护B", order_no=1)])
+    project_io.commit()
+    src = _make_pipe(unit.id, "分设样板", dn=600)
+    tgt = _make_pipe(unit.id, "目标", dn=800)
+    unit_vm.update_element(
+        src.id,
+        pe_name=LR_PE_TEXT,
+        pe_left_name="围护A",
+        pe_right_name="围护B",
+        support_left=True,
+        support_right=False,
+    )
+
+    panel = _panel_for(qapp, unit)
+    _select_rows(panel, [_element_row(panel, src.id)])
+    panel.set_format_painter(True)
+    _select_rows(panel, [_element_row(panel, tgt.id)])
+    panel._flush_format_painter()
+
+    target = orm.session().get(Element, tgt.id)
+    assert target.pe_name == LR_PE_TEXT
+    assert target.pe_left_name == "围护A"
+    assert target.pe_right_name == "围护B"
+    assert target.support_left is True
+    assert target.support_right is False
+
+    qapp.processEvents()  # 等刷完后的表格重载落地
+    # 反向：普通单原则样板刷到分设构件 → 退出分设、清空左右原则
+    single = _make_pipe(unit.id, "单原则样板", dn=1000)
+    qapp.processEvents()
+    unit_vm.update_element(single.id, pe_name="围护A")
+    qapp.processEvents()
+    _select_rows(panel, [_element_row(panel, single.id)])
+    panel.set_format_painter(True)
+    _select_rows(panel, [_element_row(panel, tgt.id)])
+    panel._flush_format_painter()
+    target = orm.session().get(Element, tgt.id)
+    assert target.pe_name == "围护A"
+    assert target.pe_left_name == "" and target.pe_right_name == ""

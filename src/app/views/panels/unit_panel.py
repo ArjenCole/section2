@@ -1518,12 +1518,11 @@ class UnitPanel(QWidget):
 
         source = _element(source_id)
         if source is None:
-            bus().status_message.emit("格式刷：样板构件已不存在，已退出。", 4000)
+            bus().status_message.emit("格式刷：样板构件已不存在，已退出。", 2000)
             return
-        source_pe = source.pe_name
-        if source_pe == LR_PE_TEXT:
-            # 左右分设样板（合槽成员）：取左原则作为普通构件的围护原则
-            source_pe = source.pe_left_name or source.pe_right_name or ""
+        # 左右分设样板：把分设格式（占位 + 左右原则 + 支撑勾选）整体复制，
+        # 而不是退化成单条左原则
+        source_lr = source.pe_name == LR_PE_TEXT
         changed = 0
         for element_id in self._selected_element_ids():
             if element_id == source_id:
@@ -1532,8 +1531,19 @@ class UnitPanel(QWidget):
             if element is None:
                 continue
             fields: dict = {}
-            if element.group_id is None and source_pe and element.pe_name != source_pe:
-                fields["pe_name"] = source_pe
+            if element.group_id is None:  # 合槽子节点的围护由组规则接管
+                if source_lr:
+                    lr_fields = {
+                        "pe_name": LR_PE_TEXT,
+                        "pe_left_name": source.pe_left_name or "",
+                        "pe_right_name": source.pe_right_name or "",
+                        "support_left": bool(source.support_left),
+                        "support_right": bool(source.support_right),
+                    }
+                    if any(getattr(element, key) != value for key, value in lr_fields.items()):
+                        fields.update(lr_fields)
+                elif source.pe_name and element.pe_name != source.pe_name:
+                    fields["pe_name"] = source.pe_name
             if source.pf_name and element.pf_name != source.pf_name:
                 fields["pf_name"] = source.pf_name
             if source.pp_name and element.pp_name != source.pp_name:
@@ -1546,10 +1556,10 @@ class UnitPanel(QWidget):
             changed += 1
         if changed:
             bus().status_message.emit(
-                f"格式刷：已同步 {changed} 条构件的原则，已自动退出格式刷。", 4000
+                f"格式刷：已同步 {changed} 条构件的原则，已自动退出格式刷。", 2000
             )
         else:
-            bus().status_message.emit("格式刷：目标与样板原则一致，已退出。", 4000)
+            bus().status_message.emit("格式刷：目标与样板原则一致，已退出。", 2000)
 
     def _show_group_detail(self, group_id: int) -> None:
         """合槽父行选中：明细占位 + 成员合计工程量 + 整槽断面图。"""
