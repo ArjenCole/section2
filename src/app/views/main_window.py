@@ -925,7 +925,7 @@ class MainWindow(QMainWindow):
             else []
         )
         can_group = state["can_group"]
-        can_dissolve = state["group_id"] is not None
+        can_dissolve = state["can_dissolve"]
         is_member = state["member_id"] is not None
         can_join = state["can_join"] and bool(groups)
 

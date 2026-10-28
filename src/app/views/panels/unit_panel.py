@@ -1924,7 +1924,7 @@ class UnitPanel(QWidget):
         # ---- 合槽编组（v3）：只显示当前有效的条目，整段共用一个分隔组 ----
         state = self.group_menu_state()
         show_create = state["can_group"]
-        show_dissolve = state["group_id"] is not None
+        show_dissolve = state["can_dissolve"]
         show_member = state["member_id"] is not None
         groups: list = []
         if state["can_join"]:
@@ -2059,6 +2059,8 @@ class UnitPanel(QWidget):
             "can_group": len(ids) >= 2,
             "group_id": group_id,
             "member_id": member_id,
+            # 解散只对父行开放：选中子条目时菜单里不出现「解散合槽」
+            "can_dissolve": group_id is not None and member_id is None,
             "can_join": group_id is None and target_id is not None,
             "join_target": target_id,
         }

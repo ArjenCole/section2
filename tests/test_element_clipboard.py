@@ -588,11 +588,11 @@ def test_edit_menu_group_actions_follow_selection(qapp, two_unit_project) -> Non
             not action.isSeparator() for action in menu_actions[separator_index + 1 :]
         )
 
-        # 选中组成员：解散 / 移出 / 组内移动显示，编组与加入隐藏
+        # 选中组成员：移出 / 组内移动显示；解散只对父行开放，编组与加入隐藏
         _select_rows(panel, [_element_row(panel, e1.id)])
         window._refresh_group_actions()
         assert window._group_separator.isVisible()
-        assert window._act_group_dissolve.isVisible()
+        assert not window._act_group_dissolve.isVisible()
         assert window._act_group_remove.isVisible()
         assert window._act_group_move_left.isVisible()
         assert window._act_group_move_right.isVisible()
