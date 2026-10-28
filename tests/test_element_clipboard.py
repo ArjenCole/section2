@@ -169,7 +169,8 @@ def _element_row(panel, element_id: int) -> int:
     return next(
         index
         for index, row in enumerate(panel._rows_cache)
-        if getattr(row, "id", None) == element_id
+        # 父节点行与构件行都可能同 id（分属两张表），按类型排除父行
+        if not hasattr(row, "member_count") and getattr(row, "id", None) == element_id
     )
 
 
@@ -244,6 +245,70 @@ def test_paste_elements_into_group_and_nesting_rejected(qapp, two_unit_project) 
     assert any("嵌套" in message for message in messages)
     groups = list(orm.session().scalars(select(TrenchGroup)))
     assert len(groups) == 1
+
+
+def test_paste_on_group_parent_inserts_after_group_at_same_level(
+    qapp, two_unit_project
+) -> None:
+    """选中合槽父行粘贴普通构件：落在整组之后同层级，不变成组员。"""
+    from app.core.models.models import Element
+    from app.viewmodels.unit_vm import table_rows
+
+    unit_a, _unit_b = two_unit_project
+    e1 = _make_pipe(unit_a.id, "管A")
+    e2 = _make_pipe(unit_a.id, "管B", dn=800)
+    group, _error = unit_vm.create_trench_group([e1.id, e2.id])
+    e3 = _make_pipe(unit_a.id, "管C", dn=1000)
+    source = _make_pipe(unit_a.id, "待粘贴", dn=1200)
+
+    panel = _panel_for(qapp, unit_a)
+    _select_rows(panel, [_element_row(panel, source.id)])
+    panel._copy_elements()
+    _select_rows(panel, [_group_row(panel)])
+    panel._paste_elements()
+    qapp.processEvents()
+
+    orm.session().expire(group)
+    assert len(group.members) == 2  # 没有变成合槽子条目
+    names = [row.name for row in table_rows(unit_a.id)]
+    assert names == ["管A+管B 合槽", "管A", "管B", "待粘贴", "管C", "待粘贴"]
+    pasted = next(
+        element
+        for element in orm.session().query(Element).filter_by(name="待粘贴").all()
+        if element.id != source.id
+    )
+    assert pasted.group_id is None
+    assert pasted.order_no == 2  # 紧跟在整组之后
+
+
+def test_paste_group_on_group_parent_inserts_sibling_group(
+    qapp, two_unit_project
+) -> None:
+    """选中合槽父行粘贴整组合槽：作为同层级兄弟组插在其后，不嵌套。"""
+    from app.core.models.models import TrenchGroup
+    from sqlalchemy import select
+
+    from app.viewmodels.unit_vm import group_snapshot, table_rows
+
+    unit_a, _unit_b = two_unit_project
+    e1 = _make_pipe(unit_a.id, "管A")
+    e2 = _make_pipe(unit_a.id, "管B", dn=800)
+    group, _error = unit_vm.create_trench_group([e1.id, e2.id])
+    e3 = _make_pipe(unit_a.id, "管C", dn=1000)
+
+    panel = _panel_for(qapp, unit_a)
+    _select_rows(panel, [_group_row(panel)])
+    panel._copy_elements()
+    element_clipboard.write_items([{"type": "group", "data": group_snapshot(group.id)}])
+    _select_rows(panel, [_group_row(panel)])
+    panel._paste_elements()
+    qapp.processEvents()
+
+    groups = list(orm.session().scalars(select(TrenchGroup).where(TrenchGroup.unit_id == unit_a.id)))
+    assert len(groups) == 2
+    assert all(len(item.members) == 2 for item in groups)  # 没有成员被并进原组
+    names = [row.name for row in table_rows(unit_a.id)]
+    assert names == ["管A+管B 合槽", "管A", "管B", "管A+管B 合槽", "管A", "管B", "管C"]
 
 
 def test_multi_row_copy_paste_keeps_order(qapp, two_unit_project) -> None:

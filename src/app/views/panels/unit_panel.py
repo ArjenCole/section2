@@ -2046,10 +2046,11 @@ class UnitPanel(QWidget):
         self._paste_elements()
 
     def _paste_target_group(self) -> int | None:
-        """粘贴目标合槽组：选中父行返回该组，选中组成员返回其组。"""
-        group_id = self._selected_group_row_id()
-        if group_id is not None:
-            return group_id
+        """粘贴目标合槽组：仅选中组成员时返回其组。
+
+        选中父行不算目标组——父行代表整条合槽，粘贴应落在它与同层级
+        相邻构件之间，而不是变成该合槽的子条目。
+        """
         element = self._current_element_row()
         if element is not None and element.group_id is not None:
             return element.group_id
@@ -2058,9 +2059,10 @@ class UnitPanel(QWidget):
     def _paste_elements(self) -> None:
         """粘贴剪贴板快照（brackets 同款：内容来自系统剪贴板，可跨文件）。
 
-        选中合槽（父行或成员）时粘贴普通构件 = 加入该组；粘贴合槽组被拒
-        （合槽不允许嵌套）。普通位置按行序逐项插入（锚点固定为当前行下一
-        条构件，插入顺序 = 复制顺序）。
+        选中合槽成员时粘贴普通构件 = 加入该组；粘贴合槽组被拒（合槽不
+        允许嵌套）。选中合槽父行时与普通行同层级处理：整组视为一条，
+        粘贴内容插到该组之后。普通位置按行序逐项插入（锚点固定为当前
+        行下一条构件，插入顺序 = 复制顺序）。
         """
         from app.services import element_clipboard
 
@@ -2088,17 +2090,24 @@ class UnitPanel(QWidget):
             if pasted:
                 bus().status_message.emit(f"已粘贴 {pasted} 条构件到合槽组。", 4000)
             return
-        from app.viewmodels.unit_vm import insert_element_data, insert_group_data
+        from app.viewmodels.unit_vm import (
+            element_id_after_group,
+            insert_element_data,
+            insert_group_data,
+        )
 
         anchor = self._current_element_id()
+        if anchor is None:
+            # 选中合槽父行（父行不是构件）：整组视作一条，插到组之后
+            selected_group = self._selected_group_row_id()
+            if selected_group is not None:
+                anchor = element_id_after_group(selected_group)
         count = 0
         for item in items:
             if item.get("type") == "group":
                 group = insert_group_data(self._unit_id, item.get("data") or {}, anchor)
                 if group is not None:
                     count += 1
-                    from app.viewmodels.unit_vm import element_id_after_group
-
                     anchor = element_id_after_group(group.id)
             else:
                 element = insert_element_data(self._unit_id, item.get("data") or {}, anchor)
