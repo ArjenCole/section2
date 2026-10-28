@@ -109,45 +109,48 @@ def precipitation_enabled(key: str, enclosure: PcpEnclosure) -> tuple[bool, floa
     return elevation >= 0, elevation, gap, sides
 
 
-def excavation_text(precipitation: PcpPrecipitation) -> str:
-    """挖填方描述：基坑开挖土质 + 坞塝 / 顶部回填（回填方式按编辑窗体同口径反推）。
+def excavation_sentence(excvt: str, dock: str, cover: str, mode: str) -> str:
+    """按「坞塝回填」方式拼挖填方描述（编辑窗体实时预览与库内字段共用口径）。
 
     至管顶 50cm：「坞塝采用 X 回填至管顶 50cm，顶部采用 Y 回填」；至管顶标高 /
     管中心标高同理；至沟槽顶标高时全部同材质，合并成一句。
     """
+    if mode == "至沟槽顶标高":
+        return f"基坑挖{excvt}，全部采用{dock}回填至沟槽顶标高"
+    if mode == "至管中心标高":
+        return f"基坑挖{excvt}，坞塝采用{dock}回填至管中心标高，上部采用{cover}回填"
+    target = "管顶50cm" if mode == "至管顶50cm" else "管顶标高"
+    return f"基坑挖{excvt}，坞塝采用{dock}回填至{target}，顶部采用{cover}回填"
+
+
+def excavation_text(precipitation: PcpPrecipitation) -> str:
+    """挖填方描述：基坑开挖土质 + 坞塝 / 顶部回填（回填方式按库内字段反推）。"""
     if (
         precipitation.dock_h == precipitation.dock_l
         and precipitation.cover50 == precipitation.dock_l
         and precipitation.cover == precipitation.dock_l
     ):
-        return f"基坑挖{precipitation.excvt}，全部采用{precipitation.dock_l}回填至沟槽顶标高"
-    if precipitation.dock_h == precipitation.dock_l:
-        if precipitation.cover50 == precipitation.dock_l:
-            return (
-                f"基坑挖{precipitation.excvt}，坞塝采用{precipitation.dock_l}回填至管顶50cm，"
-                f"顶部采用{precipitation.cover}回填"
-            )
-        return (
-            f"基坑挖{precipitation.excvt}，坞塝采用{precipitation.dock_l}回填至管顶标高，"
-            f"顶部采用{precipitation.cover}回填"
-        )
-    return (
-        f"基坑挖{precipitation.excvt}，坞塝采用{precipitation.dock_l}回填至管中心标高，"
-        f"上部采用{precipitation.cover}回填"
-    )
+        mode = "至沟槽顶标高"
+    elif precipitation.dock_h == precipitation.dock_l:
+        # cover50 == dock_l 且 cover 不同 = 至管顶 50cm；否则至管顶标高
+        mode = "至管顶50cm" if precipitation.cover50 == precipitation.dock_l else "至管顶标高"
+    else:
+        mode = "至管中心标高"
+    return excavation_sentence(precipitation.excvt, precipitation.dock_l, precipitation.cover, mode)
 
 
-def precipitation_text(precipitation: PcpPrecipitation) -> str:
+def precipitation_text(precipitation: PcpPrecipitation, excavation: str | None = None) -> str:
     """挖填方 + 降水描述（一段正常文字，窗体不够宽时自动换行）。
 
-    前半句是挖填方描述（:func:`excavation_text`）；后半句按井型表逐层给出
-    深度区间，区间口径与「范围」列一致：每层自其埋深到下一启用层的埋深，
-    最深启用层为「深度 X m 以下」，全部层深相同（埋深 0）时写「全程」。
-    层与层之间用逗号连成一句，不再逐层换行。
+    前半句是挖填方描述（缺省取 :func:`excavation_text`；编辑窗体传当前
+    面板的实时取值，让总结文字跟随挖填类型面板即时变化）；后半句按井型表
+    逐层给出深度区间，区间口径与「范围」列一致：每层自其埋深到下一启用层
+    的埋深，最深启用层为「深度 X m 以下」，全部层深相同（埋深 0）时写
+    「全程」。层与层之间用逗号连成一句，不再逐层换行。
 
     湿土排水取的是它到下一启用井型之间的**浅层区间**——旧版把「最后一个
     启用井型」的埋深（默认 15m）当成了湿土排水的下限，写出错误的
-    「深度 15m 以下，采用湿土排水」；此处按首条启用井型的埋深计算。
+    「深度 15 m 以下，采用湿土排水」；此处按首条启用井型的埋深计算。
     """
     enabled: list[tuple[str, float]] = []
     for key in PRECIPITATION_COLUMNS:  # 湿土排水 → 深井，行序与表格一致
@@ -165,9 +168,10 @@ def precipitation_text(precipitation: PcpPrecipitation) -> str:
             parts.append(f"沟槽深度{elevation:g}~{upper:g}m采用{label}")
         else:
             parts.append(f"{elevation:g}~{upper:g}m采用{label}")
+    head = excavation if excavation is not None else excavation_text(precipitation)
     if not parts:
-        return f"{excavation_text(precipitation)}；未设置降水。"
-    return f"{excavation_text(precipitation)}；{'，'.join(parts)}。"
+        return f"{head}；未设置降水。"
+    return f"{head}；{'，'.join(parts)}。"
 
 
 class PrincipleSubDialog(FramelessDialog):
@@ -1110,7 +1114,9 @@ class PrecipitationEditDialog(FramelessDialog):
     字段改用“侧数”表达），行序同 1.0（湿土排水 → 深井）；未选用行埋深、
     范围显示“-”且只读，已选用行的范围自最深已选用行向浅处推算
     （+∞ → 下一已选用行埋深，旧版 FlashFm）；下方实时给出挖填方 + 降水描述
-    （一段正常文字，随窗体宽度自动换行，见 :func:`precipitation_text`）；
+    （一段正常文字，随窗体宽度自动换行，见 :func:`precipitation_text`），
+    井型表编辑与挖填类型面板调整选项都即时刷新（_describe_change /
+    _excavation_changed，挖填类型用面板当前值预览，确认才落库）；
     两面板高度以井型表内容为准（_fit_panel_heights），下缘对齐。
     """
 
@@ -1209,7 +1215,11 @@ class PrecipitationEditDialog(FramelessDialog):
         root.addLayout(button_row)
 
     def _build_excavation_box(self) -> QGroupBox:
-        """「挖填类型」面板（原属围护原则窗体，v10 起并入本原则）。"""
+        """「挖填类型」面板（原属围护原则窗体，v10 起并入本原则）。
+
+        四个选项任一变化都即时刷新下方总结文字（_excavation_changed），
+        不等「确认」落库——编辑期间只写会话，预览用面板当前值。
+        """
         box = QGroupBox("挖填类型")
         form = QFormLayout(box)
         self._excvt = QComboBox()
@@ -1222,7 +1232,33 @@ class PrecipitationEditDialog(FramelessDialog):
         form.addRow("坞塝材质", self._dock_material)
         form.addRow("坞塝回填", self._dock_mode)
         form.addRow("顶部回填", self._cover)
+        self._excvt.currentTextChanged.connect(self._excavation_changed)
+        self._dock_material.textChanged.connect(self._excavation_changed)
+        self._dock_mode.currentTextChanged.connect(self._excavation_changed)
+        self._cover.textChanged.connect(self._excavation_changed)
         return box
+
+    def _excavation_changed(self, *_args) -> None:
+        """挖填类型面板选项变化：总结文字实时跟随（装填期间跳过）。"""
+        if self._loading:
+            return
+        self._update_describe()
+
+    def _excavation_preview(self) -> str:
+        """按面板当前取值拼挖填方描述（回填方式直接取「坞塝回填」下拉）。"""
+        return excavation_sentence(
+            self._excvt.currentText(),
+            self._dock_material.text().strip(),
+            self._cover.text().strip(),
+            self._dock_mode.currentText(),
+        )
+
+    def _update_describe(self) -> None:
+        precipitation = self._precipitation()
+        if precipitation is not None:
+            self._describe.setText(
+                precipitation_text(precipitation, excavation=self._excavation_preview())
+            )
 
     def _precipitation(self) -> PcpPrecipitation | None:
         return orm.session().get(PcpPrecipitation, self._precipitation_id)
@@ -1316,9 +1352,7 @@ class PrecipitationEditDialog(FramelessDialog):
     def _describe_change(self, *_args) -> None:
         self._refresh_range()
         self._apply_rows()
-        precipitation = self._precipitation()
-        if precipitation is not None:
-            self._describe.setText(precipitation_text(precipitation))
+        self._update_describe()
 
     def _apply_rows(self) -> None:
         if self._loading:

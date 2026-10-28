@@ -641,3 +641,40 @@ def test_precipitation_text_paragraph_and_excavation(qapp, project) -> None:
     text = precipitation_text(pp)
     assert text.startswith("基坑挖Ⅲ类土") and text.endswith("未设置降水。")
     assert "降水，" not in text
+
+
+def test_precipitation_dialog_describe_follows_excavation_panel(qapp, project) -> None:
+    """挖填类型面板调整选项时，下方总结文字实时跟随（不点确认也预览）。"""
+    from app.core.models import base as orm
+
+    from app.views.dialogs.principle_dialogs import PrecipitationEditDialog
+
+    dialog = PrecipitationEditDialog(project_io.precipitations()[0].id)
+    try:
+        dialog.show()
+        qapp.processEvents()
+        assert "基坑挖Ⅲ类土，坞塝采用中粗砂回填至管顶50cm" in dialog._describe.text()
+        # 开挖类型变化 → 描述里的土质跟着变
+        dialog._excvt.setCurrentText("Ⅳ类土")
+        assert "基坑挖Ⅳ类土" in dialog._describe.text()
+        # 坞塝材质 / 顶部回填
+        dialog._dock_material.setText("碎石")
+        assert "坞塝采用碎石回填至管顶50cm" in dialog._describe.text()
+        dialog._cover.setText("黄土")
+        assert "顶部采用黄土回填" in dialog._describe.text()
+        # 坞塝回填方式：三种目标的措辞
+        dialog._dock_mode.setCurrentText("至管顶标高")
+        assert "坞塝采用碎石回填至管顶标高，顶部采用黄土回填" in dialog._describe.text()
+        dialog._dock_mode.setCurrentText("至管中心标高")
+        assert "回填至管中心标高，上部采用黄土回填" in dialog._describe.text()
+        dialog._dock_mode.setCurrentText("至沟槽顶标高")
+        assert "全部采用碎石回填至沟槽顶标高" in dialog._describe.text()
+        # 井型表编辑仍然刷新降水段（两处来源共用一个标签）
+        assert "沟槽深度0~3.5m采用湿土排水" in dialog._describe.text()
+
+        # 取消：挖填类型的调整不落库，库内仍是默认值
+        dialog.reject()
+        pp = project_io.precipitations()[0]
+        assert pp.excvt == "Ⅲ类土" and pp.dock_l == "中粗砂" and pp.cover == "素土"
+    finally:
+        dialog.close()
