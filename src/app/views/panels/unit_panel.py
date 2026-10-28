@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, QRect, QRectF, Qt
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -431,6 +431,9 @@ class _PipeCategoryDelegate(_FocusCellDelegate):
 class UnitPanel(QWidget):
     """单位工程工作台。"""
 
+    #: 格式刷状态变化（开启 / 取消）——主窗体据此同步工具栏按钮的勾选态
+    format_painter_changed = Signal(bool)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setProperty("role", "panel")
@@ -454,6 +457,9 @@ class UnitPanel(QWidget):
         self._collapsed_group_ids: set[int] = set()
         #: 合槽父行选中时的成员 id（工程量合计 / 断面图用；空 = 非父行态）
         self._group_member_ids: list[int] = []
+        #: 格式刷：True = 等待把样板构件的四项原则刷到后续选中的构件上
+        self._format_painter_active = False
+        self._format_painter_source: int | None = None
         self._build_ui()
         self._connect()
         self._show_unit(None)
@@ -865,6 +871,11 @@ class UnitPanel(QWidget):
         self._multi_detail = False
         self._current_detail_id = None
         self._pending_select_id = None
+        # 切换单位工程 / 关闭工程：样板不再有效，格式刷自动结束
+        if self._format_painter_active:
+            self._format_painter_active = False
+            self._format_painter_source = None
+            self.format_painter_changed.emit(False)
         has_unit = unit_id is not None
         self._placeholder.setVisible(not has_unit)
         self._work_area.setVisible(has_unit)
@@ -940,7 +951,7 @@ class UnitPanel(QWidget):
             self._clear_detail()
             return
         self._refresh_grouped_lr_tab()
-        self._section_view.set_element(self._current_element_id())
+        self._refresh_section_for(self._current_element_id())
 
     def _refresh_grouped_lr_tab(self) -> None:
         """埋深变化后刷新合槽子节点的「围护原则」tab 左右侧可编辑状态。
@@ -1388,6 +1399,8 @@ class UnitPanel(QWidget):
         工程量显示选中行求和；合槽父行 → 成员合计工程量 + 整槽断面；
         单行 → 显示该行内容。
         """
+        if self._format_painter_active and not self._loading:
+            self._apply_format_painter()
         ids = self._selected_element_ids()
         if len(ids) >= 2:
             self._show_multi_detail()
@@ -1406,6 +1419,76 @@ class UnitPanel(QWidget):
             self._show_single_detail(element_id)
         else:
             self._fill_quantities()  # 同一行重新选中：只刷新工程量
+
+    # ------------------------------------------------------------------ 格式刷
+    def set_format_painter(self, on: bool) -> None:
+        """格式刷开关（主窗体工具栏按钮 / 编辑菜单调用）。
+
+        开启时以当前选中构件为样板；随后选中的构件自动同步其四项原则
+        （围护 / 地基 / 挖填降水 / 面宽），可连续刷多条，Esc 或再次点击结束。
+        """
+        if on:
+            source_id = self._current_element_id()
+            if source_id is None:
+                self._format_painter_active = False
+                self._format_painter_source = None
+                bus().status_message.emit("请先选中一条构件，再使用格式刷。", 4000)
+                self.format_painter_changed.emit(False)
+                return
+            self._format_painter_active = True
+            self._format_painter_source = source_id
+            bus().status_message.emit(
+                "格式刷已取样板：点击其他构件即同步其四项原则（Esc 或再次点击格式刷结束）。", 0
+            )
+        else:
+            self._cancel_format_painter()
+
+    def _cancel_format_painter(self) -> None:
+        if not self._format_painter_active and self._format_painter_source is None:
+            return
+        self._format_painter_active = False
+        self._format_painter_source = None
+        self.format_painter_changed.emit(False)
+        bus().status_message.emit("", 0)
+
+    def _apply_format_painter(self) -> None:
+        """把样板构件的四项原则同步到当前选中的其他构件上。"""
+        source_id = self._format_painter_source
+        if source_id is None:
+            return
+        from app.core.models.models import LR_PE_TEXT
+        from app.viewmodels.unit_vm import _element, update_element
+
+        source = _element(source_id)
+        if source is None:
+            self._cancel_format_painter()
+            return
+        source_pe = source.pe_name
+        if source_pe == LR_PE_TEXT:
+            # 左右分设样板（合槽成员）：取左原则作为普通构件的围护原则
+            source_pe = source.pe_left_name or source.pe_right_name or ""
+        changed = 0
+        for element_id in self._selected_element_ids():
+            if element_id == source_id:
+                continue
+            element = _element(element_id)
+            if element is None:
+                continue
+            fields: dict = {}
+            if element.group_id is None and source_pe and element.pe_name != source_pe:
+                fields["pe_name"] = source_pe
+            if source.pf_name and element.pf_name != source.pf_name:
+                fields["pf_name"] = source.pf_name
+            if source.pp_name and element.pp_name != source.pp_name:
+                fields["pp_name"] = source.pp_name
+            if source.pw_name and element.pw_name != source.pw_name:
+                fields["pw_name"] = source.pw_name
+            if not fields:
+                continue
+            update_element(element_id, **fields)
+            changed += 1
+        if changed:
+            bus().status_message.emit(f"格式刷：已同步 {changed} 条构件的原则。", 4000)
 
     def _show_group_detail(self, group_id: int) -> None:
         """合槽父行选中：明细占位 + 成员合计工程量 + 整槽断面图。"""
@@ -1432,7 +1515,7 @@ class UnitPanel(QWidget):
         self._current_detail_id = element_id
         self._group_member_ids = []
         self._vm.load_detail(element_id)
-        self._section_view.set_element(element_id)
+        self._refresh_section_for(element_id)
         self._fill_quantities()
         from app.viewmodels.unit_vm import _element
 
@@ -1443,6 +1526,20 @@ class UnitPanel(QWidget):
                 "element_name": element.name if element is not None else "",
             }
         )
+
+    def _refresh_section_for(self, element_id: int | None) -> None:
+        """断面图跟随选中构件：合槽成员也画整个合槽断面。
+
+        选中的是合槽组成员时看的是整槽全景（与选中父行一致），普通构件
+        才画自己的单管断面。
+        """
+        from app.viewmodels.unit_vm import _element
+
+        element = _element(element_id) if element_id is not None else None
+        if element is not None and element.group_id is not None:
+            self._section_view.set_group(element.group_id)
+        else:
+            self._section_view.set_element(element_id)
 
     def _show_multi_detail(self) -> None:
         self._multi_detail = True
@@ -1679,12 +1776,25 @@ class UnitPanel(QWidget):
     # ------------------------------------------------------------------ 主表格快捷键 / 右键菜单（复刻旧版 dGVmain_KeyUp / CMSmain）
     def eventFilter(self, source, event) -> bool:  # noqa: N802
         from PySide6.QtCore import QEvent
-        from PySide6.QtGui import QKeyEvent
+        from PySide6.QtGui import QKeyEvent, QKeySequence
 
         if source is self._element_table and event.type() == QEvent.Type.KeyPress:
             assert isinstance(event, QKeyEvent)
             if event.key() == Qt.Key.Key_Delete:
                 self._delete_selected_elements()
+                return True
+            # 复制 / 剪切 / 粘贴（brackets 同款：Ctrl+C/X/V，剪贴板内容可跨文件）
+            if event.matches(QKeySequence.StandardKey.Copy):
+                self._copy_elements()
+                return True
+            if event.matches(QKeySequence.StandardKey.Cut):
+                self._cut_elements()
+                return True
+            if event.matches(QKeySequence.StandardKey.Paste):
+                self._paste_elements()
+                return True
+            if event.key() == Qt.Key.Key_Escape and self._format_painter_active:
+                self._cancel_format_painter()
                 return True
         return super().eventFilter(source, event)
 
@@ -1724,7 +1834,9 @@ class UnitPanel(QWidget):
         menu.addAction("复制", self._copy_elements)
         menu.addAction("剪切", self._cut_elements)
         paste = menu.addAction("粘贴", self._paste_elements)
-        paste.setEnabled(self._clipboard is not None)
+        from app.services import element_clipboard
+
+        paste.setEnabled(element_clipboard.has_payload())
         menu.addSeparator()
         principle_menu = menu.addMenu("选择沟槽围护原则")
         for name in project_io.enclosure_names():
@@ -1791,33 +1903,138 @@ class UnitPanel(QWidget):
                 return row
         return None
 
-    #: 行剪贴板 / 原则剪贴板（原版 mClipboard / mClipboard_PCP 的内存版）
-    _clipboard: list[dict] | None = None
+    #: 原则剪贴板（原版 mClipboard_PCP 的内存版）；构件剪贴板在
+    #: services.element_clipboard（系统剪贴板，跨文件可用）
     _principle_clipboard: tuple[str, str] | None = None
 
     def _copy_elements(self, *, cut: bool = False) -> None:
-        ids = self._selected_element_ids()
-        if not ids:
-            return
-        from app.viewmodels.unit_vm import element_snapshot
+        """复制选中行到构件剪贴板（系统剪贴板，跨文件/跨工程可用）。
 
-        self._clipboard = [element_snapshot(element_id) for element_id in ids]
+        选中合槽父行时整组复制；只选中部分成员（没选父行）时按独立构件
+        复制（还原为普通单原则）。剪切 = 复制 + 删除原条目。
+        """
+        from app.services import element_clipboard
+        from app.viewmodels.unit_vm import element_copy_snapshot, group_snapshot
+
+        rows = sorted({index.row() for index in self._element_table.selectedIndexes()})
+        items: list[dict] = []
+        seen_groups: set[int] = set()
+        element_ids: list[int] = []
+        group_ids: list[int] = []
+        for row in rows:
+            group_id = self._group_id_at(row)
+            if group_id is not None:
+                if group_id in seen_groups:
+                    continue
+                seen_groups.add(group_id)
+                data = group_snapshot(group_id)
+                if data is not None:
+                    items.append({"type": "group", "data": data})
+                    group_ids.append(group_id)
+                continue
+            element_id = self._element_id_at(row)
+            if element_id is None:
+                continue
+            from app.viewmodels.unit_vm import _element
+
+            element = _element(element_id)
+            if element is not None and element.group_id is not None:
+                if element.group_id in seen_groups:
+                    continue  # 整组已随父行复制
+            data = element_copy_snapshot(element_id)
+            if data is not None:
+                items.append({"type": "element", "data": data})
+                element_ids.append(element_id)
+        if not items:
+            return
+        element_clipboard.write_items(items)
         if cut:
-            for element_id in ids:
+            from app.viewmodels.unit_vm import delete_trench_group
+
+            for group_id in group_ids:
+                self._collapsed_group_ids.discard(group_id)
+                delete_trench_group(group_id)
+            for element_id in element_ids:
                 self._vm.remove_element(element_id)
+        verb = "剪切" if cut else "复制"
+        bus().status_message.emit(
+            f"已{verb} {len(items)} 项到剪贴板（跨工程文件可用）。", 4000
+        )
 
     def _cut_elements(self) -> None:
         self._copy_elements(cut=True)
 
+    # 编辑菜单 / 快捷键入口（主窗体调用）
+    def copy_selection(self) -> None:
+        self._copy_elements()
+
+    def cut_selection(self) -> None:
+        self._cut_elements()
+
+    def paste_selection(self) -> None:
+        self._paste_elements()
+
+    def _paste_target_group(self) -> int | None:
+        """粘贴目标合槽组：选中父行返回该组，选中组成员返回其组。"""
+        group_id = self._selected_group_row_id()
+        if group_id is not None:
+            return group_id
+        element = self._current_element_row()
+        if element is not None and element.group_id is not None:
+            return element.group_id
+        return None
+
     def _paste_elements(self) -> None:
-        if not self._clipboard or self._unit_id is None:
+        """粘贴剪贴板快照（brackets 同款：内容来自系统剪贴板，可跨文件）。
+
+        选中合槽（父行或成员）时粘贴普通构件 = 加入该组；粘贴合槽组被拒
+        （合槽不允许嵌套）。普通位置按行序逐项插入（锚点固定为当前行下一
+        条构件，插入顺序 = 复制顺序）。
+        """
+        from app.services import element_clipboard
+
+        items = element_clipboard.read_items()
+        if not items or self._unit_id is None:
             return
-        from app.viewmodels.unit_vm import insert_element_data
+        items = element_clipboard.remap_items(items)
+        target_group = self._paste_target_group()
+        if target_group is not None:
+            if any(item.get("type") == "group" for item in items):
+                bus().status_message.emit("合槽不允许嵌套：不能把合槽组粘贴到另一组合槽内。", 5000)
+                return
+            from app.viewmodels.unit_vm import add_to_group, insert_element_data
+
+            pasted = 0
+            for item in items:
+                element = insert_element_data(self._unit_id, item.get("data") or {}, None)
+                if element is None:
+                    continue
+                ok, error = add_to_group(element.id, target_group)
+                if ok:
+                    pasted += 1
+                elif error:
+                    bus().status_message.emit(error, 5000)
+            if pasted:
+                bus().status_message.emit(f"已粘贴 {pasted} 条构件到合槽组。", 4000)
+            return
+        from app.viewmodels.unit_vm import insert_element_data, insert_group_data
 
         anchor = self._current_element_id()
-        for data in self._clipboard:
-            element = insert_element_data(self._unit_id, data, anchor)
-            anchor = element.id if element is not None else anchor
+        count = 0
+        for item in items:
+            if item.get("type") == "group":
+                group = insert_group_data(self._unit_id, item.get("data") or {}, anchor)
+                if group is not None:
+                    count += 1
+                    from app.viewmodels.unit_vm import element_id_after_group
+
+                    anchor = element_id_after_group(group.id)
+            else:
+                element = insert_element_data(self._unit_id, item.get("data") or {}, anchor)
+                if element is not None:
+                    count += 1
+        if count:
+            bus().status_message.emit(f"已粘贴 {count} 项。", 4000)
 
     def _copy_principles(self) -> None:
         element_id = self._current_element_id()

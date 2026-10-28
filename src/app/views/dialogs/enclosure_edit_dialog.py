@@ -2,8 +2,10 @@
 
 布局与交互照抄 FormPE / FormPE.Designer：
 
-* 顶部「原则名称」；右侧竖排「确认修改 / 取消修改」；v10 起围护原则仅管围护
-  做法：原「挖填类型」板块移到挖填降水原则、原「管道基础」板块移到地基原则；
+* 顶部「原则名称」；v10 起围护原则仅管围护做法：原「挖填类型」板块移到挖填
+  降水原则、原「管道基础」板块移到地基原则；
+* 底部「取消 / 确认」按钮（与地基处理原则窗体同款常规按钮，Apple HIG：
+  取消在左、确认在右）；
 * 主表格 7 列：埋深 / 范围 / 围护类型 / 围护形式描述 / 止水类型 / 止水形式描述 /
   按钮列（「+」在按钮列表头格，每行行尾「-」删该行，见 RowButtonColumn），
   首行埋深恒 0 且只读，Insert 插入做法（埋深取值规则与旧版一致），
@@ -26,7 +28,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QTableWidgetItem,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -55,7 +56,7 @@ class EnclosureEditDialog(FramelessDialog):
 
     def __init__(self, enclosure_id: int, parent: QWidget | None = None) -> None:
         super().__init__(parent, "沟槽围护原则编辑")
-        self.resize(660, 470)
+        self.resize(660, 520)
         self._enclosure_id = enclosure_id
         self._loading = False
         self._build_ui()
@@ -73,13 +74,6 @@ class EnclosureEditDialog(FramelessDialog):
         self._name = QLineEdit()
         name_row.addWidget(self._name, 1)
         root.addLayout(name_row)
-
-        # v10 起围护原则仅管围护做法：挖填类型 → 挖填降水原则、管道基础 → 地基原则，
-        # 因此这里只剩确认 / 取消按钮（右侧竖排，与做法表同排）
-        detail_row = QHBoxLayout()
-        detail_row.addStretch(1)
-        detail_row.addWidget(self._build_confirm_buttons())
-        root.addLayout(detail_row)
 
         table_row = QHBoxLayout()
         self._work_table = _WorkTable()
@@ -102,22 +96,21 @@ class EnclosureEditDialog(FramelessDialog):
         self._work_buttons.attach()
         root.addLayout(table_row, 1)
 
-    def _build_confirm_buttons(self) -> QWidget:
-        column = QWidget()
-        layout = QVBoxLayout(column)
-        layout.setContentsMargins(0, 0, 0, 0)
-        # 原版按钮文字分两行：确认/修改、取消/修改
-        btn_yes = QPushButton("确认\n修改")
-        btn_yes.setFixedSize(76, 52)
-        btn_yes.setProperty("primary", "true")
-        btn_yes.clicked.connect(self._confirm)
-        btn_cancel = QPushButton("取消\n修改")
-        btn_cancel.setFixedSize(76, 52)
+        # 底部「取消 / 确认」（与地基处理原则窗体同款常规按钮；Apple HIG：
+        # 取消在左，确认（默认按钮）在右）
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        btn_cancel = QPushButton("取消")
+        btn_cancel.setFixedWidth(76)
         btn_cancel.clicked.connect(self.reject)
-        layout.addWidget(btn_yes)
-        layout.addWidget(btn_cancel)
-        layout.addStretch(1)
-        return column
+        btn_yes = QPushButton("确认")
+        btn_yes.setFixedWidth(76)
+        btn_yes.setProperty("primary", "true")
+        btn_yes.setDefault(True)
+        btn_yes.clicked.connect(self._confirm)
+        button_row.addWidget(btn_cancel)
+        button_row.addWidget(btn_yes)
+        root.addLayout(button_row)
 
     # ------------------------------------------------------------------ 数据
     def _enclosure(self) -> PcpEnclosure | None:

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -88,19 +89,24 @@ class FoundationEditDialog(FramelessDialog):
         name_row.addWidget(self._name, 1)
         root.addLayout(name_row)
 
-        # 「管道基础」（原属围护原则窗体，v10 起并入地基原则），放在换填层上方
+        # 「管道基础」（原属围护原则窗体，v10 起并入地基原则），放在换填层上方；
+        # 四个参数两行两列：基础类型 / 基础角度第一行，垫层材质 / 厚度第二行
         pipe_box = QGroupBox("管道基础")
-        pipe_form = QFormLayout(pipe_box)
+        pipe_grid = QGridLayout(pipe_box)
         self._con_found = QComboBox()
         self._con_found.addItems(_CONFOUND_CHOICES)
         self._angle = QComboBox()
         self._angle.addItems(_ANGLE_CHOICES)
         self._cushion_name = QLineEdit()
         self._cushion_h = QLineEdit()
-        pipe_form.addRow("基础类型", self._con_found)
-        pipe_form.addRow("基础角度", self._angle)
-        pipe_form.addRow("垫层材质", self._cushion_name)
-        pipe_form.addRow("厚度mm", self._cushion_h)
+        pipe_grid.addWidget(QLabel("基础类型"), 0, 0)
+        pipe_grid.addWidget(self._con_found, 0, 1)
+        pipe_grid.addWidget(QLabel("基础角度"), 0, 2)
+        pipe_grid.addWidget(self._angle, 0, 3)
+        pipe_grid.addWidget(QLabel("垫层材质"), 1, 0)
+        pipe_grid.addWidget(self._cushion_name, 1, 1)
+        pipe_grid.addWidget(QLabel("厚度mm"), 1, 2)
+        pipe_grid.addWidget(self._cushion_h, 1, 3)
         root.addWidget(pipe_box)
 
         replace_box = QGroupBox("换填层")

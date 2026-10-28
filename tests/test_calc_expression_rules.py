@@ -246,3 +246,30 @@ def test_expression_detail_tooltip() -> None:
     single = QDict()
     single.add("管道基础|混凝土|m3", 1.0, "2-1", "基础 2 − 120° 弓形占位 1")
     assert _expression_detail(single.get("管道基础|混凝土|m3")) == "2-1\n\n基础 2 − 120° 弓形占位 1"
+
+
+def test_extract_common_divisors_pulls_thousandths_out() -> None:
+    """公共 /1000 提到括号外：值不变、式更短；单段、函数参数与函数调用括号不动。"""
+    from app.core.calc.tracer import extract_common_divisors
+
+    assert (
+        extract_common_divisors("600/1000+(65*2+130*2+500*2)/1000")
+        == "(600+65*2+130*2+500*2)/1000"
+    )
+    # 负号开头的连续段：段内符号取反（-(A-B)/1000 = -A/1000+B/1000）
+    assert extract_common_divisors("600/1000-500/1000") == "(600-500)/1000"
+    assert extract_common_divisors("50-600/1000-500/1000") == "50-(600+500)/1000"
+    # 单段可提取不动（提取不会更短）
+    assert extract_common_divisors("600/1000+0.5") == "600/1000+0.5"
+    assert extract_common_divisors("2.5+0.3+(65+130)/1000") == "2.5+0.3+(65+130)/1000"
+    # 函数参数表与函数调用括号不动
+    assert extract_common_divisors("CEILING(600/1000+700/1000,1)") == "CEILING(600/1000+700/1000,1)"
+    assert extract_common_divisors("SIN(120*PI()/180)*600/1000") == "SIN(120*PI()/180)*600/1000"
+    # 值等价
+    for text in (
+        "600/1000+(65*2+130*2+500*2)/1000",
+        "2.5+0.3+(65+130)/1000",
+        "50-600/1000-500/1000",
+        "150/1000*(600+65/1000*2)-300/1000",
+    ):
+        assert evaluate(extract_common_divisors(text)) == pytest.approx(evaluate(text))

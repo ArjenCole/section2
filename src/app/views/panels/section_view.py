@@ -261,7 +261,7 @@ class SectionView(QWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         super().resizeEvent(event)
-        if self._element_id is not None:
+        if self._element_id is not None or self._group_id is not None:
             self._refresh()
 
 

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -109,32 +109,65 @@ def precipitation_enabled(key: str, enclosure: PcpEnclosure) -> tuple[bool, floa
     return elevation >= 0, elevation, gap, sides
 
 
-def precipitation_text(enclosure: PcpEnclosure) -> str:
-    """降水描述（复刻旧版 mcPcpEnclosure.DiscribePreciptitation）。
+def excavation_text(precipitation: PcpPrecipitation) -> str:
+    """挖填方描述：基坑开挖土质 + 坞塝 / 顶部回填（回填方式按编辑窗体同口径反推）。
 
-    每个深度范围独占一行（旧版标签是多行文本）；末行以句号结尾。
+    至管顶 50cm：「坞塝采用 X 回填至管顶 50cm，顶部采用 Y 回填」；至管顶标高 /
+    管中心标高同理；至沟槽顶标高时全部同材质，合并成一句。
     """
-    lines: list[str] = []
-    current: float | None = None
-    for key in ("light_well", "jet_well", "big_well", "deep_well"):
-        enabled, elevation, _gap, _sides = precipitation_enabled(key, enclosure)
-        if enabled:
-            lines.append(f"深度{elevation:g}m以上，采用{PRECIPITATION_LABELS[key]}降水；")
-            current = elevation
-    wet_enabled, _e, _g, _s = precipitation_enabled("wet_soil", enclosure)
-    if wet_enabled:
-        if current is None:
-            lines.insert(0, "湿土排水；")
-        elif current > 0:
-            lines.insert(0, f"深度{current:g}m以下，采用湿土排水；")
+    if (
+        precipitation.dock_h == precipitation.dock_l
+        and precipitation.cover50 == precipitation.dock_l
+        and precipitation.cover == precipitation.dock_l
+    ):
+        return f"基坑挖{precipitation.excvt}，全部采用{precipitation.dock_l}回填至沟槽顶标高"
+    if precipitation.dock_h == precipitation.dock_l:
+        if precipitation.cover50 == precipitation.dock_l:
+            return (
+                f"基坑挖{precipitation.excvt}，坞塝采用{precipitation.dock_l}回填至管顶50cm，"
+                f"顶部采用{precipitation.cover}回填"
+            )
+        return (
+            f"基坑挖{precipitation.excvt}，坞塝采用{precipitation.dock_l}回填至管顶标高，"
+            f"顶部采用{precipitation.cover}回填"
+        )
+    return (
+        f"基坑挖{precipitation.excvt}，坞塝采用{precipitation.dock_l}回填至管中心标高，"
+        f"上部采用{precipitation.cover}回填"
+    )
+
+
+def precipitation_text(precipitation: PcpPrecipitation) -> str:
+    """挖填方 + 降水描述（一段正常文字，窗体不够宽时自动换行）。
+
+    前半句是挖填方描述（:func:`excavation_text`）；后半句按井型表逐层给出
+    深度区间，区间口径与「范围」列一致：每层自其埋深到下一启用层的埋深，
+    最深启用层为「深度 X m 以下」，全部层深相同（埋深 0）时写「全程」。
+    层与层之间用逗号连成一句，不再逐层换行。
+
+    湿土排水取的是它到下一启用井型之间的**浅层区间**——旧版把「最后一个
+    启用井型」的埋深（默认 15m）当成了湿土排水的下限，写出错误的
+    「深度 15m 以下，采用湿土排水」；此处按首条启用井型的埋深计算。
+    """
+    enabled: list[tuple[str, float]] = []
+    for key in PRECIPITATION_COLUMNS:  # 湿土排水 → 深井，行序与表格一致
+        elevation, _gap, _sides = parse_precipitation(getattr(precipitation, key), key)
+        if elevation >= 0:
+            enabled.append((key, elevation))
+    parts: list[str] = []
+    for index, (key, elevation) in enumerate(enabled):
+        upper = enabled[index + 1][1] if index + 1 < len(enabled) else None
+        label = "湿土排水" if key == "wet_soil" else f"{PRECIPITATION_LABELS[key]}降水"
+        if upper is None:
+            # 最深一层：埋深 0 = 全程只有这一种做法
+            parts.append("全程采用" + label if elevation <= 0 else f"深度{elevation:g}m以下采用{label}")
+        elif index == 0:
+            parts.append(f"沟槽深度{elevation:g}~{upper:g}m采用{label}")
         else:
-            lines.insert(0, "不采用湿土排水；")
-    if not lines:
-        return "未设置降水。"
-    text = "\n".join(lines)
-    if text.endswith("；"):
-        text = text[:-1] + "。"
-    return text
+            parts.append(f"{elevation:g}~{upper:g}m采用{label}")
+    if not parts:
+        return f"{excavation_text(precipitation)}；未设置降水。"
+    return f"{excavation_text(precipitation)}；{'，'.join(parts)}。"
 
 
 class PrincipleSubDialog(FramelessDialog):
@@ -1076,8 +1109,9 @@ class PrecipitationEditDialog(FramelessDialog):
     井型表格列沿用 1.0：措施名称 / 选用 / 埋深 / 范围 / 侧数 / 间隔（旧版“道数”
     字段改用“侧数”表达），行序同 1.0（湿土排水 → 深井）；未选用行埋深、
     范围显示“-”且只读，已选用行的范围自最深已选用行向浅处推算
-    （+∞ → 下一已选用行埋深，旧版 FlashFm）；下方实时给出降水描述
-    （旧版 DiscribePreciptitation 的等价文案）。
+    （+∞ → 下一已选用行埋深，旧版 FlashFm）；下方实时给出挖填方 + 降水描述
+    （一段正常文字，随窗体宽度自动换行，见 :func:`precipitation_text`）；
+    两面板高度以井型表内容为准（_fit_panel_heights），下缘对齐。
     """
 
     _ROWS = PRECIPITATION_COLUMNS  # 湿土排水 → 深井，与旧版行序一致
@@ -1092,6 +1126,30 @@ class PrecipitationEditDialog(FramelessDialog):
         self._build_ui()
         self._fill()
 
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().showEvent(event)
+        # 布局落定后再定面板高度（首帧表头高度未定，同地基窗体 _fit_replace_height）
+        QTimer.singleShot(0, self, self._fit_panel_heights)
+
+    def _fit_panel_heights(self) -> None:
+        """两个面板的高度以井型表内容为准，下缘对齐。
+
+        井型表格定高 = 表头 + 全部行（出横向滚动条时再让出滚动条高度），
+        井型面板定高 = 表格实高 + 面板边框 / 标题开销；同排的挖填类型面板
+        被布局拉到同高，表单不足处留一点空白（下缘对齐）。窗体高度随即
+        收口到内容实需，多余高度不再压进面板。
+        """
+        table = self._table
+        scrollbar = table.horizontalScrollBar()
+        extra = scrollbar.height() if scrollbar.isVisible() else 0
+        table.setFixedHeight(
+            table.horizontalHeader().height()
+            + table.rowCount() * table.verticalHeader().defaultSectionSize()
+            + extra
+        )
+        self._well_box.setFixedHeight(self._well_box.sizeHint().height())
+        self.resize(self.width(), max(self.sizeHint().height(), self.minimumSizeHint().height()))
+
     def _build_ui(self) -> None:
         root = self.bodyLayout()
         root.setContentsMargins(12, 10, 12, 10)
@@ -1104,6 +1162,7 @@ class PrecipitationEditDialog(FramelessDialog):
         root.addLayout(name_row)
 
         box = QGroupBox("井型（埋深 m / 侧数 / 间隔 m）")
+        self._well_box = box
         layout = QVBoxLayout(box)
         self._table = CellFillTable(len(self._ROWS), 6)
         self._table.setHorizontalHeaderLabels(
@@ -1119,16 +1178,19 @@ class PrecipitationEditDialog(FramelessDialog):
         layout.addWidget(self._table)
         self._table.itemChanged.connect(self._describe_change)
 
-        # 「挖填类型」面板与井型面板左右布置
+        # 「挖填类型」面板与井型面板左右布置；高度以井型表内容为准
+        # （_fit_panel_heights 定高），不随窗体拉伸
         panels = QHBoxLayout()
         panels.addWidget(self._build_excavation_box())
         panels.addWidget(box, 1)
-        root.addLayout(panels, 1)
+        root.addLayout(panels)
 
-        # 降水描述在两面板下方（整宽，长文字换行可读）
+        # 降水描述在两面板下方（整宽，长文字换行可读；挖填方在前、逐层区间随后，
+        # 见 precipitation_text）
         self._describe = QLabel("")
         self._describe.setProperty("role", "hint")
         self._describe.setWordWrap(True)
+        self._describe.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         root.addWidget(self._describe)
 
         button_row = QHBoxLayout()

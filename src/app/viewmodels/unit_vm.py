@@ -888,6 +888,112 @@ def insert_element_data(
     )
 
 
+def element_copy_snapshot(element_id: int) -> dict | None:
+    """复制用快照：合槽成员按 :func:`_revert_members` 口径还原为独立构件。
+
+    直接用 :func:`element_snapshot` 会带着「左右分设」占位与左右侧原则名，
+    粘到合槽外就成了悬空的分设构件；此处还原 pe_name（首成员取左原则、
+    其余取右原则），清空左右侧字段，与「移出合槽」的还原规则一致。
+    """
+    data = element_snapshot(element_id)
+    if data is None:
+        return None
+    element = _element(element_id)
+    if element is not None and element.group_id is not None:
+        group = orm.session().get(TrenchGroup, element.group_id)
+        siblings = (
+            sorted(group.members, key=lambda item: (item.order_no, item.id))
+            if group is not None
+            else []
+        )
+        index = next((i for i, member in enumerate(siblings) if member.id == element_id), 0)
+        restore = (
+            element.pe_left_name or element.pe_right_name
+            if index == 0
+            else element.pe_right_name or element.pe_left_name
+        )
+        if restore and restore != LR_PE_TEXT:
+            data["pe_name"] = restore
+        data["pe_left_name"] = ""
+        data["pe_right_name"] = ""
+    return data
+
+
+def group_snapshot(group_id: int) -> dict | None:
+    """合槽组整体快照：父节点名称 / 数量 + 成员完整快照（复制/剪切用）。"""
+    group = orm.session().get(TrenchGroup, group_id) if project_io.is_open() else None
+    if group is None:
+        return None
+    members = sorted(group.members, key=lambda item: (item.order_no, item.id))
+    member_data = [data for data in (element_snapshot(member.id) for member in members) if data is not None]
+    return {
+        "name": group.name,
+        "amount": group.amount or _group_amount(group),
+        "members": member_data,
+    }
+
+
+def insert_group_data(
+    unit_id: int,
+    data: dict,
+    before_element_id: int | None = None,
+) -> TrenchGroup | None:
+    """把合槽组快照整组插入主表格（粘贴合槽用），成员保持快照里的左右分设。
+
+    成员逐条插在 ``before_element_id`` 之前（锚点不变，插入顺序即快照顺序），
+    随后建父节点并把成员挂进组里。快照成员不足两条时拒绝（合槽至少两条）。
+    """
+    if not project_io.is_open() or not _unit_exists(unit_id):
+        return None
+    members_data = [member for member in (data.get("members") or []) if isinstance(member, dict)]
+    if len(members_data) < 2:
+        return None
+    session = orm.session()
+    new_ids: list[int] = []
+    for member_data in members_data:
+        element = insert_element_data(unit_id, member_data, before_element_id)
+        if element is not None:
+            new_ids.append(element.id)
+    if len(new_ids) < 2:
+        return None
+    group = TrenchGroup(
+        unit_id=unit_id,
+        name=str(data.get("name") or "合槽组"),
+        amount=str(data.get("amount") or ""),
+        pe_name="",
+        pw_name="",
+        order_no=0,
+    )
+    session.add(group)
+    session.flush()
+    members = [session.get(Element, element_id) for element_id in new_ids]
+    members = [member for member in members if member is not None]
+    if not group.amount:
+        group.amount = members[0].amount or ""
+    for member in members:
+        member.group_id = group.id
+        member.amount = group.amount
+    project_io.commit()
+    bus().unit_changed.emit(unit_id)
+    return group
+
+
+def element_id_after_group(group_id: int) -> int | None:
+    """合槽组最后一条成员之后的下一条构件 id（按库内 order_no 查，组在末尾为 None）。
+
+    与界面 ``_element_id_after_group`` 的差别：直接读库，不依赖主表格的
+    行缓存——粘贴合槽后表格还没重载，缓存里没有新成员。
+    """
+    group = orm.session().get(TrenchGroup, group_id) if project_io.is_open() else None
+    if group is None or not group.members:
+        return None
+    members = sorted(group.members, key=lambda item: (item.order_no, item.id))
+    last_order = members[-1].order_no
+    following = [item for item in _elements_of(group.unit_id) if item.order_no > last_order]
+    following.sort(key=lambda item: item.order_no)
+    return following[0].id if following else None
+
+
 def _first_foundation_pair() -> tuple[bool, int]:
     """项目第一条地基原则的 (砼基础开关, 基础角度)；库为空时 (True, 120)。
 

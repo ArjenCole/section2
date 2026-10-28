@@ -606,3 +606,38 @@ def test_component_editor_add_delete_rows_and_dangling_warning(qapp, project) ->
         }
     finally:
         dialog.close()
+
+
+def test_precipitation_text_paragraph_and_excavation(qapp, project) -> None:
+    """挖填方 + 降水描述：一段正常文字；湿土排水取浅层区间（默认不再是"深度15m以下"）。
+
+    旧版把最深启用井型的埋深（默认 15m）当成湿土排水的下限，写出错误的
+    "深度15m以下，采用湿土排水"；现按「范围」列口径取浅层区间。
+    """
+    from app.core.models import base as orm
+
+    from app.views.dialogs.principle_dialogs import precipitation_text
+
+    pp = project_io.precipitations()[0]
+    text = precipitation_text(pp)
+    assert text.startswith("基坑挖Ⅲ类土，坞塝采用中粗砂回填至管顶50cm，顶部采用素土回填；")
+    assert "沟槽深度0~3.5m采用湿土排水" in text
+    assert "3.5~6m采用轻型井点降水" in text
+    assert "10~15m采用大口径井点降水" in text
+    assert "深度15m以下采用深井降水" in text
+    assert chr(10) not in text and text.endswith("。")
+
+    # 只留湿土排水：全程湿土排水
+    for key in ("light_well", "jet_well", "big_well", "deep_well"):
+        setattr(pp, key, "-1|1|2")
+    project_io.commit()
+    orm.session().expire(pp)
+    assert "全程采用湿土排水" in precipitation_text(pp)
+
+    # 全部停用：只剩挖填方描述 + 未设置降水
+    pp.wet_soil = "-1|0|0"
+    project_io.commit()
+    orm.session().expire(pp)
+    text = precipitation_text(pp)
+    assert text.startswith("基坑挖Ⅲ类土") and text.endswith("未设置降水。")
+    assert "降水，" not in text

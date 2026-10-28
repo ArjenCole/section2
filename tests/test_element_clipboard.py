@@ -1,0 +1,378 @@
+"""构件剪贴板（跨文件复制/粘贴/剪切）与格式刷测试。
+
+覆盖：快照口径（合槽成员还原为独立构件）、系统剪贴板读写、原则引用
+重映射、合槽组整组粘贴与嵌套拒绝、多选复制粘贴顺序、格式刷同步四项
+原则与取消路径、断面图跟随合槽成员画整槽。Qt 部分离屏运行。
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from app.core.models import base as orm
+from app.services import element_clipboard, project_io
+from app.services.project_io import NewProjectSpec
+from app.viewmodels import unit_vm
+
+
+@pytest.fixture()
+def two_unit_project(tmp_path):
+    """两个单位工程的临时工程，返回 (unit_a, unit_b)。"""
+    project_io.new_project(NewProjectSpec(path=tmp_path / "剪贴板.stn", unit_names=["雨水", "污水"]))
+    units = project_io.units(project_io.segments()[0].id)
+    return units[0], units[1]
+
+
+def _make_pipe(unit_id: int, name: str, dn: int = 600, depth: str = "3"):
+    from app.viewmodels import unit_vm
+
+    element = unit_vm.create_element(unit_id, category=1, name=name, depth=depth, amount="10")
+    unit_vm.create_pipe(element.id, mat="Ⅱ级混凝土管", dn=dn, content="1")
+    return element
+
+
+# --------------------------------------------------------------------------- #
+# 快照与插入
+# --------------------------------------------------------------------------- #
+def test_group_member_snapshot_restores_single_principle(two_unit_project) -> None:
+    """合槽成员的复制快照还原为普通单原则构件（不带着左右分设粘贴出去）。"""
+    from app.viewmodels.unit_vm import element_copy_snapshot, element_snapshot
+
+    unit_a, _unit_b = two_unit_project
+    e1 = _make_pipe(unit_a.id, "管A")
+    e2 = _make_pipe(unit_a.id, "管B", dn=800)
+    group, error = unit_vm.create_trench_group([e1.id, e2.id])
+    assert group is not None and error is None
+
+    raw = element_snapshot(e1.id)
+    assert raw["pe_name"] == "左右分设"
+    snap = element_copy_snapshot(e1.id)
+    assert snap["pe_name"] == raw["pe_left_name"]  # 首成员还原左原则
+    assert snap["pe_left_name"] == "" and snap["pe_right_name"] == ""
+
+
+def test_group_snapshot_and_insert_roundtrip(two_unit_project) -> None:
+    """合槽组整组复制 → 粘贴到另一单位工程：成员、名称、数量、左右分设一致。"""
+    from app.core.models.models import TrenchGroup
+    from sqlalchemy import select
+
+    from app.viewmodels.unit_vm import group_snapshot, insert_group_data
+
+    unit_a, unit_b = two_unit_project
+    e1 = _make_pipe(unit_a.id, "管A")
+    e2 = _make_pipe(unit_a.id, "管B", dn=800)
+    group, error = unit_vm.create_trench_group([e1.id, e2.id])
+    assert group is not None and error is None
+    data = group_snapshot(group.id)
+    assert data["name"] == group.name and len(data["members"]) == 2
+
+    pasted = insert_group_data(unit_b.id, data, None)
+    assert pasted is not None
+    members = sorted(pasted.members, key=lambda item: (item.order_no, item.id))
+    assert [member.name for member in members] == ["管A", "管B"]
+    assert all(member.pe_name == "左右分设" for member in members)
+    assert all(member.amount == group.amount for member in members)
+    # 原组不受影响
+    groups_a = list(
+        orm.session().scalars(select(TrenchGroup).where(TrenchGroup.unit_id == unit_a.id))
+    )
+    assert len(groups_a) == 1
+
+
+def test_insert_group_rejects_single_member(two_unit_project) -> None:
+    """成员不足两条的快照拒绝成组。"""
+    from app.viewmodels.unit_vm import insert_group_data
+
+    unit_a, _unit_b = two_unit_project
+    e1 = _make_pipe(unit_a.id, "管A")
+    data = {"name": "单条", "amount": "10", "members": [{"name": "管A", "amount": "10"}]}
+    assert insert_group_data(unit_a.id, data, e1.id) is None
+
+
+# --------------------------------------------------------------------------- #
+# 系统剪贴板
+# --------------------------------------------------------------------------- #
+def test_clipboard_roundtrip(qapp) -> None:
+    """写入系统剪贴板后按 MIME 原样读回；异类载荷返回 None。"""
+    assert element_clipboard.read_items() is None  # 空剪贴板
+    items = [{"type": "element", "data": {"name": "甲", "pe_name": "围护1"}}]
+    assert element_clipboard.write_items(items)
+    assert element_clipboard.has_payload()
+    read = element_clipboard.read_items()
+    assert read == items
+    # 读回的是副本：就地修改不影响剪贴板
+    read[0]["data"]["name"] = "改"
+    assert element_clipboard.read_items()[0]["data"]["name"] == "甲"
+
+
+def test_remap_clears_unknown_principles(two_unit_project) -> None:
+    """目标工程没有同名原则时回退默认（pe_name=None、侧名空），保留合槽占位。"""
+    from app.core.models.models import LR_PE_TEXT
+
+    unit_a, _unit_b = two_unit_project
+    e1 = _make_pipe(unit_a.id, "管A")
+    e2 = _make_pipe(unit_a.id, "管B", dn=800)
+    unit_vm.create_trench_group([e1.id, e2.id])
+    items = [
+        {
+            "type": "element",
+            "data": {
+                "name": "外来",
+                "pe_name": "不存在的围护",
+                "pf_name": "不存在的地基",
+                "pp_name": "不存在的降水",
+                "pw_name": "不存在的面宽",
+                "pe_left_name": "没有的左",
+                "pe_right_name": "没有的右",
+            },
+        },
+        {
+            "type": "element",
+            "data": {"name": "分设", "pe_name": LR_PE_TEXT, "pe_left_name": "没有的左"},
+        },
+    ]
+    element_clipboard.remap_items(items)
+    normal = items[0]["data"]
+    assert normal["pe_name"] is None and normal["pf_name"] is None
+    assert normal["pp_name"] is None and normal["pw_name"] is None
+    assert normal["pe_left_name"] == "" and normal["pe_right_name"] == ""
+    lr = items[1]["data"]
+    assert lr["pe_name"] == LR_PE_TEXT  # 合槽占位不被误清
+    assert lr["pe_left_name"] == ""
+
+
+# --------------------------------------------------------------------------- #
+# 界面：复制 / 粘贴 / 剪切 / 嵌套拒绝 / 顺序
+# --------------------------------------------------------------------------- #
+def _select_rows(panel, rows: list[int]) -> None:
+    from PySide6.QtCore import QItemSelectionModel
+
+    panel._element_table.clearSelection()
+    for index, row in enumerate(rows):
+        if index == 0:
+            panel._element_table.setCurrentCell(row, 0)
+        panel._element_table.selectionModel().select(
+            panel._element_table.model().index(row, 0),
+            QItemSelectionModel.Select | QItemSelectionModel.Rows,
+        )
+
+
+def _group_row(panel) -> int:
+    return next(
+        index
+        for index, row in enumerate(panel._rows_cache)
+        if hasattr(row, "member_count")
+    )
+
+
+def _element_row(panel, element_id: int) -> int:
+    return next(
+        index
+        for index, row in enumerate(panel._rows_cache)
+        if getattr(row, "id", None) == element_id
+    )
+
+
+def test_copy_group_paste_into_other_unit(qapp, two_unit_project) -> None:
+    """选中父行复制 → 整组进剪贴板；跨单位工程粘贴成组且顺序不变。"""
+    from PySide6.QtCore import Qt
+
+    from app.core.models.models import TrenchGroup
+    from sqlalchemy import select
+    from app.viewmodels.unit_vm import table_rows
+
+    unit_a, unit_b = two_unit_project
+    e1 = _make_pipe(unit_a.id, "管A")
+    e2 = _make_pipe(unit_a.id, "管B", dn=800)
+    group, _error = unit_vm.create_trench_group([e1.id, e2.id])
+    e3 = _make_pipe(unit_b.id, "管C")
+
+    panel = _panel_for(qapp, unit_a)
+    _select_rows(panel, [_group_row(panel)])
+    panel._copy_elements()
+    items = element_clipboard.read_items()
+    assert [item["type"] for item in items] == ["group"]
+
+    panel._show_unit(unit_b.id, "污水")
+    qapp.processEvents()
+    _select_rows(panel, [_element_row(panel, e3.id)])
+    panel._paste_elements()
+    qapp.processEvents()
+    groups_b = list(
+        orm.session().scalars(select(TrenchGroup).where(TrenchGroup.unit_id == unit_b.id))
+    )
+    assert len(groups_b) == 1
+    members = sorted(groups_b[0].members, key=lambda item: (item.order_no, item.id))
+    assert [member.name for member in members] == ["管A", "管B"]
+    # 组插在锚点（管C）之前，成员顺序保持快照顺序；首行是合槽父行
+    names = [row.name for row in table_rows(unit_b.id)]
+    assert names[:3] == ["管A+管B 合槽", "管A", "管B"] and names[-1] == "管C"
+
+
+def test_paste_elements_into_group_and_nesting_rejected(qapp, two_unit_project) -> None:
+    """普通构件粘贴进合槽 = 加入该组；合槽组粘贴进合槽被拒（不允许嵌套）。"""
+    from app.core.event_bus import bus
+    from app.core.models.models import TrenchGroup
+    from sqlalchemy import select
+
+    unit_a, _unit_b = two_unit_project
+    e1 = _make_pipe(unit_a.id, "管A")
+    e2 = _make_pipe(unit_a.id, "管B", dn=800)
+    group, _error = unit_vm.create_trench_group([e1.id, e2.id])
+    e3 = _make_pipe(unit_a.id, "管C")
+
+    panel = _panel_for(qapp, unit_a)
+    # 复制普通构件 管C
+    _select_rows(panel, [_element_row(panel, e3.id)])
+    panel._copy_elements()
+    # 选中组成员 管A → 粘贴进组
+    _select_rows(panel, [_element_row(panel, e1.id)])
+    panel._paste_elements()
+    qapp.processEvents()
+    orm.session().expire(group)
+    members = sorted(group.members, key=lambda item: (item.order_no, item.id))
+    assert [member.name for member in members] == ["管A", "管B", "管C"]
+
+    # 剪贴板换成整组快照 → 粘贴到成员行被拒
+    from app.viewmodels.unit_vm import group_snapshot
+
+    element_clipboard.write_items([{"type": "group", "data": group_snapshot(group.id)}])
+    messages: list[str] = []
+    bus().status_message.connect(lambda text, _ms: messages.append(text))
+    _select_rows(panel, [_element_row(panel, e1.id)])
+    panel._paste_elements()
+    assert any("嵌套" in message for message in messages)
+    groups = list(orm.session().scalars(select(TrenchGroup)))
+    assert len(groups) == 1
+
+
+def test_multi_row_copy_paste_keeps_order(qapp, two_unit_project) -> None:
+    """多行复制粘贴保持复制顺序（逐条都插在同一锚点之前，不再倒序）。"""
+    from app.viewmodels.unit_vm import table_rows
+
+    unit_a, _unit_b = two_unit_project
+    e1 = _make_pipe(unit_a.id, "甲")
+    e2 = _make_pipe(unit_a.id, "乙", dn=800)
+    e3 = _make_pipe(unit_a.id, "丙", dn=1000)
+
+    panel = _panel_for(qapp, unit_a)
+    _select_rows(panel, [_element_row(panel, e1.id), _element_row(panel, e3.id)])
+    panel._copy_elements()
+    items = element_clipboard.read_items()
+    assert [item["data"]["name"] for item in items] == ["甲", "丙"]
+    panel._paste_elements()
+    qapp.processEvents()
+    names = [row.name for row in table_rows(unit_a.id)]
+    assert names == ["甲", "丙", "甲", "乙", "丙"]
+
+
+def test_cut_removes_and_keeps_clipboard(qapp, two_unit_project) -> None:
+    """剪切 = 复制 + 删除原条目；剪贴板内容保留可反复粘贴。"""
+    from app.core.models.models import Element
+
+    unit_a, _unit_b = two_unit_project
+    e1 = _make_pipe(unit_a.id, "管A")
+    panel = _panel_for(qapp, unit_a)
+    _select_rows(panel, [_element_row(panel, e1.id)])
+    panel._cut_elements()
+    qapp.processEvents()
+    assert orm.session().get(Element, e1.id) is None
+    assert element_clipboard.has_payload()
+
+
+# --------------------------------------------------------------------------- #
+# 格式刷
+# --------------------------------------------------------------------------- #
+def _panel_for(qapp, unit):
+    from app.views.panels.unit_panel import UnitPanel
+
+    panel = UnitPanel()
+    panel._show_unit(unit.id, unit.name)
+    qapp.processEvents()
+    return panel
+
+
+def test_format_painter_syncs_four_principles(qapp, tmp_path) -> None:
+    """格式刷：样板取当前构件，选其他构件自动同步四项原则；Esc 取消。"""
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+
+    from app.core.models.models import (
+        Element,
+        PcpEnclosure,
+        PcpFoundation,
+        PcpPrecipitation,
+        PcpWidth,
+    )
+
+    project_io.new_project(NewProjectSpec(path=tmp_path / "刷.stn", unit_names=["u"]))
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    session = orm.session()
+    session.add_all(
+        [
+            PcpEnclosure(name="围护B", order_no=1),
+            PcpFoundation(name="地基B", order_no=1),
+            PcpPrecipitation(name="降水B", order_no=1),
+            PcpWidth(name="面宽B", order_no=1),
+        ]
+    )
+    project_io.commit()
+    src = _make_pipe(unit.id, "样板", dn=600)
+    tgt = _make_pipe(unit.id, "目标", dn=800)
+    unit_vm.update_element(
+        src.id, pe_name="围护B", pf_name="地基B", pp_name="降水B", pw_name="面宽B"
+    )
+
+    panel = _panel_for(qapp, unit)
+    _select_rows(panel, [_element_row(panel, src.id)])
+    panel.set_format_painter(True)
+    assert panel._format_painter_active
+    _select_rows(panel, [_element_row(panel, tgt.id)])
+    qapp.processEvents()
+    target = orm.session().get(Element, tgt.id)
+    assert target.pe_name == "围护B"
+    assert target.pf_name == "地基B"
+    assert target.pp_name == "降水B"
+    assert target.pw_name == "面宽B"
+
+    # Esc 取消：状态复位并通知按钮弹起
+    released: list[bool] = []
+    panel.format_painter_changed.connect(released.append)
+    event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
+    panel.eventFilter(panel._element_table, event)
+    assert not panel._format_painter_active
+    assert released == [False]
+
+
+def test_format_painter_requires_source(qapp, tmp_path) -> None:
+    """没有选中构件时开启格式刷：提示并自动弹起（信号 False）。"""
+    project_io.new_project(NewProjectSpec(path=tmp_path / "空.stn", unit_names=["u"]))
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    panel = _panel_for(qapp, unit)
+    received: list[bool] = []
+    panel.format_painter_changed.connect(received.append)
+    panel.set_format_painter(True)
+    assert not panel._format_painter_active
+    assert received == [False]
+
+
+# --------------------------------------------------------------------------- #
+# 断面图跟随合槽成员
+# --------------------------------------------------------------------------- #
+def test_section_follows_group_member(qapp, two_unit_project) -> None:
+    """选中合槽成员（含普通构件切换）时断面图分别画整槽 / 单管。"""
+    from app.viewmodels.unit_vm import create_trench_group
+
+    unit_a, _unit_b = two_unit_project
+    e1 = _make_pipe(unit_a.id, "管A")
+    e2 = _make_pipe(unit_a.id, "管B", dn=800, depth="4")
+    group, _error = create_trench_group([e1.id, e2.id])
+    assert group is not None
+    standalone = _make_pipe(unit_a.id, "独立")
+
+    panel = _panel_for(qapp, unit_a)
+    canvas = panel._section_view._canvas
+    panel._refresh_section_for(e1.id)
+    assert canvas._group_id == group.id and canvas._element_id is None
+    panel._refresh_section_for(standalone.id)
+    assert canvas._element_id == standalone.id and canvas._group_id is None

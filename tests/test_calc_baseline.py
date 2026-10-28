@@ -74,7 +74,8 @@ def test_closed_form_trapezoid(project) -> None:
     # 算式不预运算：下底边（槽底宽 = 管径/1000 + 2×(壁厚+工作面加宽+工作面)/1000）
     # 与沟槽深度（埋深原文 + (壁厚+垫层厚)/1000）都把来源写全，不出现算好的数字
     dig = dq.get("开挖|Ⅲ类土|m3")
-    assert "(600/1000+(65*2+130*2+500*2)/1000)" in dig.expression
+    # 公共 /1000 已按四则运算规则提到括号外（tracer.extract_common_divisors）
+    assert "(600+65*2+130*2+500*2)/1000" in dig.expression
     assert "(2.5+0.3+(65+130)/1000)" in dig.expression
     assert "(2*" in dig.expression  # 梯形 (2*B+2*H*放坡系数)*H/2
 

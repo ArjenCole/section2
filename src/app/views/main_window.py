@@ -587,6 +587,7 @@ class MainWindow(QMainWindow):
         "act_redo": "redo",
         "act_add_segment": "folder-plus",
         "act_add_unit": "file-text",
+        "act_format_painter": "paintbrush",
         "act_theme": "moon",
         "act_ai_panel": "panel-right",
     }
@@ -598,6 +599,15 @@ class MainWindow(QMainWindow):
         self._act_save_as = self._action("另存为(&A)…", self._save_project_as, "Ctrl+Shift+S")
         self._act_undo = self._action("撤销(&U)", self._undo, "Ctrl+Z")
         self._act_redo = self._action("重做(&R)", self._redo, "Ctrl+Y")
+        # 复制 / 剪切 / 粘贴（brackets 同款：编辑菜单 + 快捷键，构件剪贴板跨文件可用）
+        self._act_cut = self._action("剪切(&T)", self._unit_panel.cut_selection, "Ctrl+X")
+        self._act_copy = self._action("复制(&C)", self._unit_panel.copy_selection, "Ctrl+C")
+        self._act_paste = self._action("粘贴(&P)", self._unit_panel.paste_selection, "Ctrl+V")
+        # 格式刷是勾选动作：接 toggled 而不是 triggered，面板反向同步
+        # setChecked（样板失效自动弹起）时也会走同一条开关路径
+        self._act_format_painter = QAction("格式刷(&F)", self)
+        self._act_format_painter.setCheckable(True)
+        self._act_format_painter.toggled.connect(self._toggle_format_painter)
         self._act_close = self._action("关闭工程(&C)", self._close_project)
         self._act_import_legacy = self._action("导入旧版工程(.stn)…", self._import_legacy)
         self._act_exit = self._action("退出(&Q)", self.close, "Ctrl+Q")
@@ -618,6 +628,9 @@ class MainWindow(QMainWindow):
             # setData 存图标名，主题切换时按新主题色重载（Quotor _make_action 同款）
             action.setData(icon_name)
             self._apply_action_icon(action)
+
+        # 格式刷按钮勾选态由面板反向同步（样板失效 / Esc 取消时自动弹起）
+        self._unit_panel.format_painter_changed.connect(self._act_format_painter.setChecked)
 
         for action in (
             self._act_save,
@@ -700,6 +713,12 @@ class MainWindow(QMainWindow):
         edit_menu = menubar.addMenu("编辑(&E)")
         edit_menu.addAction(self._act_undo)
         edit_menu.addAction(self._act_redo)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self._act_cut)
+        edit_menu.addAction(self._act_copy)
+        edit_menu.addAction(self._act_paste)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self._act_format_painter)
 
         view_menu = menubar.addMenu("视图(&V)")
         view_menu.addAction(self._act_theme)
@@ -731,6 +750,8 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         toolbar.addAction(self._act_add_segment)
         toolbar.addAction(self._act_add_unit)
+        toolbar.addSeparator()
+        toolbar.addAction(self._act_format_painter)
         toolbar.addSeparator()
         toolbar.addAction(self._act_theme)
         toolbar.addAction(self._act_ai_panel)
@@ -1026,6 +1047,10 @@ class MainWindow(QMainWindow):
 
     def _undo(self) -> None:
         self._restore_from_stack(undo_stack.undo(), "撤销")
+
+    def _toggle_format_painter(self, checked: bool) -> None:
+        """格式刷开关（工具栏 / 编辑菜单）：面板据此取样板或结束。"""
+        self._unit_panel.set_format_painter(checked)
 
     def _redo(self) -> None:
         self._restore_from_stack(undo_stack.redo(), "重做")
