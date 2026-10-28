@@ -205,13 +205,13 @@ def test_copy_group_paste_into_other_unit(qapp, two_unit_project) -> None:
     assert len(groups_b) == 1
     members = sorted(groups_b[0].members, key=lambda item: (item.order_no, item.id))
     assert [member.name for member in members] == ["管A", "管B"]
-    # 组插在锚点（管C）之前，成员顺序保持快照顺序；首行是合槽父行
+    # 组插在锚点（管C）之后，成员顺序保持快照顺序
     names = [row.name for row in table_rows(unit_b.id)]
-    assert names[:3] == ["管A+管B 合槽", "管A", "管B"] and names[-1] == "管C"
+    assert names == ["管C", "管A+管B 合槽", "管A", "管B"]
 
 
 def test_paste_elements_into_group_and_nesting_rejected(qapp, two_unit_project) -> None:
-    """普通构件粘贴进合槽 = 加入该组；合槽组粘贴进合槽被拒（不允许嵌套）。"""
+    """粘贴到组成员之后（不是组尾）；合槽组粘贴进合槽被拒（不允许嵌套）。"""
     from app.core.event_bus import bus
     from app.core.models.models import TrenchGroup
     from sqlalchemy import select
@@ -226,13 +226,13 @@ def test_paste_elements_into_group_and_nesting_rejected(qapp, two_unit_project) 
     # 复制普通构件 管C
     _select_rows(panel, [_element_row(panel, e3.id)])
     panel._copy_elements()
-    # 选中组成员 管A → 粘贴进组
+    # 选中组成员 管A → 作为子构件插到 管A 之后（管B 之前）
     _select_rows(panel, [_element_row(panel, e1.id)])
     panel._paste_elements()
     qapp.processEvents()
     orm.session().expire(group)
     members = sorted(group.members, key=lambda item: (item.order_no, item.id))
-    assert [member.name for member in members] == ["管A", "管B", "管C"]
+    assert [member.name for member in members] == ["管A", "管C", "管B"]
 
     # 剪贴板换成整组快照 → 粘贴到成员行被拒
     from app.viewmodels.unit_vm import group_snapshot
@@ -312,7 +312,7 @@ def test_paste_group_on_group_parent_inserts_sibling_group(
 
 
 def test_multi_row_copy_paste_keeps_order(qapp, two_unit_project) -> None:
-    """多行复制粘贴保持复制顺序（逐条都插在同一锚点之前，不再倒序）。"""
+    """多行复制粘贴保持复制顺序，且整体落在当前条目之后。"""
     from app.viewmodels.unit_vm import table_rows
 
     unit_a, _unit_b = two_unit_project
@@ -328,7 +328,30 @@ def test_multi_row_copy_paste_keeps_order(qapp, two_unit_project) -> None:
     panel._paste_elements()
     qapp.processEvents()
     names = [row.name for row in table_rows(unit_a.id)]
-    assert names == ["甲", "丙", "甲", "乙", "丙"]
+    assert names == ["甲", "甲", "丙", "乙", "丙"]
+
+
+def test_paste_without_selection_appends_to_end(qapp, two_unit_project) -> None:
+    """没有选中条目时的兜底：粘贴到表单最后一条构件之后（末尾）。"""
+    from PySide6.QtCore import QModelIndex
+
+    from app.viewmodels.unit_vm import table_rows
+
+    unit_a, _unit_b = two_unit_project
+    _make_pipe(unit_a.id, "甲")
+    _make_pipe(unit_a.id, "乙", dn=800)
+    source = _make_pipe(unit_a.id, "待粘贴", dn=1000)
+
+    panel = _panel_for(qapp, unit_a)
+    _select_rows(panel, [_element_row(panel, source.id)])
+    panel._copy_elements()
+    panel._element_table.clearSelection()
+    panel._element_table.setCurrentIndex(QModelIndex())
+    assert panel._current_element_id() is None
+    panel._paste_elements()
+    qapp.processEvents()
+    names = [row.name for row in table_rows(unit_a.id)]
+    assert names == ["甲", "乙", "待粘贴", "待粘贴"]
 
 
 def test_cut_removes_and_keeps_clipboard(qapp, two_unit_project) -> None:

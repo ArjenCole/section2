@@ -2059,10 +2059,12 @@ class UnitPanel(QWidget):
     def _paste_elements(self) -> None:
         """粘贴剪贴板快照（brackets 同款：内容来自系统剪贴板，可跨文件）。
 
-        选中合槽成员时粘贴普通构件 = 加入该组；粘贴合槽组被拒（合槽不
-        允许嵌套）。选中合槽父行时与普通行同层级处理：整组视为一条，
-        粘贴内容插到该组之后。普通位置按行序逐项插入（锚点固定为当前
-        行下一条构件，插入顺序 = 复制顺序）。
+        插入点跟随当前选中条目：
+        1. 普通构件 → 插到该条目之后；
+        2. 合槽父行 → 整组视为一条，插到该组之后（同层级）；
+        3. 合槽成员 → 作为该组子构件插到所选成员之后（不追加到组尾）；
+        4. 没有选中条目 → 追加到表单末尾。
+        粘贴合槽组到合槽内被拒（合槽不允许嵌套）。
         """
         from app.services import element_clipboard
 
@@ -2077,28 +2079,33 @@ class UnitPanel(QWidget):
                 return
             from app.viewmodels.unit_vm import add_to_group, insert_element_data
 
+            after_element_id = self._current_element_id()
             pasted = 0
             for item in items:
                 element = insert_element_data(self._unit_id, item.get("data") or {}, None)
                 if element is None:
                     continue
-                ok, error = add_to_group(element.id, target_group)
+                ok, error = add_to_group(element.id, target_group, after_element_id)
                 if ok:
                     pasted += 1
+                    after_element_id = element.id  # 后续条目依次排在其后
                 elif error:
                     bus().status_message.emit(error, 5000)
             if pasted:
                 bus().status_message.emit(f"已粘贴 {pasted} 条构件到合槽组。", 4000)
             return
         from app.viewmodels.unit_vm import (
+            element_id_after_element,
             element_id_after_group,
             insert_element_data,
             insert_group_data,
         )
 
-        anchor = self._current_element_id()
-        if anchor is None:
-            # 选中合槽父行（父行不是构件）：整组视作一条，插到组之后
+        anchor = None  # None = 追加末尾（无选中条目时的兜底）
+        current_element = self._current_element_id()
+        if current_element is not None:
+            anchor = element_id_after_element(current_element)
+        else:
             selected_group = self._selected_group_row_id()
             if selected_group is not None:
                 anchor = element_id_after_group(selected_group)

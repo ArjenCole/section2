@@ -978,6 +978,18 @@ def insert_group_data(
     return group
 
 
+def element_id_after_element(element_id: int) -> int | None:
+    """按库内 order_no 返回该构件之后的下一条构件 id（末尾为 None）。"""
+    element = _element(element_id)
+    if element is None:
+        return None
+    ordered = _elements_of(element.unit_id)
+    index = next((i for i, item in enumerate(ordered) if item.id == element_id), None)
+    if index is None or index + 1 >= len(ordered):
+        return None
+    return ordered[index + 1].id
+
+
 def element_id_after_group(group_id: int) -> int | None:
     """合槽组最后一条成员之后的下一条构件 id（按库内 order_no 查，组在末尾为 None）。
 
@@ -988,10 +1000,7 @@ def element_id_after_group(group_id: int) -> int | None:
     if group is None or not group.members:
         return None
     members = sorted(group.members, key=lambda item: (item.order_no, item.id))
-    last_order = members[-1].order_no
-    following = [item for item in _elements_of(group.unit_id) if item.order_no > last_order]
-    following.sort(key=lambda item: item.order_no)
-    return following[0].id if following else None
+    return element_id_after_element(members[-1].id)
 
 
 def _first_foundation_pair() -> tuple[bool, int]:
@@ -1350,8 +1359,17 @@ def delete_trench_group(group_id: int) -> None:
     bus().tree_structure_changed.emit()
 
 
-def add_to_group(element_id: int, group_id: int) -> tuple[bool, str | None]:
-    """把构件加入已有合槽组（追加为最右成员，挪到组块末尾）。"""
+def add_to_group(
+    element_id: int,
+    group_id: int,
+    after_element_id: int | None = None,
+) -> tuple[bool, str | None]:
+    """把构件加入已有合槽组。
+
+    ``after_element_id`` 指定插到该组员之后（粘贴用，可落在组中间）；
+    None 时追加为最右成员（「加入合槽」菜单的原有行为）。两种方式都会
+    重排 order_no，保证组员连续。
+    """
     element = _element(element_id)
     group = orm.session().get(TrenchGroup, group_id) if project_io.is_open() else None
     if element is None or group is None:
@@ -1367,18 +1385,31 @@ def add_to_group(element_id: int, group_id: int) -> tuple[bool, str | None]:
         return False, "合槽组没有成员。"
 
     ordered = list(_elements_of(element.unit_id))
-    tail = members[-1]
     display = [item for item in ordered if item.id != element.id]
-    tail_position = display.index(tail)
-    display.insert(tail_position + 1, element)
-    for position, item in enumerate(display):
-        item.order_no = position
+    if after_element_id is None:
+        insert_after = members[-1]
+    else:
+        insert_after = next(
+            (member for member in members if member.id == after_element_id), None
+        )
+        if insert_after is None:
+            return False, "插入位置的合槽成员不存在。"
+    position = display.index(insert_after) + 1
+    display.insert(position, element)
+    for order, item in enumerate(display):
+        item.order_no = order
     internal = _default_internal_side()
-    # 原末构件变为内侧：其右原则默认改为第一条（规则 5；等深时强制 "-"）
-    tail.pe_right_name = internal or _original_side_name(tail, "right")
+    right_neighbor = display[position + 1] if position + 1 < len(display) else None
+    at_right_edge = right_neighbor is None or right_neighbor.group_id != group.id
+    if at_right_edge:
+        # 追加为最右成员：原末构件右原则转为内侧，新成员保留右侧原原则
+        insert_after.pe_right_name = internal or _original_side_name(insert_after, "right")
+        element.pe_right_name = _original_side_name(element, "right")
+    else:
+        # 插在组中间：新成员两侧都是内侧（规则 5）
+        element.pe_right_name = internal or _original_side_name(element, "right")
     element.group_id = group.id
     element.pe_left_name = internal or _original_side_name(element, "left")
-    element.pe_right_name = _original_side_name(element, "right")
     element.pe_name = LR_PE_TEXT
     # 新成员数量强制取父节点数量
     if not group.amount:
