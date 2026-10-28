@@ -34,21 +34,83 @@ def _make_pipe(unit_id: int, name: str, dn: int = 600, depth: str = "3"):
 # --------------------------------------------------------------------------- #
 # 快照与插入
 # --------------------------------------------------------------------------- #
-def test_group_member_snapshot_restores_single_principle(two_unit_project) -> None:
-    """合槽成员的复制快照还原为普通单原则构件（不带着左右分设粘贴出去）。"""
-    from app.viewmodels.unit_vm import element_copy_snapshot, element_snapshot
+@pytest.fixture()
+def multi_enclosure_project(tmp_path):
+    """两个围护原则的临时工程（列表顺序：围护A、围护B）。"""
+    from app.core.models.models import PcpEnclosure
 
-    unit_a, _unit_b = two_unit_project
-    e1 = _make_pipe(unit_a.id, "管A")
-    e2 = _make_pipe(unit_a.id, "管B", dn=800)
-    group, error = unit_vm.create_trench_group([e1.id, e2.id])
+    project_io.new_project(
+        NewProjectSpec(path=tmp_path / "多原则.stn", unit_names=["u"], enclosure_name="围护A")
+    )
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    orm.session().add(PcpEnclosure(name="围护B", order_no=1))
+    project_io.commit()
+    return unit
+
+
+def test_group_member_copy_both_sides_dash_uses_first_principle(
+    multi_enclosure_project,
+) -> None:
+    """两侧都是 "-"：复制后取项目围护原则列表第一条，忽略成员原有侧名。"""
+    unit = multi_enclosure_project
+    e1 = _make_pipe(unit.id, "管A", depth="3")
+    e2 = _make_pipe(unit.id, "管B", depth="3")
+    e3 = _make_pipe(unit.id, "管C", depth="3")
+    group, error = unit_vm.create_trench_group([e1.id, e2.id, e3.id])
     assert group is not None and error is None
+    # 等深：中间成员左右两侧都是 "-"；把侧名改成围护B，验证不会被取用
+    unit_vm.update_element(e2.id, pe_left_name="围护B", pe_right_name="围护B")
 
-    raw = element_snapshot(e1.id)
-    assert raw["pe_name"] == "左右分设"
-    snap = element_copy_snapshot(e1.id)
-    assert snap["pe_name"] == raw["pe_left_name"]  # 首成员还原左原则
+    snap = unit_vm.element_copy_snapshot(e2.id)
+    assert snap["pe_name"] == "围护A"
     assert snap["pe_left_name"] == "" and snap["pe_right_name"] == ""
+
+
+def test_group_member_copy_single_dash_uses_other_side(multi_enclosure_project) -> None:
+    """单侧是 "-"：复制后取另一侧原则（左右两种方向都覆盖）。"""
+    unit = multi_enclosure_project
+    deep = _make_pipe(unit.id, "深", depth="4")
+    shallow = _make_pipe(unit.id, "浅", dn=800, depth="3")
+    unit_vm.update_element(deep.id, pe_name="围护A")
+    unit_vm.update_element(shallow.id, pe_name="围护B")
+    group, _error = unit_vm.create_trench_group([deep.id, shallow.id])
+
+    # 末成员更浅：左侧 "-"，取右侧外侧原则
+    snap = unit_vm.element_copy_snapshot(shallow.id)
+    assert snap["pe_name"] == "围护B"
+    assert snap["pe_left_name"] == "" and snap["pe_right_name"] == ""
+
+    # 反过来：浅构件在首、深构件在末 → 首成员右侧 "-"，取左侧
+    shallow2 = _make_pipe(unit.id, "浅2", dn=1000, depth="3")
+    deep2 = _make_pipe(unit.id, "深2", dn=1200, depth="4")
+    unit_vm.update_element(shallow2.id, pe_name="围护B")
+    unit_vm.update_element(deep2.id, pe_name="围护A")
+    group2, _error = unit_vm.create_trench_group([shallow2.id, deep2.id])
+    snap2 = unit_vm.element_copy_snapshot(shallow2.id)
+    assert snap2["pe_name"] == "围护B"
+    assert snap2["pe_left_name"] == "" and snap2["pe_right_name"] == ""
+
+
+def test_group_member_copy_both_sides_active_keeps_lr(multi_enclosure_project) -> None:
+    """两侧都不是 "-"：保留左右分设及详细原则、支撑勾选。"""
+    unit = multi_enclosure_project
+    deep = _make_pipe(unit.id, "深", depth="4")
+    shallow = _make_pipe(unit.id, "浅", dn=800, depth="3")
+    group, _error = unit_vm.create_trench_group([deep.id, shallow.id])
+    unit_vm.update_element(
+        deep.id,
+        pe_left_name="围护A",
+        pe_right_name="围护B",
+        support_left=True,
+        support_right=False,
+    )
+
+    snap = unit_vm.element_copy_snapshot(deep.id)
+    assert snap["pe_name"] == "左右分设"
+    assert snap["pe_left_name"] == "围护A"
+    assert snap["pe_right_name"] == "围护B"
+    assert snap["support_left"] is True
+    assert snap["support_right"] is False
 
 
 def test_group_snapshot_and_insert_roundtrip(two_unit_project) -> None:
@@ -352,6 +414,44 @@ def test_paste_without_selection_appends_to_end(qapp, two_unit_project) -> None:
     qapp.processEvents()
     names = [row.name for row in table_rows(unit_a.id)]
     assert names == ["甲", "乙", "待粘贴", "待粘贴"]
+
+
+def test_copy_group_member_with_both_sides_active_pastes_as_lr(
+    qapp, multi_enclosure_project
+) -> None:
+    """两侧都有效的合槽成员复制到组外：粘贴结果仍是左右分设，侧名与支撑不变。"""
+    from app.core.models.models import Element, LR_PE_TEXT
+
+    unit = multi_enclosure_project
+    deep = _make_pipe(unit.id, "深", depth="4")
+    shallow = _make_pipe(unit.id, "浅", dn=800, depth="3")
+    group, _error = unit_vm.create_trench_group([deep.id, shallow.id])
+    unit_vm.update_element(
+        deep.id,
+        pe_left_name="围护A",
+        pe_right_name="围护B",
+        support_left=True,
+        support_right=False,
+    )
+    target = _make_pipe(unit.id, "目标", dn=1000)
+
+    panel = _panel_for(qapp, unit)
+    _select_rows(panel, [_element_row(panel, deep.id)])
+    panel._copy_elements()
+    _select_rows(panel, [_element_row(panel, target.id)])
+    panel._paste_elements()
+    qapp.processEvents()
+
+    pasted = next(
+        element
+        for element in orm.session().query(Element).filter_by(name="深").all()
+        if element.id != deep.id
+    )
+    assert pasted.group_id is None
+    assert pasted.pe_name == LR_PE_TEXT
+    assert pasted.pe_left_name == "围护A"
+    assert pasted.pe_right_name == "围护B"
+    assert pasted.support_left is True and pasted.support_right is False
 
 
 def test_cut_removes_and_keeps_clipboard(qapp, two_unit_project) -> None:

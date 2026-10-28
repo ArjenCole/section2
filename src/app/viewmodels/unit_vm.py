@@ -889,33 +889,42 @@ def insert_element_data(
 
 
 def element_copy_snapshot(element_id: int) -> dict | None:
-    """复制用快照：合槽成员按 :func:`_revert_members` 口径还原为独立构件。
+    """复制用快照：合槽成员按「在组内的实际围护状态」还原为组外构件。
 
-    直接用 :func:`element_snapshot` 会带着「左右分设」占位与左右侧原则名，
-    粘到合槽外就成了悬空的分设构件；此处还原 pe_name（首成员取左原则、
-    其余取右原则），清空左右侧字段，与「移出合槽」的还原规则一致。
+    "-" 是按相邻构件深度实时算出的不可编辑侧（见 ``group_side_plan``），
+    不看成员编组前的历史选择：
+
+    * 两侧都是 "-"：复制后取项目围护原则列表第一条（最左原则）；
+    * 单侧是 "-"：复制后取另一侧的原则；
+    * 两侧都不是 "-"：保持左右分设，左侧 / 右侧原则与两个支撑勾选
+      原样保留。
     """
     data = element_snapshot(element_id)
     if data is None:
         return None
     element = _element(element_id)
     if element is not None and element.group_id is not None:
-        group = orm.session().get(TrenchGroup, element.group_id)
-        siblings = (
-            sorted(group.members, key=lambda item: (item.order_no, item.id))
-            if group is not None
-            else []
-        )
-        index = next((i for i, member in enumerate(siblings) if member.id == element_id), 0)
-        restore = (
-            element.pe_left_name or element.pe_right_name
-            if index == 0
-            else element.pe_right_name or element.pe_left_name
-        )
-        if restore and restore != LR_PE_TEXT:
+        plan = group_side_plan(element.group_id)
+        left_active, right_active = plan.get(element.id, (True, True))
+        left_name = element.pe_left_name or ""
+        right_name = element.pe_right_name or ""
+        names = project_io.enclosure_names()
+        first_name = names[0] if names else ""
+        if not left_active and not right_active:
+            data["pe_name"] = first_name
+            data["pe_left_name"] = ""
+            data["pe_right_name"] = ""
+        elif not left_active or not right_active:
+            restore = right_name if not left_active else left_name
+            if not restore or restore == LR_PE_TEXT:
+                restore = first_name
             data["pe_name"] = restore
-        data["pe_left_name"] = ""
-        data["pe_right_name"] = ""
+            data["pe_left_name"] = ""
+            data["pe_right_name"] = ""
+        else:
+            data["pe_name"] = LR_PE_TEXT
+            data["pe_left_name"] = left_name
+            data["pe_right_name"] = right_name
     return data
 
 
