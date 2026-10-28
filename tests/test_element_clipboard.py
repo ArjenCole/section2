@@ -551,6 +551,69 @@ def test_copy_group_member_with_both_sides_active_pastes_as_lr(
     assert pasted.support_left is True and pasted.support_right is False
 
 
+def test_edit_menu_group_actions_follow_selection(qapp, two_unit_project) -> None:
+    """编辑菜单的合槽项与右键菜单同口径：按当前选中刷新可用态。"""
+    from app.views.main_window import MainWindow
+
+    unit_a, _unit_b = two_unit_project
+    e1 = _make_pipe(unit_a.id, "管A")
+    e2 = _make_pipe(unit_a.id, "管B", dn=800)
+    e3 = _make_pipe(unit_a.id, "管C")
+    _group, _error = unit_vm.create_trench_group([e1.id, e2.id])
+    unit_id, unit_name = unit_a.id, unit_a.name
+
+    window = MainWindow(str(project_io.current_path()))
+    qapp.processEvents()
+    try:
+        panel = window._unit_panel
+        panel._show_unit(unit_id, unit_name)
+        qapp.processEvents()
+
+        # 编辑菜单确实挂了这些动作
+        menu_actions = window._edit_menu.actions()
+        for action in (
+            window._act_group_create,
+            window._act_group_dissolve,
+            window._act_group_remove,
+            window._act_group_move_left,
+            window._act_group_move_right,
+        ):
+            assert action in menu_actions
+        assert window._group_join_menu.menuAction() in menu_actions
+
+        # 选中组成员：解散 / 移出 / 组内移动可用，编组与加入不可用
+        _select_rows(panel, [_element_row(panel, e1.id)])
+        window._refresh_group_actions()
+        assert window._act_group_dissolve.isEnabled()
+        assert window._act_group_remove.isEnabled()
+        assert window._act_group_move_left.isEnabled()
+        assert window._act_group_move_right.isEnabled()
+        assert not window._act_group_create.isEnabled()
+        assert not window._group_join_menu.isEnabled()
+
+        # 选中父行：解散可用，移出 / 组内移动不可用
+        _select_rows(panel, [_group_row(panel)])
+        window._refresh_group_actions()
+        assert window._act_group_dissolve.isEnabled()
+        assert not window._act_group_remove.isEnabled()
+        assert not window._act_group_move_left.isEnabled()
+
+        # 选中独立构件：解散不可用，加入合槽可用
+        _select_rows(panel, [_element_row(panel, e3.id)])
+        window._refresh_group_actions()
+        assert not window._act_group_dissolve.isEnabled()
+        assert not window._act_group_remove.isEnabled()
+        assert window._group_join_menu.isEnabled()
+
+        # 多选两条构件：合槽编组可用
+        _select_rows(panel, [_element_row(panel, e3.id), _element_row(panel, e1.id)])
+        window._refresh_group_actions()
+        assert window._act_group_create.isEnabled()
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
 def test_cut_removes_and_keeps_clipboard(qapp, two_unit_project) -> None:
     """剪切 = 复制 + 删除原条目；剪贴板内容保留可反复粘贴。"""
     from app.core.models.models import Element

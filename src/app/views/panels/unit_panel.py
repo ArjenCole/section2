@@ -1923,30 +1923,26 @@ class UnitPanel(QWidget):
         apply_menu.addAction("应用地基处理原则", lambda: self._paste_principles(False, True))
         # ---- 合槽编组（v3）----
         menu.addSeparator()
-        ids = self._selected_element_ids()
-        group_action = menu.addAction("合槽编组", lambda: self._vm.create_group(ids))
-        group_action.setEnabled(len(ids) >= 2)
+        state = self.group_menu_state()
+        group_action = menu.addAction("合槽编组", self.create_group_from_selection)
+        group_action.setEnabled(state["can_group"])
         group_action.setToolTip(
             "多选构件后编组：成员转为左右分设，上下顺序 = 沟槽从左到右；"
             "约束不满足时状态栏提示原因。"
         )
         # 选中父行或组成员时给解散 / 移出入口
-        current_group = self._selected_group_row_id()
-        element = self._current_element_row()
-        if current_group is None and element is not None:
-            current_group = element.group_id
-        if current_group is not None:
-            menu.addAction("解散合槽", lambda: self._vm.dissolve_group(current_group))
-            if element is not None and element.group_id is not None:
-                menu.addAction("移出合槽", lambda: self._vm.remove_from_group(element.id))
+        if state["group_id"] is not None:
+            menu.addAction("解散合槽", self.dissolve_selected_group)
+            if state["member_id"] is not None:
+                menu.addAction("移出合槽", self.remove_selected_from_group)
                 menu.addSeparator()
                 menu.addAction(
-                    "组内左移（上移）", lambda: self._vm.move_element(element.id, -1)
+                    "组内左移（上移）", lambda: self.move_selected_in_group(-1)
                 )
                 menu.addAction(
-                    "组内右移（下移）", lambda: self._vm.move_element(element.id, 1)
+                    "组内右移（下移）", lambda: self.move_selected_in_group(1)
                 )
-        elif len(ids) >= 1:
+        elif state["can_join"]:
             join_menu = menu.addMenu("加入合槽…")
             from app.core.models import base as orm
             from app.core.models.models import TrenchGroup
@@ -1956,11 +1952,9 @@ class UnitPanel(QWidget):
             if not groups:
                 join_menu.setEnabled(False)
             for group in groups:
-                target = element.id if element is not None else (ids[0] if ids else None)
                 join_menu.addAction(
                     group.name,
-                    lambda group_id=group.id, target_id=target: target_id is not None
-                    and self._vm.add_to_group(target_id, group_id),
+                    lambda group_id=group.id: self.join_group_from_selection(group_id),
                 )
         menu.exec(self._element_table.viewport().mapToGlobal(position))
 
@@ -2044,6 +2038,55 @@ class UnitPanel(QWidget):
 
     def paste_selection(self) -> None:
         self._paste_elements()
+
+    # ---- 合槽菜单（右键菜单 / 编辑菜单共用同一口径）----
+    def group_menu_state(self) -> dict:
+        """合槽相关菜单项的可用态与操作对象。
+
+        右键菜单和菜单栏「编辑」菜单都从这里取状态，避免两处判定漂移。
+        """
+        ids = self._selected_element_ids()
+        element = self._current_element_row()
+        group_id = self._selected_group_row_id()
+        if group_id is None and element is not None:
+            group_id = element.group_id
+        member_id = element.id if element is not None and element.group_id is not None else None
+        target_id = element.id if element is not None else (ids[0] if ids else None)
+        return {
+            "can_group": len(ids) >= 2,
+            "group_id": group_id,
+            "member_id": member_id,
+            "can_join": group_id is None and target_id is not None,
+            "join_target": target_id,
+        }
+
+    def create_group_from_selection(self) -> None:
+        """多选构件合槽编组（编辑菜单 / 右键菜单）。"""
+        self._vm.create_group(self._selected_element_ids())
+
+    def dissolve_selected_group(self) -> None:
+        """解散当前选中行所属的合槽组。"""
+        group_id = self.group_menu_state()["group_id"]
+        if group_id is not None:
+            self._vm.dissolve_group(group_id)
+
+    def remove_selected_from_group(self) -> None:
+        """把当前选中的合槽成员移出组。"""
+        member_id = self.group_menu_state()["member_id"]
+        if member_id is not None:
+            self._vm.remove_from_group(member_id)
+
+    def move_selected_in_group(self, delta: int) -> None:
+        """当前选中的合槽成员组内左移 / 右移。"""
+        member_id = self.group_menu_state()["member_id"]
+        if member_id is not None:
+            self._vm.move_element(member_id, delta)
+
+    def join_group_from_selection(self, group_id: int) -> None:
+        """把当前选中的独立构件加入指定合槽组。"""
+        target_id = self.group_menu_state()["join_target"]
+        if target_id is not None:
+            self._vm.add_to_group(target_id, group_id)
 
     def _paste_target_group(self) -> int | None:
         """粘贴目标合槽组：仅选中组成员时返回其组。

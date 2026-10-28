@@ -598,6 +598,22 @@ class MainWindow(QMainWindow):
         self._act_cut = self._action("剪切(&T)", self._unit_panel.cut_selection, "Ctrl+X")
         self._act_copy = self._action("复制(&C)", self._unit_panel.copy_selection, "Ctrl+C")
         self._act_paste = self._action("粘贴(&P)", self._unit_panel.paste_selection, "Ctrl+V")
+        # 合槽菜单项（右键菜单同款入口）：可用态在编辑菜单打开时按当前选中刷新
+        self._act_group_create = self._action(
+            "合槽编组", self._unit_panel.create_group_from_selection
+        )
+        self._act_group_dissolve = self._action(
+            "解散合槽", self._unit_panel.dissolve_selected_group
+        )
+        self._act_group_remove = self._action(
+            "移出合槽", self._unit_panel.remove_selected_from_group
+        )
+        self._act_group_move_left = self._action(
+            "组内左移（上移）", self._move_selected_in_group_left
+        )
+        self._act_group_move_right = self._action(
+            "组内右移（下移）", self._move_selected_in_group_right
+        )
         # 格式刷是勾选动作：接 toggled 而不是 triggered，面板反向同步
         # setChecked（样板失效自动弹起）时也会走同一条开关路径
         self._act_format_painter = QAction("格式刷(&F)", self)
@@ -635,6 +651,11 @@ class MainWindow(QMainWindow):
             self._act_redo,
             self._act_add_segment,
             self._act_add_unit,
+            self._act_group_create,
+            self._act_group_dissolve,
+            self._act_group_remove,
+            self._act_group_move_left,
+            self._act_group_move_right,
         ):
             action.setEnabled(False)
         self._project_actions = (
@@ -706,6 +727,7 @@ class MainWindow(QMainWindow):
 
         # 撤销 / 重做（brackets2 同款：编辑菜单 + Ctrl+Z / Ctrl+Y）
         edit_menu = menubar.addMenu("编辑(&E)")
+        self._edit_menu = edit_menu
         edit_menu.addAction(self._act_undo)
         edit_menu.addAction(self._act_redo)
         edit_menu.addSeparator()
@@ -714,6 +736,16 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self._act_paste)
         edit_menu.addSeparator()
         edit_menu.addAction(self._act_format_painter)
+        # 合槽（右键菜单同款）：打开编辑菜单时按当前选中刷新可用态
+        edit_menu.addSeparator()
+        edit_menu.addAction(self._act_group_create)
+        self._group_join_menu = edit_menu.addMenu("加入合槽…")
+        edit_menu.addAction(self._act_group_dissolve)
+        edit_menu.addAction(self._act_group_remove)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self._act_group_move_left)
+        edit_menu.addAction(self._act_group_move_right)
+        edit_menu.aboutToShow.connect(self._refresh_group_actions)
 
         view_menu = menubar.addMenu("视图(&V)")
         view_menu.addAction(self._act_theme)
@@ -853,6 +885,60 @@ class MainWindow(QMainWindow):
     def _set_project_actions(self, enabled: bool) -> None:
         for action in self._project_actions:
             action.setEnabled(enabled)
+        if not enabled:
+            # 关闭工程后合槽项一律失效，等下次打开编辑菜单再按选中刷新
+            for action in self._group_menu_actions():
+                action.setEnabled(False)
+            join_menu = getattr(self, "_group_join_menu", None)
+            if join_menu is not None:
+                join_menu.setEnabled(False)
+
+    def _group_menu_actions(self) -> tuple[QAction, ...]:
+        return (
+            self._act_group_create,
+            self._act_group_dissolve,
+            self._act_group_remove,
+            self._act_group_move_left,
+            self._act_group_move_right,
+        )
+
+    def _refresh_group_actions(self) -> None:
+        """编辑菜单的合槽项：打开菜单时按当前选中刷新，口径与右键菜单一致。"""
+        from sqlalchemy import select
+
+        from app.core.models import base as orm
+        from app.core.models.models import TrenchGroup
+        from app.services import project_io
+
+        state = self._unit_panel.group_menu_state()
+        self._act_group_create.setEnabled(state["can_group"])
+        self._act_group_dissolve.setEnabled(state["group_id"] is not None)
+        is_member = state["member_id"] is not None
+        self._act_group_remove.setEnabled(is_member)
+        self._act_group_move_left.setEnabled(is_member)
+        self._act_group_move_right.setEnabled(is_member)
+        groups = (
+            list(orm.session().scalars(select(TrenchGroup).order_by(TrenchGroup.id)))
+            if project_io.is_open()
+            else []
+        )
+        self._group_join_menu.clear()
+        self._group_join_menu.setEnabled(state["can_join"] and bool(groups))
+        if state["can_join"]:
+            for group in groups:
+                action = self._group_join_menu.addAction(group.name)
+                connect_weak(
+                    action.triggered,
+                    self._unit_panel,
+                    "join_group_from_selection",
+                    group.id,
+                )
+
+    def _move_selected_in_group_left(self) -> None:
+        self._unit_panel.move_selected_in_group(-1)
+
+    def _move_selected_in_group_right(self) -> None:
+        self._unit_panel.move_selected_in_group(1)
 
     def _update_title(self) -> None:
         path_hint = ""
