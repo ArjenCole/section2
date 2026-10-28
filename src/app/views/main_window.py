@@ -305,13 +305,16 @@ class _StatusToast(QLabel):
     状态栏那一行去掉后，界面元素直接顶到窗体最下方；但原来的瞬时提示
     （算式结果、拖拽被拒、MCP 启动失败等）仍需可见，于是改成这个
     **绝对定位的子控件**：不参与 QMainWindow 布局，因此不占任何高度，
-    只浮在右下角内容之上，鼠标穿透、超时自动隐藏。
+    贴在窗体右下角之上，鼠标穿透、超时自动隐藏。
     """
 
     #: 与窗体边缘的间距（逻辑像素）
     _MARGIN = 14
     #: 左右内边距合计（QSS 里 12px padding × 2 + 1px border × 2）
     _PAD_H = 26
+    #: 宽度余量：实宽贴着文字宽时（内边距假设与实机字体/DPI 的几像素差），
+    #: 末字会被折到第二行、第二行又被单行高度裁掉——余量保证不触发折行
+    _WIDTH_SLACK = 12
     #: 常驻提示（timeout=0）的兜底时长，避免浮层永久压在内容上
     _DEFAULT_MS = 6000
 
@@ -322,14 +325,9 @@ class _StatusToast(QLabel):
         self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.setWordWrap(True)
         self.hide()
-        self._avoid: QWidget | None = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.hide)
-
-    def set_avoid_widget(self, widget: QWidget | None) -> None:
-        """设置需要避让的控件（AI 面板输入区）：浮层落在它上方，不盖住发送按钮。"""
-        self._avoid = widget
 
     def show_message(self, text: str, timeout_ms: int = 0) -> None:
         text = (text or "").strip()
@@ -351,28 +349,25 @@ class _StatusToast(QLabel):
             self._reposition()
 
     def _reposition(self) -> None:
+        """贴在窗体右下角；宽度 = 文字实宽 + 余量，高度按实宽折行后计算。"""
         parent = self.parentWidget()
         if parent is None:
             return
         hint = self.sizeHint()
         # wordWrap 下的 sizeHint 是"窄宽 + 已折行高度"，不能用；按文字实际宽度取自然宽
-        natural = max(hint.width(), self.fontMetrics().horizontalAdvance(self.text()) + self._PAD_H)
+        natural = (
+            max(hint.width(), self.fontMetrics().horizontalAdvance(self.text()) + self._PAD_H)
+            + self._WIDTH_SLACK
+        )
         max_w = max(160, parent.width() - 2 * self._MARGIN)
         width = min(natural, max_w)
-        # 放得下按单行高取（用自然宽 + 余量问），放不下才按折行后的高度
-        measure = width if width < natural else natural + 40
-        height = self.heightForWidth(measure) or hint.height()
+        # 高度按最终实宽算（heightForWidth 含 QSS 内边距与边框）：宽放得下是
+        # 单行高，放不下是折行后的高，与往返宽度一致才不会裁字
+        height = self.heightForWidth(width) or hint.height()
         self.resize(width, height)
-        bottom = parent.height() - self._MARGIN
-        avoid = self._avoid
-        if avoid is not None and avoid.isVisible():
-            # 输入区顶边以上还有空间时把浮层抬上去，免得压住发送按钮
-            top = avoid.mapTo(parent, QPoint(0, 0)).y() - self._MARGIN
-            if top - height >= self._MARGIN:
-                bottom = top
         self.move(
             max(self._MARGIN, parent.width() - width - self._MARGIN),
-            max(self._MARGIN, bottom - height),
+            max(self._MARGIN, parent.height() - self._MARGIN - height),
         )
 
 
@@ -760,7 +755,6 @@ class MainWindow(QMainWindow):
     def _build_toast(self) -> None:
         """主窗体不放状态栏：三栏直接顶到窗体底部，提示改由右下角浮层承载。"""
         self._toast = _StatusToast(self)
-        self._toast.set_avoid_widget(self._ai_panel.input_widget)
 
     # ------------------------------------------------------------------ 事件
     def _connect_events(self) -> None:

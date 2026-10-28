@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, QRect, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -167,6 +167,9 @@ _QTY_HEADERS = ["类别", "项目", "单位", "值", ""]
 
 #: 共享单元格焦点的归属标记（挂在 QTableWidget 实例属性上，Quotor _GLOBAL_LATEST 同款）
 _FOCUS_OWNER_ATTR = "_unit_panel_focus_owner"
+#: 格式刷防抖（毫秒）：选中变化后停顿此时长才整体生效一次并退出——
+#: 覆盖拖选 / Ctrl·Shift 多选的选中间隔，单击目标也只多等这一瞬
+_FORMAT_PAINTER_DEBOUNCE_MS = 300
 #: 明细面板四张表标记（多选边框 / 选区互斥只作用于它们，主表格行选不受影响）
 _DETAIL_TABLE_ATTR = "_unit_panel_detail_table"
 
@@ -460,6 +463,14 @@ class UnitPanel(QWidget):
         #: 格式刷：True = 等待把样板构件的四项原则刷到后续选中的构件上
         self._format_painter_active = False
         self._format_painter_source: int | None = None
+        #: 格式刷光标覆盖是否已设置（进出成对，避免重复 set / restore）
+        self._format_painter_cursor_active = False
+        #: 格式刷防抖：选中包含样板以外的构件后停顿片刻才整体生效一次并退出
+        #: （拖选 / Ctrl·Shift 多选是逐步发生的，见 _schedule_format_painter）
+        self._format_painter_timer = QTimer(self)
+        self._format_painter_timer.setSingleShot(True)
+        self._format_painter_timer.setInterval(_FORMAT_PAINTER_DEBOUNCE_MS)
+        self._format_painter_timer.timeout.connect(self._flush_format_painter)
         self._build_ui()
         self._connect()
         self._show_unit(None)
@@ -871,11 +882,8 @@ class UnitPanel(QWidget):
         self._multi_detail = False
         self._current_detail_id = None
         self._pending_select_id = None
-        # 切换单位工程 / 关闭工程：样板不再有效，格式刷自动结束
-        if self._format_painter_active:
-            self._format_painter_active = False
-            self._format_painter_source = None
-            self.format_painter_changed.emit(False)
+        # 切换单位工程 / 关闭工程：样板不再有效，格式刷自动结束（撤销未生效的待刷）
+        self._cancel_format_painter()
         has_unit = unit_id is not None
         self._placeholder.setVisible(not has_unit)
         self._work_area.setVisible(has_unit)
@@ -1400,7 +1408,7 @@ class UnitPanel(QWidget):
         单行 → 显示该行内容。
         """
         if self._format_painter_active and not self._loading:
-            self._apply_format_painter()
+            self._schedule_format_painter()
         ids = self._selected_element_ids()
         if len(ids) >= 2:
             self._show_multi_detail()
@@ -1425,7 +1433,8 @@ class UnitPanel(QWidget):
         """格式刷开关（主窗体工具栏按钮 / 编辑菜单调用）。
 
         开启时以当前选中构件为样板；随后选中的构件自动同步其四项原则
-        （围护 / 地基 / 挖填降水 / 面宽），可连续刷多条，Esc 或再次点击结束。
+        （围护 / 地基 / 挖填降水 / 面宽），**生效一次后自动退出**；
+        Esc 或再次点击可提前结束。
         """
         if on:
             source_id = self._current_element_id()
@@ -1435,33 +1444,81 @@ class UnitPanel(QWidget):
                 bus().status_message.emit("请先选中一条构件，再使用格式刷。", 4000)
                 self.format_painter_changed.emit(False)
                 return
+            self._format_painter_timer.stop()
             self._format_painter_active = True
             self._format_painter_source = source_id
+            self._set_format_painter_cursor(True)
             bus().status_message.emit(
-                "格式刷已取样板：点击其他构件即同步其四项原则（Esc 或再次点击格式刷结束）。", 0
+                "格式刷已取样板：点选或框选其他构件即同步其四项原则（生效一次后自动退出，Esc 取消）。", 0
             )
         else:
             self._cancel_format_painter()
 
+    def _set_format_painter_cursor(self, active: bool) -> None:
+        """格式刷状态期间把鼠标换成刷形光标（应用级覆盖，退出即恢复原样）。
+
+        热点在刷毛尖端（图标左下 (3, 19)），点选的位置就是刷毛指的位置。
+        """
+        from PySide6.QtGui import QCursor
+        from PySide6.QtWidgets import QApplication
+
+        if active:
+            if self._format_painter_cursor_active:
+                return
+            from app.views.widgets.frameless_dialog import load_icon
+
+            color = ThemeManager.instance().current().text_primary
+            pixmap = load_icon("paintbrush", color=color, size=24).pixmap(24, 24)
+            self._format_painter_cursor_active = True
+            QApplication.setOverrideCursor(QCursor(pixmap, 3, 19))
+        else:
+            if not self._format_painter_cursor_active:
+                return
+            self._format_painter_cursor_active = False
+            QApplication.restoreOverrideCursor()
+
     def _cancel_format_painter(self) -> None:
         if not self._format_painter_active and self._format_painter_source is None:
             return
+        self._format_painter_timer.stop()
         self._format_painter_active = False
         self._format_painter_source = None
+        self._set_format_painter_cursor(False)
         self.format_painter_changed.emit(False)
         bus().status_message.emit("", 0)
 
-    def _apply_format_painter(self) -> None:
-        """把样板构件的四项原则同步到当前选中的其他构件上。"""
-        source_id = self._format_painter_source
-        if source_id is None:
+    def _schedule_format_painter(self) -> None:
+        """选中变化时的格式刷调度（防抖）：以**最后一次选中**为准，一次刷完。
+
+        拖选 / Ctrl·Shift 多选的选中是逐步发生的（每次都会触发选中事件），
+        不能在第一个事件就生效退出；这里在选中包含样板以外的构件时启动
+        短防抖定时器，选中继续变化就重置，停顿片刻后整体生效一次。
+        只选中样板（或没选中构件）时保持待刷并撤销未生效的定时。
+        """
+        if not self._format_painter_active:
             return
+        source_id = self._format_painter_source
+        if any(element_id != source_id for element_id in self._selected_element_ids()):
+            self._format_painter_timer.start()
+        else:
+            self._format_painter_timer.stop()
+
+    def _flush_format_painter(self) -> None:
+        """防抖到点：把样板构件的四项原则刷到当前选中的构件上，然后自动退出。"""
+        if not self._format_painter_active:
+            return
+        source_id = self._format_painter_source
+        # 先退出再刷：update_element 触发表格重载，重载路径不得再进入格式刷调度
+        self._format_painter_active = False
+        self._format_painter_source = None
+        self._set_format_painter_cursor(False)
+        self.format_painter_changed.emit(False)
         from app.core.models.models import LR_PE_TEXT
         from app.viewmodels.unit_vm import _element, update_element
 
         source = _element(source_id)
         if source is None:
-            self._cancel_format_painter()
+            bus().status_message.emit("格式刷：样板构件已不存在，已退出。", 4000)
             return
         source_pe = source.pe_name
         if source_pe == LR_PE_TEXT:
@@ -1488,7 +1545,11 @@ class UnitPanel(QWidget):
             update_element(element_id, **fields)
             changed += 1
         if changed:
-            bus().status_message.emit(f"格式刷：已同步 {changed} 条构件的原则。", 4000)
+            bus().status_message.emit(
+                f"格式刷：已同步 {changed} 条构件的原则，已自动退出格式刷。", 4000
+            )
+        else:
+            bus().status_message.emit("格式刷：目标与样板原则一致，已退出。", 4000)
 
     def _show_group_detail(self, group_id: int) -> None:
         """合槽父行选中：明细占位 + 成员合计工程量 + 整槽断面图。"""

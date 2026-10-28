@@ -293,7 +293,7 @@ def _panel_for(qapp, unit):
 
 
 def test_format_painter_syncs_four_principles(qapp, tmp_path) -> None:
-    """格式刷：样板取当前构件，选其他构件自动同步四项原则；Esc 取消。"""
+    """格式刷：样板取当前构件，选其他构件自动同步四项原则；生效一次后自动退出。"""
     from PySide6.QtCore import QEvent, Qt
     from PySide6.QtGui import QKeyEvent
 
@@ -327,21 +327,73 @@ def test_format_painter_syncs_four_principles(qapp, tmp_path) -> None:
     _select_rows(panel, [_element_row(panel, src.id)])
     panel.set_format_painter(True)
     assert panel._format_painter_active
+    assert qapp.overrideCursor() is not None  # 刷形光标已覆盖
+    # 只选中样板（或回到样板）不生效：定时器未启动
+    _select_rows(panel, [_element_row(panel, src.id)])
+    assert not panel._format_painter_timer.isActive()
+
+    # 选中目标 → 防抖定时器就位 → 到点一次生效并自动退出
     _select_rows(panel, [_element_row(panel, tgt.id)])
-    qapp.processEvents()
+    assert panel._format_painter_timer.isActive()
+    panel._flush_format_painter()
+    assert not panel._format_painter_active
+    assert qapp.overrideCursor() is None  # 退出后光标恢复
     target = orm.session().get(Element, tgt.id)
     assert target.pe_name == "围护B"
     assert target.pf_name == "地基B"
     assert target.pp_name == "降水B"
     assert target.pw_name == "面宽B"
 
-    # Esc 取消：状态复位并通知按钮弹起
+    # 生效后再选中其他构件不再刷（已退出）；Esc 取消路径仍可用
+    panel.set_format_painter(True)
+    assert qapp.overrideCursor() is not None
+    _select_rows(panel, [_element_row(panel, tgt.id)])
     released: list[bool] = []
     panel.format_painter_changed.connect(released.append)
     event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
     panel.eventFilter(panel._element_table, event)
     assert not panel._format_painter_active
+    assert not panel._format_painter_timer.isActive()
+    assert qapp.overrideCursor() is None
     assert released == [False]
+
+
+def test_format_painter_multi_select_one_shot(qapp, tmp_path) -> None:
+    """选中多条目标：一次生效刷全部选中构件，然后自动退出（不再连续刷）。"""
+    from app.core.models.models import Element, PcpEnclosure, PcpFoundation, PcpPrecipitation, PcpWidth
+
+    project_io.new_project(NewProjectSpec(path=tmp_path / "刷多.stn", unit_names=["u"]))
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    orm.session().add_all(
+        [
+            PcpEnclosure(name="围护B", order_no=1),
+            PcpFoundation(name="地基B", order_no=1),
+            PcpPrecipitation(name="降水B", order_no=1),
+            PcpWidth(name="面宽B", order_no=1),
+        ]
+    )
+    project_io.commit()
+    src = _make_pipe(unit.id, "样板", dn=600)
+    t1 = _make_pipe(unit.id, "目标1", dn=800)
+    t2 = _make_pipe(unit.id, "目标2", dn=1000)
+    unit_vm.update_element(
+        src.id, pe_name="围护B", pf_name="地基B", pp_name="降水B", pw_name="面宽B"
+    )
+
+    panel = _panel_for(qapp, unit)
+    _select_rows(panel, [_element_row(panel, src.id)])
+    panel.set_format_painter(True)
+    _select_rows(panel, [_element_row(panel, t1.id), _element_row(panel, t2.id)])
+    assert panel._format_painter_active  # 防抖期内尚未生效
+    panel._flush_format_painter()
+    assert not panel._format_painter_active  # 一次生效后自动退出
+    for element_id in (t1.id, t2.id):
+        target = orm.session().get(Element, element_id)
+        assert target.pe_name == "围护B" and target.pf_name == "地基B"
+        assert target.pp_name == "降水B" and target.pw_name == "面宽B"
+    # 退出后再选中别的构件不再自动刷
+    _select_rows(panel, [_element_row(panel, t1.id)])
+    assert not panel._format_painter_active
 
 
 def test_format_painter_requires_source(qapp, tmp_path) -> None:
