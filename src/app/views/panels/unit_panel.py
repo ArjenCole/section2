@@ -1921,40 +1921,43 @@ class UnitPanel(QWidget):
         apply_menu.addAction("应用沟槽及地基原则", lambda: self._paste_principles(True, True))
         apply_menu.addAction("应用沟槽围护原则", lambda: self._paste_principles(True, False))
         apply_menu.addAction("应用地基处理原则", lambda: self._paste_principles(False, True))
-        # ---- 合槽编组（v3）----
-        menu.addSeparator()
+        # ---- 合槽编组（v3）：只显示当前有效的条目，整段共用一个分隔组 ----
         state = self.group_menu_state()
-        group_action = menu.addAction("合槽编组", self.create_group_from_selection)
-        group_action.setEnabled(state["can_group"])
-        group_action.setToolTip(
-            "多选构件后编组：成员转为左右分设，上下顺序 = 沟槽从左到右；"
-            "约束不满足时状态栏提示原因。"
-        )
-        # 选中父行或组成员时给解散 / 移出入口
-        if state["group_id"] is not None:
-            menu.addAction("解散合槽", self.dissolve_selected_group)
-            if state["member_id"] is not None:
-                menu.addAction("移出合槽", self.remove_selected_from_group)
-                menu.addSeparator()
-                menu.addAction(
-                    "组内左移（上移）", lambda: self.move_selected_in_group(-1)
-                )
-                menu.addAction(
-                    "组内右移（下移）", lambda: self.move_selected_in_group(1)
-                )
-        elif state["can_join"]:
-            join_menu = menu.addMenu("加入合槽…")
+        show_create = state["can_group"]
+        show_dissolve = state["group_id"] is not None
+        show_member = state["member_id"] is not None
+        groups: list = []
+        if state["can_join"]:
             from app.core.models import base as orm
             from app.core.models.models import TrenchGroup
             from sqlalchemy import select
 
             groups = list(orm.session().scalars(select(TrenchGroup).order_by(TrenchGroup.id)))
-            if not groups:
-                join_menu.setEnabled(False)
-            for group in groups:
-                join_menu.addAction(
-                    group.name,
-                    lambda group_id=group.id: self.join_group_from_selection(group_id),
+        show_join = state["can_join"] and bool(groups)
+        if show_create or show_dissolve or show_member or show_join:
+            menu.addSeparator()
+            if show_create:
+                group_action = menu.addAction("合槽编组", self.create_group_from_selection)
+                group_action.setToolTip(
+                    "多选构件后编组：成员转为左右分设，上下顺序 = 沟槽从左到右；"
+                    "约束不满足时状态栏提示原因。"
+                )
+            if show_join:
+                join_menu = menu.addMenu("加入合槽…")
+                for group in groups:
+                    join_menu.addAction(
+                        group.name,
+                        lambda group_id=group.id: self.join_group_from_selection(group_id),
+                    )
+            if show_dissolve:
+                menu.addAction("解散合槽", self.dissolve_selected_group)
+            if show_member:
+                menu.addAction("移出合槽", self.remove_selected_from_group)
+                menu.addAction(
+                    "组内左移（上移）", lambda: self.move_selected_in_group(-1)
+                )
+                menu.addAction(
+                    "组内右移（下移）", lambda: self.move_selected_in_group(1)
                 )
         menu.exec(self._element_table.viewport().mapToGlobal(position))
 

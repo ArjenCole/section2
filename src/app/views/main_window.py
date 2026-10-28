@@ -736,13 +736,12 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self._act_paste)
         edit_menu.addSeparator()
         edit_menu.addAction(self._act_format_painter)
-        # 合槽（右键菜单同款）：打开编辑菜单时按当前选中刷新可用态
-        edit_menu.addSeparator()
+        # 合槽（右键菜单同款）：一个分隔组，打开编辑菜单时只显示当前有效项
+        self._group_separator = edit_menu.addSeparator()
         edit_menu.addAction(self._act_group_create)
         self._group_join_menu = edit_menu.addMenu("加入合槽…")
         edit_menu.addAction(self._act_group_dissolve)
         edit_menu.addAction(self._act_group_remove)
-        edit_menu.addSeparator()
         edit_menu.addAction(self._act_group_move_left)
         edit_menu.addAction(self._act_group_move_right)
         edit_menu.aboutToShow.connect(self._refresh_group_actions)
@@ -886,12 +885,17 @@ class MainWindow(QMainWindow):
         for action in self._project_actions:
             action.setEnabled(enabled)
         if not enabled:
-            # 关闭工程后合槽项一律失效，等下次打开编辑菜单再按选中刷新
+            # 关闭工程后合槽项一律隐藏，等下次打开编辑菜单再按选中刷新
             for action in self._group_menu_actions():
+                action.setVisible(False)
                 action.setEnabled(False)
             join_menu = getattr(self, "_group_join_menu", None)
             if join_menu is not None:
+                join_menu.menuAction().setVisible(False)
                 join_menu.setEnabled(False)
+            separator = getattr(self, "_group_separator", None)
+            if separator is not None:
+                separator.setVisible(False)
 
     def _group_menu_actions(self) -> tuple[QAction, ...]:
         return (
@@ -903,7 +907,11 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_group_actions(self) -> None:
-        """编辑菜单的合槽项：打开菜单时按当前选中刷新，口径与右键菜单一致。"""
+        """编辑菜单的合槽项：打开菜单时按当前选中刷新，口径与右键菜单一致。
+
+        与右键菜单一样只显示当前有效的条目；整段没有任何有效项时连前面
+        的分隔线一并隐藏。
+        """
         from sqlalchemy import select
 
         from app.core.models import base as orm
@@ -911,20 +919,30 @@ class MainWindow(QMainWindow):
         from app.services import project_io
 
         state = self._unit_panel.group_menu_state()
-        self._act_group_create.setEnabled(state["can_group"])
-        self._act_group_dissolve.setEnabled(state["group_id"] is not None)
-        is_member = state["member_id"] is not None
-        self._act_group_remove.setEnabled(is_member)
-        self._act_group_move_left.setEnabled(is_member)
-        self._act_group_move_right.setEnabled(is_member)
         groups = (
             list(orm.session().scalars(select(TrenchGroup).order_by(TrenchGroup.id)))
             if project_io.is_open()
             else []
         )
+        can_group = state["can_group"]
+        can_dissolve = state["group_id"] is not None
+        is_member = state["member_id"] is not None
+        can_join = state["can_join"] and bool(groups)
+
+        def _show(action: QAction, visible: bool) -> None:
+            action.setVisible(visible)
+            action.setEnabled(visible)
+
+        _show(self._act_group_create, can_group)
+        _show(self._group_join_menu.menuAction(), can_join)
+        _show(self._act_group_dissolve, can_dissolve)
+        _show(self._act_group_remove, is_member)
+        _show(self._act_group_move_left, is_member)
+        _show(self._act_group_move_right, is_member)
+        self._group_separator.setVisible(can_group or can_dissolve or is_member or can_join)
+
         self._group_join_menu.clear()
-        self._group_join_menu.setEnabled(state["can_join"] and bool(groups))
-        if state["can_join"]:
+        if can_join:
             for group in groups:
                 action = self._group_join_menu.addAction(group.name)
                 connect_weak(
