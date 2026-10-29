@@ -6,9 +6,16 @@
 现场。本模块用 ``SetUnhandledExceptionFilter`` 挂一个进程级兜底：
 
 * 写 ``logs/crash_<时间>_<pid>.txt``：异常代码 / 地址 / 故障模块+偏移 /
-  异常参数 / Python 线程栈；
+  异常参数 / **原生调用栈（模块+偏移）** / Python 线程栈；
 * 写 ``logs/crash_<时间>_<pid>.dmp``：``MiniDumpWriteDump`` 生成的 minidump，
   可用 WinDbg / Visual Studio 打开看原生调用栈。
+
+栈溢出（``0xC00000FD``）现场（2026-10-29 12:56）：Python 栈只有
+``UnitPanel.eventFilter`` 一个业务帧，说明耗尽栈的是它下面纯 C++ 的调用链，
+Python 侧看不到。此时原线程几乎没栈可用，``MiniDumpWriteDump`` 会失败并留下
+0 字节的 ``.dmp``；``RtlCaptureStackBackTrace`` 只需要很少栈，所以原生栈改为
+在异常回调里直接抓取并写进文本报告。安装时另用 ``SetThreadStackGuarantee``
+给异常处理预留 256KB，避免回调自身再次踩到守卫页。
 
 局限：``__fastfail``（含 ``0xc0000409``）按设计不可被 SEH/VEH 拦截，仍可能只由
 WER 处理；访问冲突（``0xc0000005``）、C++ 异常等绝大多数崩溃都能留下 dump。
@@ -47,6 +54,16 @@ _LOG_DIR: Path | None = None
 _PID = os.getpid()
 _ENV: dict[str, str] = {}
 _WRITING = False
+_GUARANTEE_SET = False
+
+#: 给异常处理预留的栈（字节）。栈溢出时系统会临时提交这么多栈给
+#: SEH/VEH 回调，让文本报告、原生栈抓取和 minidump 有地方执行。
+#: 预留区是从线程栈里划出来的（正常执行用不到），所以只取 256KB：
+#: 足够写报告和 dump，又不至于把主线程可用的 ~2MB 明显压缩。
+_STACK_GUARANTEE = 256 * 1024
+
+#: 原生调用栈最多抓多少帧（递归链一般 20~50 帧就够看清循环）
+_NATIVE_FRAMES = 64
 
 #: 崩溃时最多保留几个异常参数（EXCEPTION_MAXIMUM_PARAMETERS）
 _MAX_EXCEPTION_PARAMS = 15
@@ -130,6 +147,7 @@ def install() -> bool:
         _LOG_DIR = None
     _capture_env()
     _enable_faulthandler()
+    _set_stack_guarantee()
     _FILTER = _TOP_LEVEL_EXCEPTION_FILTER(_on_unhandled_exception)
     _KERNEL32.SetUnhandledExceptionFilter(_FILTER)
     _INSTALLED = True
@@ -185,6 +203,15 @@ def _init_win32() -> None:  # pragma: no cover - 平台相关
     kernel32.GetModuleHandleExW.restype = wintypes.BOOL
     kernel32.GetModuleFileNameW.argtypes = [wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
     kernel32.GetModuleFileNameW.restype = wintypes.DWORD
+    kernel32.RtlCaptureStackBackTrace.argtypes = [
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.RtlCaptureStackBackTrace.restype = wintypes.WORD
+    kernel32.SetThreadStackGuarantee.argtypes = [ctypes.POINTER(wintypes.ULONG)]
+    kernel32.SetThreadStackGuarantee.restype = wintypes.BOOL
 
     dbghelp = ctypes.WinDLL("dbghelp", use_last_error=True)
     dbghelp.MiniDumpWriteDump.argtypes = [
@@ -240,6 +267,58 @@ def _enable_faulthandler() -> None:
         _logger.warning("faulthandler 开启失败：%s", error)
 
 
+def _set_stack_guarantee() -> bool:
+    """给当前线程预留异常处理栈（栈溢出时异常回调才有地方执行）。
+
+    默认栈溢出后系统只保留一页左右给异常分发，写报告够用、
+    ``MiniDumpWriteDump`` 不够（现场留下 0 字节 dump）。``SetThreadStackGuarantee``
+    在栈溢出时临时提交指定字节数给 SEH/VEH 回调，是 Windows 为此提供的正式机制。
+    """
+    global _GUARANTEE_SET
+    if _GUARANTEE_SET or _KERNEL32 is None:
+        return _GUARANTEE_SET
+    try:
+        from ctypes import wintypes
+
+        size = wintypes.ULONG(_STACK_GUARANTEE)
+        ok = _KERNEL32.SetThreadStackGuarantee(ctypes.byref(size))
+        _GUARANTEE_SET = bool(ok)
+        if ok:
+            # 成功时 size 返回的是原来的预留值
+            _logger.info(
+                "异常处理栈预留：%d KB（原 %d KB）", _STACK_GUARANTEE // 1024, int(size.value) // 1024
+            )
+        else:
+            _logger.warning("SetThreadStackGuarantee 失败：error=%s", ctypes.get_last_error())
+    except Exception as error:  # noqa: BLE001 - 预留不上不能拖垮启动
+        _logger.warning("异常处理栈预留失败：%s", error)
+    return _GUARANTEE_SET
+
+
+def _capture_native_stack(limit: int = _NATIVE_FRAMES) -> list[int]:
+    """抓当前线程的原生调用栈（返回地址，最近的在前）。
+
+    只依赖 ``RtlCaptureStackBackTrace``：它按 unwind 信息逐帧回溯，栈快耗尽时
+    仍然能用；栈溢出现场必须靠它，因为此时 ``MiniDumpWriteDump`` 通常写不出来。
+    """
+    if _KERNEL32 is None:
+        return []
+    try:
+        buffer = (ctypes.c_void_p * limit)()
+        count = int(_KERNEL32.RtlCaptureStackBackTrace(0, limit, buffer, None))
+        return [int(buffer[index]) for index in range(min(count, limit))]
+    except Exception:  # noqa: BLE001 - 抓不到就退回只有 Python 栈
+        return []
+
+
+def _format_native_stack(addresses: list[int]) -> list[str]:
+    """把返回地址格式化成 ``#序号 0x地址 模块 (+0x偏移)``（符号需离线查）。"""
+    lines: list[str] = []
+    for index, address in enumerate(addresses):
+        lines.append(f"#{index:02d} 0x{address:X}  {_faulting_module(address) or '未知模块'}")
+    return lines
+
+
 # --------------------------------------------------------------------------- #
 # 崩溃回调
 # --------------------------------------------------------------------------- #
@@ -249,6 +328,8 @@ def _on_unhandled_exception(exception_pointers):  # pragma: no cover - 只在真
     if _WRITING:
         return _EXCEPTION_CONTINUE_SEARCH
     _WRITING = True
+    # 先抓原生栈：此时递归链还在栈上，写文件/解析模块都会再吃栈。
+    native_addresses = _capture_native_stack()
     try:
         record = exception_pointers.contents.ExceptionRecord
         if record:
@@ -274,6 +355,7 @@ def _on_unhandled_exception(exception_pointers):  # pragma: no cover - 只在真
             "address": address,
             "params": params,
             "module": _faulting_module(address),
+            "native_stack": _format_native_stack(native_addresses),
             "env": dict(_ENV),
         }
         _write_text_report(base.with_suffix(".txt"), info)
@@ -315,6 +397,7 @@ def _faulting_module(address: int) -> str:  # pragma: no cover - 平台相关
 
 def _write_text_report(path: Path, info: dict) -> None:  # pragma: no cover - 崩溃路径
     params = ", ".join(f"0x{value:X}" for value in info["params"]) or "无"
+    native_stack = info.get("native_stack") or []
     lines = [
         "Section 2.0 原生崩溃报告",
         f"时间：{info['time']}",
@@ -327,11 +410,15 @@ def _write_text_report(path: Path, info: dict) -> None:  # pragma: no cover - �
         "== 环境 ==",
     ]
     lines.extend(f"{key}: {value}" for key, value in info["env"].items())
+    lines.extend(["", "== 原生调用栈（RtlCaptureStackBackTrace，最近的在前）=="])
+    lines.extend(native_stack or ["（未抓到原生栈）"])
     lines.extend(["", "== Python 线程栈（faulthandler）=="])
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as handle:
+            # 先落盘原生栈：栈溢出时下面的 Python 栈 dump 也可能失败
             handle.write("\n".join(lines) + "\n")
+            handle.flush()
             if _faulthandler is not None:
                 _faulthandler.dump_traceback(file=handle, all_threads=True)
             else:  # pragma: no cover
