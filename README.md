@@ -155,7 +155,13 @@ py -3.12 -m venv .venv
   API key 只写入系统钥匙串（条目 `section2/<名称>`），配置文件里永远没有 key；
 - 一期工具：`list_elements` / `add_element` / `update_element` / `delete_element`，
   只作用于项目树里当前选中的单位工程；新增、修改、删除都会先弹确认窗，
-  执行后工程量表自动刷新。
+  执行后工程量表自动刷新；
+- **上传文件**（输入框左下角 📎）：支持 Excel（.xlsx/.xlsm/.xltx）、Word（.docx）、
+  CSV / 文本 / JSON / XML / Markdown / `.stn`（PDF 需可选依赖 pypdf）。
+  文件在本地提取为文本后挂到输入框上方的附件条（可单个移除）。带附件发送走
+  两段式：先调一次模型按提示词把文件内容提炼成结构化数据（`services/ai/file_extract.py`
+  负责本地提取，超长文件按 10 万字符截断），再把「提取数据 + 用户要求」一并交给
+  带工具的代理去操作软件——提取数据保留在对话历史里，后续追问可直接引用。
 
 ## MCP 服务（M10）
 

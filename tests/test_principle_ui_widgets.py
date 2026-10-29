@@ -642,8 +642,11 @@ def test_combo_names_skip_dash_placeholder():
 
 
 def test_insert_template_after_group(qapp, project):
-    """构件库插入：选中合槽父行 / 子条目 / 收起的父行，都插到整组合槽之后。"""
+    """构件库插入与粘贴同口径（_insertion_target）：选中父行 / 收起的父行
+    → 整组之后同层级；选中子条目 → 作为组员插到所选成员之后（粘贴一致）。"""
     from app.core.event_bus import bus
+    from app.core.models import base as orm
+    from app.core.models.models import Element
     from app.services import project_io
     from app.services.element_library import element_library
     from app.viewmodels import unit_vm
@@ -682,23 +685,146 @@ def test_insert_template_after_group(qapp, project):
         ids = element_ids()
         assert len(ids) == 4 and ids[0] == first.id and ids[1] == second.id and ids[3] == third.id
 
-        # 2) 选中合槽子条目 → 仍插到整组之后（上一步新增条目之前）
+        # 2) 选中合槽子条目 → 作为组员插到所选成员之后（与粘贴到组成员一致）
         panel._element_table.setCurrentCell(
             row_index(lambda row: isinstance(row, ElementRow) and row.group_id is not None), 0
         )
+        before = set(element_ids())
         panel.insert_template(template)
         qapp.processEvents()
         ids = element_ids()
-        assert len(ids) == 5 and ids[0] == first.id and ids[1] == second.id and ids[-1] == third.id
+        assert len(ids) == 5 and ids[0] == first.id and ids[2] == second.id and ids[-1] == third.id
+        member_id = next(element_id for element_id in ids if element_id not in before)
+        assert orm.session().get(Element, member_id).group_id == group.id
 
-        # 3) 收起合槽后选中父行 → 仍插到整组之后
+        # 3) 收起合槽后选中父行 → 仍插到整组之后（同层级，不入组）
         parent_index = row_index(lambda row: isinstance(row, GroupRow))
         panel._on_group_toggle_requested(parent_index)
         qapp.processEvents()
         panel._element_table.setCurrentCell(row_index(lambda row: isinstance(row, GroupRow)), 0)
+        before = set(element_ids())
         panel.insert_template(template)
         qapp.processEvents()
         ids = element_ids()
-        assert len(ids) == 6 and ids[0] == first.id and ids[1] == second.id and ids[-1] == third.id
+        assert len(ids) == 6 and ids[0] == first.id and ids[-1] == third.id
+        outside_id = next(element_id for element_id in ids if element_id not in before)
+        assert orm.session().get(Element, outside_id).group_id is None
     finally:
         window.close()
+
+
+# --------------------------------------------------------------------------- #
+# 主表格右键菜单：原则批量设置段 / 快捷键提示 / 合槽成员不生效弹窗
+# --------------------------------------------------------------------------- #
+def _panel_for(qapp, unit):
+    from app.views.panels.unit_panel import UnitPanel
+
+    panel = UnitPanel()
+    panel._show_unit(unit.id, unit.name)
+    qapp.processEvents()
+    return panel
+
+
+def _element_row_index(panel, element_id: int) -> int:
+    return next(
+        index
+        for index, row in enumerate(panel._rows_cache)
+        if not hasattr(row, "member_count") and getattr(row, "id", None) == element_id
+    )
+
+
+def _select_elements(panel, element_ids: list[int]) -> None:
+    from PySide6.QtCore import QItemSelectionModel
+
+    table = panel._element_table
+    table.clearSelection()
+    for position, element_id in enumerate(element_ids):
+        row = _element_row_index(panel, element_id)
+        if position == 0:
+            table.setCurrentCell(row, 0)
+        table.selectionModel().select(
+            table.model().index(row, 0),
+            QItemSelectionModel.Select | QItemSelectionModel.Rows,
+        )
+
+
+def _submenus(menu):
+    return {action.text(): action.menu() for action in menu.actions() if action.menu() is not None}
+
+
+def test_context_menu_principle_section_multi_select_only(qapp, project) -> None:
+    """「选择…原则」批量段仅多选（≥2 条）出现，且四类原则齐全；快捷键提示。"""
+    from app.services import project_io
+    from app.viewmodels import unit_vm
+
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    e1 = unit_vm.create_element(unit.id, category=1, name="管A", depth="2", amount="10")
+    e2 = unit_vm.create_element(unit.id, category=1, name="管B", depth="3", amount="10")
+    panel = _panel_for(qapp, unit)
+
+    # 单选：没有「选择…原则」子菜单；复制 / 剪切 / 粘贴 带快捷键提示
+    _select_elements(panel, [e1.id])
+    titles = [action.text() for action in panel._build_element_context_menu().actions()]
+    assert not any(str(text).startswith("选择") for text in titles)
+    assert "复制\tCtrl+C" in titles
+    assert "剪切\tCtrl+X" in titles
+    assert "粘贴\tCtrl+V" in titles
+
+    # 多选：四类原则子菜单齐全，各含库中原则项（默认工程每类 1 条）
+    _select_elements(panel, [e1.id, e2.id])
+    submenus = _submenus(panel._build_element_context_menu())
+    assert list(submenus) == [
+        "选择沟槽围护原则",
+        "选择地基处理原则",
+        "选择挖填降水原则",
+        "选择工作面宽原则",
+    ]
+    for title, submenu in submenus.items():
+        assert submenu.actions(), f"{title} 没有原则项"
+
+
+def test_apply_enclosure_skips_group_members_with_dialog(qapp, project, monkeypatch) -> None:
+    """多选含合槽子构件选围护原则：普通构件生效、合槽成员跳过并弹窗说明。"""
+    from app.core.models.models import LR_PE_TEXT
+    from app.services import project_io
+    from app.viewmodels import unit_vm
+
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    normal = unit_vm.create_element(unit.id, category=1, name="普通管", depth="2", amount="10")
+    member1 = unit_vm.create_element(unit.id, category=1, name="组员甲", depth="2", amount="10")
+    member2 = unit_vm.create_element(unit.id, category=1, name="组员乙", depth="4", amount="10")
+    group, error = unit_vm.create_trench_group([member1.id, member2.id])
+    assert group is not None and error is None
+    panel = _panel_for(qapp, unit)
+
+    shown: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "app.views.panels.unit_panel.FramelessMessageBox.information",
+        lambda _parent, title, text, *_a, **_k: shown.append((title, text)),
+    )
+
+    # 混合多选（普通管 + 组员甲）：普通构件生效，合槽成员跳过并弹窗
+    _select_elements(panel, [normal.id, member1.id])
+    panel._apply_to_selected("pe_name", "围护A")
+    (title, text), = shown
+    assert title == "围护原则"
+    assert "已为 1 条构件应用" in text
+    assert "另有 1 条合槽子构件未应用" in text and "组员甲" in text
+    assert unit_vm._element(normal.id).pe_name == "围护A"
+    assert unit_vm._element(member1.id).pe_name == LR_PE_TEXT  # 仍由合槽规则接管
+
+    # 全是合槽成员：本次选择未生效的提示（applied = 0 口径）
+    shown.clear()
+    _select_elements(panel, [member1.id, member2.id])
+    panel._apply_to_selected("pe_name", "围护A")
+    (title, text), = shown
+    assert "均为合槽子构件" in text and "未生效" in text
+    assert unit_vm._element(member1.id).pe_name == LR_PE_TEXT
+
+    # 其他原则（地基）对合槽成员照常生效，不弹窗
+    shown.clear()
+    _select_elements(panel, [member1.id, member2.id])
+    panel._apply_to_selected("pf_name", "围护B")
+    assert shown == []
+    assert unit_vm._element(member1.id).pf_name == "围护B"
+    assert unit_vm._element(member2.id).pf_name == "围护B"

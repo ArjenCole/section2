@@ -734,6 +734,10 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
         center_x = (base_left + base_right) / 2.0 - half
         depth_raise_mm = (h_max - snap["depth"]) * 1000.0
         raise_mm = foundation_thickness(snap["pf"]) + snap["c1_display"] - snap["at"].c1
+        if not snap["info"].pipes:
+            # 没录管材的成员画不出本体（沟槽仍按它的参数绘制）：
+            # 与单构件断面“未录入管材”的提示口径一致，不能整图崩溃
+            continue
         for shape in _ontology_shapes(snap["info"], snap["at"], snap["at"].c1):
             shapes.append(
                 _Shape(

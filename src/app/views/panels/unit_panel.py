@@ -1606,6 +1606,10 @@ class UnitPanel(QWidget):
         """
         from app.viewmodels.unit_vm import _element
 
+        # VM 空明细的哨兵是 0（load_unit(None) 发 detail_loaded(0, [], [], [])），
+        # 不是 None：不归一成 None，set_element(0) 会跳过空态短路直接查工作库，
+        # 启动时（还没打开工程）就抛 NoProjectOpenError
+        element_id = element_id or None
         element = _element(element_id) if element_id is not None else None
         if element is not None and element.group_id is not None:
             self._section_view.set_group(element.group_id)
@@ -1708,38 +1712,29 @@ class UnitPanel(QWidget):
             return int(data[1])
         return None
 
-    def _insert_anchor_element_id(self) -> int | None:
-        """构件库插入锚点（新条目插到该构件之前）；None = 追加末尾。
+    def _insertion_target(self) -> tuple[int | None, int | None]:
+        """粘贴 / 构件库双击共用的落点，返回 (目标合槽组 id, 锚点构件 id)。
 
-        普通构件取当前行下一行的构件；选中合槽父行或合槽子条目时，锚点取
-        整组合槽所有条目之后的下一条构件，新条目不会插进合槽组内部。
+        * 选中合槽成员 → (组 id, 所选成员 id)：新条目作为该组成员插到所选
+          成员之后（粘贴多条时依次排在其后）；
+        * 其余情况 → (None, anchor)：anchor 是"新条目插到它之前"的构件 id——
+          选中普通构件 = 它之后的第一条构件；选中合槽父行 = 整组之后的第一条
+          构件（新条目不插进组内、也不替换父行）；没有选中条目 = None，追加末尾。
         """
-        row_index = self._element_table.currentRow()
-        if row_index < 0 or row_index >= len(self._rows_cache):
-            return None
-        row = self._rows_cache[row_index]
-        if isinstance(row, GroupRow):
-            return self._element_id_after_group(row.id)
-        if isinstance(row, ElementRow) and row.group_id is not None:
-            return self._element_id_after_group(row.group_id)
-        return self._element_id_at(row_index + 1)
+        from app.viewmodels.unit_vm import element_id_after_element, element_id_after_group
 
-    def _element_id_after_group(self, group_id: int) -> int | None:
-        """合槽组最后一条成员之后的下一条构件 id；组在末尾时为 None。"""
-        last_index = -1
-        for index, row in enumerate(self._rows_cache):
-            if isinstance(row, GroupRow):
-                if row.id == group_id:
-                    last_index = index
-            elif isinstance(row, ElementRow) and row.group_id == group_id:
-                last_index = index
-        if last_index < 0:
-            return None
-        for index in range(last_index + 1, len(self._rows_cache)):
-            row = self._rows_cache[index]
-            if isinstance(row, ElementRow):
-                return row.id
-        return None
+        target_group = self._paste_target_group()
+        if target_group is not None:
+            return target_group, self._current_element_id()
+        anchor = None  # None = 追加末尾（无选中条目时的兜底）
+        current_element = self._current_element_id()
+        if current_element is not None:
+            anchor = element_id_after_element(current_element)
+        else:
+            selected_group = self._selected_group_row_id()
+            if selected_group is not None:
+                anchor = element_id_after_group(selected_group)
+        return None, anchor
 
     def _restore_current_element(
         self, element_id: int | None, column: int, group_id: int | None = None
@@ -1897,30 +1892,40 @@ class UnitPanel(QWidget):
         return self._group_id_at(self._element_table.currentRow())
 
     def _on_element_context_menu(self, position) -> None:
+        menu = self._build_element_context_menu()
+        menu.exec(self._element_table.viewport().mapToGlobal(position))
+
+    def _build_element_context_menu(self):
+        """构建主表格右键菜单（不弹出；弹出在 :meth:`_on_element_context_menu`）。"""
         from PySide6.QtWidgets import QMenu
 
         menu = QMenu(self)
         menu.addAction("删除选中构件", self._delete_selected_elements)
         menu.addSeparator()
-        menu.addAction("复制", self._copy_elements)
-        menu.addAction("剪切", self._cut_elements)
-        paste = menu.addAction("粘贴", self._paste_elements)
+        # 快捷键提示写进文案（\t 后段由样式渲染成右侧的快捷键列）。
+        # 不用 setShortcut 真注册：每次右键都会新建一个挂在面板上的菜单，
+        # 关闭后 C++ 对象仍随父控件存活，真注册会让历史菜单的快捷键一直有效
+        menu.addAction("复制\tCtrl+C", self._copy_elements)
+        menu.addAction("剪切\tCtrl+X", self._cut_elements)
+        paste = menu.addAction("粘贴\tCtrl+V", self._paste_elements)
         from app.services import element_clipboard
 
         paste.setEnabled(element_clipboard.has_payload())
-        menu.addSeparator()
-        principle_menu = menu.addMenu("选择沟槽围护原则")
-        for name in project_io.enclosure_names():
-            principle_menu.addAction(name, lambda name=name: self._apply_to_selected("pe_name", name))
-        foundation_menu = menu.addMenu("选择地基处理原则")
-        for name in project_io.foundation_names():
-            foundation_menu.addAction(name, lambda name=name: self._apply_to_selected("pf_name", name))
-        menu.addSeparator()
-        menu.addAction("复制原则", self._copy_principles)
-        apply_menu = menu.addMenu("应用原则")
-        apply_menu.addAction("应用沟槽及地基原则", lambda: self._paste_principles(True, True))
-        apply_menu.addAction("应用沟槽围护原则", lambda: self._paste_principles(True, False))
-        apply_menu.addAction("应用地基处理原则", lambda: self._paste_principles(False, True))
+        # 批量设置原则：仅多选（≥2 条）出现——单条构件直接改表格里的原则下拉框
+        if len(self._selected_element_ids()) >= 2:
+            menu.addSeparator()
+            for title, names, field in (
+                ("选择沟槽围护原则", project_io.enclosure_names(), "pe_name"),
+                ("选择地基处理原则", project_io.foundation_names(), "pf_name"),
+                ("选择挖填降水原则", project_io.precipitation_names(), "pp_name"),
+                ("选择工作面宽原则", project_io.width_names(), "pw_name"),
+            ):
+                submenu = menu.addMenu(title)
+                for name in names:
+                    submenu.addAction(
+                        name,
+                        lambda name=name, field=field: self._apply_to_selected(field, name),
+                    )
         # ---- 合槽编组（v3）：只显示当前有效的条目，整段共用一个分隔组 ----
         state = self.group_menu_state()
         show_create = state["can_group"]
@@ -1959,7 +1964,7 @@ class UnitPanel(QWidget):
                 menu.addAction(
                     "组内右移（下移）", lambda: self.move_selected_in_group(1)
                 )
-        menu.exec(self._element_table.viewport().mapToGlobal(position))
+        return menu
 
     def _current_element_row(self):
         """当前选中行的 ElementRow（父行 / 空表返回 None）。"""
@@ -1970,10 +1975,6 @@ class UnitPanel(QWidget):
             if isinstance(row, ElementRow) and row.id == element_id:
                 return row
         return None
-
-    #: 原则剪贴板（原版 mClipboard_PCP 的内存版）；构件剪贴板在
-    #: services.element_clipboard（系统剪贴板，跨文件可用）
-    _principle_clipboard: tuple[str, str] | None = None
 
     def _copy_elements(self, *, cut: bool = False) -> None:
         """复制选中行到构件剪贴板（系统剪贴板，跨文件/跨工程可用）。
@@ -2120,14 +2121,14 @@ class UnitPanel(QWidget):
         if not items or self._unit_id is None:
             return
         items = element_clipboard.remap_items(items)
-        target_group = self._paste_target_group()
+        target_group, anchor = self._insertion_target()
         if target_group is not None:
             if any(item.get("type") == "group" for item in items):
                 bus().status_message.emit("合槽不允许嵌套：不能把合槽组粘贴到另一组合槽内。", 5000)
                 return
             from app.viewmodels.unit_vm import add_to_group, insert_element_data
 
-            after_element_id = self._current_element_id()
+            after_element_id = anchor
             pasted = 0
             for item in items:
                 element = insert_element_data(self._unit_id, item.get("data") or {}, None)
@@ -2143,20 +2144,11 @@ class UnitPanel(QWidget):
                 bus().status_message.emit(f"已粘贴 {pasted} 条构件到合槽组。", 4000)
             return
         from app.viewmodels.unit_vm import (
-            element_id_after_element,
             element_id_after_group,
             insert_element_data,
             insert_group_data,
         )
 
-        anchor = None  # None = 追加末尾（无选中条目时的兜底）
-        current_element = self._current_element_id()
-        if current_element is not None:
-            anchor = element_id_after_element(current_element)
-        else:
-            selected_group = self._selected_group_row_id()
-            if selected_group is not None:
-                anchor = element_id_after_group(selected_group)
         count = 0
         for item in items:
             if item.get("type") == "group":
@@ -2171,50 +2163,75 @@ class UnitPanel(QWidget):
         if count:
             bus().status_message.emit(f"已粘贴 {count} 项。", 4000)
 
-    def _copy_principles(self) -> None:
-        element_id = self._current_element_id()
-        if element_id is None:
-            return
-        from app.viewmodels.unit_vm import element_snapshot
-
-        data = element_snapshot(element_id)
-        if data is not None:
-            self._principle_clipboard = (data["pe_name"], data["pf_name"])
-
     def _apply_to_selected(self, field: str, value: str) -> None:
-        for element_id in self._selected_element_ids():
-            self._vm.set_element_field(element_id, field, value)
+        """把所选原则批量应用到多选构件（右键「选择…原则」菜单）。
 
-    def _paste_principles(self, use_pe: bool, use_pf: bool) -> None:
-        """CopyPCP/PastePCP：把记住的原则批量应用到选中行。"""
-        if self._principle_clipboard is None:
+        围护原则（pe_name）特殊：合槽子构件强制左右分设，围护由组规则接管，
+        改不动 pe_name——跳过并弹窗说明哪些没生效、其余已生效，不再静默无效。
+        """
+        ids = self._selected_element_ids()
+        if not ids:
             return
-        pe_name, pf_name = self._principle_clipboard
-        for element_id in self._selected_element_ids():
-            if use_pe:
-                self._vm.set_element_field(element_id, "pe_name", pe_name)
-            if use_pf:
-                self._vm.set_element_field(element_id, "pf_name", pf_name)
+        if field != "pe_name":
+            for element_id in ids:
+                self._vm.set_element_field(element_id, field, value)
+            return
+        from app.viewmodels.unit_vm import _element
+
+        applied = 0
+        skipped: list[str] = []
+        for element_id in ids:
+            element = _element(element_id)
+            if element is not None and element.group_id is not None:
+                skipped.append(element.name or f"条目{element_id}")
+                continue
+            self._vm.set_element_field(element_id, field, value)
+            applied += 1
+        if not skipped:
+            return
+        names = "、".join(skipped[:6]) + ("…" if len(skipped) > 6 else "")
+        if applied:
+            message = (
+                f"已为 {applied} 条构件应用沟槽围护原则「{value}」。\n\n"
+                f"另有 {len(skipped)} 条合槽子构件未应用（{names}）："
+                "合槽成员强制左右分设，围护原则由合槽规则统一接管，"
+                "请选中成员后在下方面板「围护原则」页签按左右侧设置。"
+            )
+        else:
+            message = (
+                f"选中的 {len(skipped)} 条构件均为合槽子构件（{names}），"
+                "沟槽围护原则未生效：合槽成员强制左右分设，围护原则由合槽规则统一接管，"
+                "请选中成员后在下方面板「围护原则」页签按左右侧设置。"
+            )
+        FramelessMessageBox.information(self, "围护原则", message)
 
     # ------------------------------------------------------------------ 构件库插入（原版 FormMdi 构件库双击）
     def insert_template(self, template) -> None:
         """把构件库模板插入当前单位工程主表格，并选中新条目。
 
-        普通构件插到当前选中行的下一行；选中合槽父行或其子条目时插到整组
-        合槽所有条目之后（合槽组在末尾则追加到末尾）。
+        插入点与粘贴构件完全同口径（``_insertion_target``）：选中合槽成员时
+        作为该组成员插到所选成员之后；选中普通构件时插到它之后；选中合槽
+        父行时插到整组之后（同层级）；没有选中条目时追加末尾。
         """
         if self._unit_id is None:
             bus().status_message.emit("请先选中单位工程，再从构件库插入。", 4000)
             return
-        from app.viewmodels.unit_vm import insert_element_template
+        from app.viewmodels.unit_vm import add_to_group, insert_element_template
 
-        # 插入语义是“锚点行之前”：锚点由 _insert_anchor_element_id 计算
-        # （选中合槽相关行时取整组之后，避免插进组内部或替换父行）。
         # 表格刷新经 unit_changed → QTimer.singleShot(0) 延后，此处只记下新 id，
         # 由 _on_unit_loaded 在重载落地后选中新行
-        element = insert_element_template(
-            self._unit_id, template, self._insert_anchor_element_id()
-        )
+        target_group, anchor = self._insertion_target()
+        if target_group is not None:
+            # 先追加末尾再入组（与粘贴进合槽同一条路径）：入组会重排 order_no
+            element = insert_element_template(self._unit_id, template, None)
+            if element is not None:
+                ok, error = add_to_group(element.id, target_group, anchor)
+                if not ok:
+                    if error:
+                        bus().status_message.emit(error, 5000)
+                    return  # 入组失败：新条目留在表尾，不算插入成功
+        else:
+            element = insert_element_template(self._unit_id, template, anchor)
         if element is not None:
             self._pending_select_id = element.id
 
@@ -2453,11 +2470,9 @@ class UnitPanel(QWidget):
             self._fill_lr_tab(element)
         finally:
             self._loading = False
-        # 管径/壁厚/参数/工程量都影响断面几何与工程量结果，明细变化后重绘
-        if element_id:
-            self._section_view.set_element(element_id)
-        else:
-            self._section_view.set_element(None)
+        # 管径/壁厚/参数/工程量都影响断面几何与工程量结果，明细变化后重绘；
+        # 合槽成员看整槽全景（与选中父行一致），不能跳回单构件断面
+        self._refresh_section_for(element_id)
 
     def _fill_lr_tab(self, element) -> None:
         """「围护原则」tab：分设构件显示四行设置，其余显示占位说明。

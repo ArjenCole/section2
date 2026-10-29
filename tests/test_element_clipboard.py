@@ -801,6 +801,33 @@ def test_section_follows_group_member(qapp, two_unit_project) -> None:
     assert canvas._element_id == standalone.id and canvas._group_id is None
 
 
+def test_section_stays_group_after_detail_reload(qapp, two_unit_project) -> None:
+    """合槽成员明细重载（编辑确认后的 detail_loaded 路径）不得跳回单构件断面。"""
+    from app.viewmodels.unit_vm import (
+        create_trench_group,
+        param_rows,
+        pipe_rows,
+        quantity_rows,
+    )
+
+    unit_a, _unit_b = two_unit_project
+    e1 = _make_pipe(unit_a.id, "管A")
+    e2 = _make_pipe(unit_a.id, "管B", dn=800, depth="4")
+    group, _error = create_trench_group([e1.id, e2.id])
+    assert group is not None
+
+    panel = _panel_for(qapp, unit_a)
+    canvas = panel._section_view._canvas
+    panel._refresh_section_for(e1.id)
+    assert canvas._group_id == group.id
+    # 编辑管材 / 参数 / 工程量后 unit_vm._refresh 会补发 detail_loaded：
+    # 此前这条路径把断面图重置成单构件图，这里锁定整槽全景
+    panel._on_detail_loaded(
+        e1.id, pipe_rows(e1.id), param_rows(e1.id), quantity_rows(e1.id)
+    )
+    assert canvas._group_id == group.id and canvas._element_id is None
+
+
 def test_format_painter_copies_lr_format(qapp, tmp_path) -> None:
     """左右分设样板：格式刷把分设格式整体复制（占位 / 左右原则 / 支撑勾选）。"""
     from app.core.models.models import Element, LR_PE_TEXT, PcpEnclosure

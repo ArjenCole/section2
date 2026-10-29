@@ -110,3 +110,22 @@ def test_scene_without_principle(qapp, tmp_path) -> None:
     assert view._scene is None
     assert "原则" in view._hint
     assert orm.is_open()
+
+
+def test_detail_reload_sentinel_zero_without_project(qapp) -> None:
+    """未打开工程时的空明细重载（哨兵 id=0）不得触碰工作库。
+
+    VM 的 ``load_unit(None)`` 发 ``detail_loaded(0, [], [], [])``——0 是
+    “没有条目”的哨兵，不是真实 id；断面刷新必须把它与 None 同等对待，
+    否则启动时（尚未打开工程）就抛 NoProjectOpenError。
+    """
+    assert not orm.is_open()
+    from app.viewmodels.unit_vm import UnitViewModel
+    from app.views.panels.unit_panel import UnitPanel
+
+    panel = UnitPanel()  # __init__ 即走 _show_unit(None) → load_unit(None)
+    panel._vm = UnitViewModel()
+    panel._vm.detail_loaded.connect(panel._on_detail_loaded)
+    panel._vm.load_unit(None)  # 空明细重载：哨兵 0
+    panel._on_detail_loaded(0, [], [], [])  # 同一哨兵直接走处理器也不崩
+    assert not orm.is_open()

@@ -11,6 +11,13 @@
   #aiSourceBtn + 发送按钮 #aiSendBtn），Enter 发送、Shift/Ctrl+Enter 换行；
   - 模型来源选择器显示「provider 显示名/当前模型」+ 下箭头，点击向上弹出菜单；
     菜单上半部分是 AI 设置左侧的 provider 列表，底部「管理模型」打开设置窗体；
+  - 左下角 📎 按钮或把文件拖到面板任意位置上传（Excel / Word / CSV / 文本…）：
+    拖拽悬停时整块面板盖一层毛玻璃（:class:`_DropOverlay`，居中提示
+    “松开以添加附件”）；文件在本地提取为文本后，以圆角附件片挂在输入框
+    左上角。带附件发送走**两段式**：先调一次模型按
+    提示词把文件内容提炼成结构化数据（_ExtractionWorker，后台线程、无工具），
+    再把「提取数据 + 用户要求」并入用户消息交给 AgentLoop 操作软件——
+    提取数据保留在对话历史里，后续追问可直接引用；
 * 顶部：标题 + 「清空」（兼停止，运行中点击即中断）+ 齿轮「设置」。
 
 agent 层沿用本项目的 AgentLoop（content/reasoning/status/finished/failed/confirm 信号）。
@@ -19,14 +26,19 @@ agent 层沿用本项目的 AgentLoop（content/reasoning/status/finished/failed
 from __future__ import annotations
 
 import html
+import threading
 import time
+from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
+    QGraphicsBlurEffect,
+    QGraphicsPixmapItem,
+    QGraphicsScene,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -48,11 +60,14 @@ from app.core.event_bus import bus, connect_weak
 from app.resources.qss.theme import ThemeManager, combo_arrow_renderer
 from app.services.ai import ai_keychain
 from app.services.ai.ai_provider import (
+    AiProviderError,
     ChatMessage,
     ProviderConfig,
     default_send_reasoning_content,
     new_session_id,
+    stream_chat,
 )
+from app.services.ai.file_extract import FILE_DIALOG_FILTER, FileExtractError, extract_text
 from app.views.widgets.frameless_dialog import FramelessMessageBox, load_icon
 
 _SYSTEM_PROMPT = (
@@ -63,6 +78,26 @@ _SYSTEM_PROMPT = (
     "（如 2.5+0.3），不要把算式预计算后回写；计算结果的 expression/steps 原样引用、不要改写；"
     "用户取消操作后不要重试同一工具。"
 )
+
+#: 附件提取阶段（第一段）的提示词：只提炼数据，不操作软件（此阶段无工具）
+_EXTRACT_SYSTEM_PROMPT = (
+    "你是工程量计算软件 Section 2.0 的数据提取助手。用户上传了文件并给出要求，"
+    "请只依据文件内容，围绕用户的要求把相关数据提炼成干净、结构化的结果"
+    "（优先 Markdown 表格或 JSON），供后续步骤据此操作软件："
+    "构件名称、管材与管径、埋深、数量、原则名等字段逐条对应、不要合并同类项；"
+    "文件里没有的信息标注“未提供”，禁止编造；数字保持原文写法"
+    "（算式原样保留、不要预计算、不要换单位）。"
+    "只输出提取结果本身，不要寒暄，也不要复述用户的要求。"
+)
+
+
+#: 附件片在输入框内左上角的排列参数：起始留白 / 片间距 / 文件名省略宽度
+_CHIP_MARGIN = 8
+_CHIP_GAP = 4
+_CHIP_NAME_MAX = 150
+
+#: 拖拽悬停时毛玻璃层中间的提示文字
+_DROP_HINT = "松开以添加附件"
 
 
 def _c():
@@ -77,6 +112,8 @@ class _MarkdownView(QTextBrowser):
         self.setOpenLinks(False)
         self.setOpenExternalLinks(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setAcceptDrops(False)  # 文件拖拽统一冒泡给 AiPanel，别被文本框吃掉
+        self.viewport().setAcceptDrops(False)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.document().setDocumentMargin(0)
@@ -288,6 +325,172 @@ class _SourceButton(QPushButton):
         painter.end()
 
 
+def _frosted_backdrop(snapshot: QPixmap) -> QPixmap:
+    """把面板快照模糊成毛玻璃底图（按设备像素处理，DPR 原样带回）。"""
+    image = snapshot.toImage()
+    dpr = snapshot.devicePixelRatio() or 1.0
+    image.setDevicePixelRatio(1.0)  # 场景坐标 = 设备像素，避免 DPR 二次缩放
+    scene = QGraphicsScene()
+    item = QGraphicsPixmapItem(QPixmap.fromImage(image))
+    effect = QGraphicsBlurEffect()
+    effect.setBlurHints(QGraphicsBlurEffect.BlurHint.QualityHint)
+    effect.setBlurRadius(18.0 * dpr)  # 视觉半径不随缩放比例变化
+    item.setGraphicsEffect(effect)
+    scene.addItem(item)
+    result = QPixmap(image.size())
+    result.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(result)
+    scene.render(
+        painter,
+        QRectF(result.rect()),
+        QRectF(0.0, 0.0, float(image.width()), float(image.height())),
+    )
+    painter.end()
+    result.setDevicePixelRatio(dpr)
+    return result
+
+
+class _DropOverlay(QWidget):
+    """拖拽文件悬停时盖住整个面板的毛玻璃层（ZCode 同款交互）。
+
+    底图是开始拖拽瞬间的面板快照，高斯模糊后再压一层主题背景色，保证
+    居中提示可读。本层 WA_TransparentForMouseEvents：拖拽事件继续由
+    :class:`AiPanel` 接收，面板在 drop / leave 时负责隐藏本层。
+    """
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._backdrop: QPixmap | None = None
+        self.hide()
+
+    def set_backdrop(self, snapshot: QPixmap) -> None:
+        self._backdrop = _frosted_backdrop(snapshot)
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        painter = QPainter(self)
+        if self._backdrop is not None:
+            painter.drawPixmap(0, 0, self._backdrop)
+        colors = _c()
+        tint = QColor(colors.bg_window)
+        tint.setAlpha(170)
+        painter.fillRect(self.rect(), tint)
+        font = self.font()
+        font.setPointSizeF(font.pointSizeF() + 1.0)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.setPen(QColor(colors.text_primary))
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, _DROP_HINT)
+        painter.end()
+
+
+class _AttachmentChip(QFrame):
+    """输入框左上角的一枚文件片：圆角框内文件图标 + 文件名 + 「×」移除。"""
+
+    removed = Signal(object)  # attachment dict
+
+    def __init__(self, attachment: dict, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._attachment = attachment
+        colors = _c()
+        self.setStyleSheet(
+            "QFrame { background: transparent; border: 1px solid"
+            f" {colors.border}; border-radius: 10px; }}\n"
+            "QFrame QLabel { background: transparent; border: none; }\n"
+            "QFrame QToolButton { background: transparent; border: none;"
+            f" color: {colors.text_secondary}; font-weight: 600; }}\n"
+            f"QFrame QToolButton:hover {{ color: {colors.text_primary}; }}"
+        )
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 2, 4, 2)
+        layout.setSpacing(4)
+        icon = QLabel()
+        icon.setPixmap(
+            load_icon("file-text", color=colors.text_secondary, size=14).pixmap(14, 14)
+        )
+        layout.addWidget(icon)
+        name_label = QLabel()
+        # 文件名过长时省略（完整路径在 tooltip 里），免得一枚附件片撑满整行
+        name_label.setText(
+            name_label.fontMetrics().elidedText(
+                str(attachment["name"]), Qt.TextElideMode.ElideRight, _CHIP_NAME_MAX
+            )
+        )
+        name_label.setToolTip(str(attachment["path"]))
+        layout.addWidget(name_label)
+        close = QToolButton()
+        close.setText("×")
+        close.setFixedSize(16, 16)
+        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        close.setToolTip("移除该文件")
+        close.clicked.connect(lambda: self.removed.emit(self._attachment))
+        layout.addWidget(close)
+
+
+class _ExtractionWorker(QObject):
+    """附件流程第一段（后台线程）：按提示词把上传文件内容提炼成结构化数据。
+
+    只发 content / finished / failed 三个信号（跨线程 queued），不碰任何
+    控件；「清空」会 cancel()，之后剩余的流式回调静默丢弃、不再发信号。
+    该阶段不带工具——先拿到干净的数据，第二段才交给 AgentLoop 操作软件。
+    """
+
+    content = Signal(str)
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        provider: ProviderConfig,
+        api_key: str,
+        prompt: str,
+        attachments: list[dict],
+    ) -> None:
+        super().__init__()
+        self.provider = provider
+        self.api_key = api_key
+        self.prompt = prompt
+        self.attachments = attachments
+        self._cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+
+    def start(self) -> None:
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self) -> None:
+        blocks = [f"我的要求：{self.prompt}"]
+        for index, attachment in enumerate(self.attachments, start=1):
+            blocks.append(
+                f"\n【上传文件 {index}：{attachment['name']}】\n{attachment['text']}"
+            )
+        messages = [
+            ChatMessage(role="system", content=_EXTRACT_SYSTEM_PROMPT),
+            ChatMessage(role="user", content="\n".join(blocks)),
+        ]
+        chunks: list[str] = []
+
+        def on_content(text: str) -> None:
+            if self._cancelled.is_set():
+                return
+            chunks.append(text)
+            self.content.emit(text)
+
+        try:
+            stream_chat(self.provider, self.api_key, messages, on_content=on_content)
+        except AiProviderError as error:
+            if not self._cancelled.is_set():
+                self.failed.emit(str(error))
+        except Exception as error:  # 后台线程兜底
+            if not self._cancelled.is_set():
+                self.failed.emit(f"{type(error).__name__}: {error}")
+        else:
+            if not self._cancelled.is_set():
+                self.finished.emit("".join(chunks))
+
+
 class AiPanel(QWidget):
     """AI 助手面板。"""
 
@@ -299,6 +502,10 @@ class AiPanel(QWidget):
         self._loop: AgentLoop | None = None
         self._thinking_block: _ThinkingBlock | None = None
         self._bubbles: list[_MessageBubble] = []
+        #: 附件提取阶段（第一段）的后台工作器；非 None 即流程进行中
+        self._extract_worker: _ExtractionWorker | None = None
+        #: 📎 上传的文件（已本地提取为文本）：{"path", "name", "text"}
+        self._attachments: list[dict] = []
         self.unit_id: int | None = None  # 当前单位工程（AI 工具的作用范围）
         self.unit_name: str = ""
         self._stream_text = ""  # 当前流式正文累计
@@ -350,15 +557,19 @@ class AiPanel(QWidget):
         self._history_scroll.setWidget(self._history_container)
         layout.addWidget(self._history_scroll, 1)
 
-        # 输入区：圆角输入框 + 右下角 overlay 发送按钮
+        # 输入区：圆角输入框 + 右下角 overlay 发送按钮；附件片挂在输入框
+        # 内部左上角（见 _reposition_attachment_chips）
         self._input = _InputEdit()
         self._input.setObjectName("aiInputEdit")
         self._input.setPlaceholderText("输入问题... (Enter 发送, Shift+Enter 换行)")
         self._input.setMaximumHeight(108)
         self._input.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._input.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # 右侧留给发送按钮；底部整条留给模型选择器 + 发送按钮，正文不会压到它们
-        self._input.setViewportMargins(0, 0, 40, 38)
+        self._input.setAcceptDrops(False)  # 文件拖拽统一交给面板处理
+        self._input.viewport().setAcceptDrops(False)  # 文本框视口默认也吃拖放
+        # 左下角留给 📎 附件按钮、右侧留给发送按钮；底部整条留给模型选择器 +
+        # 发送按钮，正文不会压到它们；顶部给附件片让位（_apply_input_margins）
+        self._apply_input_margins(0)
         self._input.submitted.connect(self._send_message)
         layout.addWidget(self._input)
 
@@ -380,6 +591,29 @@ class AiPanel(QWidget):
         self._source_btn.setParent(self._input)
         self._source_btn.clicked.connect(self._show_source_menu)
         self._source_btn.raise_()
+
+        # 输入框左下角的 📎 附件按钮：选择文件后挂到输入框左上角
+        self._attach_btn = QToolButton()
+        self._attach_btn.setObjectName("aiAttachBtn")
+        self._attach_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._attach_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._attach_btn.setFixedSize(28, 28)
+        self._attach_btn.setStyleSheet("QToolButton { border: none; background: transparent; }")
+        self._attach_btn.setToolTip(
+            "上传文件（Excel / Word / CSV / 文本…）\n"
+            "发送时 AI 先按你的要求提取文件数据，再结合要求操作软件。"
+        )
+        self._attach_btn.setParent(self._input)
+        self._attach_btn.clicked.connect(self._attach_files)
+        self._attach_btn.raise_()
+        self._refresh_attach_icon()
+        # 附件片挂在输入框内部左上角（ZCode 同款）；拖拽上传的毛玻璃层
+        # 覆盖整个面板，文件拖拽统一由面板接收
+        self._attachment_chips: list[_AttachmentChip] = []
+        self._drop_overlay = _DropOverlay(self)
+        self.setAcceptDrops(True)
+        # 三个 overlay 按钮都就位后再装过滤器：Resize 事件触发的重定位
+        # 可以安全访问它们
         self._input.installEventFilter(self)
 
     def _connect(self) -> None:
@@ -393,6 +627,7 @@ class AiPanel(QWidget):
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt 命名
         if obj is self._input and event.type() == QEvent.Type.Resize:
             self._reposition_overlay_buttons()
+            self._reposition_attachment_chips()  # 宽度变了，附件片重新换行
         return super().eventFilter(obj, event)
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
@@ -400,6 +635,52 @@ class AiPanel(QWidget):
         # 面板宽度变化后 provider 名可用宽度也变了，重新省略 + 定位
         if getattr(self, "_source_btn", None) is not None:
             self._refresh_source_button()
+        if (
+            getattr(self, "_drop_overlay", None) is not None
+            and self._drop_overlay.isVisible()
+        ):
+            self._drop_overlay.setGeometry(self.rect())
+
+    # ------------------------------------------------------------------ 拖拽上传
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if self._drag_has_files(event.mimeData()):
+            event.acceptProposedAction()
+            self._show_drop_overlay()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if self._drag_has_files(event.mimeData()):
+            event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        self._hide_drop_overlay()
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        paths = [
+            url.toLocalFile()
+            for url in event.mimeData().urls()
+            if url.isLocalFile()
+        ]
+        event.acceptProposedAction()
+        self._hide_drop_overlay()
+        if paths:
+            self._add_attachment_paths(paths)
+
+    @staticmethod
+    def _drag_has_files(mime) -> bool:
+        return mime.hasUrls() and any(url.isLocalFile() for url in mime.urls())
+
+    def _show_drop_overlay(self) -> None:
+        """拖拽进入面板：抓当前帧做毛玻璃底图，盖住整个面板。"""
+        overlay = self._drop_overlay
+        overlay.setGeometry(self.rect())
+        overlay.set_backdrop(self.grab())  # 必须在显示 overlay 之前抓帧
+        overlay.raise_()
+        overlay.show()
+
+    def _hide_drop_overlay(self) -> None:
+        self._drop_overlay.hide()
 
     def _reposition_overlay_buttons(self) -> None:
         rect = self._input.rect()
@@ -414,6 +695,22 @@ class AiPanel(QWidget):
             self._send_btn.y(),
         )
         self._source_btn.raise_()
+        self._attach_btn.move(
+            margin,
+            rect.bottom() - self._attach_btn.height() - margin,
+        )
+        self._attach_btn.raise_()
+
+    def _apply_input_margins(self, top: int) -> None:
+        """正文区留白：左下 📎、右侧模型/发送按钮、顶部附件片让位。"""
+        self._input.setViewportMargins(34, top, 40, 38)
+
+    def _refresh_attach_icon(self) -> None:
+        """📎 图标随主题着色。"""
+        if getattr(self, "_attach_btn", None) is not None:
+            self._attach_btn.setIcon(
+                load_icon("paperclip", color=_c().text_secondary, size=18)
+            )
 
     @staticmethod
     def _make_send_arrow_icon():
@@ -441,7 +738,9 @@ class AiPanel(QWidget):
 
     def _on_theme_changed(self) -> None:
         self._btn_settings.setIcon(load_icon("settings", color=_c().text_primary, size=16))
+        self._refresh_attach_icon()
         self._source_btn.update()  # 箭头颜色随主题重绘
+        self._refresh_attachments()  # 文件片边框 / 图标颜色随主题重建
         for bubble in self._bubbles:
             bubble.refresh_theme()
 
@@ -533,7 +832,7 @@ class AiPanel(QWidget):
         self._source_btn.setText(text)
         width = min(cap, metrics.horizontalAdvance(text) + 32)
         self._source_btn.setFixedWidth(max(56, width))
-        self._source_btn.setEnabled(self._loop is None)
+        self._source_btn.setEnabled(not self._busy())
         if source and model:
             tooltip = f"模型来源：{source}\n当前模型：{model}"
         elif source:
@@ -623,6 +922,14 @@ class AiPanel(QWidget):
     def _clear(self) -> None:
         if self._loop is not None:
             self._loop.cancel()
+        if self._extract_worker is not None:
+            # 断开信号再取消：迟到的提取完成 / 失败不再改动已清空的面板
+            worker = self._extract_worker
+            worker.content.disconnect(self._on_content)
+            worker.finished.disconnect(self._on_extract_finished)
+            worker.failed.disconnect(self._on_extract_failed)
+            worker.cancel()
+            self._extract_worker = None
         while self._history_layout.count() > 1:  # 保留末尾 stretch
             item = self._history_layout.takeAt(0)
             widget = item.widget()
@@ -635,39 +942,165 @@ class AiPanel(QWidget):
         self._send_btn.setEnabled(self._provider() is not None)
         self._source_btn.setEnabled(self._provider() is not None)
 
+    def _busy(self) -> bool:
+        """一轮流程进行中：代理循环（第二段）或附件提取（第一段）。"""
+        return self._loop is not None or self._extract_worker is not None
+
+    # ------------------------------------------------------------------ 附件
+    def _attach_files(self) -> None:
+        """📎 选择文件：本地提取为文本后挂到输入框；失败的文件弹状态栏提示。"""
+        from PySide6.QtWidgets import QFileDialog
+
+        paths, _filter = QFileDialog.getOpenFileNames(self, "上传文件", "", FILE_DIALOG_FILTER)
+        self._add_attachment_paths(paths)
+
+    def _add_attachment_paths(self, paths: list[str]) -> None:
+        """把文件提取为文本挂到附件片（📎 对话框与拖拽上传共用）。"""
+        added = False
+        for path in paths:
+            if not path or any(item["path"] == path for item in self._attachments):
+                continue
+            try:
+                text = extract_text(path)
+            except FileExtractError as error:
+                bus().status_message.emit(str(error), 6000)
+                continue
+            self._attachments.append(
+                {"path": path, "name": Path(path).name, "text": text}
+            )
+            added = True
+        if added:
+            self._refresh_attachments()
+
+    def _refresh_attachments(self) -> None:
+        """按 self._attachments 重建输入框左上角的附件片（增删文件 / 换主题共用）。"""
+        for chip in self._attachment_chips:
+            chip.deleteLater()
+        self._attachment_chips = []
+        for attachment in self._attachments:
+            chip = _AttachmentChip(attachment, self._input)
+            chip.removed.connect(self._remove_attachment)
+            chip.show()
+            self._attachment_chips.append(chip)
+        self._reposition_attachment_chips()
+
+    def _reposition_attachment_chips(self) -> None:
+        """附件片在输入框内左上角流式换行，正文区上边距随之让位。"""
+        chips = self._attachment_chips
+        if not chips:
+            self._apply_input_margins(0)
+            return
+        right_edge = self._input.width() - _CHIP_MARGIN
+        x = y = _CHIP_MARGIN
+        row_height = 0
+        for chip in chips:
+            size = chip.sizeHint()
+            chip.resize(size)
+            if x > _CHIP_MARGIN and x + size.width() > right_edge + 1:
+                x = _CHIP_MARGIN
+                y += row_height + _CHIP_GAP
+                row_height = 0
+            chip.move(x, y)
+            chip.raise_()
+            x += size.width() + _CHIP_GAP
+            row_height = max(row_height, size.height())
+        self._apply_input_margins(y + row_height + _CHIP_GAP)
+
+    def _remove_attachment(self, attachment: dict) -> None:
+        if attachment in self._attachments:
+            self._attachments.remove(attachment)
+        self._refresh_attachments()
+
     # ------------------------------------------------------------------ 发送
     def _send_message(self) -> None:
         provider = self._provider()
-        if provider is None or self._loop is not None:
+        if provider is None or self._busy():
             return
         text = self._input.toPlainText().strip()
         if not text:
             return
         api_key = ai_keychain.get_api_key(provider.name)
         self._input.clear()
+        attachments = self._attachments
+        self._attachments = []
+        self._refresh_attachments()
+        # 用户气泡：带附件时附上文件清单（提取的数据不进气泡，AI 回复里体现）
+        display_text = text
+        if attachments:
+            display_text += "\n\n📎 " + "、".join(a["name"] for a in attachments)
         self._history.append(ChatMessage(role="user", content=text))
+        self._append_message("user", display_text)
+
+        # 预创建思考块并立即启动"思考中"动画（Quotor 同款，消除启动空白期）；
+        # 附件流程的提取阶段与随后的工具调用阶段共用同一块
+        self._thinking_block = _ThinkingBlock("思考过程")
+        self._insert_widget(self._thinking_block)
+        self._thinking_block.start_thinking()
+        self._send_btn.setEnabled(False)
+        self._source_btn.setEnabled(False)
+        self._stream_text = ""
+
+        if attachments:
+            # 两段式：第一段调模型按提示词从文件提炼数据（无工具），
+            # 第二段把「提取数据 + 用户要求」交给带工具的代理操作软件
+            self._start_extraction_phase(text, attachments, provider, api_key)
+        else:
+            self._start_agent_phase(provider, api_key)
+
+    def _start_extraction_phase(
+        self, prompt: str, attachments: list[dict], provider: ProviderConfig, api_key: str
+    ) -> None:
+        """第一段：后台线程调模型提炼文件数据（流式正文进思考块）。"""
+        self._extract_worker = _ExtractionWorker(provider, api_key, prompt, attachments)
+        self._extract_worker.content.connect(self._on_content)
+        self._extract_worker.finished.connect(self._on_extract_finished)
+        self._extract_worker.failed.connect(self._on_extract_failed)
+        self._extract_worker.start()
+
+    def _on_extract_finished(self, extracted: str) -> None:
+        worker = self._extract_worker
+        self._extract_worker = None
+        if worker is None:
+            return
+        extracted = (extracted or "").strip()
+        names = "、".join(a["name"] for a in worker.attachments)
+        if extracted:
+            composed = (
+                f"{worker.prompt}\n\n---\n"
+                f"以下是 AI 根据你的要求从上传文件（{names}）中提取的数据，"
+                f"请结合这些数据和上面的要求操作本软件：\n\n{extracted}"
+            )
+        else:
+            composed = (
+                f"{worker.prompt}\n\n（未能从上传文件（{names}）中提取到数据，"
+                "请直接按上面的要求处理。）"
+            )
+        # 本条用户消息换成「提示词 + 提取数据」：后续追问仍能引用这份数据
+        if self._history and self._history[-1].role == "user":
+            self._history[-1].content = composed
+        if self._thinking_block is not None:
+            self._thinking_block.rotate_stream_label()
+        self._stream_text = ""
+        self._start_agent_phase(worker.provider, worker.api_key)
+
+    def _on_extract_failed(self, message: str) -> None:
+        self._extract_worker = None
+        self._on_failed(message)
+
+    def _start_agent_phase(self, provider: ProviderConfig, api_key: str) -> None:
+        """第二段：带工具的代理循环（与普通对话同一条路径，写操作弹确认卡）。"""
         agent_context = current_agent_context().as_dict()
         rules = default_registry().to_rules_for_context(agent_context)
         system = ChatMessage(
             role="system",
             content=_SYSTEM_PROMPT + ("\n\n" + rules if rules else ""),
         )
-        self._append_message("user", text)
-
         self._loop = AgentLoop(agent_context, session_id=self._session_id)
         self._loop.content.connect(self._on_content)
         self._loop.reasoning.connect(self._on_reasoning)
         self._loop.status.connect(self._on_status)
         self._loop.finished.connect(self._on_finished)
         self._loop.failed.connect(self._on_failed)
-        self._send_btn.setEnabled(False)
-        self._source_btn.setEnabled(False)
-
-        # 预创建思考块并立即启动"思考中"动画（Quotor 同款，消除启动空白期）
-        self._thinking_block = _ThinkingBlock("思考过程")
-        self._insert_widget(self._thinking_block)
-        self._thinking_block.start_thinking()
-
         self._loop.run([system, *self._history], provider, api_key, None)
 
     # ------------------------------------------------------------------ 流式回调
