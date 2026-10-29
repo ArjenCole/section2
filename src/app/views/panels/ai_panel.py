@@ -96,6 +96,9 @@ _CHIP_MARGIN = 8
 _CHIP_GAP = 4
 _CHIP_NAME_MAX = 150
 
+#: 输入框基础高度；实际高度 = 基础高度 + 3 行行高（见 _apply_input_height）
+_INPUT_BASE_HEIGHT = 108
+
 #: 拖拽悬停时毛玻璃层中间的提示文字
 _DROP_HINT = "松开以添加附件"
 
@@ -562,7 +565,7 @@ class AiPanel(QWidget):
         self._input = _InputEdit()
         self._input.setObjectName("aiInputEdit")
         self._input.setPlaceholderText("输入问题... (Enter 发送, Shift+Enter 换行)")
-        self._input.setMaximumHeight(108)
+        self._apply_input_height()
         self._input.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._input.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._input.setAcceptDrops(False)  # 文件拖拽统一交给面板处理
@@ -597,7 +600,7 @@ class AiPanel(QWidget):
         self._attach_btn.setObjectName("aiAttachBtn")
         self._attach_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._attach_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._attach_btn.setFixedSize(28, 28)
+        self._attach_btn.setFixedSize(30, 30)  # 与右侧模型/发送按钮同高，占满按钮行
         self._attach_btn.setStyleSheet("QToolButton { border: none; background: transparent; }")
         self._attach_btn.setToolTip(
             "上传文件（Excel / Word / CSV / 文本…）\n"
@@ -702,14 +705,20 @@ class AiPanel(QWidget):
         self._attach_btn.raise_()
 
     def _apply_input_margins(self, top: int) -> None:
-        """正文区留白：左下 📎、右侧模型/发送按钮、顶部附件片让位。"""
-        self._input.setViewportMargins(34, top, 40, 38)
+        """正文区留白：正文从输入框最左侧开始、右侧用到最右（左右都为 0），
+        底部整条留给 📎 / 模型选择 / 发送按钮，顶部给附件片让位。"""
+        self._input.setViewportMargins(0, top, 0, 38)
+
+    def _apply_input_height(self) -> None:
+        """输入框高度 = 基础高度 + 3 行行高（按主题字体换算，字体变化时重算）。"""
+        lines = self._input.fontMetrics().lineSpacing()
+        self._input.setMaximumHeight(_INPUT_BASE_HEIGHT + 3 * lines)
 
     def _refresh_attach_icon(self) -> None:
         """📎 图标随主题着色。"""
         if getattr(self, "_attach_btn", None) is not None:
             self._attach_btn.setIcon(
-                load_icon("paperclip", color=_c().text_secondary, size=18)
+                load_icon("paperclip", color=_c().text_secondary, size=20)
             )
 
     @staticmethod
@@ -739,6 +748,7 @@ class AiPanel(QWidget):
     def _on_theme_changed(self) -> None:
         self._btn_settings.setIcon(load_icon("settings", color=_c().text_primary, size=16))
         self._refresh_attach_icon()
+        self._apply_input_height()  # 主题字体可能变，行高按新字体重算
         self._source_btn.update()  # 箭头颜色随主题重绘
         self._refresh_attachments()  # 文件片边框 / 图标颜色随主题重建
         for bubble in self._bubbles:
@@ -792,6 +802,7 @@ class AiPanel(QWidget):
     def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         super().showEvent(event)
         self._refresh_source_button()
+        self._apply_input_height()  # 显示时主题字体已生效，按实际行高重算
 
     @staticmethod
     def _source_label(provider: dict) -> str:

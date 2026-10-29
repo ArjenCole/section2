@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QMimeData, Qt, QUrl
 from PySide6.QtGui import QDragLeaveEvent
 
-from app.views.panels.ai_panel import AiPanel
+from app.views.panels.ai_panel import _INPUT_BASE_HEIGHT, AiPanel
 
 
 class _FakeDragEvent:
@@ -116,6 +116,20 @@ def test_panel_is_drop_target_and_text_views_do_not_swallow(qapp) -> None:
     view = panel._bubbles[0]._content_view
     assert not view.acceptDrops()
     assert not view.viewport().acceptDrops()
+
+
+def test_input_text_starts_at_left_and_attach_button_fills_row(qapp) -> None:
+    panel = _make_panel()
+    panel._reposition_overlay_buttons()
+    margins = panel._input.viewportMargins()
+    # 正文从输入框最左侧开始，右侧也用到最右（按钮都在底部按钮条内）
+    assert margins.left() == 0 and margins.right() == 0
+    # 📎 与右侧模型选择/发送按钮同一行、同高
+    assert panel._attach_btn.size() == panel._send_btn.size()
+    assert panel._attach_btn.y() == panel._send_btn.y()
+    # 输入框比基础高度高三行文字
+    lines = panel._input.fontMetrics().lineSpacing()
+    assert panel._input.maximumHeight() == _INPUT_BASE_HEIGHT + 3 * lines
 
 
 def test_remove_chip_restores_input_margins(qapp, tmp_path) -> None:
