@@ -5,10 +5,10 @@ from PySide6.QtCore import Qt
 
 from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.views.widgets.mac_window import is_mac
-from app.views.widgets.rounded_window import _RingWidget, _ShadowWindow, _SHADOW_MARGIN
+from app.views.widgets.rounded_window import _RingWindow, _ShadowWindow, _SHADOW_MARGIN
 
 # 自绘圆角 / 阴影 / 描边圈助手只在 Windows/Linux 安装（mac 保留原生标题栏，
-# FramelessDialog 不装 RoundedWindowHelper，没有 _rounded / _RingWidget）
+# FramelessDialog 不装 RoundedWindowHelper，没有 _rounded / _RingWindow）
 _requires_rounded_helper = pytest.mark.skipif(
     is_mac(), reason="mac 保留原生标题栏，不安装自绘圆角助手"
 )
@@ -27,15 +27,47 @@ def message_box(qapp):
 
 @_requires_rounded_helper
 def test_dialog_gets_translucent_background_and_ring(message_box):
-    """安装助手后：半透明窗口 + 描边圈 overlay 存在且置顶。"""
+    """安装助手后：半透明窗口 + 独立顶层描边窗口。"""
     message_box.show()
     message_box.activateWindow()
     assert bool(message_box.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground))
-    ring = message_box.findChild(_RingWidget)
-    assert ring is not None
-    assert ring.parent() is message_box
+    ring = message_box._rounded._ring
+    assert isinstance(ring, _RingWindow)
+    assert ring.isWindow()
+    assert ring.parent() is None
     # 窗体级样式表按 ID 选择器关掉了顶层 QSS 背景，避免盖住透明圆角
     assert "RoundedWindowRoot" in message_box.styleSheet()
+
+
+@_requires_rounded_helper
+def test_ring_is_top_level_click_through_not_child(message_box):
+    """回归防护：描边圈必须是独立顶层穿透窗口，不能是宿主的子控件。
+
+    2026-10-29 现场：Qt 在从最大化还原时把覆盖全窗的子控件提升成原生子
+    窗口，Windows 把鼠标消息直接发给它；``WA_TransparentForMouseEvents``
+    跨原生子窗口不生效，整个界面“看得见、点不动”。独立顶层窗口 +
+    ``Qt::WindowTransparentForInput`` 从系统层面穿透，绕开这条路径。
+    """
+    ring = message_box._rounded._ring
+    assert ring.isWindow()
+    assert ring.parent() is None
+    assert bool(ring.windowFlags() & Qt.WindowType.WindowTransparentForInput)
+    assert ring.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    assert ring.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+    # 不能再出现在宿主的子对象树里（旧实现是 findChild(_RingWidget)）
+    assert message_box.findChildren(_RingWindow) == []
+
+
+@_requires_rounded_helper
+def test_ring_follows_host_geometry(qapp, message_box):
+    """描边窗口几何 = 宿主 frameGeometry，随宿主显示。"""
+    message_box.resize(320, 240)
+    message_box.show()
+    qapp.processEvents()
+    ring = message_box._rounded._ring
+    ring.sync()
+    assert ring.geometry() == message_box.frameGeometry()
+    assert ring.isVisible()
 
 
 def test_dialog_not_squared_when_maximized(qapp, message_box):
@@ -86,12 +118,14 @@ def test_shadow_hidden_when_maximized(qapp):
 
 
 @_requires_rounded_helper
-def test_ring_follows_theme(message_box):
+def test_ring_follows_theme(qapp, message_box):
     """主题切换后描边圈重绘（不抛异常即为连通）。"""
     from app.resources.qss.theme import ThemeManager
 
     message_box.show()
-    ring = message_box.findChild(_RingWidget)
+    qapp.processEvents()
+    ring = message_box._rounded._ring
+    ring.sync()
     ThemeManager.instance().theme_changed.emit("light")
     ThemeManager.instance().theme_changed.emit("dark")
     assert ring.isVisible()

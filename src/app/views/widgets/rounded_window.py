@@ -4,10 +4,14 @@
 子控件用 QSS ``border-radius`` 自绘（见 theme.py：标题栏上两角、对话框 body
 与内嵌 QWizard 的下两角、主窗体状态栏下两角）。QSS 背景走 QPainter 抗锯齿
 填充，边缘平滑；四条直边与窗体矩形重合，天然无锯齿。曾经用过的 ``setMask``
-方案是 1-bit 系统级裁剪，边缘锯齿明显，已移除。置顶的 overlay 子控件沿同一
-条轮廓用抗锯齿画 1px 描边圈，充当窗体描边（对应 Win11 DWM 在系统圆角下附带
-的 1px 轮廓）。最大化时通过窗体级样式表把贴角子控件的圆角压平（与系统行为
-一致），还原时自动恢复。
+方案是 1-bit 系统级裁剪，边缘锯齿明显，已移除。置顶的顶层描边窗口
+（:class:`_RingWindow`，``Qt::WindowTransparentForInput``）沿同一条轮廓用
+抗锯齿画 1px 描边圈，充当窗体描边（对应 Win11 DWM 在系统圆角下附带的 1px
+轮廓）。它必须是独立顶层窗口，不能做成宿主的全窗子控件：子控件一旦被 Qt
+提升成原生子窗口，Windows 会把鼠标消息直接发给它，而
+``WA_TransparentForMouseEvents`` 跨原生子窗口不生效，整个界面会“看得见、
+点不动”（2026-10-29 现场）。最大化时通过窗体级样式表把贴角子控件的圆角
+压平（与系统行为一致），还原时自动恢复。
 
 外阴影：一个透明的 Tool 影子窗口（:class:`_ShadowWindow`）贴在宿主窗体正
 后方，随宿主显示/移动/缩放同步，用“核心填充 + 向外指数渐隐的环带”模拟投影。
@@ -35,7 +39,7 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
 )
-from PySide6.QtWidgets import QComboBox, QMainWindow, QMenu, QWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QMainWindow, QMenu, QWidget
 
 from app.core import window_diag
 
@@ -94,14 +98,113 @@ def _rounded_path(rect: QRectF, radius: float) -> QPainterPath:
     return path
 
 
-class _RingWidget(QWidget):
-    """置顶 overlay：只画 1px 抗锯齿圆角边框圈，鼠标穿透。"""
+#: Windows 扩展样式：鼠标穿透 / 不激活
+_WS_EX_TRANSPARENT = 0x00000020
+_WS_EX_NOACTIVATE = 0x08000000
 
-    def __init__(self, parent: QWidget) -> None:
-        super().__init__(parent)
+
+def _make_click_through(widget: QWidget) -> None:
+    """Windows：给独立顶层窗口补上系统级鼠标穿透。
+
+    ``WA_TransparentForMouseEvents`` 只影响 Qt 自己的命中测试；窗口一旦是
+    独立原生窗口，系统会先把鼠标消息发给它，Qt 不会再转给下面的窗口。
+    这里直接加 ``WS_EX_TRANSPARENT``（+ ``WS_EX_NOACTIVATE``），让输入在
+    系统层面穿透。非 Windows 平台是空操作。
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        hwnd = int(widget.winId())
+        user32 = ctypes.windll.user32
+        # 显式 argtypes：不写时 HWND 会按 c_int 传，64 位下可能截断句柄
+        user32.GetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        user32.GetWindowLongW.restype = ctypes.c_long
+        user32.SetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_long]
+        user32.SetWindowLongW.restype = ctypes.c_long
+        ex_style = user32.GetWindowLongW(hwnd, -20)
+        user32.SetWindowLongW(
+            hwnd, -20, ex_style | _WS_EX_TRANSPARENT | _WS_EX_NOACTIVATE
+        )
+    except Exception:  # noqa: BLE001 - 没有原生句柄时静默跳过
+        pass
+
+
+class _RingWindow(QWidget):
+    """顶层描边窗口：只画 1px 抗锯齿圆角边框，鼠标完全穿透。
+
+    以前这里是宿主窗体的全窗子控件。Qt 在“从最大化还原”时会把这种覆盖
+    整个客户区的子控件提升成原生子窗口，Windows 随后把鼠标消息直接发给
+    它；``WA_TransparentForMouseEvents`` 跨原生子窗口不生效，于是整个界面
+    看得见却点不动（2026-10-29 现场）。改成独立顶层窗口 + 系统级穿透后，
+    输入不再经过 Qt 的子窗口命中测试，绕开了这条提升路径。
+    """
+
+    def __init__(self, host: QWidget) -> None:
+        super().__init__(
+            None,
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowDoesNotAcceptFocus
+            | Qt.WindowType.WindowTransparentForInput
+            | Qt.WindowType.NoDropShadowWindowHint,
+        )
+        self._host = host
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        # 全局 QSS 的 QWidget 背景规则会把它填成实心盖住窗口，这里关掉
-        self.setStyleSheet("background: transparent;")
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().showEvent(event)
+        _make_click_through(self)
+
+    def sync(self, *, activate: bool = False) -> None:
+        """跟随宿主：可见性 / 几何 / 层级 / 穿透样式。"""
+        host = self._host
+        # 最大化压平只针对主窗体：QDialog 作为最大化 QMainWindow 的 owned
+        # 窗口时 isMaximized() 会偶发误报 True（见 _ShadowWindow.sync）
+        suppress_maximized = host.isMaximized() and isinstance(host, QMainWindow)
+        # 模态弹窗打开时主窗体被禁用；owned-above-owner 规则可能把主窗体的
+        # 描边抬到弹窗之上，这里直接隐藏（弹窗自己的描边照常显示）
+        modal = QApplication.activeModalWidget()
+        modal_above = modal is not None and modal is not host
+        if (
+            not host.isVisible()
+            or host.isMinimized()
+            or suppress_maximized
+            or modal_above
+        ):
+            if self.isVisible():
+                self.hide()
+            return
+
+        target = host.frameGeometry()
+        if self.geometry() != target:
+            self.setGeometry(target)
+        if not self.isVisible():
+            self._bind_owner()
+            self.show()
+            activate = True
+        if activate and host.isActiveWindow():
+            self.raise_()
+        self.update()
+
+    def _bind_owner(self) -> None:
+        """把描边窗口挂到宿主名下：owned-above-owner 保证它压在宿主上方，
+        同时随宿主最小化/隐藏，不会浮到其他应用前面。"""
+        host_handle = self._host.windowHandle()
+        if host_handle is None:
+            self._host.winId()
+            host_handle = self._host.windowHandle()
+        if host_handle is None:
+            return
+        handle = self.windowHandle()
+        if handle is None:
+            self.winId()  # 先建原生窗口才能设置 owner
+            handle = self.windowHandle()
+        if handle is not None and handle.transientParent() is not host_handle:
+            handle.setTransientParent(host_handle)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         from app.resources.qss.theme import ThemeManager
@@ -137,6 +240,11 @@ class _ShadowWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._cache_key: tuple[int, int, float] | None = None
         self._cache: QPixmap | None = None
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().showEvent(event)
+        # 原生窗口重建（如跨屏 DPI 变化）后重新补系统级穿透
+        _make_click_through(self)
 
     # ------------------------------------------------------------- 几何同步
     def sync(self) -> None:
@@ -177,6 +285,7 @@ class _ShadowWindow(QWidget):
                         )
                     handle.setTransientParent(host_handle.transientParent())
             self.show()
+            _make_click_through(self)
 
     def restack(self) -> None:
         """把自己插到宿主 HWND 正后方（仅 Windows）。"""
@@ -333,9 +442,10 @@ class RoundedWindowHelper(QObject):
     def __init__(self, window: QWidget) -> None:
         super().__init__(window)
         self._window = window
-        self._ring = _RingWidget(window)
+        self._ring = _RingWindow(window)
         self._shadow = _ShadowWindow(window)
-        # 影子窗口是独立顶层窗口（不能设 widget 父对象），挂在助手销毁信号上随宿主清理
+        # 描边/影子都是独立顶层窗口（不能设 widget 父对象），挂在助手销毁信号上随宿主清理
+        self.destroyed.connect(self._ring.deleteLater)
         self.destroyed.connect(self._shadow.deleteLater)
         self._squared = False
 
@@ -382,24 +492,27 @@ class RoundedWindowHelper(QObject):
         if etype in (QEvent.Type.Show, QEvent.Type.Resize, QEvent.Type.Move):
             self._apply()
             self._shadow.sync()
+            self._ring.sync(activate=etype == QEvent.Type.Show)
             if etype == QEvent.Type.Show:
                 self._shadow.restack()
         elif etype == QEvent.Type.WindowStateChange:
             self._apply()
             self._shadow.sync()
             self._shadow.restack()
+            self._ring.sync(activate=True)
         elif etype in (QEvent.Type.Hide, QEvent.Type.Close):
             self._shadow.hide()
+            self._ring.hide()
         elif etype in (QEvent.Type.ActivationChange, QEvent.Type.ZOrderChange):
             # 宿主被抬起后，把影子重新插回宿主正下方；顺带 sync 自愈——
             # 若影子曾被误藏（见 _ShadowWindow.sync），激活变化时拉回来
             self._shadow.sync()
             self._shadow.restack()
+            self._ring.sync(activate=True)
         return False
 
     def _apply(self) -> None:
         window = self._window
-        ring = self._ring
         # 最大化退化只针对主窗体（QDialog 上 isMaximized() 会误报，见 _ShadowWindow.sync）
         squared = window.isMaximized() and isinstance(window, QMainWindow)
         if squared != self._squared:
@@ -414,10 +527,4 @@ class RoundedWindowHelper(QObject):
             window.setStyleSheet(
                 self._base_sheet + _SQUARE_CORNERS_SHEET if squared else self._base_sheet
             )
-        if squared:
-            ring.hide()
-            return
-        ring.setGeometry(window.rect())
-        ring.show()
-        ring.raise_()
-        ring.update()
+        # 描边窗口的可见性/几何统一交给 _RingWindow.sync()（最大化时它自己隐藏）

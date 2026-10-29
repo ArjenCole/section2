@@ -17,9 +17,9 @@
 |---|---|---|
 | 圆角轮廓 | 贴角子控件 QSS `border-radius` | 背景沿圆角路径抗锯齿填充，轮廓由子控件自己画 |
 | 圆角背景真正裁剪 | 规则里**必须带 border**（1px 透明即可） | Qt 的 QSS 背景裁剪走 border 盒子路径，无 border 一律方角填充 |
-| 1px 窗体描边 | 置顶、鼠标穿透的 overlay 子控件 | 沿同一圆角路径画抗锯齿描边，兼作窗体轮廓线 |
+| 1px 窗体描边 | 独立顶层穿透窗口（`Qt::WindowTransparentForInput`） | 沿同一圆角路径画抗锯齿描边，兼作窗体轮廓线 |
 | 外阴影 | 影子窗口（贴在宿主正后方的透明 Tool 窗口） | 核心填充 + 环带指数渐隐，整体下移并加强下缘 |
-| 影子不挡鼠标 | `WA_TransparentForMouseEvents` + 不接受焦点 | 纯视觉层 |
+| 描边/影子不挡鼠标 | `WA_TransparentForMouseEvents` + `WS_EX_TRANSPARENT` + 不接受焦点 | 纯视觉层，系统级输入穿透 |
 | 最大化退化 | 窗体级样式表压平子控件圆角 + 隐藏影子 | 与系统行为一致，还原自动恢复 |
 | 圆角弹出层（菜单/下拉列表） | 首次 polish 时开透明 + 无边框 + 关系统阴影 | 让 QSS 圆角成为弹出层的真实窗口轮廓 |
 
@@ -134,17 +134,27 @@ QStatusBar {
 状态栏 `QStatusBar` 顶在下方（管下两角）、central widget 的角都在直边中段
 （无需处理）。弹窗 = 自绘标题栏（上两角）+ body（下两角）。
 
-### 3.3 描边圈 overlay
+### 3.3 描边窗口（独立顶层、输入穿透）
 
 ```python
-class _RingWidget(QWidget):
-    """置顶 overlay：只画 1px 抗锯齿圆角边框圈，鼠标穿透。"""
+class _RingWindow(QWidget):
+    """独立顶层描边窗口：只画 1px 圆角边框，鼠标完全穿透。"""
 
-    def __init__(self, parent: QWidget) -> None:
-        super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        # 全局 QSS 的 QWidget 背景规则会把它填成实心盖住窗口，这里关掉
-        self.setStyleSheet("background: transparent;")
+    def __init__(self, host: QWidget) -> None:
+        super().__init__(None, Qt.Tool | Qt.FramelessWindowHint
+                         | Qt.WindowDoesNotAcceptFocus
+                         | Qt.WindowTransparentForInput
+                         | Qt.NoDropShadowWindowHint)
+        self._host = host
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+    def sync(self, *, activate: bool = False) -> None:
+        # 几何 = host.frameGeometry()；宿主隐藏/最小化/最大化（及模态弹窗
+        # 打开）时隐藏；首次显示时把 owner 设为宿主（owned-above-owner），
+        # 宿主激活时 raise_()
+        ...
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
@@ -155,7 +165,14 @@ class _RingWidget(QWidget):
 ```
 
 作用有二：充当 1px 窗体描边（对应 Win11 DWM 系统圆角自带的轮廓线）；盖住
-QSS 圆角边缘与阴影衔接处的细缝。它在宿主 Show/Resize 时 `raise_()` 保持置顶。
+QSS 圆角边缘与阴影衔接处的细缝。Windows 上 `_make_click_through()` 还会显式
+补 `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`，保证系统层面也不吃鼠标。
+
+**必须是独立顶层窗口，不能做成宿主的全窗子控件。** 2026-10-29 现场：Qt 在
+“从最大化还原”时把覆盖整个客户区的子控件提升成原生子窗口，Windows 会把鼠标
+消息直接发给它；`WA_TransparentForMouseEvents` 只在同一个原生窗口内部生效，
+跨原生子窗口不会转发给下面的控件，于是主窗体看起来正常、却任何位置都点不动。
+顶层 + `WindowTransparentForInput` 绕开了这条提升路径。
 
 ### 3.4 最大化退化
 
@@ -484,7 +501,7 @@ AI 设置等），无需逐处接入。
 
 | 内容 | 位置 |
 |---|---|
-| 助手/描边圈/影子/弹出层修整 | `src/app/views/widgets/rounded_window.py`（影子继承宿主 transientParent 在 `_ShadowWindow.sync`，压平片段 `_SQUARE_CORNERS_SHEET`，见 §3.5/§4.5） |
+| 助手/描边窗口/影子/弹出层修整 | `src/app/views/widgets/rounded_window.py`（`_RingWindow` 为顶层穿透窗口，`_make_click_through` 补 `WS_EX_TRANSPARENT`；影子继承宿主 transientParent 在 `_ShadowWindow.sync`，压平片段 `_SQUARE_CORNERS_SHEET`，见 §3.5/§4.5） |
 | 接入点（弹窗基类） | `src/app/views/widgets/frameless_dialog.py`（`FramelessDialog.__init__` 非 mac 分支） |
 | 接入点（主窗体） | `src/app/views/main_window.py`（`MainWindow.__init__` 非 mac 分支） |
 | 贴角子控件 QSS | `src/app/resources/qss/theme.py`（搜 `FramelessTitleBar` / `FramelessDialogBody` / `QWizard` / `QStatusBar` / `WindowBtn`） |
