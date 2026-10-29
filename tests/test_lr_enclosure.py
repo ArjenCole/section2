@@ -489,6 +489,54 @@ def test_group_mid_slope_pile_run_encroaches(project) -> None:
     assert dig1 + dig2 == pytest.approx(expected_total.v * 120, rel=1e-6)
 
 
+def test_group_layered_trapezoid_multilevel_slope() -> None:
+    """多级放坡按标高分层：换级处坡度切换、平台跳变不贡献面积，每层一个梯形。"""
+    from types import SimpleNamespace
+
+    from app.core.calc.tracer import dim
+    from app.core.calc.trench_group import (
+        _internal_side_profiles,
+        _rect_segments,
+        _unique_dims,
+        _width_for_interval,
+    )
+
+    def level(slope: float, step_width: float):
+        param = SimpleNamespace(key="A", value=f"放坡系数 1:X|{slope}")
+        component = SimpleNamespace(params=[param])
+        return SimpleNamespace(h=-1.0, step_width=step_width, components=[component])
+
+    # 深级 1:0.3 / 平台 1.0；浅级 1:0.5 / 平台 0.8；ΔH = 1.0
+    work = SimpleNamespace(levels=[level(0.5, 0.8), level(0.3, 1.0)])
+    depth, shallow = dim(4.0), dim(3.0)
+    profile = _internal_side_profiles(work, depth, shallow)[0]
+
+    # 0→0.5：0.3；换级平台 0.8；0.5→1.0：0.5；1.0→4.0：竖直 1.2
+    assert [round(seg.t1.v, 6) for seg in profile] == [0.0, 0.5, 1.0]
+    assert [round(seg.t2.v, 6) for seg in profile] == [0.5, 1.0, 4.0]
+    assert [round(seg.slope.v, 6) for seg in profile] == [0.3, 0.5, 0.0]
+    assert profile[1].w1.v == pytest.approx(0.5 * 0.3 + 0.8, rel=1e-9)
+    assert profile[2].w1.v == pytest.approx(0.5 * 0.3 + 0.8 + 0.5 * 0.5, rel=1e-9)
+
+    # 本体 1.0 + 内侧坡；在回填分层与围护折点上切分，逐层梯形求和
+    profiles = [_rect_segments(dim(1.0), depth)] + _internal_side_profiles(
+        work, depth, shallow
+    )
+    boundaries = [dim(value) for value in (0.0, 0.5, 1.0, 2.0, 3.0, 4.0)]
+    for item in profiles:
+        for segment in item:
+            boundaries += [segment.t1, segment.t2]
+    edges = _unique_dims(boundaries)
+    areas = []
+    for lo, hi in zip(edges, edges[1:]):
+        low, high = _width_for_interval(profiles, lo, hi)
+        areas.append(((low + high) / 2 * (hi - lo)).v)
+
+    # 0→0.5：(1+1.15)/2*0.5；0.5→1：(1.95+2.2)/2*0.5；其余三层恒宽 2.2
+    assert areas == pytest.approx([0.5375, 1.0375, 2.2, 2.2, 2.2], rel=1e-9)
+    assert sum(areas) == pytest.approx(8.175, rel=1e-9)
+
+
 # --------------------------------------------------------------------------- #
 # 合槽编组：操作与校验
 # --------------------------------------------------------------------------- #

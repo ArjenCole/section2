@@ -10,26 +10,19 @@
 
 * **父节点不持有围护 / 面宽原则**：父节点零工程量、零几何，只作合计视图；
   全部原则取子构件自己的。
-* **每个构件一套"归属区"**：本体区（宽 b_i = 基础外皮宽）、工作面区
-  （宽按**自己的**面宽原则 + 自身管径查表）、内侧放坡区（仅深侧构件）、
-  边缘边坡区（仅首 / 末构件）。首构件左边缘取``pe_left_name``、末构件
-  右边缘取``pe_right_name``，中间构件的左右侧只在与邻居的相邻区里生效。
-* **相邻区**：
-  - 埋深相同 → 两侧围护均为 "-"（等同 1:0、高 0 的围护），几何 =
-    左构件右侧工作面 + 右构件左侧工作面；
-  - 埋深不同 → 浅侧围护 "-"（自身工作面宽 + 虚拟垂直空围护），深侧围护
-    由用户选择（默认库中第一条）并向浅侧槽底放坡；坡与浅槽底的交点即
-    浅侧虚拟垂直围护的水平位置。相邻区宽 = 浅侧工作面宽 + 深侧放坡水平
-    投影（分级 / 平台按做法逐级累加）。
-* **挖填拆分**：以浅侧虚拟垂直围护为分界线——浅侧构件得工作面矩形，
-  深侧构件得内侧放坡楔形 + 浅槽底以上的垂直条带（宽度 = 放坡水平投影）。
-* **宽度函数分段线性**：本体 / 工作面恒宽；内侧放坡区为折线（含平台
-  跳变）；边缘边坡为折线。构件的分层界面与全部折点构成事件集，事件
-  之间的带上宽度线性 → 梯形公式 ``(w1+w2)/2*Δ`` 精确。
-* **回填正量 = 该构件归属区面积按它自己的分层界面归类**（材质 / 换填取
-  自身围护原则 PE / 自己的 PF）；比其槽底更深的归属区部分追加为覆土层；
-  挖方 = 同带面积之和进开挖定额键；逐管扣减（弓形 / 包封 / 箱涵）由
-  foundation 现状函数以同 key 负项合并。
+* **逐构件宽度剖面**：每个构件是一条自槽底向上的分段线性宽度函数——
+  本体恒宽；外边缘 = 工作面矩形 + 分级放坡剖面；相邻侧按**虚拟竖直墙**
+  拆分：更深一侧为"深槽底→浅槽底"的内侧放坡 + 浅槽底以上等宽竖直条带，
+  更浅 / 等深一侧为工作面矩形（首构件左边缘取 ``pe_left_name``、末构件
+  右边缘取 ``pe_right_name``）。
+* **按标高分层、每层梯形**：把该构件的回填分层界面（换填顶、垫层顶、
+  坞膀下半顶、坞膀顶、管顶 50cm 顶、覆土顶）、各侧放坡剖面的全部分级 /
+  平台折点（含相邻构件的槽底标高）合并成标高事件集；相邻事件之间宽度
+  线性，单层断面面积用梯形 ``(w_下+w_上)/2*Δh`` 精确计算。放坡系数变化
+  与平台跳变都正好落在事件边界上，因此每一层都是一个梯形。
+* **回填正量 = 各层梯形面积按该构件自己的分层界面归类**（材质 / 换填取
+  自身围护原则 PE / 自己的 PF）；挖方 = 同层面积之和进开挖定额键；逐管
+  扣减（弓形 / 包封 / 箱涵）由 foundation 现状函数以同 key 负项合并。
 * **围护量每面 ×1**（``sides=1``）：左边坡挂首构件（其左原则）、右边坡
   挂末构件（其右原则）、内侧坡挂深侧构件（其朝向该面的原则）；等深相邻
   面不出围护量。支撑行按公式类别（``支撑``）识别，按归属构件朝向该面的
@@ -38,6 +31,10 @@
   按归属带宽代入 width。
 * **父节点零工程量**：全部输出挂在子构件名下，每构件量 × L_组（编组时
   校验组员数量一致）。
+
+后续扩展：相邻侧的分界可由用户选择"按优先级取高优先级构件的围护原则"，
+低优先级一侧用负坡向内让出侵入部分；宽度剖面与梯形积分已按"坡度可正可负"
+实现，届时只需替换 ``_internal_side_profiles`` / ``_wall_profiles`` 的选择逻辑。
 """
 
 from __future__ import annotations
@@ -66,42 +63,14 @@ from app.services.atlas import resolve_atlas
 
 
 # --------------------------------------------------------------------------- #
-# 归属区：高度带上的分段线性宽度（自构件槽底向上累计，算式不预运算）
+# 宽度剖面：自构件槽底向上的分段线性宽度（Dim，算式不预运算）
 # --------------------------------------------------------------------------- #
-class _Zone:
-    """一个归属区：``area_in(lo, hi, height)`` 为高度带 [lo, hi] 上的断面面积。
-
-    ``lo`` / ``hi`` 是自**构件槽底**向上的累计高度（Dim），``height`` 为该带厚度
-    （Dim，数值等于 hi−lo）。宽度以 Dim 分段线性参与运算，放坡系数与层厚都按
-    算式原文展开，不做提前运算。
-    """
-
-    top: Dim
-
-    def area_in(self, lo: Dim, hi: Dim, height: Dim) -> Dim | None:
-        raise NotImplementedError
-
-
-class _RectZone(_Zone):
-    """恒宽区（本体 / 工作面）：高度 [0, top] 内宽 ``width``。"""
-
-    def __init__(self, width: Dim, top: Dim, note: str) -> None:
-        self.width = width
-        self.top = top
-        self.note = note
-
-    def area_in(self, lo: Dim, hi: Dim, height: Dim) -> Dim | None:
-        if hi.v <= 0 or lo.v >= self.top.v:
-            return None
-        if hi.v > self.top.v:
-            # 带超出区顶（中间坡楔形追加的覆土层）：只算区内的剩余厚度
-            return self.width * (self.top - lo)
-        return self.width * height
-
-
 @dataclass(frozen=True)
 class _SlopeSegment:
-    """一段等坡线：高度 ``t1`` 处宽 ``w1``，到 ``t2`` 按 ``slope`` 线性外扩。"""
+    """一段等坡线：高度 ``t1`` 处宽 ``w1``，到 ``t2`` 按 ``slope`` 线性变化。
+
+    ``slope`` 可为负（后续共享侧"负坡向内让出侵入"选项），宽度仍按线性插值。
+    """
 
     t1: Dim
     w1: Dim
@@ -111,35 +80,6 @@ class _SlopeSegment:
     def width_at(self, t: Dim) -> Dim:
         step = t - self.t1
         return self.w1 if step.v == 0 else self.w1 + self.slope * step
-
-
-class _SlopeZone(_Zone):
-    """边坡区（分级放坡 + 平台）：侧宽按等坡段积分，平台跳变不贡献面积。"""
-
-    def __init__(self, segments: list[_SlopeSegment], top: Dim, note: str) -> None:
-        self.segments = segments
-        self.top = top
-        self.note = note
-
-    def area_in(self, lo: Dim, hi: Dim, height: Dim) -> Dim | None:
-        total = dim(0.0)
-        covered = False
-        for segment in self.segments:
-            part_lo = lo if lo.v > segment.t1.v else segment.t1
-            part_hi = hi if hi.v < segment.t2.v else segment.t2
-            if part_hi.v <= part_lo.v:
-                continue  # 带外 / 零长段（平台跳变，无面积）
-            # 整带落在一段内时直接取层厚算式，避免出现 hi−lo 的重复展开
-            part_height = (
-                height
-                if part_lo.v == lo.v and part_hi.v == hi.v
-                else part_hi - part_lo
-            )
-            total = total + (
-                segment.width_at(part_lo) + segment.width_at(part_hi)
-            ) / 2 * part_height
-            covered = True
-        return total if covered else None
 
 
 def _slope_profile(work, height: Dim) -> tuple[list[_SlopeSegment], Dim]:
@@ -166,6 +106,113 @@ def _slope_profile(work, height: Dim) -> tuple[list[_SlopeSegment], Dim]:
     return segments, run
 
 
+def _profile_segments(work, height: Dim) -> list[_SlopeSegment]:
+    """放坡剖面段，覆盖 [0, height]（高度自构件槽底向上）。
+
+    分级 / 平台沿用 :func:`_slope_profile`；固定级高之和与目标高度不一致时，
+    超出部分截断、不足部分按最后一段坡度续到目标高度，保证每侧剖面都完整
+    覆盖构件高度（分层梯形不会出现缺口或重叠）。
+    """
+    if height.v <= 0:
+        return []
+    segments, _run = _slope_profile(work, height)
+    if all(segment.slope.v == 0 and segment.w1.v == 0 for segment in segments):
+        return []  # 桩类 / 直壁：没有外扩宽度，不占归属宽
+    result: list[_SlopeSegment] = []
+    for segment in segments:
+        if segment.t1.v >= height.v - 1e-9:
+            break
+        if segment.t2.v > height.v + 1e-9:
+            result.append(_SlopeSegment(segment.t1, segment.w1, segment.slope, height))
+            return result
+        result.append(segment)
+    if not result:
+        return [_SlopeSegment(dim(0.0), dim(0.0), dim(0.0), height)]
+    last = result[-1]
+    if last.t2.v < height.v - 1e-9:
+        result.append(
+            _SlopeSegment(last.t2, last.width_at(last.t2), last.slope, height)
+        )
+    return result
+
+
+def _rect_segments(width: Dim, depth: Dim) -> list[_SlopeSegment]:
+    """恒宽区（本体 / 工作面）的剖面段。"""
+    if depth.v <= 0:
+        return []
+    return [_SlopeSegment(dim(0.0), width, dim(0.0), depth)]
+
+
+def _outer_side_profiles(work, depth: Dim, workface: Dim) -> list[list[_SlopeSegment]]:
+    """合槽外边缘一侧：工作面矩形 + 分级放坡剖面（两个宽度贡献相加）。"""
+    profiles: list[list[_SlopeSegment]] = []
+    rect = _rect_segments(workface, depth)
+    if rect:
+        profiles.append(rect)
+    slope = _profile_segments(work, depth)
+    if slope:
+        profiles.append(slope)
+    return profiles
+
+
+def _internal_side_profiles(work, depth: Dim, shallow: Dim) -> list[list[_SlopeSegment]]:
+    """相邻侧（深侧）：深槽底放坡到浅槽底，以上为等宽竖直条带。
+
+    返回的剖面覆盖 [0, depth]；桩类 / 直壁的 ``run`` 为 0，不产生宽度贡献。
+    """
+    delta = depth - shallow
+    if delta.v <= 0:
+        return []
+    segments = _profile_segments(work, delta)
+    if not segments:
+        return []
+    run = segments[-1].width_at(delta)
+    if depth.v > delta.v + 1e-9:
+        segments = segments + [_SlopeSegment(delta, run, dim(0.0), depth)]
+    return [segments]
+
+
+def _wall_profiles(workface: Dim, depth: Dim) -> list[list[_SlopeSegment]]:
+    """相邻侧（浅侧 / 等深）：虚拟竖直围护，只有工作面矩形。"""
+    rect = _rect_segments(workface, depth)
+    return [rect] if rect else []
+
+
+def _unique_dims(values: list[Dim]) -> list[Dim]:
+    """按数值去重并升序（同一数值保留先出现的算式）。"""
+    result: list[Dim] = []
+    for value in sorted(values, key=lambda item: item.v):
+        if result and abs(value.v - result[-1].v) <= 1e-9:
+            continue
+        result.append(value)
+    return result
+
+
+def _segment_for_interval(
+    profile: list[_SlopeSegment], lo: Dim, hi: Dim
+) -> _SlopeSegment | None:
+    """找出覆盖整个 [lo, hi] 的段；跳变处上段用于上方、下段用于下方。"""
+    for segment in profile:
+        if segment.t1.v <= lo.v + 1e-9 and segment.t2.v >= hi.v - 1e-9:
+            return segment
+    return None
+
+
+def _width_for_interval(
+    profiles: list[list[_SlopeSegment]], lo: Dim, hi: Dim
+) -> tuple[Dim, Dim]:
+    """区间下沿 / 上沿的构件总宽（各宽度贡献之和）。"""
+    low = dim(0.0)
+    high = dim(0.0)
+    for profile in profiles:
+        segment = _segment_for_interval(profile, lo, hi)
+        if segment is None:
+            continue
+        low = low + segment.width_at(lo)
+        high = high + segment.width_at(hi)
+    return low, high
+
+
 def _as_dim(value: "Dim | float") -> Dim:
     """普通数字 → Dim（断面图等浮点调用方复用同一套剖面函数）。"""
     return value if isinstance(value, Dim) else dim(value)
@@ -182,19 +229,6 @@ def _internal_run(work, h_deep: "Dim | float", h_shallow: "Dim | float") -> Dim:
         return dim(0.0)
     _segments, run = _slope_profile(work, delta)
     return run
-
-
-def _internal_slope_zone(
-    work, h_deep: Dim, h_shallow: Dim, note: str
-) -> _SlopeZone | None:
-    """内侧放坡区：深侧槽底放坡到浅槽底，以上为虚拟垂直围护（恒宽到地面）。"""
-    delta = h_deep - h_shallow
-    if delta.v <= 0 or work is None:
-        return None
-    segments, run = _slope_profile(work, delta)
-    if h_shallow.v > 1e-9:
-        segments.append(_SlopeSegment(t1=delta, w1=run, slope=dim(0.0), t2=h_deep))
-    return _SlopeZone(segments, h_deep, note)
 
 
 def _slope_points(work, depth: float) -> list[tuple[float, float]]:
@@ -226,7 +260,7 @@ class _Member:
     depth: Dim  # 槽底深 H_i（埋深 + 换填 + 壁厚 + 垫层）
     base_width: Dim  # 基础外皮宽 b_i（= 单管槽底宽去掉两侧工作面）
     work_width: Dim  # 自身面宽原则按自身管径查到的单侧工作面宽
-    zones: list = field(default_factory=list)
+    profiles: list[list[_SlopeSegment]] = field(default_factory=list)
     flat_width: Dim = field(default_factory=lambda: dim(0.0))  # 平面归属带宽（降水 / 特殊地基代入用）
 
 
@@ -450,37 +484,36 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
                 )
             )
 
-    # 逐构件的归属区 + 平面归属带宽（规则 6：工作面宽用自己的 PW）
+    # 逐构件的宽度剖面 + 平面归属带宽（规则 6：工作面宽用自己的 PW）
     for i, member in enumerate(snapshots):
-        member.zones.append(_RectZone(member.base_width, member.depth, "本体"))
+        member.profiles = []
+        base = _rect_segments(member.base_width, member.depth)
+        if base:
+            member.profiles.append(base)
         if i == 0:
-            member.zones.append(_RectZone(member.work_width, member.depth, "左工作面"))
-            segments, _run = _slope_profile(work_left, member.depth)
-            member.zones.append(_SlopeZone(segments, member.depth, "左边坡"))
+            member.profiles += _outer_side_profiles(
+                work_left, member.depth, member.work_width
+            )
         else:
             pair = pairs[i - 1]
             if pair.deep is member:  # 自身更深：左侧内侧放坡
-                zone = _internal_slope_zone(
-                    pair.work, member.depth, snapshots[i - 1].depth, "左侧中间坡"
+                member.profiles += _internal_side_profiles(
+                    pair.work, member.depth, snapshots[i - 1].depth
                 )
-                if zone is not None:
-                    member.zones.append(zone)
-            else:  # 自身更浅 / 等深：左侧工作面（虚拟垂直围护）
-                member.zones.append(_RectZone(member.work_width, member.depth, "左工作面"))
+            else:  # 自身更浅 / 等深：左侧虚拟竖直围护
+                member.profiles += _wall_profiles(member.work_width, member.depth)
         if i == n - 1:
-            member.zones.append(_RectZone(member.work_width, member.depth, "右工作面"))
-            segments, _run = _slope_profile(work_right, member.depth)
-            member.zones.append(_SlopeZone(segments, member.depth, "右边坡"))
+            member.profiles += _outer_side_profiles(
+                work_right, member.depth, member.work_width
+            )
         else:
             pair = pairs[i]
             if pair.deep is member:  # 自身更深：右侧内侧放坡
-                zone = _internal_slope_zone(
-                    pair.work, member.depth, snapshots[i + 1].depth, "右侧中间坡"
+                member.profiles += _internal_side_profiles(
+                    pair.work, member.depth, snapshots[i + 1].depth
                 )
-                if zone is not None:
-                    member.zones.append(zone)
-            else:  # 自身更浅 / 等深：右侧工作面（虚拟垂直围护）
-                member.zones.append(_RectZone(member.work_width, member.depth, "右工作面"))
+            else:  # 自身更浅 / 等深：右侧虚拟竖直围护
+                member.profiles += _wall_profiles(member.work_width, member.depth)
         flat = member.base_width
         if i == 0:
             flat = flat + member.work_width
@@ -492,7 +525,7 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             flat = flat + pairs[i].right_width
         member.flat_width = flat
 
-    # 挖方 / 回填（带积分）
+    # 挖方 / 回填（按标高分层、每层梯形）
     for member in snapshots:
         out = QDict()
         if not _member_dig_fill(member, out):
@@ -574,18 +607,19 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
 
 
 def _member_dig_fill(member: _Member, out: QDict) -> bool:
-    """构件归属区的挖方 / 分层回填（带积分，结果写入 ``out``）。
+    """构件宽度剖面的挖方 / 分层回填（按标高分层、每层梯形，结果写入 ``out``）。
 
-    分层界面来自该构件自己的 backfill_layers（自槽底累计高度，层厚算式原文
-    参与面积计算）；比其槽底更深的归属区部分（中间坡楔形）追加为覆土层。
-    挖方按层合并 term（说明 = 层名），与单管路径同风格。
+    标高事件集 = 回填分层界面（换填顶 / 垫层顶 / 坞膀下半顶 / 坞膀顶 /
+    管顶 50cm 顶 / 覆土顶）+ 各侧放坡剖面的全部分级 / 平台折点（含相邻
+    构件槽底标高）。事件之间宽度线性，单层面积用梯形 ``(w_下+w_上)/2*Δh``
+    精确计算；每层按它所属的回填分层归类，挖方按层合并 term（说明 = 层名）。
     """
     info = member.info
     pp = info.pp
     pf = info.pf
     cushion_name = pf.cushions[0].name if pf.cushions else "中粗砂"
     layers = backfill_layers(pp, pf, member.ad, info.size_h_dim, member.depth, cushion_name)
-    # 层的高度带 (下界, 上界, 层厚)：自槽底向上累计，第 k 层占据
+    # 层的高度带 (下界, 上界, 层厚, 说明)：自槽底向上累计，第 k 层占据
     # [Σh, Σh+h]（自构件槽底起算的高度区间）
     bands: list[tuple[str, Dim, Dim, Dim, str]] = []
     cum = dim(0.0)
@@ -594,37 +628,61 @@ def _member_dig_fill(member: _Member, out: QDict) -> bool:
             continue
         bands.append((key, cum, cum + layer, layer, note))
         cum = cum + layer
-    max_top = max(
-        (zone.top for zone in member.zones),
-        key=lambda item: item.v,
-        default=member.depth,
-    )
-    # 比槽底更高的归属区（中间坡楔形）：按覆土层追加
-    if max_top.v > member.depth.v + 1e-9:
-        bands.append(
-            (f"回填|{pp.cover}|m3", member.depth, max_top, max_top - member.depth, "覆土(深区)")
-        )
     if not bands:
         return False
+    total = cum
+
+    # 标高事件集：回填分层界面优先，其次各侧剖面的折点（分级 / 平台 / 相邻槽底）
+    boundaries: list[Dim] = [dim(0.0), total]
+    for _key, lo, hi, _layer, _note in bands:
+        boundaries.append(lo)
+        boundaries.append(hi)
+    for profile in member.profiles:
+        for segment in profile:
+            boundaries.append(segment.t1)
+            boundaries.append(segment.t2)
+    edges = [
+        value
+        for value in _unique_dims(boundaries)
+        if -1e-9 <= value.v <= total.v + 1e-9
+    ]
 
     dig_key = f"开挖|{pp.excvt}|m3"
     dig = out.add(dig_key, 0.0)
     dig.terms.clear()
     dig.value = 0.0
     produced = False
-    for key, lo, hi, height, note in bands:
-        if hi.v <= lo.v:
+    for lo, hi in zip(edges, edges[1:]):
+        if hi.v - lo.v <= 1e-9:
             continue
-        layer_area = dim(0.0)
-        for zone in member.zones:
-            part = zone.area_in(lo, hi, height)
-            if part is not None:
-                layer_area = layer_area + part
-        if layer_area.v == 0:
+        band = next(
+            (
+                item
+                for item in bands
+                if item[1].v <= lo.v + 1e-9 and hi.v <= item[2].v + 1e-9
+            ),
+            None,
+        )
+        if band is None:
+            continue
+        key, band_lo, band_hi, layer, note = band
+        # 整层未被围护分级切开时沿用层厚算式，否则用区间差
+        if abs(lo.v - band_lo.v) <= 1e-9 and abs(hi.v - band_hi.v) <= 1e-9:
+            height = layer
+        else:
+            height = hi - lo
+        low, high = _width_for_interval(member.profiles, lo, hi)
+        # 线性宽度两端相等 = 恒宽层，退化为矩形（梯形公式的等底情形），
+        # 避免把同一个宽度算式重复展开两遍
+        if abs(low.v - high.v) <= 1e-12:
+            area = low * height
+        else:
+            area = (low + high) / 2 * height
+        if area.v == 0:
             continue
         produced = True
-        out.add(key, layer_area.v, layer_area.e, note)
-        dig.add_term(layer_area.v, layer_area.e, note)
+        out.add(key, area.v, area.e, note)
+        dig.add_term(area.v, area.e, note)
     if not produced:
         out.discard(dig_key)
         return False
