@@ -56,7 +56,7 @@ from app.core.calc.engine import (
 from app.core.calc.groove import backfill_layers, level_slope, split_h_by_step
 from app.core.calc.measures import AtlasDims, cushion_thickness as cushion_dim
 from app.core.calc.measures import foundation_thickness as foundation_dim
-from app.core.calc.tracer import Dim, QDict, dim, dim_sum as _dim_sum, scale_sum
+from app.core.calc.tracer import Dim, QDict, dim, dim_sum as _dim_sum, scale_sum, wrap
 from app.core.models import base as orm
 from app.core.models.models import CATEGORY_ENCASED, Element, TrenchGroup
 from app.services.atlas import resolve_atlas
@@ -138,7 +138,7 @@ def _profile_segments(work, height: Dim) -> list[_SlopeSegment]:
 
 def _rect_segments(width: Dim, depth: Dim) -> list[_SlopeSegment]:
     """恒宽区（本体 / 工作面）的剖面段。"""
-    if depth.v <= 0:
+    if depth.v <= 0 or width.v == 0:
         return []
     return [_SlopeSegment(dim(0.0), width, dim(0.0), depth)]
 
@@ -155,21 +155,29 @@ def _outer_side_profiles(work, depth: Dim, workface: Dim) -> list[list[_SlopeSeg
     return profiles
 
 
-def _internal_side_profiles(work, depth: Dim, shallow: Dim) -> list[list[_SlopeSegment]]:
-    """相邻侧（深侧）：深槽底放坡到浅槽底，以上为等宽竖直条带。
+def _internal_side_profiles(
+    work, depth: Dim, shallow: Dim, workface: Dim
+) -> list[list[_SlopeSegment]]:
+    """相邻侧（深侧）：工作面矩形 + 深槽底放坡到浅槽底 + 以上等宽竖直条带。
 
-    返回的剖面覆盖 [0, depth]；桩类 / 直壁的 ``run`` 为 0，不产生宽度贡献。
+    返回的剖面覆盖 [0, depth]；桩类 / 直壁的 ``run`` 为 0，只剩工作面矩形。
+    工作面是深侧构件在共享侧自己的施工面，坡从工作面外缘起算。
     """
+    profiles: list[list[_SlopeSegment]] = []
+    rect = _rect_segments(workface, depth)
+    if rect:
+        profiles.append(rect)
     delta = depth - shallow
     if delta.v <= 0:
-        return []
+        return profiles
     segments = _profile_segments(work, delta)
     if not segments:
-        return []
+        return profiles
     run = segments[-1].width_at(delta)
     if depth.v > delta.v + 1e-9:
         segments = segments + [_SlopeSegment(delta, run, dim(0.0), depth)]
-    return [segments]
+    profiles.append(segments)
+    return profiles
 
 
 def _wall_profiles(workface: Dim, depth: Dim) -> list[list[_SlopeSegment]]:
@@ -198,19 +206,25 @@ def _segment_for_interval(
     return None
 
 
-def _width_for_interval(
-    profiles: list[list[_SlopeSegment]], lo: Dim, hi: Dim
+def _width_and_slope_for_interval(
+    profiles: list[list[_SlopeSegment]], lo: Dim, hi: Dim, height: Dim
 ) -> tuple[Dim, Dim]:
-    """区间下沿 / 上沿的构件总宽（各宽度贡献之和）。"""
+    """区间下沿的构件总宽与各侧坡高项之和。
+
+    返回 ``(W_下, Σ(H*s))``；线性宽度满足 ``W_上 = W_下 + Σ(s)*Δh``，因此
+    梯形面积写成 ``(2*W_下 + Σ(H*s))/2*Δh``——与非合槽构件的
+    ``trapezoid_lr_expr`` 同形，下底只出现一次（``2*下底``）。
+    """
     low = dim(0.0)
-    high = dim(0.0)
+    slope_terms = dim(0.0)
     for profile in profiles:
         segment = _segment_for_interval(profile, lo, hi)
         if segment is None:
             continue
         low = low + segment.width_at(lo)
-        high = high + segment.width_at(hi)
-    return low, high
+        if segment.slope.v != 0:
+            slope_terms = slope_terms + segment.slope * height
+    return low, slope_terms
 
 
 def _as_dim(value: "Dim | float") -> Dim:
@@ -271,7 +285,7 @@ class _Pair:
     deep: _Member | None  # 更深一侧；None = 等深
     run: Dim  # 深侧放坡水平投影（m）；等深为 0
     work: object | None  # 深侧内侧坡做法
-    left_width: Dim  # 左构件在该相邻面的归属宽（浅侧 = 工作面，深侧 = 放坡投影）
+    left_width: Dim  # 左构件在该相邻面的归属宽（浅侧 = 工作面，深侧 = 工作面 + 放坡投影）
     right_width: Dim  # 右构件在该相邻面的归属宽
 
 
@@ -470,7 +484,7 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
                     run=run,
                     work=work,
                     left_width=left.work_width,
-                    right_width=run,
+                    right_width=deep.work_width + run,
                 )
             )
         else:
@@ -479,7 +493,7 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
                     deep=deep,
                     run=run,
                     work=work,
-                    left_width=run,
+                    left_width=deep.work_width + run,
                     right_width=right.work_width,
                 )
             )
@@ -498,7 +512,7 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             pair = pairs[i - 1]
             if pair.deep is member:  # 自身更深：左侧内侧放坡
                 member.profiles += _internal_side_profiles(
-                    pair.work, member.depth, snapshots[i - 1].depth
+                    pair.work, member.depth, snapshots[i - 1].depth, member.work_width
                 )
             else:  # 自身更浅 / 等深：左侧虚拟竖直围护
                 member.profiles += _wall_profiles(member.work_width, member.depth)
@@ -510,7 +524,7 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             pair = pairs[i]
             if pair.deep is member:  # 自身更深：右侧内侧放坡
                 member.profiles += _internal_side_profiles(
-                    pair.work, member.depth, snapshots[i + 1].depth
+                    pair.work, member.depth, snapshots[i + 1].depth, member.work_width
                 )
             else:  # 自身更浅 / 等深：右侧虚拟竖直围护
                 member.profiles += _wall_profiles(member.work_width, member.depth)
@@ -518,11 +532,11 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
         if i == 0:
             flat = flat + member.work_width
         else:
-            flat = flat + pairs[i - 1].left_width
+            flat = flat + pairs[i - 1].right_width
         if i == n - 1:
             flat = flat + member.work_width
         else:
-            flat = flat + pairs[i].right_width
+            flat = flat + pairs[i].left_width
         member.flat_width = flat
 
     # 挖方 / 回填（按标高分层、每层梯形）
@@ -671,13 +685,20 @@ def _member_dig_fill(member: _Member, out: QDict) -> bool:
             height = layer
         else:
             height = hi - lo
-        low, high = _width_for_interval(member.profiles, lo, hi)
-        # 线性宽度两端相等 = 恒宽层，退化为矩形（梯形公式的等底情形），
-        # 避免把同一个宽度算式重复展开两遍
-        if abs(low.v - high.v) <= 1e-12:
+        low, slope_terms = _width_and_slope_for_interval(
+            member.profiles, lo, hi, height
+        )
+        if slope_terms.v == 0:
+            # 恒宽层：梯形公式的等底情形，直接 B*H
             area = low * height
         else:
-            area = (low + high) / 2 * height
+            # (2*W_下 + Σ(H*s))*H/2：下底只出现一次，与非合槽构件同形
+            doubled = Dim(2 * low.v, f"2*{wrap(low.e)}")
+            inner = doubled + slope_terms
+            area = Dim(
+                inner.v * height.v / 2.0,
+                f"({inner.e})*{wrap(height.e)}/2",
+            )
         if area.v == 0:
             continue
         produced = True

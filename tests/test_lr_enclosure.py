@@ -407,11 +407,11 @@ def test_group_different_depth_mid_slope(project) -> None:
         )
     g1, g2 = geometry
     h1, h2 = g1["h"].v, g2["h"].v
-    # 桩类内侧放坡水平投影为 0：浅侧构件 = 本体 + 自身两侧工作面；
-    # 深侧构件 = 本体 + 自身右侧工作面（相邻侧竖直隔断，无工作面）
+    # 桩类内侧放坡水平投影为 0：两侧构件各得本体 + 两侧自身工作面
+    # （深侧共享侧现在也有自己的工作面，坡从工作面外缘起算）
     expected_total = (
         (2 * g1["ww"] + g1["b"]) * h1
-        + (g2["b"] + g2["ww"]) * h2
+        + (2 * g2["ww"] + g2["b"]) * h2
     )
     dig1 = _value(results[e1], "开挖|Ⅲ类土|m3")
     dig2 = _value(results[e2], "开挖|Ⅲ类土|m3")
@@ -476,13 +476,14 @@ def test_group_mid_slope_pile_run_encroaches(project) -> None:
     # 首构件（e1）自身左侧原则为放坡 1:0.5 → 左边坡梯形 = h1×(h1×0.5)/2
     edge_slope = h1 * (h1 * 0.5) / 2
     # 浅侧构件 = 本体 + 两侧自身工作面；深侧构件 = 浅槽底以上的竖直条带
-    # （宽 run）+ 坡楔（h1 处宽 run → h2 处宽 0）+ 本体 + 右侧工作面
+    # （宽 run）+ 坡楔（h1 处宽 run → h2 处宽 0）+ 本体 + 两侧自身工作面
+    # （共享侧工作面在坡脚，坡从工作面外缘起算）
     mid_area = run * h1 + run * (h2 - h1) / 2
     expected_total = (
         (2 * g1["ww"] + g1["b"]) * h1
         + edge_slope
         + mid_area
-        + (g2["b"] + g2["ww"]) * h2
+        + (2 * g2["ww"] + g2["b"]) * h2
     )
     dig1 = _value(results[e1], "开挖|Ⅲ类土|m3")
     dig2 = _value(results[e2], "开挖|Ⅲ类土|m3")
@@ -498,7 +499,7 @@ def test_group_layered_trapezoid_multilevel_slope() -> None:
         _internal_side_profiles,
         _rect_segments,
         _unique_dims,
-        _width_for_interval,
+        _width_and_slope_for_interval,
     )
 
     def level(slope: float, step_width: float):
@@ -509,7 +510,7 @@ def test_group_layered_trapezoid_multilevel_slope() -> None:
     # 深级 1:0.3 / 平台 1.0；浅级 1:0.5 / 平台 0.8；ΔH = 1.0
     work = SimpleNamespace(levels=[level(0.5, 0.8), level(0.3, 1.0)])
     depth, shallow = dim(4.0), dim(3.0)
-    profile = _internal_side_profiles(work, depth, shallow)[0]
+    profile = _internal_side_profiles(work, depth, shallow, dim(0.0))[0]
 
     # 0→0.5：0.3；换级平台 0.8；0.5→1.0：0.5；1.0→4.0：竖直 1.2
     assert [round(seg.t1.v, 6) for seg in profile] == [0.0, 0.5, 1.0]
@@ -520,7 +521,7 @@ def test_group_layered_trapezoid_multilevel_slope() -> None:
 
     # 本体 1.0 + 内侧坡；在回填分层与围护折点上切分，逐层梯形求和
     profiles = [_rect_segments(dim(1.0), depth)] + _internal_side_profiles(
-        work, depth, shallow
+        work, depth, shallow, dim(0.0)
     )
     boundaries = [dim(value) for value in (0.0, 0.5, 1.0, 2.0, 3.0, 4.0)]
     for item in profiles:
@@ -529,8 +530,14 @@ def test_group_layered_trapezoid_multilevel_slope() -> None:
     edges = _unique_dims(boundaries)
     areas = []
     for lo, hi in zip(edges, edges[1:]):
-        low, high = _width_for_interval(profiles, lo, hi)
-        areas.append(((low + high) / 2 * (hi - lo)).v)
+        height = hi - lo
+        low, slope_terms = _width_and_slope_for_interval(
+            profiles, lo, hi, height
+        )
+        if slope_terms.v == 0:
+            areas.append((low * height).v)
+        else:
+            areas.append((2 * low.v + slope_terms.v) * height.v / 2.0)
 
     # 0→0.5：(1+1.15)/2*0.5；0.5→1：(1.95+2.2)/2*0.5；其余三层恒宽 2.2
     assert areas == pytest.approx([0.5375, 1.0375, 2.2, 2.2, 2.2], rel=1e-9)
