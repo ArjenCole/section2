@@ -795,6 +795,50 @@ def test_section_scene_builds_for_lr_and_group(project, qapp) -> None:
     panel.render(image)
 
 
+@pytest.mark.parametrize(
+    "category", [3, 6]  # 箱涵 / 管廊
+)
+def test_group_section_draws_box_structures_and_virtual_wall(
+    project, qapp, category
+) -> None:
+    """箱涵 / 管廊合槽：结构剖面与虚拟竖直墙都要画出来（等深 / 异深）。"""
+    from app.views.panels.section_view import _build_group_scene
+    from app.viewmodels import unit_vm
+
+    unit_id = _first_unit_id()
+    shallow = unit_vm.create_element(
+        unit_id, category=category, name="箱涵浅", depth="3", amount="40",
+        seed_atlas_defaults=True,
+    )
+    deep = unit_vm.create_element(
+        unit_id, category=category, name="箱涵深", depth="4", amount="40",
+        seed_atlas_defaults=True,
+    )
+    group, error = unit_vm.create_trench_group([shallow.id, deep.id])
+    assert group is not None and error is None
+    scene, hint = _build_group_scene(group.id, 400, 300)
+    assert scene is not None and scene.outline, hint
+    # 结构剖面（外框 + 基础 + 内腔）必须画出来，不能只剩基坑线
+    assert scene.shapes, "箱涵 / 管廊的结构剖面没有画出来"
+    assert len(scene.dashed_lines) == 1  # 异深虚拟墙
+
+    # 等深相邻：结构剖面同样要画，公共边也要有虚拟竖直线
+    same1 = unit_vm.create_element(
+        unit_id, category=category, name="箱涵等深1", depth="3", amount="40",
+        seed_atlas_defaults=True,
+    )
+    same2 = unit_vm.create_element(
+        unit_id, category=category, name="箱涵等深2", depth="3", amount="40",
+        seed_atlas_defaults=True,
+    )
+    group2, error2 = unit_vm.create_trench_group([same1.id, same2.id])
+    assert group2 is not None and error2 is None
+    scene2, hint2 = _build_group_scene(group2.id, 400, 300)
+    assert scene2 is not None and scene2.outline, hint2
+    assert scene2.shapes
+    assert len(scene2.dashed_lines) == 1  # 等深公共边
+
+
 def test_unit_panel_group_rows_and_lr_tab(project, qapp) -> None:
     """主表格树形行 / 父行编辑 / 分设 tab 的装填冒烟。"""
     from app.views.panels.unit_panel import UnitPanel

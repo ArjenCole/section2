@@ -921,10 +921,9 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
                     right_x = base_right + snap["work_width"]
             layer_lines.append((left_x - half, y, right_x - half, y))
 
-    # 虚拟竖直墙：异深相邻面，自浅槽底到地面
+    # 虚拟竖直墙：每个相邻面都画——异深自浅槽底到地面，等深自槽底到地面。
+    # 它是构件归属区的计算分界（等深时落在两侧工作面的公共边），不是实体墙。
     for i, pair in enumerate(pairs):
-        if pair["deep_index"] is None:
-            continue
         prev_right = extents[i][1]
         wall_x = prev_right + pair["left_width"]
         h_shallow = min(snapshots[i]["depth"], snapshots[i + 1]["depth"])
@@ -940,9 +939,13 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
         center_x = (base_left + base_right) / 2.0 - half
         depth_raise_mm = (h_max - snap["depth"]) * 1000.0
         raise_mm = foundation_thickness(snap["pf"]) + snap["c1_display"] - snap["at"].c1
-        if not snap["info"].pipes:
-            # 没录管材的成员画不出本体（沟槽仍按它的参数绘制）：
-            # 与单构件断面“未录入管材”的提示口径一致，不能整图崩溃
+        if not snap["info"].pipes and snap["info"].category in (
+            CATEGORY_BURIED,
+            CATEGORY_JACKING,
+            CATEGORY_PULLING,
+        ):
+            # 直埋 / 顶管 / 牵引管必须录入管材才能画本体；包封 / 箱涵 / 管廊
+            # 的结构尺寸来自自身参数，不依赖管材行，不能在这里跳过。
             continue
         for shape in _ontology_shapes(snap["info"], snap["at"], snap["at"].c1):
             shapes.append(
