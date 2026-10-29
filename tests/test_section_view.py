@@ -156,3 +156,130 @@ def test_stale_detail_id_after_project_close(qapp, project_with_element) -> None
     assert scene is None and hint == "尚未打开工程"
     scene, hint = _build_group_scene(1, 320, 420)
     assert scene is None and hint == "尚未打开工程"
+
+
+# --------------------------------------------------------------------------- #
+# 分层递推的进度保护（2026-10-29：分级高度异常时旧版 while True 会卡死）
+# --------------------------------------------------------------------------- #
+def _walk_level(height, slope=0.5, step_width=0.0):
+    from types import SimpleNamespace as NS
+
+    component = NS(params=[NS(key="A", value=f"放坡系数 1:X|{slope}")])
+    return NS(h=height, step_width=step_width, components=[component])
+
+
+def _walk_layers():
+    from app.views.panels import section_view
+
+    return section_view._walk_layers
+
+
+def test_walk_layers_normal_has_no_problem() -> None:
+    from app.core.calc.tracer import dim
+
+    problem: list[str] = []
+    segments = _walk_layers()(
+        [_walk_level(-1)],
+        [("a", dim(1.5), ""), ("b", dim(1.5), "")],
+        bottom=1.0,
+        depth=3.0,
+        problem=problem,
+    )
+    assert problem == []
+    assert segments
+
+
+def test_walk_layers_stops_on_zero_height_level() -> None:
+    """固定级高为 0：递推无法前进，必须立即停下（旧版会原地死循环）。"""
+    from app.core.calc.tracer import dim
+
+    problem: list[str] = []
+    segments = _walk_layers()(
+        [_walk_level(0.0)],
+        [("a", dim(1.5), "")],
+        bottom=1.0,
+        depth=3.0,
+        problem=problem,
+    )
+    assert problem and "围护分级高度异常" in problem[0]
+    assert segments == []
+
+
+def test_walk_layers_stops_on_non_monotonic_levels() -> None:
+    """固定级高之和大于槽深后出现非单调标高：不得死循环，也不得画出负段。"""
+    from app.core.calc.tracer import dim
+
+    problem: list[str] = []
+    segments = _walk_layers()(
+        [_walk_level(4.0), _walk_level(-1), _walk_level(2.0)],
+        [("a", dim(1.5), ""), ("b", dim(1.5), "")],
+        bottom=1.0,
+        depth=3.0,
+        problem=problem,
+    )
+    assert problem and "围护分级高度异常" in problem[0]
+    assert all(segment.h_delta >= 0 for segment in segments)
+
+
+def test_walk_layers_stops_at_iteration_cap(monkeypatch) -> None:
+    from app.core.calc.tracer import dim
+    from app.views.panels import section_view
+
+    monkeypatch.setattr(section_view, "_MAX_WALK_STEPS", 1)
+    problem: list[str] = []
+    section_view._walk_layers(
+        [_walk_level(1.0), _walk_level(-1)],
+        [("a", dim(1.5), ""), ("b", dim(1.5), "")],
+        bottom=1.0,
+        depth=3.0,
+        problem=problem,
+    )
+    assert problem and "步数异常" in problem[0]
+
+
+def test_walk_layers_sided_stops_on_zero_height_level() -> None:
+    from app.core.calc.tracer import dim
+    from app.views.panels.section_view import _walk_layers_sided
+
+    problem: list[str] = []
+    left, right = _walk_layers_sided(
+        [_walk_level(0.0)],
+        [_walk_level(-1)],
+        [("a", dim(1.5), "")],
+        bottom=1.0,
+        depth=3.0,
+        problem=problem,
+    )
+    assert problem and "围护分级高度异常" in problem[0]
+    assert left == [] and right == []
+
+
+def test_build_scene_reports_walk_problem(tmp_path) -> None:
+    """围护分级高度异常时，断面构建返回提示而不是卡死。"""
+    spec = NewProjectSpec(path=tmp_path / "异常分级.stn", unit_names=["雨水工程"])
+    project_io.new_project(spec)
+    from app.core.models import base as orm
+    from app.core.models.models import PcpEnclosure
+    from app.views.panels.section_view import _build_scene
+    from app.viewmodels import unit_vm
+
+    session = orm.session()
+    pe = PcpEnclosure(name="零级高原则", order_no=90)
+    session.add(pe)
+    session.flush()
+    project_io.new_enclosure_work(
+        session, pe, project_io.component_library(), order_no=0, level_name="钢板桩"
+    )
+    project_io.commit()
+    # 把唯一一级的固定级高改成 0：递推无法从槽底前进
+    pe.works_sorted()[0].levels[0].h = 0.0
+    project_io.commit()
+
+    unit_id = project_io.units(project_io.segments()[0].id)[0].id
+    element = unit_vm.create_element(
+        unit_id, category=1, name="异常分级管", depth="3", amount="100", pe_name=pe.name
+    )
+    unit_vm.create_pipe(element.id, mat="Ⅱ级钢筋混凝土管", dn=1200)
+    scene, hint = _build_scene(element.id, 320, 420)
+    assert scene is None
+    assert "围护分级高度异常" in hint

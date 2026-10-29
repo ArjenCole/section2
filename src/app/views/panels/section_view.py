@@ -19,6 +19,7 @@ level_slope / groove_width），保证图上的沟槽形状与工程量公式完
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QRectF, Qt
@@ -71,6 +72,29 @@ _COLOR_LINE = QColor("cyan")
 _COLOR_TEXT = QColor("yellow")
 _COLOR_ELLIPSE = QColor("yellow")
 _COLOR_RECT = QColor("#FF00FF")
+
+_logger = logging.getLogger(__name__)
+
+#: 分层递推的进度容差（m）：与旧版递推的 0.0001 一致
+_WALK_EPS = 0.0001
+#: 分层递推的硬上限。正常一槽最多几十段（回填层 × 围护分级），
+#: 1000 步只可能出现在分级高度异常的坏数据上；到上限就停，避免死循环卡死界面。
+_MAX_WALK_STEPS = 1000
+#: 递推中止时给界面/日志的提示
+_WALK_STALLED_HINT = "围护分级高度异常（级高之和超过槽深或出现 0 高度级），断面无法绘制。"
+_WALK_LIMIT_HINT = "断面分层递推步数异常，已停止绘制（请检查围护分级高度）。"
+
+#: 已记过日志的提示：断面在窗口缩放时会反复重建，坏数据不应刷屏（按提示种类去重）
+_WALK_WARNED: set[str] = set()
+
+
+def _walk_abort(problem: list[str] | None, hint: str, detail: str = "") -> None:
+    """递推保护触发：记日志并把用户可读提示交给调用方（不抛异常）。"""
+    if hint not in _WALK_WARNED:
+        _WALK_WARNED.add(hint)
+        _logger.warning("断面分层递推中止：%s%s", hint, f"（{detail}）" if detail else "")
+    if problem is not None:
+        problem.append(hint)
 
 
 @dataclass
@@ -403,7 +427,10 @@ def _build_trench_scene(
     ad_display = atlas_dims(info, at_display)  # 图集参数的算式伴随（这里只取数值）
     layers = groove.backfill_layers(info.pp, pf, ad_display, info.size_h_dim, dim(depth), cushion_name)
     bottom = groove.groove_width(ad_display, info.size_b_dim).v
-    segments = _walk_layers(list(work.levels), layers, bottom, depth)
+    problem: list[str] = []
+    segments = _walk_layers(list(work.levels), layers, bottom, depth, problem=problem)
+    if problem:
+        return None, problem[0]
     total_h = segments[-1].h_current + segments[-1].h_delta if segments else 0.0
     top_width = segments[-1].bottom + segments[-1].h_delta * segments[-1].slope * 2 if segments else 0.0
     if total_h <= 0:
@@ -427,8 +454,21 @@ def _build_trench_scene(
     return scene, ""
 
 
-def _walk_layers(levels: list, layers: list[tuple[str, float, str]], bottom: float, depth: float) -> list[_Segment]:
-    """按旧版 PaintBackFilled 的递推把回填层切成随深度放坡的梯形段（单位 m）。"""
+def _walk_layers(
+    levels: list,
+    layers: list[tuple[str, float, str]],
+    bottom: float,
+    depth: float,
+    *,
+    problem: list[str] | None = None,
+) -> list[_Segment]:
+    """按旧版 PaintBackFilled 的递推把回填层切成随深度放坡的梯形段（单位 m）。
+
+    ``problem`` 是可选的中止原因输出：围护分级高度异常导致递推无法前进
+    （级高为 0、固定级高之和超过槽深后出现非单调标高）时，这里会停下并把
+    提示写进去，由调用方转成断面提示——旧版 ``while True`` 在这种情况下会
+    原地打转，界面表现为卡死。
+    """
     step_heights = [step.v for step in groove.split_h_by_step(levels, dim(depth))]
     if not step_heights:
         return []
@@ -439,8 +479,21 @@ def _walk_layers(levels: list, layers: list[tuple[str, float, str]], bottom: flo
     for key, layer, _note in layers:
         layer_h = layer.v
         target = current + layer_h
-        while True:
+        for _ in range(_MAX_WALK_STEPS):
+            remaining = target - current
+            if remaining < -_WALK_EPS:
+                _walk_abort(
+                    problem, _WALK_STALLED_HINT,
+                    f"回填层厚度为负：{layer_h:g}m",
+                )
+                return segments
             delta = min(target, step_heights[step]) - current
+            if delta <= 0 and remaining > _WALK_EPS:
+                _walk_abort(
+                    problem, _WALK_STALLED_HINT,
+                    f"当前 {current:g}m 已不低于分级标高 {step_heights[step]:g}m，目标 {target:g}m",
+                )
+                return segments
             slope = level_slope(levels[step]).v
             continues = bool(segments) and segments[-1].key == key
             segments.append(_Segment(key, bottom, current, delta, slope, continues))
@@ -450,8 +503,11 @@ def _walk_layers(levels: list, layers: list[tuple[str, float, str]], bottom: flo
                 step -= 1
                 if step_heights[step] != step_heights[step + 1] and step_heights[step + 1] != 0:
                     bottom += levels[step].step_width * 2
-            if current - target >= -0.0001:
+            if current - target >= -_WALK_EPS:
                 break
+        else:
+            _walk_abort(problem, _WALK_LIMIT_HINT, f"超过 {_MAX_WALK_STEPS} 步")
+            return segments
     return segments
 
 
@@ -461,6 +517,8 @@ def _walk_layers_sided(
     layers: list[tuple[str, float, str]],
     bottom: float,
     depth: float,
+    *,
+    problem: list[str] | None = None,
 ) -> tuple[list[_Segment], list[_Segment]]:
     """左右分设的逐层递推（与 cal_groove_sided 同构，只出几何不出量）。
 
@@ -469,6 +527,9 @@ def _walk_layers_sided(
     ``2×该侧半宽``（随该侧坡度外扩、平台只加发生切级的一侧）。若两列共用按
     ``sL+sR`` 外扩的总底宽，坡度不等时下一段 ``bottom/2`` 会跳过上一段终点，
     折线随之错位折断。
+
+    ``problem`` 语义同 :func:`_walk_layers`：递推无法前进或步数超限时停下并
+    写回原因。
     """
     heights_l = [step.v for step in groove.split_h_by_step(levels_l, dim(depth))]
     heights_r = [step.v for step in groove.split_h_by_step(levels_r, dim(depth))]
@@ -483,10 +544,23 @@ def _walk_layers_sided(
     for key, layer, _note in layers:
         layer_h = layer.v
         target = current + layer_h
-        while True:
+        for _ in range(_MAX_WALK_STEPS):
+            remaining = target - current
+            if remaining < -_WALK_EPS:
+                _walk_abort(
+                    problem, _WALK_STALLED_HINT,
+                    f"回填层厚度为负：{layer_h:g}m",
+                )
+                return segments_l, segments_r
             top_l, top_r = heights_l[step_l], heights_r[step_r]
             step_top = min(top_l, top_r)
             delta = min(target, step_top) - current
+            if delta <= 0 and remaining > _WALK_EPS:
+                _walk_abort(
+                    problem, _WALK_STALLED_HINT,
+                    f"当前 {current:g}m 已不低于分级标高 {step_top:g}m，目标 {target:g}m",
+                )
+                return segments_l, segments_r
             slope_l = level_slope(levels_l[step_l]).v
             slope_r = level_slope(levels_r[step_r]).v
             segments_l.append(
@@ -508,8 +582,11 @@ def _walk_layers_sided(
                 step_r -= 1
                 if heights_r[step_r] != heights_r[step_r + 1] and heights_r[step_r + 1] != 0:
                     half_r += levels_r[step_r].step_width
-            if current - target >= -0.0001:
+            if current - target >= -_WALK_EPS:
                 break
+        else:
+            _walk_abort(problem, _WALK_LIMIT_HINT, f"超过 {_MAX_WALK_STEPS} 步")
+            return segments_l, segments_r
     return segments_l, segments_r
 
 
@@ -548,9 +625,12 @@ def _build_trench_scene_lr(
         info.pp, pf, ad_display, info.size_h_dim, dim(depth), cushion_name
     )
     bottom = groove.groove_width(ad_display, info.size_b_dim).v
+    problem: list[str] = []
     segments_l, segments_r = _walk_layers_sided(
-        list(work_l.levels), list(work_r.levels), layers, bottom, depth
+        list(work_l.levels), list(work_r.levels), layers, bottom, depth, problem=problem
     )
+    if problem:
+        return None, problem[0]
     if not segments_l or not segments_r:
         return None, "沟槽深度为 0，无法绘制断面。"
     total_h = segments_l[-1].h_current + segments_l[-1].h_delta
