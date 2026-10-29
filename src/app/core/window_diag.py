@@ -1,4 +1,4 @@
-"""窗口"消失"诊断黑匣子（仅 Windows，仅 ``SECTION2_DIAG=1`` 时启用）。
+"""窗口"消失"诊断黑匣子（仅 Windows；默认开启，``SECTION2_DIAG=0`` 关闭）。
 
 背景（2026-10-22 两次现场）：弹窗开着时点一下主窗体，主窗体与弹窗一起从屏幕上
 消失、进程却还在运行。两次取证都表明**不是崩溃**：GUI 线程空闲在 ``app.exec()``、
@@ -6,21 +6,27 @@
 （健康时类名是 ``Qt6xxxQWindowIcon``）。结论是"顶层原生窗口被销毁且没有再 show"；
 弹窗连坐，是因为它是主窗体的 owned 窗口（Windows 规则：owner 销毁 → owned 全灭）。
 
-要定位"谁销毁的"，需要原生窗口事件的时序。本模块做三件事：
+2026-10-29 的现场进一步确认：主窗体先收到一个**没有 Close、也不是最小化**的
+``QEvent::Hide``，随后原生 HWND 被销毁，而 QWidget/进程都还活着。``hide()``
+本身不会销毁原生窗口；这种"Hide + DESTROY + 无 Close"与
+``QWindow.destroy()`` / ``QWidget.destroy()`` 的特征一致。
+
+本模块做三件事：
 
 1. ``SetWinEventHook`` 监听本进程的 SHOW / HIDE / DESTROY —— 原生真相；
 2. 记录可疑路径上的每一次原生窗口操作（自绘圆角 / 影子窗口那一层、原则弹窗、
-   主窗体进出事件），带相对时间戳、当前模态窗、HWND 与调用点；
-3. 一旦"被跟踪的可视顶层窗口"的 HWND 被销毁（钩子报告，或 1s 自检发现失效），
-   立刻落盘 ``logs/window_diag_<时间>.dump.txt``：
+   主窗体进出事件），带相对时间戳、当前模态窗、HWND、spontaneous 标志与深栈；
+3. 一旦"被跟踪的顶层窗口"出现异常（主窗体无 Close 的 Hide、HWND 被销毁、
+   或 1s 自检发现失效），立刻落盘 ``logs/window_diag_<时间>.dump.txt``：
    最近 600 条时序 + 本进程全部顶层窗口快照 + 当时的 Python 栈。
 
-正常启动（无 ``SECTION2_DIAG=1``）时 :func:`install` 返回 ``None``，:func:`record`
-是空操作——对性能和行为零影响。
+正常启动默认启用；不想要时设环境变量 ``SECTION2_DIAG=0`` 关掉（离屏测试里也
+自动不启用）。关闭后 :func:`install` 返回 ``None``，:func:`record` 是空操作。
 
 用法::
 
-    set SECTION2_DIAG=1 && .venv\\Scripts\\python.exe src\\app\\main.py
+    .venv\\Scripts\\python.exe src\\app\\main.py          # 默认开启
+    set SECTION2_DIAG=0 && .venv\\Scripts\\python.exe src\\app\\main.py
 """
 
 from __future__ import annotations
@@ -71,6 +77,11 @@ _EV_SHOW = _EV_HIDE = _EV_CLOSE = _EV_QUIT = None
 
 #: 一个会话最多落盘几份 dump（防止异常循环把磁盘写满）
 _MAX_DUMPS = 20
+
+#: 被跟踪窗口 Hide/Close 时保留的栈层数。这类事件频率低，尽量多留调用者：
+#: 2026-10-29 的现场栈只留了 9 层，刚好在 SQLAlchemy 的 ``all()`` 处截断，
+#: 看不到真正触发窗口销毁的业务代码。
+_DEEP_STACK = 40
 
 
 # --------------------------------------------------------------------------- #
@@ -158,14 +169,16 @@ def _init_watched_events() -> None:
 _INSTANCE: "WindowDiag | None" = None
 
 
-def record(kind: str, detail: str = "", *, stack: int = 0) -> None:
+def record(kind: str, detail: str = "", *, stack: int = 0) -> str:
     """记录一条诊断事件（未启用时是空操作，调用点不必判断）。
 
     ``stack`` > 0 时附带 ``stack`` 层调用点（file:line 函数），用于埋点定位。
+    返回本次记录的调用点文本（未启用 / 无栈时为空串）。
     """
     instance = _INSTANCE
     if instance is not None:
-        instance.record(kind, detail, stack=stack)
+        return instance.record(kind, detail, stack=stack)
+    return ""
 
 
 def enabled() -> bool:
@@ -219,7 +232,13 @@ class WindowDiag:  # pragma: no cover - 需要真实 Windows 窗口
         self._started = time.monotonic()
         self._hwnds: dict[int, str] = {}  # hwnd -> 标签（首次见到可视窗口时登记）
         self._tracked: set[int] = set()  # 已装过滤器的 widget（按 id 去重）
-        self._hidden: set[int] = set()  # Qt 侧已经 Hide/Close 过的 hwnd（正常关窗）
+        self._hidden: set[int] = set()  # Qt 侧已经 Hide/Close 过的 hwnd
+        self._closed: set[int] = set()  # Qt 侧明确收到过 Close 的 hwnd（正常关窗）
+        self._important: set[int] = set()  # QMainWindow：消失即异常，判定比弹窗严格
+        self._anomaly_dumped: set[int] = set()  # 已因"异常 Hide"落过盘的 hwnd
+        self._main_hwnd: int | None = None  # 主窗体 HWND（退出时判断是否正常 Close）
+        self._main_closed = False  # 主窗体收到过 Close（跨 DESTROY 清理保留）
+        self._incident = 0  # 异常事件序号：让同一窗口的多次现场都能各落一份
         self._widgets: dict[int, object] = {}  # hwnd -> weakref(widget)，用于查 Qt 侧可见性
         self._dumped: set[int] = set()
         self._dump_count = 0
@@ -259,8 +278,11 @@ class WindowDiag:  # pragma: no cover - 需要真实 Windows 窗口
 
             def eventFilter(self, obj, event):  # noqa: N802 - Qt 命名
                 if _EV_QUIT is not None and event.type() == _EV_QUIT:
-                    self._owner.record("app.quit", "收到 QEvent::Quit", stack=8)
-                    self._owner._dump("应用收到 Quit（窗口即将集体消失）")
+                    self._owner.record("app.quit", "收到 QEvent::Quit", stack=_DEEP_STACK)
+                    # 正常退出前主窗体一定收到过 Close；没收到就说明是异常退出
+                    # （例如窗口已被销毁、或有人直接 quit()），才值得落盘。
+                    if self._owner._quit_without_close():
+                        self._owner._dump("应用收到 Quit，但主窗体没有走过正常的 Close")
                 return False
 
         self._app_filter = _AppFilter(self)
@@ -301,7 +323,8 @@ class WindowDiag:  # pragma: no cover - 需要真实 Windows 窗口
         _logger.info("窗口诊断已开启：%s", self._log_path)
 
     # ------------------------------------------------------------------ 记录
-    def record(self, kind: str, detail: str = "", *, stack: int = 0) -> None:
+    def record(self, kind: str, detail: str = "", *, stack: int = 0) -> str:
+        site = ""
         try:
             from PySide6.QtWidgets import QApplication
 
@@ -312,11 +335,13 @@ class WindowDiag:  # pragma: no cover - 需要真实 Windows 窗口
             if modal is not None:
                 line += f"  {{modal={type(modal).__name__}}}"
             if stack:
-                line += "  @ " + _call_site(stack + 1)
+                site = _call_site(stack + 1)
+                line += "  @ " + site
             self._ring.append(line)
             self._write(line)
         except Exception:  # noqa: BLE001 - 诊断永远不能反过来搞崩程序
             pass
+        return site
 
     def _write(self, line: str) -> None:
         try:
@@ -337,15 +362,20 @@ class WindowDiag:  # pragma: no cover - 需要真实 Windows 窗口
                 f"hwnd={hwnd} {cls} {title!r}{mark}",
             )
             if label and event == _EVENT_OBJECT_DESTROY:
+                anomaly = int(hwnd) in self._anomaly_dumped
                 expected = self._destroy_expected(int(hwnd))
                 if expected:
                     self.record("native.destroy_expected", f"hwnd={hwnd} {label}（Qt 已关窗，正常）")
+                elif anomaly:
+                    # 这个窗口的异常 Hide 已经落过盘，不重复写第二份
+                    self.record(
+                        "native.destroy_after_anomaly",
+                        f"hwnd={hwnd} {label}（Hide 异常已落盘，此处只记录）",
+                    )
                 else:
-                    # 关键信号：Qt 侧仍认为这个窗口可见，但原生窗口被销毁了
-                    self._dump(f"窗口未经 Qt 的 Hide/Close 就被销毁：{label} hwnd={hwnd}")
-                self._hwnds.pop(int(hwnd), None)
-                self._hidden.discard(int(hwnd))
-                self._widgets.pop(int(hwnd), None)
+                    # 关键信号：没有 Close、也没有可解释的 Hide，原生窗口就被销毁了
+                    self._dump(f"窗口未经 Qt 的 Close 就被销毁：{label} hwnd={hwnd}")
+                self._forget(int(hwnd))
         except Exception:  # noqa: BLE001 - 回调里绝不能抛
             pass
 
@@ -359,31 +389,103 @@ class WindowDiag:  # pragma: no cover - 需要真实 Windows 窗口
                 return
             hwnd = int(widget.winId())
             tracked = hwnd in self._hwnds
-            # 被跟踪的窗口收到 Close / Hide 时把调用栈一起记下来：
-            # 实测本机 PySide6 6.11 下 close() 会**销毁**原生窗口（hide() 不会），
-            # 所以"主窗体消失"等价于"有人 close/hide 了它"，栈能直接指出是谁干的。
-            self.record(
+            try:
+                spontaneous = bool(event.spontaneous())
+            except Exception:  # noqa: BLE001
+                spontaneous = False
+            # 被跟踪的窗口收到 Close / Hide 时把完整调用栈一起记下来。
+            # 2026-10-29 的现场只留了 9 层，刚好在 SQLAlchemy 的 all() 处截断；
+            # 这里改成深栈，下一次能直接看到业务层调用者。
+            site = self.record(
                 f"qt.{etype.name}",
                 f"{type(widget).__name__} hwnd={hwnd} title={widget.windowTitle()!r}"
+                + (f" spontaneous={spontaneous}" if etype in (_EV_HIDE, _EV_CLOSE, _EV_SHOW) else "")
                 + (f"  跟踪中：{self._hwnds[hwnd]}" if tracked else ""),
-                stack=8 if tracked and etype in (_EV_HIDE, _EV_CLOSE) else 0,
+                stack=_DEEP_STACK if tracked and etype in (_EV_HIDE, _EV_CLOSE) else 0,
             )
-            # 记录"Qt 侧已主动关窗"的信号：这类 DESTROY 属正常，不落盘
-            if etype in (_EV_HIDE, _EV_CLOSE):
+            if etype == _EV_CLOSE:
+                # 明确关窗：之后的 Hide / 原生 DESTROY 都属正常。
+                # 注意 closeEvent 可能被用户取消（未保存提示），所以这里只记
+                # "收到 Close"；真正算关闭要等 Hide 真的跟上来（见下）。
+                self._closed.add(hwnd)
                 self._hidden.add(hwnd)
+            elif etype == _EV_HIDE:
+                self._hidden.add(hwnd)
+                if hwnd in self._closed and hwnd == self._main_hwnd:
+                    # Close 之后真的 Hide 了：这次关闭被接受
+                    self._main_closed = True
+                if self._is_anomalous_hide(widget, hwnd, spontaneous, site):
+                    # 主窗体被 Hide，却没有先 Close、也不是最小化：
+                    # hide() 本身不会销毁原生窗口，后续 DESTROY 很可能是
+                    # QWindow.destroy()/QWidget.destroy() 或外部 DestroyWindow。
+                    # 立刻落盘，把深栈留在现场。
+                    self._incident += 1
+                    self._anomaly_dumped.add(hwnd)
+                    self._dump(
+                        "主窗体被 Hide 但未走 close/minimize"
+                        f"（spontaneous={spontaneous}，疑似原生窗口被销毁）："
+                        f"{self._hwnds.get(hwnd, type(widget).__name__)} hwnd={hwnd} "
+                        f"incident={self._incident}"
+                    )
             elif etype == _EV_SHOW:
                 self._hidden.discard(hwnd)
+                self._closed.discard(hwnd)
+                self._anomaly_dumped.discard(hwnd)
+                if hwnd == self._main_hwnd:
+                    self._main_closed = False
         except Exception:  # noqa: BLE001
             pass
 
+    def _is_anomalous_hide(self, widget, hwnd: int, spontaneous: bool, site: str) -> bool:
+        """主窗体"非正常 Hide"判定。
+
+        正常路径只有三种：``close()``（先有 Close）、最小化（栈里有
+        ``_on_minimize``/``showMinimized``，或 ``isMinimized()`` 为真）、
+        系统级隐藏（spontaneous=True，如锁屏/显示桌面）。其余一律可疑。
+        """
+        if hwnd not in self._important:
+            return False
+        if hwnd in self._closed or spontaneous:
+            return False
+        if "_on_minimize" in site or "showMinimized" in site:
+            return False
+        try:
+            if widget.isMinimized():
+                return False
+        except RuntimeError:
+            return False
+        return True
+
+    def _quit_without_close(self) -> bool:
+        """收到 Quit 时主窗体是否没有走过正常 Close（用于过滤正常退出噪音）。"""
+        if self._main_hwnd is not None:
+            return not self._main_closed
+        return any(hwnd not in self._closed for hwnd in self._important)
+
+    def _forget(self, hwnd: int) -> None:
+        """窗口已销毁：清理该 HWND 的所有跟踪状态（``_main_hwnd`` 保留给退出判定）。"""
+        self._hwnds.pop(hwnd, None)
+        self._widgets.pop(hwnd, None)
+        self._hidden.discard(hwnd)
+        self._closed.discard(hwnd)
+        self._important.discard(hwnd)
+        self._anomaly_dumped.discard(hwnd)
+
     def _destroy_expected(self, hwnd: int) -> bool:
-        """该 HWND 被销毁是否属于"正常关窗"（Qt 已经 Hide/Close，或 widget 已析构）。"""
-        if hwnd in self._hidden:
-            return True
+        """该 HWND 被销毁是否属于"正常关窗"。
+
+        主窗体（QMainWindow）走严格口径：只有明确收到过 Close 才算正常；
+        ``hide()``/最小化都不会销毁原生窗口，没 Close 的 DESTROY 必须落盘。
+        其它顶层窗口（菜单、提示、对话框）保持宽松口径，避免正常弹层退出刷屏。
+        """
         reference = self._widgets.get(hwnd)
         widget = reference() if reference is not None else None
         if widget is None:
             return True  # widget 本身已销毁：正常
+        if hwnd in self._important:
+            return hwnd in self._closed
+        if hwnd in self._hidden:
+            return True
         try:
             return not widget.isVisible()
         except RuntimeError:
@@ -395,7 +497,7 @@ class WindowDiag:  # pragma: no cover - 需要真实 Windows 窗口
         try:
             import weakref
 
-            from PySide6.QtWidgets import QApplication
+            from PySide6.QtWidgets import QApplication, QMainWindow
 
             for widget in QApplication.topLevelWidgets():
                 if not _is_alive(widget):
@@ -413,20 +515,46 @@ class WindowDiag:  # pragma: no cover - 需要真实 Windows 窗口
                     self._hwnds.setdefault(hwnd, label)
                     self._widgets.setdefault(hwnd, weakref.ref(widget))
                     self._hidden.discard(hwnd)
+                    self._closed.discard(hwnd)
+                    self._anomaly_dumped.discard(hwnd)
+                    if isinstance(widget, QMainWindow):
+                        # 主窗体消失是"必须落盘"的异常；弹窗/菜单保持宽松口径
+                        self._important.add(hwnd)
+                        self._main_hwnd = hwnd
+                        self._main_closed = False
                     widget.installEventFilter(self._filter)
                     self.record("track", f"{label} hwnd={hwnd}")
                 except (RuntimeError, TypeError):
                     continue
 
+            # closeEvent 被取消（如“是否保存”里点取消）时窗口仍然可见：
+            # 撤销“已关闭”标记，否则后续真正的异常销毁会被误判为正常。
+            main = self._main_hwnd
+            if main is not None and main in self._closed:
+                reference = self._widgets.get(main)
+                widget = reference() if reference is not None else None
+                if widget is not None:
+                    try:
+                        if widget.isVisible():
+                            self._closed.discard(main)
+                            self._main_closed = False
+                            self.record(
+                                "close_ignored",
+                                f"hwnd={main} Close 被 closeEvent 忽略，窗口仍在",
+                            )
+                    except RuntimeError:
+                        pass
+
             for hwnd, label in list(self._hwnds.items()):
                 if _user32.IsWindow(hwnd):
                     continue
+                anomaly = hwnd in self._anomaly_dumped
                 expected = self._destroy_expected(hwnd)
-                self._hwnds.pop(hwnd, None)
-                self._widgets.pop(hwnd, None)
-                self._hidden.discard(hwnd)
-                if not expected:
-                    self._dump(f"自检发现窗口的 HWND 已失效（Qt 仍认为可见）：{label} hwnd={hwnd}")
+                self._forget(hwnd)
+                if not expected and not anomaly:
+                    self._dump(
+                        f"自检发现窗口的 HWND 已失效（未收到 Close）：{label} hwnd={hwnd}"
+                    )
         except Exception:  # noqa: BLE001
             pass
 
@@ -446,15 +574,33 @@ class WindowDiag:  # pragma: no cover - 需要真实 Windows 窗口
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(f"窗口诊断 dump —— {datetime.now():%Y-%m-%d %H:%M:%S}\n")
                 handle.write(f"原因：{reason}\n")
-                handle.write(f"进程：pid={self._pid}\n\n")
+                handle.write(f"进程：pid={self._pid}\n")
+                handle.write(
+                    f"主窗体：hwnd={self._main_hwnd} closed={self._main_closed}\n"
+                )
+                handle.write(
+                    f"异常 Hide 已落盘：{sorted(self._anomaly_dumped) or '无'}\n\n"
+                )
                 handle.write("== 跟踪表（首次见到时登记的可视顶层窗口）==\n")
                 if not self._hwnds:
                     handle.write("  (空)\n")
                 for hwnd, label in self._hwnds.items():
                     cls, title = _window_info(int(hwnd))
+                    reference = self._widgets.get(hwnd)
+                    widget = reference() if reference is not None else None
+                    visible = minimized = state = "?"
+                    if widget is not None:
+                        try:
+                            visible = str(widget.isVisible())
+                            minimized = str(widget.isMinimized())
+                            state = str(widget.windowState())
+                        except RuntimeError:
+                            pass
                     handle.write(
                         f"  hwnd={hwnd} {label} | 存活={bool(_user32.IsWindow(hwnd))} "
-                        f"{cls} {title!r}\n"
+                        f"visible={visible} minimized={minimized} state={state} "
+                        f"closed={hwnd in self._closed} "
+                        f"anomaly={hwnd in self._anomaly_dumped} {cls} {title!r}\n"
                     )
                 handle.write("\n== 本进程当前全部顶层窗口（EnumWindows）==\n")
                 handle.write(_enumerate_process_windows(self._pid) + "\n")

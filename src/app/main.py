@@ -30,6 +30,7 @@ from PySide6.QtGui import QFontDatabase, QIcon  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from app.core.main_thread import install_main_thread_executor
+from app.core.native_crash import install as install_native_crash
 from app.core.paths import fonts_dir, log_dir, resources_dir  # noqa: E402
 from app.core.window_diag import install as install_window_diag  # noqa: E402
 from app.core.window_diag import shutdown as shutdown_window_diag  # noqa: E402
@@ -123,6 +124,9 @@ def _project_from_args(argv: list[str]) -> str | None:
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv if argv is None else argv)
     setup_logging()
+    # 原生崩溃兜底（Qt/C++ 层 fast-fail 不走 sys.excepthook）：越早装越好，
+    # 连 QApplication 初始化阶段的崩溃也要能留下 minidump。
+    install_native_crash()
     _logger.info("启动 %s %s", APP_DISPLAY_NAME, APP_VERSION)
 
     app = QApplication(arguments)

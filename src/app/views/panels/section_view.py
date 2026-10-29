@@ -59,6 +59,7 @@ from app.core.calc.engine import (
 )
 from app.core.calc.groove import level_slope
 from app.core.calc.tracer import dim, scale_sum
+from app.services import project_io
 from app.services.atlas import resolve_atlas
 
 _MARGIN = 10  # 画布左右留白 px（旧版 10*2）
@@ -309,6 +310,10 @@ def _build_scene(
 ) -> tuple[_Scene | None, str]:
     if element_id is None:
         return None, "请选择构件条目"
+    # 工程关闭后仍可能收到延迟的 detail_loaded（旧 id 已失效）：先判工程再查库，
+    # 避免 orm.session() 抛 NoProjectOpenError（2026-10-29 08:29 现场）。
+    if not project_io.is_open():
+        return None, "尚未打开工程"
     session = orm.session()
     element = session.get(Element, element_id)
     if element is None:
@@ -581,6 +586,8 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
 
     折线坐标：x 相对槽中心（右正）、y 自**最深槽底**向上，单位 m。
     """
+    if not project_io.is_open():
+        return None, "尚未打开工程"
     from app.core.calc.trench_group import _internal_run, _side_name, _slope_points
 
     session = orm.session()

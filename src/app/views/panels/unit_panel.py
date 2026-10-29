@@ -1610,8 +1610,16 @@ class UnitPanel(QWidget):
         # 不是 None：不归一成 None，set_element(0) 会跳过空态短路直接查工作库，
         # 启动时（还没打开工程）就抛 NoProjectOpenError
         element_id = element_id or None
-        element = _element(element_id) if element_id is not None else None
-        if element is not None and element.group_id is not None:
+        if element_id is None:
+            self._section_view.set_element(None)
+            return
+        element = _element(element_id)
+        if element is None:
+            # 工程已关闭 / 构件已删除：延迟到达的 detail_loaded 带着旧 id，
+            # 不能把它继续传给 _build_scene（会直接查工作库并抛异常）。
+            self._section_view.set_element(None)
+            return
+        if element.group_id is not None:
             self._section_view.set_group(element.group_id)
         else:
             self._section_view.set_element(element_id)
@@ -2245,6 +2253,9 @@ class UnitPanel(QWidget):
     ) -> None:
         if self._multi_detail:
             return  # 多选模式显示占位行，不显示具体条目
+        if not project_io.is_open():
+            # 工程已关闭：忽略延迟到达的明细信号（旧 id 已不可查）
+            return
         from app.viewmodels.unit_vm import (
             _element,
             auto_atlas_params,

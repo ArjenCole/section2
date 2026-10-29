@@ -1,10 +1,12 @@
-"""窗口诊断黑匣子（app/core/window_diag.py）的开关与空操作语义。
+"""窗口诊断黑匣子（app/core/window_diag.py）的开关、空操作与异常判定语义。
 
 真实落盘需要 Windows 平台插件 + 顶层窗口，那部分由手工自测覆盖；
-这里只锁住"默认不启用、失败不抛"这两条底线。
+这里锁住"默认不启用、失败不抛"以及 2026-10-29 之后新增的判定规则。
 """
 
 from __future__ import annotations
+
+import weakref
 
 from app.core import window_diag
 
@@ -15,7 +17,7 @@ def test_disabled_without_env(qapp, monkeypatch) -> None:
     try:
         assert window_diag.install(qapp) is None
         assert window_diag.enabled() is False
-        window_diag.record("unit.test", "未启用时不能抛", stack=2)
+        assert window_diag.record("unit.test", "未启用时不能抛", stack=2) == ""
     finally:
         window_diag.shutdown()
 
@@ -36,3 +38,73 @@ def test_shutdown_is_idempotent() -> None:
     window_diag.shutdown()
     window_diag.shutdown()
     assert window_diag.enabled() is False
+
+
+# --------------------------------------------------------------------------- #
+# 2026-10-29 现场之后新增的判定规则（不依赖真实窗口，直接测纯逻辑）
+# --------------------------------------------------------------------------- #
+class _FakeWidget:
+    def __init__(self, minimized: bool = False, visible: bool = True) -> None:
+        self._minimized = minimized
+        self._visible = visible
+
+    def isMinimized(self) -> bool:  # noqa: N802 - 模仿 Qt 命名
+        return self._minimized
+
+    def isVisible(self) -> bool:  # noqa: N802
+        return self._visible
+
+
+def _bare_diag(hwnd: int = 100) -> window_diag.WindowDiag:
+    """绕过 __init__（需要真实 Windows 窗口），只装判定所需的最小状态。"""
+    diag = object.__new__(window_diag.WindowDiag)
+    widget = _FakeWidget()
+    diag._fake = widget  # 强引用：否则 weakref 立即失效
+    diag._important = {hwnd}
+    diag._closed = set()
+    diag._hidden = set()
+    diag._widgets = {hwnd: weakref.ref(widget)}
+    diag._main_hwnd = hwnd
+    diag._main_closed = False
+    return diag
+
+
+def test_bare_hide_of_main_window_is_anomalous() -> None:
+    """主窗体无 Close、非最小化、非 spontaneous 的 Hide 必须判为异常。"""
+    diag = _bare_diag()
+    widget = _FakeWidget()
+    assert diag._is_anomalous_hide(widget, 100, False, "eventFilter <- _populate_full")
+    # 最小化（栈里有 _on_minimize）不算异常
+    assert not diag._is_anomalous_hide(
+        widget, 100, False, "eventFilter <- _on_minimize@main_window.py:216"
+    )
+    # 系统级隐藏（spontaneous）不算异常
+    assert not diag._is_anomalous_hide(widget, 100, True, "eventFilter <- app.exec")
+    # 明确 Close 过的 Hide 不算异常
+    diag._closed.add(100)
+    assert not diag._is_anomalous_hide(widget, 100, False, "eventFilter <- app.exec")
+
+
+def test_main_window_destroy_requires_close() -> None:
+    """主窗体只有明确收到 Close 才算"正常销毁"；仅 Hide 不算。"""
+    diag = _bare_diag()
+    diag._hidden.add(100)  # 只有 Hide、没有 Close
+    assert diag._destroy_expected(100) is False
+    diag._closed.add(100)
+    assert diag._destroy_expected(100) is True
+    # 非主窗体（菜单/弹层）保持宽松口径
+    other = object.__new__(window_diag.WindowDiag)
+    fake = _FakeWidget(visible=False)
+    other._fake = fake
+    other._important = set()
+    other._hidden = {200}
+    other._widgets = {200: weakref.ref(fake)}
+    assert other._destroy_expected(200) is True
+
+
+def test_quit_without_close_flag_survives_forget() -> None:
+    """正常 Close 后即使 DESTROY 清理了集合，退出判定仍应知道主窗体已关闭。"""
+    diag = _bare_diag()
+    assert diag._quit_without_close() is True
+    diag._main_closed = True
+    assert diag._quit_without_close() is False

@@ -129,3 +129,30 @@ def test_detail_reload_sentinel_zero_without_project(qapp) -> None:
     panel._vm.load_unit(None)  # 空明细重载：哨兵 0
     panel._on_detail_loaded(0, [], [], [])  # 同一哨兵直接走处理器也不崩
     assert not orm.is_open()
+
+
+def test_stale_detail_id_after_project_close(qapp, project_with_element) -> None:
+    """回归（2026-10-29 08:29）：工程关闭后延迟到达的旧 id 不得再查工作库。
+
+    现场栈：``_on_detail_loaded → _refresh_section_for → set_element →
+    _build_scene → orm.session() → NoProjectOpenError``。旧 id 不是 None，
+    必须在进断面构建前被拦住。
+    """
+    from app.views.panels.section_view import _build_group_scene, _build_scene
+    from app.views.panels.unit_panel import UnitPanel
+
+    stale_id = project_with_element
+    project_io.close_project()
+    assert not orm.is_open()
+
+    panel = UnitPanel()
+    # 延迟信号直接打到处理器：必须静默忽略，不能抛
+    panel._on_detail_loaded(stale_id, [], [], [])
+    panel._refresh_section_for(stale_id)
+    assert panel._section_view._element_id is None
+
+    # 兜底：即使有人绕过面板直接构建场景，也只能返回提示
+    scene, hint = _build_scene(stale_id, 320, 420)
+    assert scene is None and hint == "尚未打开工程"
+    scene, hint = _build_group_scene(1, 320, 420)
+    assert scene is None and hint == "尚未打开工程"

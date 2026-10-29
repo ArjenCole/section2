@@ -113,6 +113,14 @@ class _TestConnectionWorker(QThread):
         self.finished_with_result.emit(True, f"连接成功，发现 {len(models)} 个模型", models)
 
 
+#: 正在运行的测试连接 worker。**不能**把 worker 设成对话框的子对象：
+#: QThread 在 run() 还没返回时被析构会触发 Qt 的 qFatal
+#: （"QThread: Destroyed while thread is still running"，0xc0000409）。
+#: 对话框随时可能被关闭/销毁，因此这里用模块级强引用兜住 worker，
+#: 等它自己发出 finished 后再从集合移除并 deleteLater。
+_ACTIVE_TEST_WORKERS: set[_TestConnectionWorker] = set()
+
+
 class _ProviderListDelegate(QStyledItemDelegate):
     """列表项绘制委托（Quotor 同款）。
 
@@ -560,9 +568,15 @@ class AiSettingsDialog(FramelessDialog):
         self._test_btn.setEnabled(False)
         self._test_result.setText("测试中...")
 
-        self._test_worker = _TestConnectionWorker(base_url, api_key, self)
-        self._test_worker.finished_with_result.connect(self._on_test_finished)
-        self._test_worker.start()
+        # 不传 parent：对话框关闭/销毁时不能连带析构仍在运行的 QThread。
+        # worker 由 _ACTIVE_TEST_WORKERS 持有，finished 后自动摘除并 deleteLater。
+        worker = _TestConnectionWorker(base_url, api_key)
+        _ACTIVE_TEST_WORKERS.add(worker)
+        worker.finished_with_result.connect(self._on_test_finished)
+        worker.finished.connect(lambda w=worker: _ACTIVE_TEST_WORKERS.discard(w))
+        worker.finished.connect(worker.deleteLater)
+        self._test_worker = worker
+        worker.start()
 
     def _on_test_finished(self, ok: bool, msg: str, models: object) -> None:
         from app.resources.qss.theme import ThemeManager
