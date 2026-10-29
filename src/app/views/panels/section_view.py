@@ -214,13 +214,6 @@ class SectionView(QWidget):
                 if previous is not None:
                     painter.drawLine(int(previous[0]), int(previous[1]), int(x), int(y))
                 previous = (x, y)
-            if previous is not None and scene.outline:
-                # 地面线：折线首尾（地面高程）向两侧画到画布边缘
-                top_y = int(origin_y - scene.total_h * 1000.0 * scene.zoom)
-                first_x = int(center_x + scene.outline[0][0] * 1000.0 * scene.zoom)
-                last_x = int(previous[0])
-                painter.drawLine(0, top_y, first_x, top_y)
-                painter.drawLine(last_x, top_y, int(self.width()), top_y)
             # 合槽分层线（换填 / 垫层 / 坞膀 / 管顶 50cm）与虚拟竖直墙
             if scene.layer_lines:
                 painter.setPen(QPen(_COLOR_LAYER, 1))
@@ -245,9 +238,6 @@ class SectionView(QWidget):
             # 折线；对称断面 segments_r 为空仍是镜像）
             for side in (1, -1):
                 segments = scene.segments if side == 1 or scene.segments_r is None else scene.segments_r
-                top_width = (
-                    scene.top_width if side == 1 else (scene.top_width_r or scene.top_width)
-                )
                 previous: _Segment | None = None
                 for segment in segments:
                     if segment.h_delta <= 0:
@@ -264,11 +254,11 @@ class SectionView(QWidget):
                                      segment.h_current + segment.h_delta))
                     self._draw_side_line(painter, points_m, side, center_x, origin_y, scene.zoom)
                     previous = segment
-                # 地面线：本侧槽顶边一直到画布边缘（旧版终点是画框半宽，按像素计）
-                edge_x = center_x - side * (self.width() / 2.0)
-                top_y = origin_y - scene.total_h * 1000.0 * scene.zoom
-                start_x = center_x - top_width / 2.0 * 1000.0 * scene.zoom * side
-                painter.drawLine(int(start_x), int(top_y), int(edge_x), int(top_y))
+
+        # 基坑上口封闭线：一条通长横线（与边坡线同色），取代两侧地坪线
+        top_y = origin_y - scene.total_h * 1000.0 * scene.zoom
+        painter.setPen(QPen(_COLOR_LINE, 1))
+        painter.drawLine(0, int(top_y), self.width(), int(top_y))
 
         # 管体本体（画一次，居中；黑填充挖空 + 描边，与旧版 FillRectangle/FillEllipse 一致）
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -883,14 +873,18 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
             dim(depth_i),
             cushion_name,
         )
+        # 只在回填材料（定额键）变化处画分层线，与单构件断面 _Segment.continues
+        # 的口径一致：同一材料被围护分级切开时不重复画线。
         tops: list[float] = []
         cum = 0.0
-        for _key, layer, _note in layers:
+        previous_key: str | None = None
+        for key, layer, _note in layers:
             if layer.v <= 0:
                 continue
-            cum += layer.v
-            if cum < depth_i - 1e-9:
+            if previous_key is not None and key != previous_key and cum < depth_i - 1e-9:
                 tops.append(cum)
+            cum += layer.v
+            previous_key = key
         for top in tops:
             y = (h_max - depth_i) + top
             if i == 0:
