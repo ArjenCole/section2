@@ -283,3 +283,250 @@ def test_build_scene_reports_walk_problem(tmp_path) -> None:
     scene, hint = _build_scene(element.id, 320, 420)
     assert scene is None
     assert "围护分级高度异常" in hint
+
+
+def test_group_left_slope_platform_opens_outward(tmp_path) -> None:
+    """回归：合槽最左侧边坡在切级平台处应向外阔出一个平台后再向上放坡。
+
+    做法取两级均分（每级平台宽 0.5m、上段 1:0.3 / 下段 1:0.5）。左边坡折线
+    自地面向下时必须始终向内收（外扩宽单调减小），平台处同样是“向下收进一
+    个平台”。旧实现按深度**升序稳定排序**，把切级处同一深度的下段坡顶点
+    排在上段坡底点之前，结果平台处反而向外跳、折线呈 Z 形。
+    """
+    from app.core.models import base as orm
+    from app.core.models.models import MULTI_LEVEL_TEXT, PcpEnclosure
+    from app.services import principle_edit
+    from app.viewmodels import unit_vm
+    from app.views.panels.section_view import _build_group_scene
+
+    spec = NewProjectSpec(path=tmp_path / "合槽平台.stn", unit_names=["雨水工程"])
+    project_io.new_project(spec)
+    unit_id = project_io.units(project_io.segments()[0].id)[0].id
+
+    # 两级放坡做法（多级围护），均分槽深 + 平台宽 0.5m
+    pe = PcpEnclosure(name="两级放坡平台", order_no=90)
+    orm.session().add(pe)
+    project_io.commit()
+    principle_edit.apply_enclosure_works(
+        pe.id,
+        [
+            {
+                "min_depth": 0,
+                "cpnt_cat": MULTI_LEVEL_TEXT,
+                "stop_type": "无",
+                "levels": [
+                    {"level_type": "放坡", "h": -1, "step_width": 0.5},
+                    {"level_type": "放坡", "h": -1, "step_width": 0.5},
+                ],
+            }
+        ],
+    )
+    # 上段（靠地面）1:0.3、下段 1:0.5，平台跳变处外扩宽差更明显
+    for level, slope in zip(
+        orm.session().get(PcpEnclosure, pe.id).works_sorted()[0].levels, (0.3, 0.5)
+    ):
+        for param in level.components[0].params:
+            if param.key == "A":
+                param.value = f"放坡系数 1:X|{slope}"
+    project_io.commit()
+
+    e1 = unit_vm.create_element(
+        unit_id, category=1, name="左管", depth="3", amount="100",
+        pipes=[("Ⅱ级混凝土管", 600, "1")], pe_name="两级放坡平台",
+        seed_atlas_defaults=True,
+    )
+    e2 = unit_vm.create_element(
+        unit_id, category=1, name="右管", depth="3", amount="100",
+        pipes=[("Ⅱ级混凝土管", 600, "1")], seed_atlas_defaults=True,
+    )
+    group, error = unit_vm.create_trench_group([e1.id, e2.id])
+    assert group is not None and error is None
+
+    scene, hint = _build_group_scene(group.id, 640, 480)
+    assert hint == "" and scene is not None and scene.outline
+    outline = scene.outline
+    # 左边坡 = 首个到达最深槽底的折点之前的部分（其后为槽底 / 右边坡）
+    y_min = min(y for _x, y in outline)
+    end = next(index for index, (_x, y) in enumerate(outline) if abs(y - y_min) <= 1e-9)
+    left = outline[:end]
+    assert len(left) >= 3
+    # 确实存在切级平台（同一深度两个点），否则本用例就测不到该回归
+    assert any(
+        abs(left[i][1] - left[i + 1][1]) <= 1e-9 for i in range(len(left) - 1)
+    ), left
+    runs = [-x for x, _y in left]
+    for previous, current in zip(runs, runs[1:]):
+        assert current <= previous + 1e-9, f"左侧边坡在平台处向外跳变（Z 形）：{runs}"
+
+
+def _group_pair_fixture(tmp_path, name: str, depth2: str = "4", dn2: int = 800):
+    """双管合槽（浅 3m dn600 + 深/异径右管），返回 (group, e1, e2)。"""
+    from app.viewmodels import unit_vm
+
+    spec = NewProjectSpec(path=tmp_path / f"{name}.stn", unit_names=["雨水工程"])
+    project_io.new_project(spec)
+    unit_id = project_io.units(project_io.segments()[0].id)[0].id
+    e1 = unit_vm.create_element(
+        unit_id, category=1, name="浅管", depth="3", amount="100",
+        pipes=[("Ⅱ级混凝土管", 600, "1")], seed_atlas_defaults=True,
+    )
+    e2 = unit_vm.create_element(
+        unit_id, category=1, name="右管", depth=depth2, amount="100",
+        pipes=[("Ⅱ级混凝土管", dn2, "1")], seed_atlas_defaults=True,
+    )
+    group, error = unit_vm.create_trench_group([e1.id, e2.id])
+    assert group is not None and error is None, error
+    return group, e1, e2
+
+
+def test_group_unified_layer_lines_span_trench(tmp_path) -> None:
+    """统一回填标高：每条统筹界面画一条贯通整槽的水平线。
+
+    统筹界面（手算 oracle = 各构件层顶标高逐角色取最浅）与独立口径的
+    "构件边界之间" 分层线不同：统一口径下每条线横跨轮廓在该标高的全部宽度。
+    """
+    from app.core.calc.groove import layer_roles
+    from app.core.calc.trench_group import _member_layers, _resolve_member
+    from app.viewmodels import unit_vm
+    from app.views.panels.section_view import _build_group_scene
+
+    group, _e1, _e2 = _group_pair_fixture(tmp_path, "统一回填断面")
+    session = orm.session()
+
+    def scene_of(mode):
+        unit_vm.update_group(group.id, backfill_mode=mode)
+        scene, hint = _build_group_scene(group.id, 640, 480)
+        assert hint == "" and scene is not None and scene.outline
+        return scene
+
+    independent = scene_of("独立回填标高")
+    unified = scene_of("统一回填标高")
+
+    # 手算统筹界面（地面以下深度，逐角色取最浅）
+    best: dict[tuple[str, int], float] = {}
+    for element in sorted(group.members, key=lambda item: (item.order_no, item.id)):
+        member, _error = _resolve_member(session, element)
+        cum = 0.0
+        layers = _member_layers(member)
+        for (base, occurrence), (_key, layer, _note) in zip(layer_roles(layers), layers):
+            cum += layer.v
+            if layer.v <= 0:
+                continue
+            role = (base, occurrence)
+            elevation = member.depth.v - cum
+            if role not in best or elevation < best[role] - 1e-9:
+                best[role] = elevation
+    h_max = max(member.depth.v for member in (_resolve_member(session, element)[0] for element in group.members))
+    expected_ys = sorted(
+        round(h_max - value, 9)
+        for value in best.values()
+        if 1e-9 < value < h_max - 1e-9
+    )
+    actual_ys = sorted({round(line[1], 9) for line in unified.layer_lines})
+    assert actual_ys == expected_ys
+    # 每条线水平，且跨度 >= 独立口径中任意一条线（贯通整槽）
+    assert all(abs(line[3] - line[1]) <= 1e-9 for line in unified.layer_lines)
+    assert all(abs(line[3] - line[1]) <= 1e-9 for line in independent.layer_lines)
+    assert unified.layer_lines
+    assert independent.layer_lines
+    widest_unified = max(line[2] - line[0] for line in unified.layer_lines)
+    widest_independent = max(line[2] - line[0] for line in independent.layer_lines)
+    assert widest_unified > widest_independent
+
+
+def test_group_center_split_wall_at_center_midpoint(tmp_path) -> None:
+    """管中心分隔：虚拟分界墙移到两构件中心连线的中点，并下探到较深槽底。"""
+    from app.viewmodels import unit_vm
+    from app.views.panels.section_view import _build_group_scene
+
+    group, e1, e2 = _group_pair_fixture(tmp_path, "中心分界断面", depth2="3", dn2=1000)
+    # 右管更深（壁厚差）且共享侧内坡 1:0.5，几何完全确定
+    slope_pe_name = None
+    from app.core.models.models import PcpEnclosure
+    from app.services import principle_edit
+
+    pe = PcpEnclosure(name="断面内坡0.5", order_no=95)
+    orm.session().add(pe)
+    project_io.commit()
+    principle_edit.apply_enclosure_works(
+        pe.id,
+        [
+            {
+                "min_depth": 0,
+                "cpnt_cat": "放坡",
+                "stop_type": "无",
+                "levels": [{"level_type": "放坡", "h": -1, "step_width": 0.0}],
+            }
+        ],
+    )
+    for param in orm.session().get(PcpEnclosure, pe.id).works_sorted()[0].levels[0].components[0].params:
+        if param.key == "A":
+            param.value = "放坡系数 1:X|0.5"
+    project_io.commit()
+    slope_pe_name = pe.name
+    unit_vm.update_element(e2.id, pe_left_name=slope_pe_name)
+
+    def scene_of(split_mode):
+        unit_vm.update_group(group.id, split_mode=split_mode)
+        scene, hint = _build_group_scene(group.id, 640, 480)
+        assert hint == "" and scene is not None
+        return scene
+
+    scene_slope = scene_of("起坡点分割")
+    scene_center = scene_of("管中心分隔")
+    assert len(scene_slope.dashed_lines) == 1
+    assert len(scene_center.dashed_lines) == 1
+    wall_slope = scene_slope.dashed_lines[0]
+    wall_center = scene_center.dashed_lines[0]
+
+    # 手算平面几何（自槽左缘起算）：起坡点分界 = 浅管工作面外缘；中点分界 = 两中心中点
+    from sqlalchemy import select
+
+    from app.core.calc.engine import (
+        atlas_dims,
+        build_atlas_query,
+        build_element_input,
+        workwidth_of,
+    )
+    from app.core.calc.measures import foundation_thickness as fd
+    from app.core.models.models import (
+        Element,
+        PcpFoundation,
+        PcpPrecipitation,
+        PcpWidth,
+    )
+    from app.services.atlas import resolve_atlas
+
+    session = orm.session()
+    geometry = []
+    for element_id in (e1.id, e2.id):
+        element = session.get(Element, element_id)
+        pw = session.scalars(select(PcpWidth).where(PcpWidth.name == element.pw_name)).first()
+        pf = session.scalars(select(PcpFoundation).where(PcpFoundation.name == element.pf_name)).first()
+        pp = session.scalars(select(PcpPrecipitation).where(PcpPrecipitation.name == element.pp_name)).first()
+        info = build_element_input(element, None, pf, pp=pp, pw=pw)
+        at = resolve_atlas(build_atlas_query(info, pf, pw))
+        ad = atlas_dims(info, at)
+        geometry.append(
+            {
+                "b": (info.size_b + (ad.t * 2 + ad.a * 2) / 1000).v,
+                "h": (info.depth + (fd(pf).v + ad.t + ad.c1) / 1000).v,
+                "ww": workwidth_of(pw, info) / 1000,
+            }
+        )
+    g1, g2 = geometry
+    assert g2["h"] > g1["h"] + 1e-9  # dn1000 壁厚更大 → 右管更深
+    run = (g2["h"] - g1["h"]) * 0.5
+    wall_x = g1["ww"] + g1["b"] + g1["ww"]  # 起坡点分界（坡顶）
+    base_left_2 = wall_x + run + g2["ww"]
+    c1 = g1["ww"] + g1["b"] / 2
+    c2 = base_left_2 + g2["b"] / 2
+    half = (wall_x + run + g2["ww"] + g2["b"] + g2["ww"]) / 2.0
+
+    assert wall_slope[0] == pytest.approx(wall_x - half, rel=1e-9)
+    assert wall_center[0] == pytest.approx((c1 + c2) / 2 - half, rel=1e-9)
+    assert wall_center[0] != pytest.approx(wall_slope[0])
+    # 管中心分隔的分界墙下探到较深槽底；起坡点分界止于浅槽底
+    assert wall_slope[1] == pytest.approx(max(scene_slope.total_h - g1["h"], 0.0), abs=1e-9)
+    assert wall_center[1] == pytest.approx(max(scene_center.total_h - g2["h"], 0.0), abs=1e-9)
+    assert wall_center[3] == pytest.approx(scene_center.total_h, abs=1e-9)

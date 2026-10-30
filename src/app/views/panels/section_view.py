@@ -29,6 +29,7 @@ from sqlalchemy import select
 
 from app.core.models import base as orm
 from app.core.models.models import (
+    BACKFILL_UNIFIED,
     CATEGORY_BURIED,
     CATEGORY_BOX_CULVERT,
     CATEGORY_ENCASED,
@@ -37,6 +38,7 @@ from app.core.models.models import (
     CATEGORY_PULLING,
     CATEGORY_STRUCTURE,
     LR_PE_TEXT,
+    SPLIT_CENTER_LINE,
     Element,
     PcpEnclosure,
     PcpFoundation,
@@ -692,6 +694,26 @@ def _run_at_height(
     return points[-1][1]
 
 
+def _outline_span(outline: list[tuple[float, float]], y: float) -> tuple[float, float] | None:
+    """合槽轮廓折线在高度 ``y`` 处的左右跨度（x 相对槽中心，m）。
+
+    统一回填标高的分层线要贯通整槽：取轮廓与该标高横线的全部交点（含水平
+    段）的最小 / 最大 x。
+    """
+    xs: list[float] = []
+    for (x1, y1), (x2, y2) in zip(outline, outline[1:]):
+        low, high = (y1, y2) if y1 <= y2 else (y2, y1)
+        if low - 1e-12 <= y <= high + 1e-12:
+            if abs(y2 - y1) <= 1e-12:
+                xs.extend((x1, x2))
+            else:
+                ratio = (y - y1) / (y2 - y1)
+                xs.append(x1 + (x2 - x1) * ratio)
+    if not xs:
+        return None
+    return min(xs), max(xs)
+
+
 def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene | None, str]:
     """合槽整槽全景断面（与 :func:`app.core.calc.trench_group.compute_group` 同口径）。
 
@@ -844,8 +866,12 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
     half = total_flat / 2.0
     h_max = max(snap["depth"] for snap in snapshots)
     outline: list[tuple[float, float]] = []
-    # 左边坡：自地面向下（depth 升序），x = −half − 外扩
-    for d, run in sorted(_slope_points(work_left, first["depth"]), key=lambda p: p[0]):
+    # 左边坡：自地面向下（自坡顶到槽底），x = −half − 外扩。
+    # 必须用 reversed 而不是按深度升序排序：切级平台处同一深度有两个点
+    # （下段坡顶宽 / 上段坡底宽），升序稳定排序会把下段点排在前面，折线在
+    # 平台处先向外再折回，画成“Z”形；reversed 保持上段（外扩后）在前，才是
+    # “先放坡到平台、再向外阔出一个平台、然后继续放坡”的正确轮廓。
+    for d, run in reversed(_slope_points(work_left, first["depth"])):
         outline.append((-half - run, h_max - d))
     for base_x, d in bottoms:
         outline.append((base_x - half, h_max - d))
@@ -853,76 +879,114 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
     for d, run in sorted(_slope_points(work_right, last["depth"]), key=lambda p: -p[0]):
         outline.append((half + run, h_max - d))
 
-    # 合槽分层线：每个构件按自己的回填分层（换填 / 垫层 / 坞膀 / 管顶 50cm）
-    # 在该构件当前标高的左右边界之间画水平线；虚拟竖直墙单独用虚线。
-    layer_lines: list[tuple[float, float, float, float]] = []
-    dashed_lines: list[tuple[float, float, float, float]] = []
-    for i, snap in enumerate(snapshots):
-        base_left, base_right = extents[i]
-        depth_i = snap["depth"]
+    # 合槽分层线 + 虚拟竖直墙。各构件自己的回填分层（换填 / 垫层 / 坞膀 /
+    # 管顶 50cm / 覆土）先统一算好，独立 / 统一回填标高两种口径分别画线。
+    member_layers: list[list[tuple[str, object, str]]] = []
+    for snap in snapshots:
         if snap["info"].pp is None:
+            member_layers.append([])
             continue
         at_display = replace(snap["at"], c1=snap["c1_display"])
         ad_display = atlas_dims(snap["info"], at_display)
         cushion_name = snap["pf"].cushions[0].name if snap["pf"].cushions else "中粗砂"
-        layers = groove.backfill_layers(
-            snap["info"].pp,
-            snap["pf"],
-            ad_display,
-            snap["info"].size_h_dim,
-            dim(depth_i),
-            cushion_name,
+        member_layers.append(
+            groove.backfill_layers(
+                snap["info"].pp,
+                snap["pf"],
+                ad_display,
+                snap["info"].size_h_dim,
+                dim(snap["depth"]),
+                cushion_name,
+            )
         )
-        # 只在回填材料（定额键）变化处画分层线，与单构件断面 _Segment.continues
-        # 的口径一致：同一材料被围护分级切开时不重复画线。
-        tops: list[float] = []
-        cum = 0.0
-        previous_key: str | None = None
-        for key, layer, _note in layers:
-            if layer.v <= 0:
-                continue
-            if previous_key is not None and key != previous_key and cum < depth_i - 1e-9:
-                tops.append(cum)
-            cum += layer.v
-            previous_key = key
-        for top in tops:
-            y = (h_max - depth_i) + top
-            if i == 0:
-                left_x = base_left - snap["work_width"] - _run_at_height(
-                    _slope_points(work_left, depth_i), depth_i, top
-                )
-            else:
-                pair = pairs[i - 1]
-                if pair["deep_index"] == i:  # 自身更深（右深）
-                    delta = depth_i - snapshots[i - 1]["depth"]
-                    left_x = base_left - snap["work_width"] - _run_at_height(
-                        _slope_points(pair["work"], delta), delta, min(top, delta)
-                    )
-                else:  # 自身更浅 / 等深：工作面到虚拟墙
-                    left_x = base_left - snap["work_width"]
-            if i == n - 1:
-                right_x = base_right + snap["work_width"] + _run_at_height(
-                    _slope_points(work_right, depth_i), depth_i, top
-                )
-            else:
-                pair = pairs[i]
-                if pair["deep_index"] == i:  # 自身更深（左深）
-                    delta = depth_i - snapshots[i + 1]["depth"]
-                    right_x = base_right + snap["work_width"] + _run_at_height(
-                        _slope_points(pair["work"], delta), delta, min(top, delta)
-                    )
-                else:  # 自身更浅 / 等深：工作面到虚拟墙
-                    right_x = base_right + snap["work_width"]
-            layer_lines.append((left_x - half, y, right_x - half, y))
 
-    # 虚拟竖直墙：每个相邻面都画——异深自浅槽底到地面，等深自槽底到地面。
-    # 它是构件归属区的计算分界（等深时落在两侧工作面的公共边），不是实体墙。
+    layer_lines: list[tuple[float, float, float, float]] = []
+    dashed_lines: list[tuple[float, float, float, float]] = []
+    if group.backfill_mode == BACKFILL_UNIFIED:
+        # 统一回填标高：逐层角色取组内最浅层顶标高（地面以下深度最小），
+        # 每条统筹界面画一条贯通整槽的水平线（角色口径与计算引擎一致）
+        best: dict[tuple[str, int], float] = {}
+        for snap, layers in zip(snapshots, member_layers):
+            cum = 0.0
+            for (base, occurrence), (_key, layer, _note) in zip(
+                groove.layer_roles(layers), layers
+            ):
+                cum += layer.v
+                if layer.v <= 0:
+                    continue
+                elevation = snap["depth"] - cum
+                role = (base, occurrence)
+                if role not in best or elevation < best[role] - 1e-9:
+                    best[role] = elevation
+        for depth_u in sorted({round(value, 9) for value in best.values()}):
+            y = h_max - depth_u
+            if y <= 1e-9 or y >= h_max - 1e-9:
+                continue  # 槽底 / 地面已有轮廓线，不重复画
+            span = _outline_span(outline, y)
+            if span is not None:
+                layer_lines.append((span[0], y, span[1], y))
+    else:
+        # 独立回填标高：每个构件按自己的回填分层在该构件标高的左右边界之间
+        # 画水平线；只在回填材料（定额键）变化处画，与单构件断面
+        # _Segment.continues 的口径一致：同一材料被围护分级切开时不重复画线。
+        for i, snap in enumerate(snapshots):
+            base_left, base_right = extents[i]
+            depth_i = snap["depth"]
+            layers = member_layers[i]
+            tops: list[float] = []
+            cum = 0.0
+            previous_key: str | None = None
+            for key, layer, _note in layers:
+                if layer.v <= 0:
+                    continue
+                if previous_key is not None and key != previous_key and cum < depth_i - 1e-9:
+                    tops.append(cum)
+                cum += layer.v
+                previous_key = key
+            for top in tops:
+                y = (h_max - depth_i) + top
+                if i == 0:
+                    left_x = base_left - snap["work_width"] - _run_at_height(
+                        _slope_points(work_left, depth_i), depth_i, top
+                    )
+                else:
+                    pair = pairs[i - 1]
+                    if pair["deep_index"] == i:  # 自身更深（右深）
+                        delta = depth_i - snapshots[i - 1]["depth"]
+                        left_x = base_left - snap["work_width"] - _run_at_height(
+                            _slope_points(pair["work"], delta), delta, min(top, delta)
+                        )
+                    else:  # 自身更浅 / 等深：工作面到虚拟墙
+                        left_x = base_left - snap["work_width"]
+                if i == n - 1:
+                    right_x = base_right + snap["work_width"] + _run_at_height(
+                        _slope_points(work_right, depth_i), depth_i, top
+                    )
+                else:
+                    pair = pairs[i]
+                    if pair["deep_index"] == i:  # 自身更深（左深）
+                        delta = depth_i - snapshots[i + 1]["depth"]
+                        right_x = base_right + snap["work_width"] + _run_at_height(
+                            _slope_points(pair["work"], delta), delta, min(top, delta)
+                        )
+                    else:  # 自身更浅 / 等深：工作面到虚拟墙
+                        right_x = base_right + snap["work_width"]
+                layer_lines.append((left_x - half, y, right_x - half, y))
+
+    # 虚拟竖直墙：每个相邻面都画——它是构件归属区的计算分界，不是实体墙。
+    # 起坡点分割：分界在深侧起坡点，自浅槽底到地面；管中心分隔：分界移到
+    # 两构件中心连线的中点，并下探到较深槽底（坡区条带也按此分界归属）。
     for i, pair in enumerate(pairs):
-        prev_right = extents[i][1]
-        wall_x = prev_right + pair["left_width"]
-        h_shallow = min(snapshots[i]["depth"], snapshots[i + 1]["depth"])
+        if group.split_mode == SPLIT_CENTER_LINE:
+            wall_x = (
+                extents[i][0] + extents[i][1] + extents[i + 1][0] + extents[i + 1][1]
+            ) / 4.0
+            h_bottom = max(snapshots[i]["depth"], snapshots[i + 1]["depth"])
+        else:
+            wall_x = extents[i][1] + pair["left_width"]
+            h_bottom = min(snapshots[i]["depth"], snapshots[i + 1]["depth"])
         dashed_lines.append(
-            (wall_x - half, h_max - h_shallow, wall_x - half, h_max)
+            (wall_x - half, h_max - h_bottom, wall_x - half, h_max)
         )
 
     # 各构件本体：偏移到各自本体中心（shape 的 x 轴在屏幕上向左，故取负偏移），

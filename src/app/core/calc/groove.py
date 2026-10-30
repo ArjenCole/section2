@@ -122,6 +122,24 @@ def backfill_layers(
     return layers
 
 
+def layer_roles(layers: list[tuple[str, Dim, str]]) -> list[tuple[str, int]]:
+    """分层条目的统筹角色 ``(角色名, 自底向上的同角色序号)``。
+
+    合槽"统一回填标高"按角色统筹：换填各层同属角色 ``换填``（按自底向上
+    的出现序号区分），其余层角色 = 分层说明（垫层 / 坞膀下半 / 坞膀上半 /
+    管顶50cm / 覆土）——同一角色在构件之间才被认作"同一层"参与取最浅标高，
+    回填材质（定额键）差异不影响统筹。
+    """
+    roles: list[tuple[str, int]] = []
+    counts: dict[str, int] = {}
+    for key, _layer, note in layers:
+        base = "换填" if key.startswith("换填|") else note
+        index = counts.get(base, 0)
+        counts[base] = index + 1
+        roles.append((base, index))
+    return roles
+
+
 def groove_width(ad: AtlasDims, size_b: Dim) -> Dim:
     """槽底宽度 m：沟槽宽度表为 0 时按 断面宽+2×(壁厚+工作面加宽+工作面) 推算。"""
     if ad.groove_b.v != 0:

@@ -17,6 +17,8 @@ from app.core.evaluator import EvalError, evaluate, format_number
 from app.core.event_bus import bus
 from app.core.models import base as orm
 from app.core.models.models import (
+    BACKFILL_INDEPENDENT,
+    BACKFILL_MODES,
     CATEGORY_BURIED,
     CATEGORY_BOX_CULVERT,
     CATEGORY_ENCASED,
@@ -25,6 +27,8 @@ from app.core.models.models import (
     CATEGORY_PULLING,
     CATEGORY_STRUCTURE,
     LR_PE_TEXT,
+    SPLIT_MODES,
+    SPLIT_SLOPE_POINT,
     Element,
     ElementParam,
     ElementQuantity,
@@ -130,6 +134,10 @@ class GroupRow:
     pw_name: str  # 恒空（父节点不选工作面宽原则）
     order_no: int
     member_count: int
+    #: 回填分层方式（主表格挖填降水列的下拉）：独立回填标高 / 统一回填标高
+    backfill_mode: str = BACKFILL_INDEPENDENT
+    #: 断面划分方式（主表格面宽列的下拉）：起坡点分割 / 管中心分隔
+    split_mode: str = SPLIT_SLOPE_POINT
     #: 供主表格统一装填的显示属性（与 ElementRow 同名同型）
     category: int = 0
     depth: str = ""
@@ -255,6 +263,8 @@ def _group_row(group_id: int, members: list[ElementRow]) -> GroupRow:
         pw_name="",
         order_no=group.order_no,
         member_count=len(members),
+        backfill_mode=group.backfill_mode if group.backfill_mode in BACKFILL_MODES else BACKFILL_INDEPENDENT,
+        split_mode=group.split_mode if group.split_mode in SPLIT_MODES else SPLIT_SLOPE_POINT,
         depth="-",
         amount=amount,
         amount_value=amount_value,
@@ -1499,10 +1509,11 @@ def group_side_plan(group_id: int) -> dict[int, tuple[bool, bool]]:
 
 
 def update_group(group_id: int, **fields) -> TrenchGroup | None:
-    """修改合槽父节点字段（name / amount；不持有围护 / 面宽原则）。
+    """修改合槽父节点字段（name / amount / backfill_mode / split_mode）。
 
     ``amount`` 是合槽的计算长度 L_组：写入父节点后**强制同步全部子构件**
-    （子构件不单独持有数量）。
+    （子构件不单独持有数量）。``backfill_mode`` / ``split_mode`` 是整槽口径
+    选项（回填分层方式 / 断面划分方式），只接受合法枚举值，其它取值忽略。
     """
     group = orm.session().get(TrenchGroup, group_id) if project_io.is_open() else None
     if group is None:
@@ -1514,6 +1525,10 @@ def update_group(group_id: int, **fields) -> TrenchGroup | None:
             group.amount = str(value)
             for member in group.members:
                 member.amount = group.amount
+        elif key == "backfill_mode" and value in BACKFILL_MODES:
+            group.backfill_mode = str(value)
+        elif key == "split_mode" and value in SPLIT_MODES:
+            group.split_mode = str(value)
     project_io.commit()
     bus().unit_changed.emit(group.unit_id)
     return group

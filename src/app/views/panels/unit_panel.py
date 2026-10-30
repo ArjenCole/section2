@@ -41,6 +41,7 @@ from app.core.param_naming import (
 from app.core.pipe_category import is_concrete as _pipe_is_concrete
 from app.views.widgets.mac_window import is_mac
 from app.core.models.models import (
+    BACKFILL_MODES,
     CATEGORY_BOX_CULVERT,
     CATEGORY_BURIED,
     CATEGORY_ENCASED,
@@ -49,6 +50,7 @@ from app.core.models.models import (
     CATEGORY_PULLING,
     CATEGORY_STRUCTURE,
     LR_PE_TEXT,
+    SPLIT_MODES,
     category_name,
 )
 from app.core.pipe_category import PIPE_CATEGORIES
@@ -64,6 +66,7 @@ from app.viewmodels.unit_vm import (
     SINGLE_PIPE_CATEGORIES,
     UnitViewModel,
     group_side_plan,
+    update_group,
 )
 from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.views.widgets.panel_splitter import SPLITTER_HANDLE_WIDTH, LineSplitter
@@ -1299,19 +1302,46 @@ class UnitPanel(QWidget):
         amount_item.setFlags(amount_item.flags() | Qt.ItemFlag.ItemIsEditable)
         _apply_expression_hint(amount_item, row.amount, row.amount_error)
 
-        # 父节点四个原则单元格一律留空：围护 / 地基 / 挖填降水 / 面宽
-        # 全部由子构件自己的原则决定
+        # 父节点围护 / 地基两格恒留空：原则全部由子构件自己的决定；
+        # 挖填降水 / 面宽两格是整槽口径下拉（回填分层方式 / 断面划分方式）
         for column, tooltip in (
             (_COL_PE, "父节点不选围护原则：左边坡取首构件左原则、右边坡取末构件右原则。"),
             (_COL_PF, "父节点不选地基处理原则：每条构件按自己的地基处理原则计算。"),
-            (_COL_PP, "父节点不选挖填降水原则：每条构件按自己的挖填降水原则计算。"),
-            (_COL_PW, "父节点不选工作面宽原则：每条构件按自己的面宽原则确定工作面。"),
         ):
             item = self._element_table.item(index, column)
             item.setText("")
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item.setForeground(QBrush(_secondary_color()))
             item.setToolTip(tooltip)
+
+        group_id = row.id
+        fill_combo = QComboBox()
+        fill_combo.addItems(list(BACKFILL_MODES))
+        fill_combo.setCurrentText(row.backfill_mode)
+        fill_combo.setToolTip(
+            "合槽回填分层方式：\n"
+            "· 独立回填标高——每条构件按自己的回填分层界面计算；\n"
+            "· 统一回填标高——每条构件先各自算出每层顶标高，再逐层统筹，"
+            "取组内最浅标高作为所有构件该层的界面（分层线贯通整槽）。"
+        )
+        fill_combo.currentTextChanged.connect(
+            lambda text, group_id=group_id: update_group(group_id, backfill_mode=text)
+        )
+        self._element_table.setCellWidget(index, _COL_PP, fill_combo)
+
+        split_combo = QComboBox()
+        split_combo.addItems(list(SPLIT_MODES))
+        split_combo.setCurrentText(row.split_mode)
+        split_combo.setToolTip(
+            "合槽断面划分方式：\n"
+            "· 起坡点分割——相邻构件以深侧起坡点为分界（深侧含放坡投影）；\n"
+            "· 管中心分隔——以相邻两构件水平中心连线的中点作虚拟竖直线分界，"
+            "分界两侧工程量分别归属（管道取管中心，混凝土构件取外包边线中点）。"
+        )
+        split_combo.currentTextChanged.connect(
+            lambda text, group_id=group_id: update_group(group_id, split_mode=text)
+        )
+        self._element_table.setCellWidget(index, _COL_PW, split_combo)
 
     def _on_group_toggle_requested(self, row_index: int) -> None:
         """点击合槽父行 +/- 方框：切换该组成员行的显示/隐藏（Quotor 组合定额同款）。"""

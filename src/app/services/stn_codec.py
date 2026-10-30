@@ -63,8 +63,10 @@ from sqlalchemy import select
 from app.core.version import APP_VERSION, STN_FILE_VERSION
 from app.core.models import base as orm
 from app.core.models.models import (
+    BACKFILL_INDEPENDENT,
     LR_PE_TEXT,
     PRECIPITATION_COLUMNS,
+    SPLIT_SLOPE_POINT,
     BasicInfo,
     Component,
     ComponentParam,
@@ -267,6 +269,8 @@ def _dump_unit(unit: Unit) -> dict:
                 "amount": group.amount or "",
                 "pe_name": group.pe_name or "",
                 "pw_name": group.pw_name or "",
+                "backfill_mode": group.backfill_mode or "",
+                "split_mode": group.split_mode or "",
             }
             for group in groups
         ],
@@ -382,6 +386,9 @@ def load_database(data: dict) -> None:
                     amount=group_data.get("amount") or "",
                     pe_name=group_data.get("pe_name") or "",
                     pw_name=group_data.get("pw_name") or "",
+                    # 旧文件缺省 = 现状口径（独立回填标高 / 起坡点分割）
+                    backfill_mode=group_data.get("backfill_mode") or BACKFILL_INDEPENDENT,
+                    split_mode=group_data.get("split_mode") or SPLIT_SLOPE_POINT,
                     order_no=group_index,
                 )
                 unit.groups.append(group)

@@ -545,6 +545,320 @@ def test_group_layered_trapezoid_multilevel_slope() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 合槽整槽口径：回填分层方式 / 断面划分方式（父节点下拉）
+# --------------------------------------------------------------------------- #
+def _group_snapshots(group):
+    """组员快照（按从左到右），供分层 / 几何对拍。"""
+    from app.core.calc.trench_group import _resolve_member
+    from app.core.models import base as orm
+
+    session = orm.session()
+    return [
+        _resolve_member(session, element)[0]
+        for element in sorted(group.members, key=lambda item: (item.order_no, item.id))
+    ]
+
+
+def _unified_interface_oracle(snapshots):
+    """手算统筹界面：逐层角色取组内各构件层顶的最低标高（地面以下深度）。"""
+    from app.core.calc.groove import layer_roles
+    from app.core.calc.trench_group import _member_layers
+
+    best: dict[tuple[str, int], float] = {}
+    for member in snapshots:
+        cum = 0.0
+        layers = _member_layers(member)
+        for (base, occurrence), (_key, layer, _note) in zip(layer_roles(layers), layers):
+            cum += layer.v
+            if layer.v <= 0:
+                continue
+            role = (base, occurrence)
+            elevation = member.depth.v - cum
+            if role not in best or elevation < best[role] - 1e-9:
+                best[role] = elevation
+    return best
+
+
+def test_group_unified_backfill_elevation(project) -> None:
+    """统一回填标高：每层界面取组内最浅层顶标高，材质仍按各构件自己的原则。
+
+    * 每个构件的层带顶标高 == 组内该层最浅标高（手算统筹界面逐带对拍）；
+    * 层带自构件自己的槽底起算并补齐到槽顶（总高 = 自身槽深）；
+    * 宽度剖面未变：每个构件的挖方与独立回填标高口径完全一致（守恒）。
+    """
+    from app.core.calc.groove import layer_roles
+    from app.core.calc.trench_group import (
+        _member_layers,
+        _unified_interfaces,
+        _unified_member_bands,
+    )
+    from app.core.models import base as orm
+    from app.viewmodels import unit_vm
+
+    group, (e1, e2) = _group_fixture(project, depth2="4", dn2=800)
+    unit_vm.update_group(group.id, backfill_mode="统一回填标高")
+    group = orm.session().get(type(group), group.id)
+    snapshots = _group_snapshots(group)
+    expected = _unified_interface_oracle(snapshots)
+    interfaces = _unified_interfaces(snapshots)
+    assert set(interfaces) == set(expected)
+    for member in snapshots:
+        bands = _unified_member_bands(member, interfaces)
+        assert bands, "统一口径下层带不应为空"
+        # 手算期望带序：按构件自己的分层自底向上，凡有统筹界面且界面低于
+        # 上一条者成带（与 _unified_member_bands 同一重建规则，逐带对拍）
+        expected_bands: list[tuple[str, float]] = []
+        bottom = member.depth.v
+        for (base, occurrence), (key, layer, _note) in zip(
+            layer_roles(_member_layers(member)), _member_layers(member)
+        ):
+            if (base, occurrence) not in expected:
+                continue
+            top = expected[(base, occurrence)]
+            if top >= bottom - 1e-9:
+                continue
+            expected_bands.append((key, member.depth.v - top))
+            bottom = top
+        assert [(band[0], round(band[2].v, 9)) for band in bands] == [
+            (key, round(top, 9)) for key, top in expected_bands
+        ]
+        for _key, lo, hi, thickness, _note in bands:
+            assert thickness.v == pytest.approx(hi.v - lo.v, rel=1e-9)
+            assert lo.v >= -1e-9 and hi.v <= member.depth.v + 1e-9
+        # 顶层补齐到槽顶
+        assert bands[-1][2].v == pytest.approx(member.depth.v, rel=1e-9)
+
+    # 守恒：剖面未变，两种回填口径下每个构件的挖方一致
+    results_unified, errors = _group_results(group)
+    assert not errors, errors
+    unit_vm.update_group(group.id, backfill_mode="独立回填标高")
+    results_independent, errors = _group_results(group)
+    assert not errors, errors
+    for element_id in (e1, e2):
+        key = "开挖|Ⅲ类土|m3"
+        assert results_unified[element_id].get(key) is not None
+        assert results_unified[element_id].get(key).value == pytest.approx(
+            results_independent[element_id].get(key).value, rel=1e-9
+        )
+
+
+def test_group_unified_backfill_roundtrip(tmp_path, project) -> None:
+    """回填分层 / 断面划分方式随工程保存重开（旧文件缺省 = 现状口径）。"""
+    from app.core.models import base as orm
+    from app.core.models.models import TrenchGroup
+    from app.viewmodels import unit_vm
+
+    group, (_e1, _e2) = _group_fixture(project)
+    unit_vm.update_group(group.id, backfill_mode="统一回填标高", split_mode="管中心分隔")
+    project_io_close_and_open(project)
+    reopened = list(orm.session().scalars(sa_select(TrenchGroup)))
+    assert len(reopened) == 1
+    assert reopened[0].backfill_mode == "统一回填标高"
+    assert reopened[0].split_mode == "管中心分隔"
+
+    # 旧文件（无这两个字段）读入 = 现状口径缺省
+    from app.services import project_io, stn_format
+
+    project_io.close_project()
+    document = stn_format.load_stn(project)
+    for unit_data in document.data["segments"][0]["units"]:
+        for group_data in unit_data.get("groups") or []:
+            group_data.pop("backfill_mode", None)
+            group_data.pop("split_mode", None)
+    stn_format.write_stn(project, document.data)
+    project_io.open_project(project)
+    reopened = list(orm.session().scalars(sa_select(TrenchGroup)))
+    assert reopened[0].backfill_mode == "独立回填标高"
+    assert reopened[0].split_mode == "起坡点分割"
+
+
+def project_io_close_and_open(path):
+    from app.services import project_io
+
+    project_io.close_project()
+    project_io.open_project(path)
+    return path
+
+
+def sa_select(model):
+    from sqlalchemy import select
+
+    return select(model)
+
+
+def test_group_center_split_conserves_and_transfers(project) -> None:
+    """管中心分隔：分界移到中心连线中点，条带归分界移向的一侧，整槽守恒。
+
+    右深左浅（深侧内坡 1:0.5）：分界必右移（中点比起坡点更靠深侧中心）……
+    实际手算 δ = (b−a)/2 > 0（a = 浅管中心→起坡点，b = 起坡点→深管中心含
+    放坡投影），浅管获条带 = 矩形 |δ|×浅槽深 + 坡区楔形 |δ|²/(2×0.5)，深管
+    等量让出；总挖方与起坡点口径严格一致。
+    """
+    from app.core.calc.engine import (
+        atlas_dims,
+        build_atlas_query,
+        build_element_input,
+        workwidth_of,
+    )
+    from app.core.calc.measures import foundation_thickness as fd
+    from app.core.models.models import Element
+    from app.services.atlas import resolve_atlas
+    from app.viewmodels import unit_vm
+
+    slope_pe = _make_enclosure("中心放坡原则", "放坡", slope=0.5)
+    pile_pe = _make_enclosure("中心桩原则", "钢板桩")
+    e1 = _element("中心浅管", dn=600, depth="3", amount="120", pe_name=slope_pe.name)
+    e2 = _element("中心深管", dn=600, depth="4", amount="120", pe_name=pile_pe.name)
+    group, error = unit_vm.create_trench_group([e1, e2])
+    assert group is not None and error is None
+    unit_vm.update_element(e2, pe_left_name=slope_pe.name)
+
+    results, errors = _group_results(group)
+    assert not errors, errors
+    dig_shallow = _value(results[e1], "开挖|Ⅲ类土|m3")
+    dig_deep = _value(results[e2], "开挖|Ⅲ类土|m3")
+    total = dig_shallow + dig_deep
+
+    # 平面几何（首构件基左缘为 0）：起坡点分界 = 浅管工作面外缘
+    from app.core.models import base as orm
+    from sqlalchemy import select
+
+    session = orm.session()
+    geometry = []
+    for element_id in (e1, e2):
+        element = session.get(Element, element_id)
+        from app.core.models.models import (
+            PcpEnclosure,
+            PcpFoundation,
+            PcpPrecipitation,
+            PcpWidth,
+        )
+
+        pw = session.scalars(select(PcpWidth).where(PcpWidth.name == element.pw_name)).first()
+        pe = session.scalars(select(PcpEnclosure).where(PcpEnclosure.name == element.pe_right_name)).first()
+        pf = session.scalars(select(PcpFoundation).where(PcpFoundation.name == element.pf_name)).first()
+        pp = session.scalars(select(PcpPrecipitation).where(PcpPrecipitation.name == element.pp_name)).first()
+        info = build_element_input(element, pe, pf, pp=pp, pw=pw)
+        at = resolve_atlas(build_atlas_query(info, pf, pw))
+        ad = atlas_dims(info, at)
+        geometry.append(
+            {
+                "b": (info.size_b + (ad.t * 2 + ad.a * 2) / 1000).v,
+                "h": (info.depth + (fd(pf).v + ad.t + ad.c1) / 1000).v,
+                "ww": workwidth_of(pw, info) / 1000,
+            }
+        )
+    g1, g2 = geometry
+    run = (g2["h"] - g1["h"]) * 0.5
+    wall = g1["ww"] + g1["b"] + g1["ww"]  # 浅管右工作面外缘 = 起坡点分界（坡顶）
+    base_left_2 = wall + run + g2["ww"]  # 坡脚 + 深管工作面
+    c1 = g1["ww"] + g1["b"] / 2
+    c2 = base_left_2 + g2["b"] / 2
+    delta = (c1 + c2) / 2 - wall
+    assert delta > 1e-9  # 分界右移：浅管获条带（b 含放坡投影 > a）
+    offset = abs(delta)
+    rect = offset * g1["h"]
+    wedge = offset * offset / (2 * 0.5) if offset <= run else 0.0
+
+    unit_vm.update_group(group.id, split_mode="管中心分隔")
+    results_center, errors = _group_results(group)
+    assert not errors, errors
+    dig_shallow_center = _value(results_center[e1], "开挖|Ⅲ类土|m3")
+    dig_deep_center = _value(results_center[e2], "开挖|Ⅲ类土|m3")
+    # 整槽守恒 + 手算条带（随 L_组 = 120 缩放）
+    assert dig_shallow_center + dig_deep_center == pytest.approx(total, rel=1e-9)
+    assert dig_shallow_center == pytest.approx(dig_shallow + (rect + wedge) * 120, rel=1e-9)
+    assert dig_deep_center == pytest.approx(dig_deep - (rect + wedge) * 120, rel=1e-9)
+    # 条带以独立项进入获方挖方（"分左右两侧分别计算再加起来"）
+    terms = results_center[e1].get("开挖|Ⅲ类土|m3").terms
+    transferred = [t for t in terms if "管中心分隔" in t.note]
+    assert transferred, "获方挖方应包含管中心分隔条带项"
+    assert sum(t.value for t in transferred) == pytest.approx((rect + wedge) * 120, rel=1e-9)
+
+
+def test_group_center_split_gainer_deep_no_wedge(project) -> None:
+    """深左浅右、分界右移（获方 = 深侧）：只有矩形条带、无坡区楔形，整槽守恒。
+
+    让方更浅时分界条带只有浅槽底以上的矩形（坡区在让方槽底以下无挖方），
+    获方（深侧）按 梯形 + 条带 追加，浅侧等量让出。
+    """
+    from app.core.calc.engine import (
+        atlas_dims,
+        build_atlas_query,
+        build_element_input,
+        workwidth_of,
+    )
+    from app.core.calc.measures import foundation_thickness as fd
+    from app.core.models.models import Element
+    from app.services.atlas import resolve_atlas
+    from app.viewmodels import unit_vm
+
+    slope_pe = _make_enclosure("深左内坡原则", "放坡", slope=0.5)
+    e1 = _element("深左管", dn=600, depth="3.5", amount="100")
+    e2 = _element("浅右管", dn=1500, depth="3", amount="100")
+    group, error = unit_vm.create_trench_group([e1, e2])
+    assert group is not None and error is None
+    # 深侧（左管）共享侧内坡 1:0.5，向浅槽底放坡
+    unit_vm.update_element(e1, pe_right_name=slope_pe.name)
+
+    results, errors = _group_results(group)
+    assert not errors, errors
+    dig1 = _value(results[e1], "开挖|Ⅲ类土|m3")
+    dig2 = _value(results[e2], "开挖|Ⅲ类土|m3")
+    total = dig1 + dig2
+
+    from app.core.models import base as orm
+    from sqlalchemy import select
+
+    session = orm.session()
+    geometry = []
+    for element_id in (e1, e2):
+        element = session.get(Element, element_id)
+        from app.core.models.models import (
+            PcpEnclosure,
+            PcpFoundation,
+            PcpPrecipitation,
+            PcpWidth,
+        )
+
+        pw = session.scalars(select(PcpWidth).where(PcpWidth.name == element.pw_name)).first()
+        pe = session.scalars(
+            select(PcpEnclosure).where(PcpEnclosure.name == element.pe_right_name)
+        ).first()
+        pf = session.scalars(select(PcpFoundation).where(PcpFoundation.name == element.pf_name)).first()
+        pp = session.scalars(select(PcpPrecipitation).where(PcpPrecipitation.name == element.pp_name)).first()
+        info = build_element_input(element, pe, pf, pp=pp, pw=pw)
+        at = resolve_atlas(build_atlas_query(info, pf, pw))
+        ad = atlas_dims(info, at)
+        geometry.append(
+            {
+                "b": (info.size_b + (ad.t * 2 + ad.a * 2) / 1000).v,
+                "h": (info.depth + (fd(pf).v + ad.t + ad.c1) / 1000).v,
+                "ww": workwidth_of(pw, info) / 1000,
+            }
+        )
+    g1, g2 = geometry
+    assert g1["h"] > g2["h"] + 1e-9  # 左深右浅（含壁厚差后仍成立）
+    run = (g1["h"] - g2["h"]) * 0.5
+    # 起坡点分界 = 左管基右 + 自身工作面 + 内坡投影（坡顶，浅槽底标高）
+    wall = g1["ww"] + g1["b"] + g1["ww"] + run
+    c1 = g1["ww"] + g1["b"] / 2
+    c2 = wall + g2["ww"] + g2["b"] / 2
+    delta = (c1 + c2) / 2 - wall
+    assert delta > 1e-9  # 分界右移：深管（左）获条带
+    rect = delta * min(g1["h"], g2["h"])
+
+    unit_vm.update_group(group.id, split_mode="管中心分隔")
+    results_center, errors = _group_results(group)
+    assert not errors, errors
+    dig1c = _value(results_center[e1], "开挖|Ⅲ类土|m3")
+    dig2c = _value(results_center[e2], "开挖|Ⅲ类土|m3")
+    assert dig1c + dig2c == pytest.approx(total, rel=1e-9)
+    assert dig1c == pytest.approx(dig1 + rect * 100, rel=1e-9)
+    assert dig2c == pytest.approx(dig2 - rect * 100, rel=1e-9)
+
+
+# --------------------------------------------------------------------------- #
 # 合槽编组：操作与校验
 # --------------------------------------------------------------------------- #
 def test_group_validation_rules(project) -> None:
@@ -887,15 +1201,34 @@ def test_unit_panel_group_rows_and_lr_tab(project, qapp) -> None:
     metas = [table.item(row, 0).data(_TREE_ROLE) for row in range(table.rowCount())]
     assert any(meta and meta["has_children"] for meta in metas)
     assert sum(1 for meta in metas if meta and meta["indent"] == 1) == 2
-    # 父行四个原则单元格一律留空且没有下拉框；
+    # 父行围护 / 地基两格留空且没有下拉框；挖填降水 / 面宽两格是整槽口径
+    # 下拉（回填分层方式 / 断面划分方式，默认现状口径）；
     # 埋深恒 "-"（不参与计算），数量 = L_组 且可编辑
     group_row_index = next(
         row for row in range(table.rowCount())
         if (table.item(row, 0).data(_TREE_ROLE) or {}).get("has_children")
     )
-    for column in (_COL_PE, _COL_PF, _COL_PP, _COL_PW):
+    for column in (_COL_PE, _COL_PF):
         assert table.item(group_row_index, column).text() == ""
         assert table.cellWidget(group_row_index, column) is None
+    from app.core.models import base as orm
+    from app.core.models.models import BACKFILL_MODES, SPLIT_MODES, TrenchGroup
+    from PySide6.QtWidgets import QComboBox
+
+    fill_combo = table.cellWidget(group_row_index, _COL_PP)
+    assert isinstance(fill_combo, QComboBox)
+    assert [fill_combo.itemText(i) for i in range(fill_combo.count())] == list(BACKFILL_MODES)
+    assert fill_combo.currentText() == "独立回填标高"
+    split_combo = table.cellWidget(group_row_index, _COL_PW)
+    assert isinstance(split_combo, QComboBox)
+    assert [split_combo.itemText(i) for i in range(split_combo.count())] == list(SPLIT_MODES)
+    assert split_combo.currentText() == "起坡点分割"
+    # 切换下拉即写父节点（整槽口径选项）
+    fill_combo.setCurrentText("统一回填标高")
+    split_combo.setCurrentText("管中心分隔")
+    parent = orm.session().get(TrenchGroup, group.id)
+    assert parent.backfill_mode == "统一回填标高"
+    assert parent.split_mode == "管中心分隔"
     assert table.item(group_row_index, _COL_DEPTH).text() == "-"
     assert table.item(group_row_index, _COL_AMOUNT).text() == "120"
     from PySide6.QtCore import Qt

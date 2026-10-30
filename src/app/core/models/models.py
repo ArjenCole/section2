@@ -88,6 +88,23 @@ MULTI_LEVEL_TEXT = "多级围护"
 #: 不按名解析原则（resolve_element_principles 跳过占位名）
 LR_PE_TEXT = "左右分设"
 
+# --------------------------------------------------------------------------- #
+# 合槽父节点的两个整槽选项（主表格挖填降水 / 面宽两列的下拉，v3.1）
+# --------------------------------------------------------------------------- #
+#: 回填分层方式：每条构件按自己的回填分层界面计算（现状口径）
+BACKFILL_INDEPENDENT = "独立回填标高"
+#: 回填分层方式：每层取组内各构件该层顶的最浅标高作为所有构件的界面
+BACKFILL_UNIFIED = "统一回填标高"
+#: 断面划分方式：相邻面分界在深侧起坡点（现状口径）
+SPLIT_SLOPE_POINT = "起坡点分割"
+#: 断面划分方式：分界取相邻两构件水平中心连线中点的虚拟竖直线
+SPLIT_CENTER_LINE = "管中心分隔"
+
+#: 合槽回填分层方式的下拉项（按序显示）
+BACKFILL_MODES = (BACKFILL_INDEPENDENT, BACKFILL_UNIFIED)
+#: 合槽断面划分方式的下拉项（按序显示）
+SPLIT_MODES = (SPLIT_SLOPE_POINT, SPLIT_CENTER_LINE)
+
 
 # --------------------------------------------------------------------------- #
 # 降水参数（对应旧版 mcPrecipitation.toXML()："elevation|gap|sides"）
@@ -318,6 +335,15 @@ class TrenchGroup(Base):
     构件左原则，右边坡取末构件右原则，每条构件的工作面宽按自己的面宽原则
     确定；相邻等深两侧强制 "-"，异深时深侧按所选原则向浅槽底放坡。
 
+    父节点持有两个整槽口径的选项（主表格挖填降水 / 面宽两列的下拉）：
+
+    * ``backfill_mode`` 回填分层方式：``独立回填标高``（每条构件按自己的
+      回填分层界面计算，现状口径）或 ``统一回填标高``（每条构件先各自算出
+      每一层的层顶标高，再逐层统筹取组内最浅标高作为所有构件该层的界面）；
+    * ``split_mode`` 断面划分方式：``起坡点分割``（相邻面的分界在深侧起坡
+      点，现状口径）或 ``管中心分隔``（分界取相邻两构件水平中心连线的中点
+      的虚拟竖直线，分界两侧工程量分别归属）。
+
     ``amount`` 是父节点唯一持有的数据：合槽的**计算长度 L_组**，子构件数量
     强制与之一致（改父节点即同步全部子构件）；父节点埋深无效（界面显示 "-"），
     组内槽深全部由子构件自己的埋深 + 基础推导。
@@ -339,6 +365,10 @@ class TrenchGroup(Base):
     pe_name: Mapped[str] = mapped_column(String(200), default="")
     #: 恒空（父节点不选工作面宽原则；字段保留仅为旧工程兼容）
     pw_name: Mapped[str] = mapped_column(String(200), default="")
+    #: 回填分层方式（挖填降水列的下拉）：独立回填标高 / 统一回填标高
+    backfill_mode: Mapped[str] = mapped_column(String(50), default=BACKFILL_INDEPENDENT)
+    #: 断面划分方式（面宽列的下拉）：起坡点分割 / 管中心分隔
+    split_mode: Mapped[str] = mapped_column(String(50), default=SPLIT_SLOPE_POINT)
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     unit: Mapped[Unit] = relationship(back_populates="groups")

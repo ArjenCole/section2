@@ -138,11 +138,15 @@ def tool_update_group(arguments: dict) -> dict:
     if group_id is None:
         raise ToolError("请给出 group_id。")
     fields: dict = {}
-    for key in ("name", "amount"):
+    for key in ("name", "amount", "backfill_mode", "split_mode"):
         if arguments.get(key) is not None:
             fields[key] = str(arguments[key])
     if not fields:
-        raise ToolError("没有给出要修改的字段。可改：name / amount（父节点不选围护 / 面宽原则）。")
+        raise ToolError(
+            "没有给出要修改的字段。可改：name / amount / backfill_mode"
+            "（独立回填标高 / 统一回填标高）/ split_mode（起坡点分割 / 管中心分隔）；"
+            "父节点不选围护 / 面宽原则。"
+        )
     group = unit_vm.update_group(int(group_id), **fields)
     if group is None:
         raise ToolError(f"找不到 id={group_id} 的合槽组。")
@@ -467,14 +471,26 @@ def register(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
             "update_group",
-            "修改合槽父节点属性（name / amount；amount = L_组，会强制同步全部子构件；"
-            "父节点不持有围护 / 面宽原则，埋深无效）。写操作。",
+            "修改合槽父节点属性（name / amount / backfill_mode / split_mode；"
+            "amount = L_组，会强制同步全部子构件；backfill_mode = 回填分层方式"
+            "（独立回填标高 / 统一回填标高），split_mode = 断面划分方式"
+            "（起坡点分割 / 管中心分隔）；父节点不持有围护 / 面宽原则，埋深无效）。写操作。",
             {
                 "type": "object",
                 "properties": {
                     "group_id": {"type": "integer"},
                     "name": {"type": "string"},
                     "amount": {"type": "string", "description": "合槽计算长度 L_组（可写算式）"},
+                    "backfill_mode": {
+                        "type": "string",
+                        "enum": ["独立回填标高", "统一回填标高"],
+                        "description": "回填分层方式：统一 = 每层取组内最浅层顶标高",
+                    },
+                    "split_mode": {
+                        "type": "string",
+                        "enum": ["起坡点分割", "管中心分隔"],
+                        "description": "断面划分方式：管中心 = 相邻构件中心连线中点作虚拟分界",
+                    },
                 },
                 "required": ["group_id"],
             },

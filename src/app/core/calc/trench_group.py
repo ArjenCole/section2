@@ -53,12 +53,18 @@ from app.core.calc.engine import (
     workwidth_of,
     works_quantities,
 )
-from app.core.calc.groove import backfill_layers, level_slope, split_h_by_step
+from app.core.calc.groove import backfill_layers, layer_roles, level_slope, split_h_by_step
 from app.core.calc.measures import AtlasDims, cushion_thickness as cushion_dim
 from app.core.calc.measures import foundation_thickness as foundation_dim
-from app.core.calc.tracer import Dim, QDict, dim, dim_sum as _dim_sum, scale_sum, wrap
+from app.core.calc.tracer import Dim, QDict, dim, dim_min, dim_sum as _dim_sum, scale_sum, wrap
 from app.core.models import base as orm
-from app.core.models.models import CATEGORY_ENCASED, Element, TrenchGroup
+from app.core.models.models import (
+    BACKFILL_UNIFIED,
+    CATEGORY_ENCASED,
+    Element,
+    SPLIT_CENTER_LINE,
+    TrenchGroup,
+)
 from app.services.atlas import resolve_atlas
 
 
@@ -261,6 +267,137 @@ def _slope_points(work, depth: float) -> list[tuple[float, float]]:
 
 
 # --------------------------------------------------------------------------- #
+# 管中心分隔：相邻面分界取两构件中心连线中点（覆盖在起坡点口径之上的条带调整）
+# --------------------------------------------------------------------------- #
+def _center_splits(
+    snapshots: list["_Member"], pairs: list["_Pair"]
+) -> list[_CenterSplit]:
+    """逐相邻面计算管中心分隔的分界位移与条带归属。
+
+    分界线 = 相邻两构件水平中心连线的中点（管道取管中心、混凝土构件取左右
+    外包边线中点，都等于本体外皮宽的中点）；相对起坡点分界的位移
+    ``δ = (中心连线中点) − (起坡点)``，右正。分界移向的一侧获得条带
+    （``gainer``），另一侧让出（``loser``）；位移为 0 的面不产生条带。
+    """
+    n = len(snapshots)
+    centers: list[Dim] = []
+    walls: list[Dim] = []
+    cursor = dim(0.0)
+    for i, member in enumerate(snapshots):
+        left_ext = snapshots[0].work_width if i == 0 else pairs[i - 1].right_width
+        right_ext = member.work_width if i == n - 1 else pairs[i].left_width
+        base_left = cursor + left_ext
+        base_right = base_left + member.base_width
+        centers.append(base_left + member.base_width / 2)
+        if i < n - 1:
+            walls.append(base_right + pairs[i].left_width)  # 起坡点分界（同断面图虚拟墙）
+        cursor = base_right + right_ext
+
+    splits: list[_CenterSplit] = []
+    for i in range(n - 1):
+        delta = (centers[i] + centers[i + 1]) / 2 - walls[i]
+        if abs(delta.v) <= 1e-9:
+            continue
+        h_left, h_right = snapshots[i].depth.v, snapshots[i + 1].depth.v
+        delta_h = (
+            snapshots[i + 1].depth - snapshots[i].depth
+            if h_right > h_left
+            else snapshots[i].depth - snapshots[i + 1].depth
+        )
+        profile: tuple[_SlopeSegment, ...] = ()
+        run_max = dim(0.0)
+        if pairs[i].work is not None and delta_h.v > 1e-9:
+            segments = _profile_segments(pairs[i].work, delta_h)
+            if segments:
+                profile = tuple(segments)
+                run_max = segments[-1].width_at(delta_h)
+        offset = delta if delta.v > 0 else -delta
+        gainer, loser = (i, i + 1) if delta.v > 0 else (i + 1, i)
+        splits.append(
+            _CenterSplit(
+                pair_index=i,
+                offset=offset,
+                gainer=gainer,
+                loser=loser,
+                shallow_depth=dim_min(snapshots[i].depth, snapshots[i + 1].depth),
+                delta_h=delta_h,
+                profile=profile,
+                run_max=run_max,
+            )
+        )
+    return splits
+
+
+def _center_deduction(split: _CenterSplit, member: "_Member") -> list[_SlopeSegment]:
+    """管中心分隔下让条带一方（``loser``）的宽度扣减剖面（负宽并入分层积分）。
+
+    让方更深时：坡区高度内扣 ``max(0, offset − gap)``（gap = 起坡点到内侧坡
+    边缘的水平距，自深槽底的 run_max 向上减到 0），浅槽底以上扣恒定 offset；
+    让方更浅 / 等深时全槽扣恒定 offset。扣减面积与获方的条带项严格相等，
+    整槽挖填量守恒。
+    """
+    offset = split.offset
+    segments: list[_SlopeSegment] = []
+    own_delta = member.depth - split.shallow_depth  # 让方槽底到浅槽底的高差
+    if own_delta.v > 1e-9:  # 让方更深：坡区内逐段扣楔形
+        if not split.profile:
+            # 桩类 / 直壁：内侧坡无外扩，坡区整段扣恒定 offset
+            segments.append(_SlopeSegment(dim(0.0), -offset, dim(0.0), own_delta))
+        else:
+            for segment in split.profile:
+                gap_lo = split.run_max - segment.width_at(segment.t1)
+                gap_hi = split.run_max - segment.width_at(segment.t2)
+                ded_lo = offset - gap_lo
+                ded_hi = offset - gap_hi
+                if ded_hi.v <= 1e-9:
+                    continue  # 整段尚未切到分界线：不扣
+                if ded_lo.v >= -1e-9:
+                    segments.append(
+                        _SlopeSegment(segment.t1, -ded_lo, -segment.slope, segment.t2)
+                    )
+                else:
+                    # 段内切入坡面：切点以下不扣，以上按同坡扣到段顶
+                    crossing = segment.t1 + (-ded_lo) / (ded_hi - ded_lo) * (
+                        segment.t2 - segment.t1
+                    )
+                    segments.append(
+                        _SlopeSegment(crossing, dim(0.0), -segment.slope, segment.t2)
+                    )
+    if member.depth.v > own_delta.v + 1e-9:
+        segments.append(_SlopeSegment(own_delta, -offset, dim(0.0), member.depth))
+    return segments
+
+
+def _wedge_area(split: _CenterSplit, lo: Dim, hi: Dim) -> Dim | None:
+    """坡区楔形在高度带 [lo, hi]（自深侧槽底起算）内的面积。
+
+    楔形 = 分界线与内侧坡之间、浅槽底以下的条带（起坡点分界下原属深侧、
+    管中心分隔下划给浅侧的部分），面积 = ∫ max(0, offset − gap) dh。带内
+    坡面为一段等坡线时是梯形；分界线在带内切入坡面时是三角形
+    ``w²/(2×放坡系数)``。返回 None 表示该带与坡区不相交或不产生楔形。
+    """
+    if hi.v <= 1e-9 or lo.v >= split.delta_h.v - 1e-9:
+        return None
+    top = hi if hi.v <= split.delta_h.v else split.delta_h
+    bottom = lo if lo.v >= 0 else dim(0.0)
+    if top.v - bottom.v <= 1e-9:
+        return None
+    if not split.profile:
+        return split.offset * (top - bottom)  # 桩类 / 直壁：坡面竖直，整带都是楔形
+    segment = _segment_for_interval(list(split.profile), bottom, top)
+    if segment is None:
+        return None
+    width_lo = split.offset - (split.run_max - segment.width_at(bottom))
+    width_hi = split.offset - (split.run_max - segment.width_at(top))
+    height = top - bottom
+    if width_hi.v <= 1e-9:
+        return None  # 整带仍在坡面之外：分界未切入坡区
+    if width_lo.v >= -1e-9:
+        return (width_lo + width_hi) * height / 2
+    return width_hi * width_hi / (2 * segment.slope)
+
+
+# --------------------------------------------------------------------------- #
 # 构件快照与总入口
 # --------------------------------------------------------------------------- #
 @dataclass
@@ -276,6 +413,30 @@ class _Member:
     work_width: Dim  # 自身面宽原则按自身管径查到的单侧工作面宽
     profiles: list[list[_SlopeSegment]] = field(default_factory=list)
     flat_width: Dim = field(default_factory=lambda: dim(0.0))  # 平面归属带宽（降水 / 特殊地基代入用）
+    #: 回填分层带 (定额键, 下界, 上界, 层厚, 说明)，高度自槽底起算；
+    #: 独立 / 统一回填标高两种口径下内容不同（见 _member_bands / _unified_member_bands）
+    bands: list[tuple[str, Dim, Dim, Dim, str]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _CenterSplit:
+    """管中心分隔的一个相邻面：分界自深侧起坡点移到两构件中心连线的中点。
+
+    分界位移扫过的竖直条带归 ``gainer``（分界移向的一侧）：浅槽底以上是
+    宽 ``offset`` 的矩形条带；让出方（``loser``）更深时，浅槽底以下的坡区
+    内还有分界线与内侧坡之间的楔形一并划给获方。让出方在分层积分里扣减
+    （:func:`_center_deduction`），获方把条带作为独立项加入
+    （"分左右两侧分别计算工程量再加起来"）。
+    """
+
+    pair_index: int
+    offset: Dim  # |δ|：分界线相对起坡点的水平位移（米）
+    gainer: int  # 获得条带一侧的成员下标
+    loser: int  # 让出条带一侧的成员下标
+    shallow_depth: Dim  # 两侧较浅的槽底深（矩形条带的下缘标高）
+    delta_h: Dim  # 相邻面的槽底高差（等深为 0）
+    profile: tuple[_SlopeSegment, ...]  # 深侧内侧坡的放坡剖面段（覆盖 [0, delta_h]）
+    run_max: Dim  # 剖面末端外扩宽（坡区楔形 gap 的基准；直壁 / 等深为 0）
 
 
 @dataclass
@@ -539,12 +700,63 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             flat = flat + pairs[i].left_width
         member.flat_width = flat
 
+    # 管中心分隔：分界移到相邻构件中心连线的中点。让出条带的一方在剖面里
+    # 扣减（挖填随分层积分同步减少），平面归属带宽随分界位移调整
+    splits: list[_CenterSplit] = []
+    if group.split_mode == SPLIT_CENTER_LINE:
+        splits = _center_splits(snapshots, pairs)
+        for split in splits:
+            loser = snapshots[split.loser]
+            loser.profiles.append(_center_deduction(split, loser))
+            snapshots[split.gainer].flat_width = snapshots[split.gainer].flat_width + split.offset
+            loser.flat_width = loser.flat_width - split.offset
+
+    # 回填分层带：独立回填标高 = 各构件自己的分层界面（现状口径）；
+    # 统一回填标高 = 每层取组内各构件该层顶的最浅标高
+    if group.backfill_mode == BACKFILL_UNIFIED:
+        interfaces = _unified_interfaces(snapshots)
+        for member in snapshots:
+            member.bands = _unified_member_bands(member, interfaces)
+    else:
+        for member in snapshots:
+            member.bands = _member_bands(member)
+
     # 挖方 / 回填（按标高分层、每层梯形）
+    filled: set[int] = set()
     for member in snapshots:
         out = QDict()
-        if not _member_dig_fill(member, out):
+        if _member_dig_fill(member, out, member.bands):
+            filled.add(member.element.id)
+        else:
             errors[member.element.id] = errors.get(member.element.id) or "覆土不足或分层无效，未生成工程量。"
         results[member.element.id] = out
+
+    # 管中心分隔：获方把分界条带作为独立项加进来（矩形条带按自己的分层带
+    # 摊入；获方更浅时坡区楔形按让方=深侧的分层带摊入），挖方同步累加
+    for split in splits:
+        gainer = snapshots[split.gainer]
+        if gainer.element.id not in filled or not gainer.bands:
+            continue
+        loser = snapshots[split.loser]
+        out = results[gainer.element.id]
+        dig_key = f"开挖|{gainer.info.pp.excvt}|m3"
+        # 矩形条带：浅槽底以上的竖直条带，按获方自己的分层带摊入
+        rect_lo = gainer.depth - split.shallow_depth
+        for key, lo, hi, _layer, note in gainer.bands:
+            band_lo = lo if lo.v >= rect_lo.v - 1e-9 else rect_lo
+            if hi.v - band_lo.v <= 1e-9:
+                continue
+            area = split.offset * (hi - band_lo)
+            out.add(key, area.v, area.e, f"{note}·管中心分隔")
+            out.add(dig_key, area.v, area.e, f"{note}·管中心分隔")
+        # 坡区楔形：仅当获方更浅（条带在获方槽底以下），按深侧的分层带摊入
+        if gainer.depth.v < loser.depth.v - 1e-9:
+            for key, lo, hi, _layer, note in loser.bands:
+                area = _wedge_area(split, lo, hi)
+                if area is None or area.v == 0:
+                    continue
+                out.add(key, area.v, area.e, f"{note}·管中心分隔")
+                out.add(dig_key, area.v, area.e, f"{note}·管中心分隔")
 
     # 围护量（每面 ×1）+ 支撑
     flat_total = _dim_sum(*(member.flat_width for member in snapshots))
@@ -620,31 +832,98 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
     return results, errors
 
 
-def _member_dig_fill(member: _Member, out: QDict) -> bool:
+def _cushion_name(pf) -> str:
+    return pf.cushions[0].name if pf.cushions else "中粗砂"
+
+
+def _member_layers(member: _Member) -> list[tuple[str, Dim, str]]:
+    """构件自己的回填分层列表（定额键, 层厚, 说明），与单构件计算同口径。"""
+    return backfill_layers(
+        member.info.pp,
+        member.info.pf,
+        member.ad,
+        member.info.size_h_dim,
+        member.depth,
+        _cushion_name(member.info.pf),
+    )
+
+
+def _member_bands(member: _Member) -> list[tuple[str, Dim, Dim, Dim, str]]:
+    """构件自己的分层带 (定额键, 下界, 上界, 层厚, 说明)——独立回填标高口径。
+
+    层的高度带自槽底向上累计：第 k 层占据 [Σh, Σh+h]。
+    """
+    bands: list[tuple[str, Dim, Dim, Dim, str]] = []
+    cum = dim(0.0)
+    for key, layer, note in _member_layers(member):
+        if layer.v <= 0:
+            continue
+        bands.append((key, cum, cum + layer, layer, note))
+        cum = cum + layer
+    return bands
+
+
+def _unified_interfaces(snapshots: list[_Member]) -> dict[tuple[str, int], Dim]:
+    """统一回填标高：逐层角色取组内各构件层顶的最低标高（最浅）。
+
+    层顶标高 = 槽底深 − 自底向上的累计层厚（地面以下深度，越小越浅），只有
+    该层自身厚度为正的构件参与统筹，算式取贡献构件的推导；组内没有正厚度
+    贡献的角色不进结果，构件重建分层带时跳过该界面、由相邻层带并入。
+    """
+    layers_by_member = [(member, _member_layers(member)) for member in snapshots]
+    best: dict[tuple[str, int], Dim] = {}
+    for member, layers in layers_by_member:
+        cum = dim(0.0)
+        for (base, occurrence), (_key, layer, _note) in zip(layer_roles(layers), layers):
+            cum = cum + layer
+            if layer.v <= 0:
+                continue
+            elevation = member.depth - cum
+            role = (base, occurrence)
+            if role not in best or elevation.v < best[role].v - 1e-9:
+                best[role] = elevation
+    return best
+
+
+def _unified_member_bands(
+    member: _Member, interfaces: dict[tuple[str, int], Dim]
+) -> list[tuple[str, Dim, Dim, Dim, str]]:
+    """统一回填标高下构件的分层带：界面取统筹标高，材质定额键仍是自己的。
+
+    各层厚度 = 相邻两条统筹界面的标高差（首层自构件自己的槽底起算）；构件
+    缺某层（自身厚度 0 / 无此层）时该界面跳过、标高区间并入相邻层带。最后
+    一条带不足槽顶时向上补齐——与 backfill_layers"顶层吸收剩余"的口径一致。
+    """
+    layers = _member_layers(member)
+    bands: list[tuple[str, Dim, Dim, Dim, str]] = []
+    bottom = member.depth  # 首层带的下缘标高 = 自身槽底
+    for (base, occurrence), (key, _layer, note) in zip(layer_roles(layers), layers):
+        top = interfaces.get((base, occurrence))
+        if top is None or top.v >= bottom.v - 1e-9:
+            continue  # 组内没有该层的统筹界面 / 界面不高于上一条：并入相邻层带
+        bands.append((key, member.depth - bottom, member.depth - top, bottom - top, note))
+        bottom = top
+    if bands and bands[-1][2].v < member.depth.v - 1e-9:
+        key, lo, _hi, _thickness, note = bands[-1]
+        bands[-1] = (key, lo, member.depth, member.depth - lo, note)
+    return bands
+
+
+def _member_dig_fill(
+    member: _Member, out: QDict, bands: list[tuple[str, Dim, Dim, Dim, str]]
+) -> bool:
     """构件宽度剖面的挖方 / 分层回填（按标高分层、每层梯形，结果写入 ``out``）。
 
-    标高事件集 = 回填分层界面（换填顶 / 垫层顶 / 坞膀下半顶 / 坞膀顶 /
-    管顶 50cm 顶 / 覆土顶）+ 各侧放坡剖面的全部分级 / 平台折点（含相邻
+    ``bands`` 为该构件的回填分层带（独立 / 统一回填标高口径由调用方决定）。
+    标高事件集 = 回填分层界面 + 各侧放坡剖面的全部分级 / 平台折点（含相邻
     构件槽底标高）。事件之间宽度线性，单层面积用梯形 ``(w_下+w_上)/2*Δh``
     精确计算；每层按它所属的回填分层归类，挖方按层合并 term（说明 = 层名）。
     """
     info = member.info
     pp = info.pp
-    pf = info.pf
-    cushion_name = pf.cushions[0].name if pf.cushions else "中粗砂"
-    layers = backfill_layers(pp, pf, member.ad, info.size_h_dim, member.depth, cushion_name)
-    # 层的高度带 (下界, 上界, 层厚, 说明)：自槽底向上累计，第 k 层占据
-    # [Σh, Σh+h]（自构件槽底起算的高度区间）
-    bands: list[tuple[str, Dim, Dim, Dim, str]] = []
-    cum = dim(0.0)
-    for key, layer, note in layers:
-        if layer.v <= 0:
-            continue
-        bands.append((key, cum, cum + layer, layer, note))
-        cum = cum + layer
     if not bands:
         return False
-    total = cum
+    total = bands[-1][2]
 
     # 标高事件集：回填分层界面优先，其次各侧剖面的折点（分级 / 平台 / 相邻槽底）
     boundaries: list[Dim] = [dim(0.0), total]
