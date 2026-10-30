@@ -2,7 +2,7 @@
 
 每个工程量条目产出 ``{key, value, expression, terms}``：
 
-* ``expression`` 是一条代入后的算式，加减链里公共的 ``/1000`` 已按四则运算
+* ``expression`` 是一条代入后的完整算式，加减链里公共的 ``/1000`` 已按四则运算
   规则提到括号外（见 :func:`extract_common_divisors`），如
   ``(2*(600+(65*2+130*2+500*2))/1000+2*2.995*1)*2.995/2``；
 * **不预运算**：软件派生出来的数字（槽底宽由管径 + 图集参数 + 面宽原则推出、
@@ -14,6 +14,10 @@
 * 中间步骤（:meth:`Quantity.steps`）＝逐项一行「说明 + 该步算式」（分层、扣减、
   公式类别等），由项本身派生，每步算式按顺序拼起来就是完整算式；
   供表格 tooltip / 详情弹窗查看，不进主算式。
+* **展示层**（:meth:`Quantity.presentation`）把长算式拆成“主算式 + 中间量定义”：
+  槽底宽、计算深度、外径、弓形面积等重复片段各定义一次，主算式只引用符号；
+  定义式仍由原始数字组成，派生结果只放在“计算结果”列，不代回公式。
+  ``expression`` 完整算式始终保留，供复制 Excel 与逐项复核。
 
 算式求值与表达式拼接共用同一套数值：先拼出可求值的算式字符串，
 再用 core.evaluator 对它求值得到结果，禁止两套算法各算各的。
@@ -21,6 +25,8 @@
 
 from __future__ import annotations
 
+import ast
+import copy
 import re
 from dataclasses import dataclass, field
 from typing import Iterable
@@ -342,12 +348,39 @@ def wrap(expression: str, tight: bool = False) -> str:
     return f"({text})" if needed else text
 
 
-def pair(other: "Dim | float") -> tuple[float, str]:
-    """Dim 与普通数字统一成 (数值, 算式) 两件套（普通数字的算式就是它本身）。"""
+@dataclass(frozen=True)
+class NamedValue:
+    """算式片段与它的人类可读含义（只用于展示层，不参与求值）。
+
+    ``expr`` 必须与 :class:`Dim` 当时的 ``e`` 完全一致；展示层按语法树比对，
+    命中后把该片段提成中间量。数字本身仍由原始 ``e`` 提供，绝不用 ``value``
+    反代回公式，因此不会把派生量预先算成一个数字。
+    """
+
+    expr: str
+    label: str
+    source: str = ""
+
+
+def _merge_tags(*groups: Iterable[NamedValue]) -> tuple[NamedValue, ...]:
+    """合并算式来源标记（同一段算式只保留第一次出现的说明）。"""
+    merged: list[NamedValue] = []
+    seen: set[str] = set()
+    for group in groups:
+        for tag in group:
+            if not tag.expr or not tag.label or tag.expr in seen:
+                continue
+            seen.add(tag.expr)
+            merged.append(tag)
+    return tuple(merged)
+
+
+def pair(other: "Dim | float") -> tuple[float, str, tuple[NamedValue, ...]]:
+    """Dim 与普通数字统一成 (数值, 算式, 来源标记) 三件套。"""
     if isinstance(other, Dim):
-        return other.v, other.e
+        return other.v, other.e, other.tags
     value = float(other)
-    return value, fmt(value)
+    return value, fmt(value), ()
 
 
 @dataclass
@@ -359,49 +392,72 @@ class Dim:
     弓形占位…）在算式里保留全部来源，只有直接录入 / 查表的原始数据
     （管径、图集 t/a/C1/C2、面宽表值）和软件常数（0.5、π 系数）才是一个数字。
     ``e`` 是裸算式，嵌入模板前须经 :func:`wrap`。
+
+    ``tags`` 记录参与运算的语义量（槽底宽、计算深度…），只供展示层把长算式拆成
+    “主算式 + 中间量定义”；它不改变 ``v`` / ``e``，也不影响计算与完整算式。
     """
 
     v: float
     e: str
+    tags: tuple[NamedValue, ...] = ()
+
+    def named(self, label: str, source: str = "") -> "Dim":
+        """给当前量补一个展示名称（返回新 Dim，不改原对象）。"""
+        return Dim(self.v, self.e, _merge_tags(self.tags, (NamedValue(self.e, label, source),)))
 
     def __add__(self, other: "Dim | float") -> "Dim":
-        value, expr = pair(other)
+        value, expr, tags = pair(other)
         if value == 0:
             return self
         if self.v == 0:
-            return Dim(value, expr)
+            return Dim(value, expr, _merge_tags(self.tags, tags))
         # 加法两侧都是同级运算，右操作数加括号只为可读；左操作数无须括号
-        return Dim(self.v + value, f"{self.e}+{wrap(expr)}")
+        return Dim(self.v + value, f"{self.e}+{wrap(expr)}", _merge_tags(self.tags, tags))
 
     __radd__ = __add__
 
     def __sub__(self, other: "Dim | float") -> "Dim":
-        value, expr = pair(other)
+        value, expr, tags = pair(other)
         if value == 0:
             return self
         # 减法的右操作数是算式时必须括起来，否则 X-(A+B) 会变成 X-A+B
-        return Dim(self.v - value, f"{self.e}-{wrap(expr)}")
+        return Dim(self.v - value, f"{self.e}-{wrap(expr)}", _merge_tags(self.tags, tags))
 
     def __neg__(self) -> "Dim":
-        return Dim(-self.v, f"-{wrap(self.e)}")
+        return Dim(-self.v, f"-{wrap(self.e)}", self.tags)
 
     def __mul__(self, other: "Dim | float") -> "Dim":
-        value, expr = pair(other)
-        return Dim(self.v * value, f"{wrap(self.e)}*{wrap(expr)}")
+        value, expr, tags = pair(other)
+        return Dim(
+            self.v * value,
+            f"{wrap(self.e)}*{wrap(expr)}",
+            _merge_tags(self.tags, tags),
+        )
 
     __rmul__ = __mul__
 
     def __truediv__(self, other: "Dim | float") -> "Dim":
-        value, expr = pair(other)
+        value, expr, tags = pair(other)
         if value == 1:
             return self  # ÷1 不写进算式（只可能是引擎生成的等分，用户写的算式保留原文）
         # 除数位置的算式要更严格：顶层乘除也得括起来，否则 _a/(b*c) 会变成 _a/b*c
-        return Dim(self.v / value, f"{wrap(self.e)}/{wrap(expr, tight=True)}")
+        return Dim(
+            self.v / value,
+            f"{wrap(self.e)}/{wrap(expr, tight=True)}",
+            _merge_tags(self.tags, tags),
+        )
 
 
-def dim(value: float, expr: str | None = None) -> Dim:
+def dim(
+    value: float, expr: str | None = None, tags: Iterable[NamedValue] = ()
+) -> Dim:
     """纯数值尺寸：算式就是数值本身。"""
-    return Dim(float(value), expr if expr is not None else fmt(value))
+    return Dim(float(value), expr if expr is not None else fmt(value), tuple(tags))
+
+
+def tag_dim(value: Dim, label: str, source: str = "") -> Dim:
+    """给已有 Dim 补展示名称，保留其数值、算式和已有来源标记。"""
+    return value.named(label, source)
 
 
 def dim_sum(*parts: Dim) -> Dim:
@@ -455,13 +511,419 @@ def prettify(expression: str) -> str:
     return text
 
 
+# --------------------------------------------------------------------------- #
+# 展示层：主算式 + 中间量定义（完整数值算式保持原样）
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class ExpressionDefinition:
+    """展示层的一条中间量定义。
+
+    ``expression`` 仍是一条包含原始数字的代入式；``value`` 只用于“计算结果”
+    列展示，**不会代回**主算式或其它定义式。
+    """
+
+    symbol: str
+    label: str
+    expression: str
+    value: float
+    source: str = ""
+    kind: str = "intermediate"  # intermediate | subtotal
+
+
+@dataclass(frozen=True)
+class CompactTerm:
+    """展示层的一个工程量分项（对应原来的一个带符号 Term）。"""
+
+    symbol: str
+    note: str
+    expression: str
+    value: float
+
+
+@dataclass(frozen=True)
+class ExpressionPresentation:
+    """一条工程量的展示结构：主算式、定义表、分项式与完整算式。"""
+
+    formula: str
+    main: str
+    definitions: tuple[ExpressionDefinition, ...]
+    terms: tuple[CompactTerm, ...]
+    full: str
+
+
+@dataclass
+class _Candidate:
+    """语法树里可提成变量的算式片段。"""
+
+    key: str
+    text: str
+    node: ast.AST
+    length: int
+    count: int
+    depth: int
+    label: str = ""
+    source: str = ""
+
+
+_PREFERRED_SYMBOLS = {
+    "槽底宽": "B",
+    "计算深度": "H",
+    "管道外径": "D",
+    "管道外径（m）": "D",
+    "管道外径（mm）": "Dmm",
+    "基础宽度": "b",
+    "基础厚度": "h",
+    "基础断面面积": "S",
+    "弓形占位面积": "A",
+    "放坡系数": "m",
+    "数量": "L",
+    "长度": "L",
+    "埋深": "h0",
+    "垫层厚度": "h_c",
+    "底板厚": "t_b",
+    "顶板厚": "t_t",
+    "外壁厚": "t_w",
+    "内壁厚": "t_i",
+    "含钢量": "rho",
+    "井距": "s",
+    "管材含量": "q",
+}
+
+
+def _excel_expression(text: str) -> str:
+    """展示层语法树输出 → Excel 写法（乘方 ``^``、去空格）。"""
+    return ast.unparse(text).replace(" ", "").replace("**", "^")  # type: ignore[arg-type]
+
+
+def _parse_expression(expression: str) -> ast.AST | None:
+    """解析引擎输出的 Excel 算式；失败返回 None（展示层退回完整算式）。"""
+    text = (expression or "").strip().lstrip("=")
+    if not text:
+        return None
+    text = (
+        text.replace("×", "*")
+        .replace("✕", "*")
+        .replace("÷", "/")
+        .replace("−", "-")
+    )
+    # Excel 的 ^ 与 Python 的 ** 同义；现有输出没有以负数为底的乘方，
+    # 直接替换不会改变算式结构。
+    text = text.replace("^", "**")
+    try:
+        return ast.parse(text, mode="eval").body
+    except (SyntaxError, ValueError):
+        return None
+
+
+def _node_key(node: ast.AST) -> str:
+    return ast.dump(node, annotate_fields=False, include_attributes=False)
+
+
+def _node_value(node: ast.AST) -> float | None:
+    """只对“可直接求值”的原式求值（中间量结果列展示用，不参与公式拼接）。"""
+    try:
+        from app.core.evaluator import evaluate
+
+        return float(evaluate(_excel_expression(node)))
+    except Exception:
+        return None
+
+
+class _PowerFold(ast.NodeTransformer):
+    """把 ``X*X`` 写成 ``X^2``（纯符号恒等变形，不做任何数值预运算）。"""
+
+    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
+        node = self.generic_visit(node)
+        if (
+            isinstance(node.op, ast.Mult)
+            and _node_key(node.left) == _node_key(node.right)
+            and not isinstance(node.left, ast.Constant)
+        ):
+            return ast.BinOp(left=node.left, op=ast.Pow(), right=ast.Constant(2))
+        return node
+
+
+def _safe_simplify(node: ast.AST) -> ast.AST:
+    """仅做不改变数值来源的展示化简（去冗余括号、X*X→X^2）。"""
+    return ast.fix_missing_locations(_PowerFold().visit(node))
+
+
+def _format_definition(expression: str) -> str:
+    """中间量定义式的展示格式：先提公共 /1000，再按最小括号形式输出。"""
+    text = extract_common_divisors(expression)
+    node = _parse_expression(text)
+    if node is None:
+        return prettify(text)
+    return _excel_expression(_safe_simplify(node))
+
+
+def _collect_tag_keys(tags: Iterable[NamedValue]) -> dict[str, NamedValue]:
+    """把来源标记的算式转成语法树 canonical key（原式与提公因式后的形式都收）。"""
+    result: dict[str, NamedValue] = {}
+    for tag in tags:
+        for text in {tag.expr, extract_common_divisors(tag.expr)}:
+            node = _parse_expression(text)
+            if node is not None:
+                result.setdefault(_node_key(node), tag)
+    return result
+
+
+def _candidate_key(node: ast.AST, root_keys: set[str]) -> bool:
+    """节点是否可能是“可复用中间量”（数字 / 单变量 / 整个分项根节点都排除）。"""
+    if isinstance(node, (ast.Constant, ast.Name)):
+        return False
+    text = _excel_expression(node)
+    if _node_key(node) in root_keys:
+        return False
+    return len(text) >= 5
+
+
+def _walk_nodes(node: ast.AST, depth: int = 0):
+    yield node, depth
+    for child in ast.iter_child_nodes(node):
+        yield from _walk_nodes(child, depth + 1)
+
+
+def _assign_symbols(candidates: list[_Candidate]) -> dict[str, str]:
+    """给候选片段分配短符号：语义量优先用 B/H/D 等，其余用 X1、X2…。"""
+    used: set[str] = set()
+    symbols: dict[str, str] = {}
+    for candidate in candidates:
+        base = _PREFERRED_SYMBOLS.get(candidate.label, "X")
+        symbol = base
+        index = 2
+        while symbol in used:
+            symbol = f"{base}{index}"
+            index += 1
+        used.add(symbol)
+        symbols[candidate.key] = symbol
+    return symbols
+
+
+class _ReplaceNodes(ast.NodeTransformer):
+    """按 canonical key 替换为变量名；``stop`` 用于定义式自身不再替换。"""
+
+    def __init__(self, symbols: dict[str, str], stop: str = "") -> None:
+        self.symbols = symbols
+        self.stop = stop
+
+    def visit(self, node: ast.AST) -> ast.AST:
+        key = _node_key(node)
+        if key != self.stop and key in self.symbols:
+            return ast.Name(id=self.symbols[key], ctx=ast.Load())
+        return super().visit(node)
+
+
+def _select_candidates(
+    roots: list[ast.AST],
+    tag_map: dict[str, NamedValue],
+    notes: list[str],
+) -> list[_Candidate]:
+    """从所有分项语法树中选可提取片段（语义量 → 确有重复的片段）。"""
+    root_keys = {_node_key(root) for root in roots}
+    aggregated: dict[str, _Candidate] = {}
+    for root, note in zip(roots, notes):
+        for node, depth in _walk_nodes(root):
+            key = _node_key(node)
+            if not _candidate_key(node, root_keys):
+                continue
+            text = _excel_expression(node)
+            existing = aggregated.get(key)
+            if existing is None:
+                tag = tag_map.get(key)
+                aggregated[key] = _Candidate(
+                    key=key,
+                    text=text,
+                    node=node,
+                    length=len(text),
+                    count=1,
+                    depth=depth,
+                    label=tag.label if tag else "",
+                    source=(tag.source if tag and tag.source else note),
+                )
+            else:
+                existing.count += 1
+                if not existing.source and note:
+                    existing.source = note
+
+    values = list(aggregated.values())
+    semantic = [item for item in values if item.label]
+    repeated = [
+        item
+        for item in values
+        if not item.label and item.count >= 2 and item.length >= 10
+    ]
+    semantic.sort(key=lambda item: (item.length, item.count), reverse=True)
+    repeated.sort(key=lambda item: item.length * (item.count - 1), reverse=True)
+
+    selected: list[_Candidate] = []
+    seen: set[str] = set()
+
+    def take(group: list[_Candidate], limit: int) -> None:
+        added = 0
+        for candidate in group:
+            if added >= limit or len(selected) >= 8:
+                return
+            if candidate.key in seen:
+                continue
+            seen.add(candidate.key)
+            selected.append(candidate)
+            added += 1
+
+    take(semantic, 8)
+    # 通用片段只在“确有重复”时提取；不再把只出现一次的超长片段提成变量
+    # （那只会让主算式变成 X1*100，反而多一次跳转）。同时避开语义量的内部，
+    # 避免出现“计算深度 = 2.5+0.3+X”这类套娃定义。
+    semantic_texts = [item.text for item in selected]
+    repeated = [
+        item
+        for item in repeated
+        if not any(item.text in text or text in item.text for text in semantic_texts)
+    ]
+    # 通用片段之间也不套娃：X2 = X4*…、X3 = X2/1000 这种链条并不比原式好读。
+    filtered: list[_Candidate] = []
+    for item in repeated:
+        if any(item.text in other.text or other.text in item.text for other in filtered):
+            continue
+        filtered.append(item)
+    take(filtered, 8)
+    return selected
+
+
+def _compact_terms(
+    terms: list["Term"],
+) -> tuple[str, list[CompactTerm], list[ExpressionDefinition]]:
+    """把一条工程量的各分项压缩成主算式、分项式和中间量定义。"""
+    parsed: list[ast.AST] = []
+    notes: list[str] = []
+    tags: list[NamedValue] = []
+    for term in terms:
+        node = _parse_expression(term.raw_expr or term.expr)
+        if node is None:
+            return "", [], []
+        parsed.append(node)
+        notes.append(term.note)
+        tags.extend(term.tags)
+
+    selected = _select_candidates(parsed, _collect_tag_keys(tags), notes)
+    symbols = _assign_symbols(selected)
+
+    compact_terms: list[CompactTerm] = []
+    for index, (term, root) in enumerate(zip(terms, parsed), start=1):
+        transformed = _ReplaceNodes(symbols).visit(root)
+        expression = _excel_expression(_safe_simplify(transformed))
+        compact_terms.append(
+            CompactTerm(
+                symbol=f"V{index}",
+                note=term.note,
+                expression=expression,
+                value=term.value,
+            )
+        )
+
+    definitions: list[ExpressionDefinition] = []
+    # 深层定义先输出，父级定义可以引用已定义的子式（排序只为阅读，不参与计算）。
+    for candidate in sorted(selected, key=lambda item: item.depth, reverse=True):
+        value = _node_value(candidate.node)  # 必须在替换子式前求值
+        transformed = _ReplaceNodes(symbols, stop=candidate.key).visit(
+            copy.deepcopy(candidate.node)
+        )
+        expression = _format_definition(_excel_expression(_safe_simplify(transformed)))
+        definitions.append(
+            ExpressionDefinition(
+                symbol=symbols[candidate.key],
+                label=candidate.label
+                or (f"{candidate.source}中间量" if candidate.source else "中间量"),
+                expression=expression,
+                value=value if value is not None else 0.0,
+                source=candidate.source or "本步原始参数",
+            )
+        )
+
+    if len(compact_terms) > 1:
+        parts: list[str] = []
+        for index, term in enumerate(compact_terms):
+            sign = "-" if term.value < 0 else ("+" if index else "")
+            parts.append(sign + term.symbol)
+            definitions.append(
+                ExpressionDefinition(
+                    symbol=term.symbol,
+                    label=term.note or f"分项 {index + 1}",
+                    expression=term.expression,
+                    # 减项在定义表按绝对值展示，正负号由主算式里的 +/− 表达；
+                    # 否则会出现“0.3 = -0.3”这种自相矛盾的行。
+                    value=abs(term.value),
+                    source=term.note or "分项计算",
+                    kind="subtotal",
+                )
+            )
+        main = "".join(parts)
+    else:
+        main = compact_terms[0].expression if compact_terms else "0"
+
+    definitions = _order_definitions(definitions)
+    definitions = _prune_definitions(main, definitions)
+    return main, compact_terms, definitions
+
+
+_TOKEN = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
+
+
+def _order_definitions(
+    definitions: list[ExpressionDefinition],
+) -> list[ExpressionDefinition]:
+    """按依赖顺序排列定义：被引用的中间量排在引用它的定义之前。"""
+    remaining = list(definitions)
+    symbols = {item.symbol for item in remaining}
+    emitted: set[str] = set()
+    ordered: list[ExpressionDefinition] = []
+    while remaining:
+        for item in remaining:
+            dependencies = set(_TOKEN.findall(item.expression)) & symbols
+            if dependencies <= emitted:
+                ordered.append(item)
+                emitted.add(item.symbol)
+                remaining.remove(item)
+                break
+        else:  # 理论上不会成环（语法树自下而上），兜底原序输出
+            ordered.extend(remaining)
+            break
+    return ordered
+
+
+def _prune_definitions(
+    main: str, definitions: list[ExpressionDefinition]
+) -> list[ExpressionDefinition]:
+    """只保留主算式或其它定义真正引用到的中间量（避免出现一堆没用上的 B4）。"""
+    by_symbol = {item.symbol: item for item in definitions}
+    used = set(_TOKEN.findall(main)) & by_symbol.keys()
+    changed = True
+    while changed:
+        changed = False
+        for symbol in list(used):
+            definition = by_symbol.get(symbol)
+            if definition is None:
+                continue
+            for token in set(_TOKEN.findall(definition.expression)) & by_symbol.keys():
+                if token not in used:
+                    used.add(token)
+                    changed = True
+    return [item for item in definitions if item.symbol in used]
+
+
 @dataclass
 class Term:
-    """工程量的一个代入项：expr 为未带正负号的算式，value 为带符号数值，note 为该项说明。"""
+    """工程量的一个代入项：expr 为未带正负号的算式，value 为带符号数值，note 为该项说明。
+
+    ``raw_expr`` 保留提公共 ``/1000`` 之前的形式，仅供展示层把语义量与语法树
+    对齐；``expr`` 仍是完整数值算式使用的可读形式。
+    """
 
     expr: str
     value: float
     note: str = ""
+    tags: tuple[NamedValue, ...] = ()
+    raw_expr: str = ""
 
 
 @dataclass
@@ -470,11 +932,16 @@ class Quantity:
 
     中间步骤由项（:class:`Term`）本身派生，见 :meth:`steps`：说明挂在项上，
     不单独存一份标签列表，因此“每步算式拼起来”与 :attr:`expression` 必然一致。
+    展示层另有 :meth:`presentation`：把长算式拆成“主算式 + 中间量定义”，
+    但 :attr:`expression` 始终保留完整数值算式，供复制 Excel 和逐项复核。
     """
 
     key: str
     value: float = 0.0
     terms: list[Term] = field(default_factory=list)
+    _presentation_cache: ExpressionPresentation | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def steps(self) -> list[tuple[str, str]]:
         """中间步骤：``[(说明, 带符号的该项算式)]``，按相加顺序排列（可能为空）。
@@ -501,19 +968,89 @@ class Quantity:
         parts = [text for _note, text in self.steps()]
         return "".join(parts) if parts else "0"
 
-    def add_term(self, value: float, expr: str, note: str = "") -> None:
+    def presentation(self) -> ExpressionPresentation:
+        """展示结构：主算式 + 中间量定义 + 分项式；失败时退回完整算式。"""
+        if self._presentation_cache is not None:
+            return self._presentation_cache
+        main = ""
+        compact_terms: list[CompactTerm] = []
+        definitions: list[ExpressionDefinition] = []
+        if self.terms:
+            main, compact_terms, definitions = _compact_terms(self.terms)
+        if not main:
+            main = self.expression
+        formula = f"V={main}"
+        self._presentation_cache = ExpressionPresentation(
+            formula=formula,
+            main=main,
+            definitions=tuple(definitions),
+            terms=tuple(compact_terms),
+            full=self.expression,
+        )
+        return self._presentation_cache
+
+    @property
+    def display_expression(self) -> str:
+        """主算式（会触发展示层解析，供导出/接口等确实需要时使用）。"""
+        return self.presentation().main
+
+    @property
+    def expression_outline(self) -> str:
+        """表格首屏用的轻量摘要：**不解析表达式**，悬停/双击时再生成完整说明。
+
+        单分项且式不长时直接显示原式；多分项给“几项 + 前几项说明”的摘要，
+        让用户一眼知道这条量由哪些部分组成，同时避免每次刷新表格都解析所有算式。
+        """
+        if not self.terms:
+            return "0"
+        if len(self.terms) == 1:
+            text = self.terms[0].expr
+            if len(text) <= 100:
+                return text
+            return f"{self.terms[0].note or '本项'}（悬停查看计算过程）"
+        notes: list[str] = []
+        for term in self.terms:
+            if term.note and term.note not in notes:
+                notes.append(term.note)
+        preview = " + ".join(notes[:3])
+        if len(notes) > 3:
+            preview += "…"
+        if preview:
+            return f"{len(self.terms)} 个分项：{preview}"
+        return f"{len(self.terms)} 个分项（悬停查看计算过程）"
+
+    def compact_steps(self) -> list[tuple[str, str]]:
+        """展示用分项步骤：``[(说明, “V1=主式”)]``；单分项直接给主式。"""
+        view = self.presentation()
+        if len(view.terms) <= 1:
+            return [(view.terms[0].note if view.terms else "", view.main)]
+        return [
+            (term.note, f"{term.symbol}={term.expression}") for term in view.terms
+        ]
+
+    def add_term(
+        self,
+        value: float,
+        expr: str,
+        note: str = "",
+        tags: Iterable[NamedValue] = (),
+    ) -> None:
         self.value += value
         if value != 0:
             # 算式只存“数值代入”部分，正负号由 value 决定，避免出现双重负号；
             # 存入前把公共的 /1000 提到括号外（输出可读化，值不变，见
             # :func:`extract_common_divisors`）
+            raw = expr.lstrip("-") or "0"
             self.terms.append(
                 Term(
-                    expr=extract_common_divisors(expr.lstrip("-") or "0"),
+                    expr=extract_common_divisors(raw),
                     value=value,
                     note=note,
+                    tags=tuple(tags),
+                    raw_expr=raw,
                 )
             )
+            self._presentation_cache = None
 
 
 class QDict:
@@ -542,16 +1079,24 @@ class QDict:
         return [item.value for item in self._items.values()]
 
     # ---------------------------------------------------------------- 累加
-    def add(self, key: str, value: float, expr: str = "", note: str = "") -> Quantity:
+    def add(
+        self,
+        key: str,
+        value: float,
+        expr: str = "",
+        note: str = "",
+        tags: Iterable[NamedValue] = (),
+    ) -> Quantity:
         """累加一项：``note`` 是该步的说明，挂在项上随 :meth:`Quantity.steps` 一起展示。
 
         数值为 0 的项不进算式，其说明也一并丢弃（步骤列表与算式严格一一对应）。
+        ``tags`` 只供展示层识别“槽底宽 / 计算深度”等中间量。
         """
         quantity = self._items.get(key)
         if quantity is None:
             quantity = Quantity(key=key)
             self._items[key] = quantity
-        quantity.add_term(value, expr or fmt(value), note)
+        quantity.add_term(value, expr or fmt(value), note, tags)
         return quantity
 
     def discard(self, key: str) -> None:
@@ -563,7 +1108,8 @@ class QDict:
         for quantity in other.items():
             target = self.add(quantity.key, 0.0)
             for term in quantity.terms:
-                target.add_term(term.value, term.expr, term.note)
+                target.add_term(term.value, term.expr, term.note, term.tags)
+                target.terms[-1].raw_expr = term.raw_expr or term.expr
 
     def scale(self, coefficient: float, expr: str | None = None) -> None:
         """整体乘系数（旧版 MultDic_StrmcQ）；系数进算式，``expr`` 为系数的算式原文。
@@ -581,6 +1127,8 @@ class QDict:
             for term in quantity.terms:
                 term.value *= coefficient
                 term.expr = f"{wrap(term.expr)}{suffix}"
+                term.raw_expr = f"{wrap(term.raw_expr or term.expr)}{suffix}"
+            quantity._presentation_cache = None
 
     # ---------------------------------------------------------------- 汇总
     def total(self) -> float:

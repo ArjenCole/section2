@@ -48,14 +48,20 @@ class AtlasDims:
 
 def cushion_thickness(pf) -> Dim:
     """垫层厚 mm（垫层 v10 起属地基原则）的算式伴随：原则垫层的表值。"""
-    return dim(pf.cushions[0].h if pf.cushions else 0.0)
+    return dim(pf.cushions[0].h if pf.cushions else 0.0).named(
+        "垫层厚度", "地基原则·垫层表值"
+    )
 
 
 def foundation_thickness(pf) -> Dim:
     """换填总厚 mm（旧版 mcPcpFoundation.TiA）的算式伴随：各换填层厚相加。"""
-    return dim_sum(*(dim(replacement.h) for replacement in pf.replacements))
+    return dim_sum(
+        *(dim(replacement.h).named("换填层厚", "地基原则·换填层") for replacement in pf.replacements)
+    ).named("换填总厚度", "地基原则·各换填层厚之和")
 
 
 def groove_b_width(value: float) -> Dim:
     """面宽原则沟槽宽度表的槽底宽 m：表里按 mm 填，算式写成 ``表值/1000``。"""
-    return Dim(value, f"{fmt(value * 1000)}/1000")
+    return Dim(value, f"{fmt(value * 1000)}/1000").named(
+        "槽底宽", "面宽原则·沟槽宽度表"
+    )

@@ -164,10 +164,23 @@ def quantity_dict(quantity, include_steps: bool = True) -> dict:
         "unit": parts[2] if len(parts) > 2 else "",
         "value": quantity.value,
         "expression": quantity.expression,
+        "display_expression": quantity.display_expression,
     }
     if include_steps:
         data["steps"] = [
             {"note": note, "expr": expr} for note, expr in quantity.steps()
+        ]
+        presentation = quantity.presentation()
+        data["definitions"] = [
+            {
+                "symbol": item.symbol,
+                "label": item.label,
+                "expression": item.expression,
+                "value": item.value,
+                "source": item.source,
+                "kind": item.kind,
+            }
+            for item in presentation.definitions
         ]
     return data
 
@@ -180,7 +193,9 @@ def qdict_dict(qdict, include_steps: bool = True, include_expressions: bool = Tr
         row = quantity_dict(quantity, include_steps=include_steps)
         if not include_expressions:
             row.pop("expression", None)
+            row.pop("display_expression", None)
             row.pop("steps", None)
+            row.pop("definitions", None)
         rows.append(row)
     return rows
 

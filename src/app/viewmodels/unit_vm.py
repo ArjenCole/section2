@@ -402,6 +402,39 @@ def compute_unit(unit_id: int):
     合槽编组的成员由 :func:`app.core.calc.trench_group.compute_group` 统一
     计算（整组一次、逐构件归属），父节点不出现在明细里（零工程量）。
     """
+    if not project_io.is_open():
+        from app.core.calc.tracer import QDict
+
+        return QDict(), []
+    return _compute_rows(_elements_of(unit_id))
+
+
+def compute_elements(element_ids: list[int]):
+    """只计算指定构件（工程量面板显示当前选中项时用）。
+
+    与 :func:`compute_unit` 同一套计算逻辑，但不再为单位工程里的每条构件
+    做原则解析和计算。点击/切换选中时通常只有 1~几条构件，项目构件多时
+    可把点击耗时从 O(单位工程构件数) 降到 O(选中构件数)。
+    合槽成员仍整组计算一次，取自己那份结果。
+    """
+    from sqlalchemy import select
+
+    from app.core.calc.tracer import QDict
+
+    ids = list(dict.fromkeys(element_ids))
+    if not ids or not project_io.is_open():
+        return QDict(), []
+    session = orm.session()
+    elements = list(
+        session.scalars(
+            select(Element).where(Element.id.in_(ids)).order_by(Element.order_no, Element.id)
+        )
+    )
+    return _compute_rows(elements)
+
+
+def _compute_rows(elements: list[Element]):
+    """按 ``compute_unit`` 的口径计算给定构件，返回 ``(汇总, 明细行)``。"""
     from app.core.calc.engine import (
         build_element_input,
         compute_element,
@@ -412,11 +445,9 @@ def compute_unit(unit_id: int):
 
     summary = QDict()
     detail: list[tuple[ElementRow, QDict]] = []
-    if not project_io.is_open():
-        return summary, detail
     session = orm.session()
     group_cache: dict[int, tuple[dict[int, QDict], dict[int, str]]] = {}
-    for element in _elements_of(unit_id):
+    for element in elements:
         row = _element_row(element)
         if element.group_id is not None:
             # 编组成员：整组只算一次（首成员触发），逐构件挂量

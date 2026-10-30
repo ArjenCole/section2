@@ -140,29 +140,38 @@ class ElementInput:
     @property
     def depth_dim(self) -> Dim:
         """埋深 m（算式为录入原文，如 ``2.5+0.3``）。"""
-        return raw_dim(self.depth_text, self.depth)
+        return raw_dim(self.depth_text, self.depth).named("埋深", "构件埋深")
 
     @property
     def amount_dim(self) -> Dim:
         """数量 / 长度（算式为录入原文）。"""
-        return raw_dim(self.amount_text, self.amount)
+        return raw_dim(self.amount_text, self.amount).named("数量", "构件数量")
 
     def param_dim(self, key: str, default: float) -> Dim:
         """构件参数的算式伴随：录入原文可求值时用原文，否则用数值 / 默认值。"""
         found = self.param_dims.get(key)
-        return found if found is not None else dim(self.params.get(key, default))
+        return (found if found is not None else dim(self.params.get(key, default))).named(
+            key, "构件参数"
+        )
 
     @property
     def size_b_dim(self) -> Dim:
         """断面宽 m 的算式伴随（直埋 = 管径/1000，箱涵 = 净宽 + 2×外壁厚/1000）。"""
         if self.category in (CATEGORY_BURIED, CATEGORY_JACKING, CATEGORY_PULLING):
-            return dim(self.pipes[0].dn) / 1000 if self.pipes else dim(0.0)
+            return (
+                (dim(self.pipes[0].dn) / 1000).named("断面宽", "管径/1000")
+                if self.pipes
+                else dim(0.0)
+            )
         if self.category == CATEGORY_ENCASED:
-            return self.param_dim("包封宽", 1.5)
+            return self.param_dim("包封宽", 1.5).named("断面宽", "构件参数·包封宽")
         if self.category == CATEGORY_BOX_CULVERT:
-            return self.param_dim("净宽(含内壁厚度)", 3.5) + self.param_dim("外壁厚", 350) * 2 / 1000
+            return (
+                self.param_dim("净宽(含内壁厚度)", 3.5)
+                + self.param_dim("外壁厚", 350) * 2 / 1000
+            ).named("断面宽", "净宽 + 2×外壁厚/1000")
         if self.category == CATEGORY_GALLERY:
-            return self.param_dim("外包宽", 6.8)
+            return self.param_dim("外包宽", 6.8).named("断面宽", "构件参数·外包宽")
         return dim(0.0)
 
     @property
@@ -174,15 +183,20 @@ class ElementInput:
     def size_h_dim(self) -> Dim:
         """断面高 m 的算式伴随（箱涵 = 净高 + (底板厚+顶板厚)/1000）。"""
         if self.category in (CATEGORY_BURIED, CATEGORY_JACKING, CATEGORY_PULLING):
-            return dim(self.pipes[0].dn) / 1000 if self.pipes else dim(0.0)
+            return (
+                (dim(self.pipes[0].dn) / 1000).named("断面高", "管径/1000")
+                if self.pipes
+                else dim(0.0)
+            )
         if self.category == CATEGORY_ENCASED:
-            return self.param_dim("包封高", 1.0)
+            return self.param_dim("包封高", 1.0).named("断面高", "构件参数·包封高")
         if self.category == CATEGORY_BOX_CULVERT:
-            return self.param_dim("净高", 2.0) + (
-                self.param_dim("底板厚", 400) + self.param_dim("顶板厚", 300)
-            ) / 1000
+            return (
+                self.param_dim("净高", 2.0)
+                + (self.param_dim("底板厚", 400) + self.param_dim("顶板厚", 300)) / 1000
+            ).named("断面高", "净高 + (底板厚+顶板厚)/1000")
         if self.category == CATEGORY_GALLERY:
-            return self.param_dim("外包高", 3.2)
+            return self.param_dim("外包高", 3.2).named("断面高", "构件参数·外包高")
         return dim(0.0)
 
     @property
@@ -226,8 +240,6 @@ def _usable_text(text: str) -> str:
 
 def _resolve_lr_enclosures(element: Element) -> tuple[PcpEnclosure | None, PcpEnclosure | None]:
     """左右分设构件的 (左 PE, 右 PE)：按名解析，引用失效回退库中第一条。"""
-    from sqlalchemy import select
-
     from app.core.models import base as orm
 
     if not orm.is_open():
@@ -235,13 +247,10 @@ def _resolve_lr_enclosures(element: Element) -> tuple[PcpEnclosure | None, PcpEn
     session = orm.session()
 
     def _by_name(name: str | None):
-        if not name:
-            return None
-        found_id = session.scalar(select(PcpEnclosure.id).where(PcpEnclosure.name == name))
-        return session.get(PcpEnclosure, found_id) if found_id is not None else None
+        return lookup_principle(session, PcpEnclosure, name)
 
     def _first():
-        return session.scalar(select(PcpEnclosure).order_by(PcpEnclosure.order_no, PcpEnclosure.id))
+        return first_principle(session, PcpEnclosure)
 
     pe_left = _by_name(element.pe_left_name) or _first()
     pe_right = _by_name(element.pe_right_name) or _first()
@@ -314,7 +323,9 @@ def build_element_input(
         pipes=pipes,
         pipe_contents=contents,
         pipe_content_dims=[
-            raw_dim(_usable_text(pipe.content), content)
+            raw_dim(_usable_text(pipe.content), content).named(
+                "管材含量", f"{pipe.mat} Dn{pipe.dn} 含量"
+            )
             for pipe, content in zip(element.pipes, contents)
         ],
         params=params,
@@ -363,6 +374,15 @@ def build_atlas_query(info: ElementInput, pf: PcpFoundation, pw: PcpWidth | None
 
 
 def _width_tables(pw: PcpWidth | None) -> tuple[dict[str, dict[int, float]], dict[str, dict[int, float]]]:
+    """面宽原则 → 两张查找表；同一 session 内缓存，避免每次查图集都遍历 ORM 行。"""
+    from sqlalchemy.orm import object_session
+
+    session = object_session(pw) if pw is not None else None
+    cache = session.info.setdefault("section2_width_tables", {}) if session is not None else {}
+    cache_key = (pw.id if pw is not None else None,)
+    if cache_key in cache:
+        return cache[cache_key]
+
     widths: dict[str, dict[int, float]] = {}
     groove_bs: dict[str, dict[int, float]] = {}
     for row in pw.items if pw is not None else ():
@@ -372,7 +392,53 @@ def _width_tables(pw: PcpWidth | None) -> tuple[dict[str, dict[int, float]], dic
         widths, groove_bs2 = atlas_service.default_width_tables()
         if not groove_bs:
             groove_bs = groove_bs2
+    if session is not None:
+        cache[cache_key] = (widths, groove_bs)
     return widths, groove_bs
+
+
+def lookup_principle(session, model, name: str | None):
+    """按名字取原则（同 session 内缓存）。
+
+    原则改名 / 删除 / 新建后由 :func:`clear_calculation_caches` 清空。
+    点击构件时同一原则常被计算、图集候选、断面图重复查询，缓存后只查一次。
+    """
+    if not name:
+        return None
+    from sqlalchemy import select
+
+    cache = session.info.setdefault("section2_calc_lookup", {})
+    key = (model.__name__, str(name))
+    if key not in cache:
+        found_id = session.scalar(select(model.id).where(model.name == name))
+        cache[key] = session.get(model, found_id) if found_id is not None else None
+    return cache[key]
+
+
+def first_principle(session, model):
+    """取库中第一条原则（同 session 内缓存）。"""
+    from sqlalchemy import select
+
+    cache = session.info.setdefault("section2_calc_lookup", {})
+    key = (model.__name__, "")
+    if key not in cache:
+        cache[key] = session.scalar(select(model).order_by(model.order_no, model.id))
+    return cache[key]
+
+
+def clear_calculation_caches(session=None) -> None:
+    """清空名称查找与面宽表缓存（原则/面宽数据变更或工程切换时调用）。"""
+    target = session
+    if target is None:
+        try:
+            from app.core.models import base as orm
+
+            target = orm.session() if orm.is_open() else None
+        except Exception:
+            target = None
+    if target is not None:
+        target.info.pop("section2_calc_lookup", None)
+        target.info.pop("section2_width_tables", None)
 
 
 def workwidth_of(pw: PcpWidth | None, info: ElementInput) -> float:
@@ -404,24 +470,32 @@ def atlas_dims(info: ElementInput, at: AtlasParam) -> AtlasDims:
     def _override(name: str) -> Dim | None:
         return info.param_dims.get(name) if name in info.params else None
 
-    a = _override(PARAM_A_NAME) or dim(at.a)
-    c1 = _override(PARAM_C1_NAME) or dim(at.c1)
-    c2 = _override(PARAM_C2_NAME) or dim(at.c2)
-    dn = dim(info.pipes[0].dn) if info.pipes else dim(0.0)
+    a = _override(PARAM_A_NAME) or dim(at.a).named("工作面加宽", "图集参数 a")
+    c1 = _override(PARAM_C1_NAME) or dim(at.c1).named("垫层厚", "图集参数 C1")
+    c2 = _override(PARAM_C2_NAME) or dim(at.c2).named("基础厚", "图集参数 C2")
+    dn = (
+        dim(info.pipes[0].dn).named("管径", "构件管材·管径")
+        if info.pipes
+        else dim(0.0)
+    )
     wall = info.pipes[0].t if info.pipes else None
     if wall is not None and info.category not in C2_ZERO_CATEGORIES:
-        t = dim(wall)
-        od = dn + t * 2
+        t = dim(wall).named("管道壁厚", "管材参数·壁厚")
+        od = (dn + t * 2).named("管道外径（mm）", "管径 + 2×壁厚")
     else:
-        t = dim(at.t)
-        od = dim(at.od) if at.od > 0 else dn + t * 2
+        t = dim(at.t).named("管道壁厚", "图集参数 t")
+        od = (
+            dim(at.od).named("管道外径（mm）", "图集参数 oD")
+            if at.od > 0
+            else (dn + t * 2).named("管道外径（mm）", "管径 + 2×壁厚")
+        )
     return AtlasDims(
         od=od,
         t=t,
         a=a,
         c1=c1,
         c2=c2,
-        workwidth=dim(at.workwidth),
+        workwidth=dim(at.workwidth).named("工作面宽", "面宽原则·工作面宽度表"),
         groove_b=groove_b_width(at.groove_b),
     )
 
@@ -571,7 +645,13 @@ def component_quantities(
         numeric = prettify_formula(pre_sub(substituted, height, width, count, sides))
         value = evaluate_or_default(numeric)
         if value != 0:
-            out.add(key_exp(params, key), value, numeric, note)
+            out.add(
+                key_exp(params, key),
+                value,
+                numeric,
+                note,
+                tags=height.tags + width.tags + count.tags,
+            )
 
 
 def component_side_quantities(
@@ -607,7 +687,13 @@ def component_side_quantities(
         numeric = prettify_formula(pre_sub(substituted, height, width, count, 1))
         value = evaluate_or_default(numeric)
         if value != 0:
-            out.add(key_exp(params, key), value, numeric, note)
+            out.add(
+                key_exp(params, key),
+                value,
+                numeric,
+                note,
+                tags=height.tags + width.tags + count.tags,
+            )
 
 
 def support_quantities_sided(
@@ -707,7 +793,9 @@ def compute_element(info: ElementInput) -> QDict | None:
         ad = ad.replace(c1=cushion_dim(pf))
 
     per_meter = QDict()
-    groove_depth = depth_dim + (foundation_dim(pf) + ad.t + ad.c1) / 1000
+    groove_depth = (
+        depth_dim + (foundation_dim(pf) + ad.t + ad.c1) / 1000
+    ).named("计算深度", "埋深 + (换填总厚+壁厚+垫层厚)/1000")
     work = choice_work(pe, groove_depth.v)
     if work is None:
         return None
@@ -767,7 +855,9 @@ def compute_element_lr(info: ElementInput) -> QDict | None:
         ad = ad.replace(c1=cushion_dim(pf))
 
     per_meter = QDict()
-    groove_depth = depth_dim + (foundation_dim(pf) + ad.t + ad.c1) / 1000
+    groove_depth = (
+        depth_dim + (foundation_dim(pf) + ad.t + ad.c1) / 1000
+    ).named("计算深度", "埋深 + (换填总厚+壁厚+垫层厚)/1000")
     work_l = choice_work(pe_l, groove_depth.v)
     work_r = choice_work(pe_r, groove_depth.v)
     if work_l is None or work_r is None:
@@ -854,8 +944,12 @@ def compute_structure(info: ElementInput) -> QDict | None:
     cnt_text = info.named_params.get(("井筒", "个"), "").strip()
     rate_text = info.named_params.get(("井筒", "m3/m"), "").strip()
     if cnt_text and rate_text:
-        count = raw_dim(cnt_text, evaluate_or_default(cnt_text))
-        rate = raw_dim(rate_text, evaluate_or_default(rate_text))
+        count = raw_dim(cnt_text, evaluate_or_default(cnt_text)).named(
+            "井筒个数", "构件参数·井筒（个）"
+        )
+        rate = raw_dim(rate_text, evaluate_or_default(rate_text)).named(
+            "井筒每米方量", "构件参数·井筒（m3/m）"
+        )
         well_h = dim(0.4)  # 旧版 mcE7：默认最小井筒高度
         jh_text = info.named_params.get(("井高", "m"), "").strip()
         if jh_text:
@@ -870,6 +964,7 @@ def compute_structure(info: ElementInput) -> QDict | None:
             count.v * well_h.v * rate.v,
             f"{wrap(count.e)}*{wrap(well_h.e)}*{wrap(rate.e)}",
             "井筒",
+            tags=count.tags + well_h.tags + rate.tags,
         )
     out.scale(info.amount, expr=amount_dim.e)
     return out
@@ -940,16 +1035,11 @@ def resolve_element_principles(element: Element, session):
 
     引用名失效（原则被删、旧文件迁出的行）时取库中第一条，与界面回退一致。
     """
-    from sqlalchemy import select
-
     def _by_name(model, name: str):
-        if not name:
-            return None
-        found_id = session.scalar(select(model.id).where(model.name == name))
-        return session.get(model, found_id) if found_id is not None else None
+        return lookup_principle(session, model, name)
 
     def _first(model):
-        return session.scalar(select(model).order_by(model.order_no, model.id))
+        return first_principle(session, model)
 
     pe = _by_name(PcpEnclosure, element.pe_name)
     if pe is None and element.pe_name == LR_PE_TEXT:

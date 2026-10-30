@@ -131,6 +131,7 @@ def unit_summary(unit_id: int) -> list[dict]:
                 "price": price,
                 "total": quantity.value * price,
                 "expression": quantity.expression,
+                "display_expression": quantity.display_expression,
             }
         )
     return rows
@@ -165,7 +166,16 @@ def export_excel(
     units_mode = unit_id is None
     headers = (
         (["单位工程"] if units_mode else [])
-        + ["类别", "项目", "单位", "计算表达式", "工程量", "单价", "合价"]
+        + [
+            "类别",
+            "项目",
+            "单位",
+            "计算表达式（主式）",
+            "完整数值算式",
+            "工程量",
+            "单价",
+            "合价",
+        ]
     )
     sheet.append(headers)
     for cell in sheet[1]:
@@ -182,6 +192,7 @@ def export_excel(
                     parts[0] if parts else "",
                     parts[1] if len(parts) > 1 else "",
                     parts[2] if len(parts) > 2 else "",
+                    quantity.display_expression,
                     quantity.expression,
                     quantity.value,
                     price,
@@ -213,6 +224,7 @@ def export_excel(
                         parts[0] if parts else "",
                         parts[1] if len(parts) > 1 else "",
                         parts[2] if len(parts) > 2 else "",
+                        quantity.display_expression,
                         quantity.expression,
                         quantity.value,
                         price,
@@ -222,8 +234,8 @@ def export_excel(
                         row.insert(0, unit_name)
                     sheet.append(row)
                     exported_rows += 1
-    widths = [18, 14, 34, 10, 50, 14, 12, 14]
-    for index, width in enumerate(widths[: len(headers)], start=1):
+    widths = ([18] if units_mode else []) + [14, 34, 10, 50, 50, 14, 12, 14]
+    for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[openpyxl.utils.get_column_letter(index)].width = width
     target.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(target)

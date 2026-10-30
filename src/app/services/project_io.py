@@ -58,7 +58,6 @@ from app.core.models.models import (
     format_precipitation,
 )
 
-
 class ProjectIoError(orm.ProjectFileError):
     """工程文件操作失败（统一继承 orm.ProjectFileError，上层只 catch 基类即可）。"""
 
@@ -457,7 +456,14 @@ def commit() -> None:
     ensure_main_thread("保存工程数据")
     if not orm.is_open():
         return
+    session = orm.session()
     orm.commit()
+    # before_flush 勾出的“原则 / 面宽变化”标记：提交成功后再清计算缓存。
+    # 普通构件编辑（埋深 / 数量）不打标，连续点击仍复用原则名称与面宽表缓存。
+    if session.info.pop(orm.CALC_CACHE_DIRTY_KEY, False):
+        from app.core.calc.engine import clear_calculation_caches
+
+        clear_calculation_caches(session)
     data = stn_codec.dump_database()
     if not _restoring_snapshot:
         undo_stack.record(data)

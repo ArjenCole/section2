@@ -483,18 +483,17 @@ def _side_name(element: Element, side: str) -> str:
 
 
 def _resolve_by_name(session, model, name: str | None):
-    from sqlalchemy import select
+    from app.core.calc.engine import lookup_principle
 
     if not name or name == "-":
         return None
-    found_id = session.scalar(select(model.id).where(model.name == name))
-    return session.get(model, found_id) if found_id is not None else None
+    return lookup_principle(session, model, name)
 
 
 def _first_of(session, model):
-    from sqlalchemy import select
+    from app.core.calc.engine import first_principle
 
-    return session.scalar(select(model).order_by(model.order_no, model.id))
+    return first_principle(session, model)
 
 
 def _resolve_member(
@@ -774,16 +773,16 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             if hi.v - band_lo.v <= 1e-9:
                 continue
             area = split.offset * (hi - band_lo)
-            out.add(key, area.v, area.e, f"{note}{suffix}")
-            out.add(dig_key, area.v, area.e, f"{note}{suffix}")
+            out.add(key, area.v, area.e, f"{note}{suffix}", tags=area.tags)
+            out.add(dig_key, area.v, area.e, f"{note}{suffix}", tags=area.tags)
         # 坡区楔形：仅当获方更浅（条带在获方槽底以下），按深侧的分层带摊入
         if gainer.depth.v < loser.depth.v - 1e-9:
             for key, lo, hi, _layer, note in loser.bands:
                 area = _wedge_area(split, lo, hi)
                 if area is None or area.v == 0:
                     continue
-                out.add(key, area.v, area.e, f"{note}{suffix}")
-                out.add(dig_key, area.v, area.e, f"{note}{suffix}")
+                out.add(key, area.v, area.e, f"{note}{suffix}", tags=area.tags)
+                out.add(dig_key, area.v, area.e, f"{note}{suffix}", tags=area.tags)
 
     # 围护量（每面 ×1）+ 支撑
     flat_total = _dim_sum(*(member.flat_width for member in snapshots))
@@ -1008,8 +1007,8 @@ def _member_dig_fill(
         if area.v == 0:
             continue
         produced = True
-        out.add(key, area.v, area.e, note)
-        dig.add_term(area.v, area.e, note)
+        out.add(key, area.v, area.e, note, tags=area.tags)
+        dig.add_term(area.v, area.e, note, tags=area.tags)
     if not produced:
         out.discard(dig_key)
         return False

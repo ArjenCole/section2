@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QLabel,
+    QMenu,
     QStyle,
     QTabWidget,
     QTableWidget,
@@ -109,6 +110,10 @@ _CATEGORY_ABBRS = {
 _QUANTITY_HEADERS = ["编号", "类别", "项目", "单位", "工程量", "计算表达式"]
 _QCOL_EXPRESSION = 5
 _QCOL_AMOUNT = 4
+#: 工程量表“计算表达式”格的懒加载数据：quantity 对象 / 已生成的主式 / 是否已生成
+_EXPR_QUANTITY_ROLE = Qt.ItemDataRole.UserRole + 10
+_EXPR_MAIN_ROLE = Qt.ItemDataRole.UserRole + 11
+_EXPR_READY_ROLE = Qt.ItemDataRole.UserRole + 12
 #: 定额/清单表格列宽默认值（取自运行实例实测；末列不拉伸，保持实测宽度）
 _QUANTITY_WIDTHS = [77, 66, 193, 48, 135, 434]
 
@@ -704,7 +709,11 @@ class UnitPanel(QWidget):
             table = self._make_table(_QUANTITY_HEADERS, card_header=True)
             table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
             table.setWordWrap(False)
+            table.setMouseTracking(True)
+            table.itemEntered.connect(self._on_quantity_item_entered)
             table.itemDoubleClicked.connect(self._show_expression_detail)
+            table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            table.customContextMenuRequested.connect(self._on_quantity_context_menu)
             # 列宽取自运行实例实测（定额/清单共用同一组），固定列宽不随父控件拉伸
             for index, width in enumerate(_QUANTITY_WIDTHS):
                 table.setColumnWidth(index, width)
@@ -995,19 +1004,20 @@ class UnitPanel(QWidget):
         """
         from app.core.calc.tracer import fmt as calc_fmt
         from app.core.calc.tracer import order_key, sorted_items
-        from app.viewmodels.unit_vm import compute_unit
+        from app.viewmodels.unit_vm import compute_elements
 
         if self._unit_id is None:
             for table in self._quantity_tables.values():
                 table.setRowCount(0)
             return
-        _summary, detail = compute_unit(self._unit_id)
-        per_element = {row.id: (row, dq) for row, dq in detail}
         ids = self._selected_element_ids() or (
             [self._current_detail_id] if self._current_detail_id else []
         )
         if not ids and getattr(self, "_group_member_ids", None):
             ids = list(self._group_member_ids)  # 合槽父行选中：成员合计
+        # 只算当前显示对象：点击/切换选中时不再遍历整个单位工程。
+        _summary, detail = compute_elements(ids)
+        per_element = {row.id: (row, dq) for row, dq in detail}
         chosen = [per_element[i] for i in ids if i in per_element]
         if not chosen:
             for table in self._quantity_tables.values():
@@ -1030,10 +1040,11 @@ class UnitPanel(QWidget):
                 item = QTableWidgetItem(text)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 digests.setItem(row_index, column, item)
-            expression = QTableWidgetItem(quantity.expression)
+            display = getattr(quantity, "expression_outline", quantity.expression)
+            expression = QTableWidgetItem(display)
             expression.setFlags(expression.flags() & ~Qt.ItemFlag.ItemIsEditable)
             expression.setData(Qt.ItemDataRole.UserRole, quantity.expression)
-            expression.setToolTip(_expression_detail(quantity))
+            expression.setData(_EXPR_QUANTITY_ROLE, quantity)
             digests.setItem(row_index, _QCOL_EXPRESSION, expression)
             amount = QTableWidgetItem(calc_fmt(quantity.value))
             amount.setFlags(amount.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -1099,14 +1110,14 @@ class UnitPanel(QWidget):
                     parts[1] if len(parts) > 1 else "",
                     parts[2] if len(parts) > 2 else "",
                     calc_fmt(quantity.value),
-                    quantity.expression,
+                    getattr(quantity, "expression_outline", quantity.expression),
                 )
                 for column, text in enumerate(cells):
                     item = QTableWidgetItem(text)
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     if column == _QCOL_EXPRESSION:
                         item.setData(Qt.ItemDataRole.UserRole, quantity.expression)
-                        item.setToolTip(_expression_detail(quantity))
+                        item.setData(_EXPR_QUANTITY_ROLE, quantity)
                     listing.setItem(row_index, column, item)
                 row_index += 1
 
@@ -1118,38 +1129,116 @@ class UnitPanel(QWidget):
         merged: dict[str, dict] = {}
         for element_index, dq in enumerate(qlists, start=1):
             for quantity in sorted(dq.items(), key=lambda q: (order_key(q.key), q.key)):
-                entry = merged.setdefault(quantity.key, {"value": 0.0, "exprs": [], "steps": []})
+                entry = merged.setdefault(
+                    quantity.key,
+                    {"value": 0.0, "exprs": [], "steps": [], "quantities": []},
+                )
                 entry["value"] += quantity.value
                 if quantity.value or quantity.expression not in ("", "0"):
                     entry["exprs"].append(quantity.expression)
+                entry["quantities"].append(quantity)
                 entry["steps"].extend(
                     (f"[构件{element_index}] {note}" if note else f"[构件{element_index}]", text)
                     for note, text in quantity.steps()
                 )
 
         class _Merged:
-            """多选合并行：算式是各构件算式的 " + " 连接，步骤按构件分组。"""
+            """多选合并行：主算式按构件编号汇总，展开后逐构件列计算逻辑。"""
 
-            __slots__ = ("key", "value", "expression", "_steps")
+            __slots__ = ("key", "value", "expression", "display_expression", "_steps", "quantities")
             #: 展示层据此换用“按构件列出”的说法（只有同一构件内的步骤才构成该构件的算式）
             per_element = True
 
-            def __init__(self, key: str, value: float, expression: str, steps: list) -> None:
+            def __init__(
+                self,
+                key: str,
+                value: float,
+                expression: str,
+                steps: list,
+                quantities: list,
+            ) -> None:
                 self.key = key
                 self.value = value
                 self.expression = expression
                 self._steps = steps
+                self.quantities = quantities
+                symbols = [f"V{index}" for index in range(1, len(quantities) + 1)]
+                self.display_expression = "+".join(symbols) if symbols else "0"
 
             def steps(self) -> list:
                 return self._steps
 
         return [
-            _Merged(key, entry["value"], " + ".join(entry["exprs"]) or "0", entry["steps"])
+            _Merged(
+                key,
+                entry["value"],
+                " + ".join(entry["exprs"]) or "0",
+                entry["steps"],
+                entry["quantities"],
+            )
             for key, entry in merged.items()
         ]
 
+    def _ensure_expression_item(self, item: QTableWidgetItem) -> bool:
+        """按需生成某条工程量的展示说明（悬停/双击/右键复制时调用）。
+
+        表格刷新阶段只写 ``expression_outline``，不解析任何表达式；生成一次后
+        用 item 的 data role 缓存，鼠标在单元格间移动不会重复解析。
+        """
+        if item.column() != _QCOL_EXPRESSION:
+            return False
+        quantity = item.data(_EXPR_QUANTITY_ROLE)
+        if quantity is None:
+            return False
+        if item.data(_EXPR_READY_ROLE):
+            return True
+        try:
+            detail = _expression_detail(quantity)
+            main = getattr(quantity, "display_expression", None)
+        except Exception as error:  # 展示失败不影响工程量表本身
+            detail = f"计算过程生成失败：{error}"
+            main = None
+        item.setToolTip(detail)
+        if main:
+            item.setData(_EXPR_MAIN_ROLE, main)
+            if not getattr(quantity, "per_element", False):
+                # 单条工程量：首次悬停时把首屏摘要升级成主算式
+                item.setText(main)
+        item.setData(_EXPR_READY_ROLE, True)
+        return True
+
+    def _on_quantity_item_entered(self, item: QTableWidgetItem) -> None:
+        """鼠标进入表达式格才生成说明（QTableWidget 已开 mouseTracking）。"""
+        if item.column() == _QCOL_EXPRESSION and not item.data(_EXPR_READY_ROLE):
+            self._ensure_expression_item(item)
+
+    def _on_quantity_context_menu(self, position) -> None:
+        """工程量表右键：复制主算式 / 完整数值算式，或打开计算过程。"""
+        table = self.sender()
+        if not isinstance(table, QTableWidget):
+            return
+        item = table.itemAt(position)
+        if item is None or item.column() != _QCOL_EXPRESSION:
+            return
+        menu = QMenu(self)
+        copy_main = menu.addAction("复制主算式")
+        copy_full = menu.addAction("复制完整数值算式（Excel）")
+        menu.addSeparator()
+        show_detail = menu.addAction("查看计算过程…")
+        chosen = menu.exec(table.viewport().mapToGlobal(position))
+        clipboard = QGuiApplication.clipboard()
+        if chosen is copy_main:
+            self._ensure_expression_item(item)
+            clipboard.setText(str(item.data(_EXPR_MAIN_ROLE) or item.text()))
+        elif chosen is copy_full:
+            clipboard.setText(str(item.data(Qt.ItemDataRole.UserRole) or item.text()))
+        elif chosen is show_detail:
+            self._show_expression_detail(item)
+
     def _show_expression_detail(self, item: QTableWidgetItem) -> None:
-        """双击“计算表达式”列：弹窗展示完整算式与中间步骤（各步说明 + 该步算式）。"""
+        """双击“计算表达式”列：展示主算式、分项、中间量定义和完整数值算式。"""
+        if not self._ensure_expression_item(item):
+            return
         text = item.toolTip()
         if not text:
             return
@@ -1630,8 +1719,9 @@ class UnitPanel(QWidget):
         self._multi_detail = False
         self._current_detail_id = element_id
         self._group_member_ids = []
+        # load_detail 会同步触发 _on_detail_loaded，那里已经刷新断面；
+        # 这里不再重复 build 一次断面图。
         self._vm.load_detail(element_id)
-        self._refresh_section_for(element_id)
         self._fill_quantities()
         from app.viewmodels.unit_vm import _element
 
@@ -2782,27 +2872,64 @@ def _combo_names(names: list[str], rows: list[ElementRow], field: str) -> list[s
     return result
 
 
-def _expression_detail(quantity) -> str:
-    """「计算表达式」列的 tooltip / 详情弹窗正文：完整算式 + 中间步骤。
+def _definition_lines(definitions) -> list[str]:
+    """中间量定义的纯文本行（符号、含义、原始参数代入式、结果、来源）。"""
+    lines: list[str] = []
+    for item in definitions:
+        value = format_number(item.value)
+        source = f"    来源：{item.source}" if item.source else ""
+        lines.append(f"{item.symbol}（{item.label}）＝ {item.expression} ＝ {value}{source}")
+    return lines
 
-    中间步骤每行 = 该步说明 + 该步算式（由 ``Quantity.steps()`` 派生，见 tracer），
-    各步算式按顺序拼起来就是上面那条完整算式；只有一步且带说明时（没有可拆的
-    步骤，例如“基础 − 弓形占位”）只补一行说明，不重复整条算式。
-    多选合并行（``_Merged``）的步骤是按构件分组的，标题相应改写。
+
+def _single_expression_detail(quantity) -> str:
+    view = quantity.presentation()
+    lines = [f"{view.formula} ＝ {format_number(quantity.value)}"]
+    subtotals = [item for item in view.definitions if item.kind == "subtotal"]
+    intermediates = [item for item in view.definitions if item.kind != "subtotal"]
+
+    if subtotals:
+        lines += ["", "分项（按主算式中的符号相加）："]
+        lines += _definition_lines(subtotals)
+    if intermediates:
+        lines += ["", "中间量（数值仍由原始参数代入；结果只用于核对，不代回公式）："]
+        lines += _definition_lines(intermediates)
+    elif not subtotals:
+        notes = [note for note, _text in quantity.steps() if note]
+        if notes:
+            lines += ["", *notes]
+    lines += ["", "完整数值算式（可复制到 Excel 复核）：", view.full]
+    return "\n".join(lines)
+
+
+def _merged_expression_detail(quantity) -> str:
+    """多选合并行：主算式按构件编号汇总，展开后逐构件给出定义与完整式。"""
+    lines = [f"V={quantity.display_expression} ＝ {format_number(quantity.value)}"]
+    for index, component in enumerate(getattr(quantity, "quantities", []), start=1):
+        view = component.presentation()
+        lines += ["", f"构件{index}：{view.formula} ＝ {format_number(component.value)}"]
+        subtotals = [item for item in view.definitions if item.kind == "subtotal"]
+        intermediates = [item for item in view.definitions if item.kind != "subtotal"]
+        if subtotals:
+            lines += _definition_lines(subtotals)
+        if intermediates:
+            lines.append("中间量：")
+            lines += _definition_lines(intermediates)
+        lines += [f"完整式：{view.full}"]
+    return "\n".join(lines)
+
+
+def _expression_detail(quantity) -> str:
+    """「计算表达式」列的 tooltip / 详情弹窗正文。
+
+    默认展示“主算式 + 分项 + 中间量定义”，完整数值算式放在最后供复核/复制。
+    多选合并行（``_Merged``）按构件分组，各自的中间量互不串名。
     """
-    steps = quantity.steps()
-    if len(steps) < 2:
-        notes = [note for note, _text in steps if note]
-        return quantity.expression + ("\n\n" + "\n".join(notes) if notes else "")
-    lines = [
-        f"{index}. {note}：{text}" if note else f"{index}. {text}"
-        for index, (note, text) in enumerate(steps, start=1)
-    ]
     if getattr(quantity, "per_element", False):
-        heading = "中间步骤（按构件列出；同一构件内各步拼接 = 该构件的算式）："
-    else:
-        heading = "中间步骤（各步拼接 = 上式）："
-    return f"{quantity.expression}\n\n{heading}\n" + "\n".join(lines)
+        return _merged_expression_detail(quantity)
+    if hasattr(quantity, "presentation"):
+        return _single_expression_detail(quantity)
+    return quantity.expression
 
 
 def _apply_expression_hint(item: QTableWidgetItem, text: str, error: str) -> None:

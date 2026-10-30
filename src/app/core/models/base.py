@@ -40,6 +40,36 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=_NAMING_CONVENTION)
 
 
+#: 这些表变化会影响计算用的原则 / 面宽缓存。由 Session.before_flush 打标，
+#: project_io.commit 在提交后统一清缓存——普通构件编辑不会误清。
+_CALC_CACHE_TABLES = frozenset(
+    {
+        "principle_enclosure",
+        "principle_foundation",
+        "principle_precipitation",
+        "principle_width",
+        "principle_width_item",
+        "enclosure_work",
+        "enclosure_level",
+        "component",
+        "component_param",
+        "foundation_cushion",
+        "foundation_replacement",
+    }
+)
+CALC_CACHE_DIRTY_KEY = "section2_calc_cache_dirty"
+
+
+@event.listens_for(Session, "before_flush")
+def _mark_calc_cache_dirty(session, _flush_context, _instances):  # pragma: no cover
+    changed = [*session.new, *session.dirty, *session.deleted]
+    if any(
+        getattr(getattr(item, "__table__", None), "name", None) in _CALC_CACHE_TABLES
+        for item in changed
+    ):
+        session.info[CALC_CACHE_DIRTY_KEY] = True
+
+
 class ProjectFileError(RuntimeError):
     """工程文件相关错误基类。"""
 
@@ -108,6 +138,10 @@ def _make_engine(path: Path) -> Engine:
     def _on_connect(dbapi_connection, _record):  # pragma: no cover - 驱动回调
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")  # 让 ondelete=CASCADE 真正生效
+        # 工作库是本次运行的临时 SQLite（正式数据在 .stn 文件里）：用 WAL +
+        # NORMAL 降低每次自动保存的 fsync 开销；正式文件仍按完整写入落盘。
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.close()
 
     return engine

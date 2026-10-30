@@ -59,6 +59,7 @@ file_version 1 的文件带 ``main_pe_name`` / ``pe_refs`` / ``pf_refs``（多�
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.core.version import APP_VERSION, STN_FILE_VERSION
 from app.core.models import base as orm
@@ -135,14 +136,56 @@ def dump_database() -> dict:
             "atlas_name": (info.atlas_name or "") if info else "",
         },
         "principles": {
-            "enclosures": [_dump_enclosure(item) for item in _ordered(session, PcpEnclosure)],
-            "foundations": [_dump_foundation(item) for item in _ordered(session, PcpFoundation)],
+            "enclosures": [
+                _dump_enclosure(item)
+                for item in _ordered(
+                    session,
+                    PcpEnclosure,
+                    selectinload(PcpEnclosure.works)
+                    .selectinload(EnclosureWork.levels)
+                    .selectinload(EnclosureLevel.components)
+                    .selectinload(Component.params),
+                    selectinload(PcpEnclosure.works)
+                    .selectinload(EnclosureWork.waterstops)
+                    .selectinload(Component.params),
+                )
+            ],
+            "foundations": [
+                _dump_foundation(item)
+                for item in _ordered(
+                    session,
+                    PcpFoundation,
+                    selectinload(PcpFoundation.cushions),
+                    selectinload(PcpFoundation.replacements),
+                    selectinload(PcpFoundation.components).selectinload(Component.params),
+                )
+            ],
             "precipitations": [
                 _dump_precipitation(item) for item in _ordered(session, PcpPrecipitation)
             ],
-            "widths": [_dump_width(item) for item in _ordered(session, PcpWidth)],
+            "widths": [
+                _dump_width(item)
+                for item in _ordered(
+                    session, PcpWidth, selectinload(PcpWidth.items)
+                )
+            ],
         },
-        "segments": [_dump_segment(item) for item in _ordered(session, Segment)],
+        "segments": [
+            _dump_segment(item)
+            for item in _ordered(
+                session,
+                Segment,
+                selectinload(Segment.units).selectinload(Unit.elements).selectinload(Element.pipes),
+                selectinload(Segment.units).selectinload(Unit.elements).selectinload(Element.params),
+                selectinload(Segment.units)
+                .selectinload(Unit.elements)
+                .selectinload(Element.atlas_candidates),
+                selectinload(Segment.units)
+                .selectinload(Unit.elements)
+                .selectinload(Element.quantities),
+                selectinload(Segment.units).selectinload(Unit.groups),
+            )
+        ],
         "prices": [
             {"key": item.key or "", "value": float(item.value or 0.0)}
             for item in session.query(Price).order_by(Price.id)
@@ -150,9 +193,14 @@ def dump_database() -> dict:
     }
 
 
-def _ordered(session, model) -> list:
-    """按界面语义排序取全表（order_no 优先，同号按 id 稳定）。"""
-    return list(session.scalars(select(model).order_by(model.order_no, model.id)))
+def _ordered(session, model, *options) -> list:
+    """按界面语义排序取全表（order_no 优先，同号按 id 稳定）。
+
+    ``options`` 用于 selectinload 关系：dump_database 先 expire_all，
+    不批量预载时每个 relationship 都会各发一条 SQL（工程大时提交会明显卡顿）。
+    """
+    query = select(model).options(*options).order_by(model.order_no, model.id)
+    return list(session.scalars(query))
 
 
 def _dump_enclosure(item: PcpEnclosure) -> dict:

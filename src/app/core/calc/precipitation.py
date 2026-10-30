@@ -19,7 +19,7 @@ from app.core.evaluator import ceil_ratio
 from app.core.models.models import parse_precipitation
 from app.core.calc import groove
 from app.core.calc.measures import AtlasDims
-from app.core.calc.tracer import Dim, QDict, dim, fmt, raw_dim, wrap
+from app.core.calc.tracer import Dim, NamedValue, QDict, dim, fmt, raw_dim, wrap
 
 
 def _enabled(text: str, key: str) -> tuple[bool, float, float, float]:
@@ -70,6 +70,11 @@ def cal_precipitation(
                 f"CEILING({length}/{fmt(gap)},1)*{fmt(sides)}/{length}",
                 f"深度 {fmt(groove_depth.v)}m > {fmt(elevation)}m，采用{name}；"
                 f"井距 {fmt(gap)}m × {fmt(sides)} 侧",
+                tags=amount_dim.tags
+                + (
+                    NamedValue(fmt(gap), "井距", "降水原则·井距"),
+                    NamedValue(fmt(sides), "井点侧数", "降水原则·侧数"),
+                ),
             )
             return
 

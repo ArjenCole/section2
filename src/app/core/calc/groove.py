@@ -103,21 +103,28 @@ def backfill_layers(
     """
     layers: list[tuple[str, Dim, str]] = []
     for replacement in reversed(list(pf.replacements)):
-        h = dim(replacement.h) / 1000
+        h = (dim(replacement.h) / 1000).named(
+            "换填层厚", f"地基原则·换填 {replacement.name}"
+        )
         layers.append((f"换填|{replacement.name}|m3", h, f"换填 {replacement.name} {fmt(h.v)}m"))
     total = depth if depth.v >= 0 else dim(0.0)
     remaining = total - foundation_thickness(pf) / 1000
 
     height, remaining = min_h((ad.c1 + ad.c2) / 1000, remaining)
+    height = height.named("垫层厚度", "垫层厚 C1 + 基础厚 C2")
     layers.append((f"垫层|{cushion_name}|m3", height, "垫层"))
     height, remaining = min_h(size_h / 2 + (ad.t - ad.c2) / 1000, remaining)
+    height = height.named("坞膀下半层厚", "断面高/2 + (壁厚−基础厚)/1000")
     layers.append((f"回填|{pp.dock_l}|m3", height, "坞膀下半"))
     height, remaining = min_h(size_h / 2 + ad.t / 1000, remaining)
+    height = height.named("坞膀上半层厚", "断面高/2 + 壁厚/1000")
     layers.append((f"回填|{pp.dock_h}|m3", height, "坞膀上半"))
     height, remaining = min_h(dim(0.5), remaining)
+    height = height.named("管顶50cm层厚", "管顶 50cm 范围")
     layers.append((f"回填|{pp.cover50}|m3", height, "管顶50cm"))
     cover = total - size_h - (foundation_thickness(pf) + ad.t * 2 + ad.c1) / 1000 - dim(0.5)
     height, remaining = min_h(cover, remaining)
+    height = height.named("覆土层厚", "计算深度−断面高−基础厚度−0.5")
     layers.append((f"回填|{pp.cover}|m3", height, "覆土"))
     return layers
 
@@ -143,8 +150,10 @@ def layer_roles(layers: list[tuple[str, Dim, str]]) -> list[tuple[str, int]]:
 def groove_width(ad: AtlasDims, size_b: Dim) -> Dim:
     """槽底宽度 m：沟槽宽度表为 0 时按 断面宽+2×(壁厚+工作面加宽+工作面) 推算。"""
     if ad.groove_b.v != 0:
-        return ad.groove_b
-    return size_b + scale_sum((ad.t, ad.a, ad.workwidth), 2.0) / 1000
+        return ad.groove_b.named("槽底宽", "面宽原则·沟槽宽度表")
+    return (
+        size_b + scale_sum((ad.t, ad.a, ad.workwidth), 2.0) / 1000
+    ).named("槽底宽", "断面宽 + 2×(壁厚+工作面加宽+工作面)/1000")
 
 
 def cal_groove(
@@ -185,6 +194,7 @@ def cal_groove(
                 trapezoid(bottom.v, delta.v, slope.v),
                 trapezoid_expr(bottom, delta, slope),
                 note,
+                tags=bottom.tags + delta.tags + slope.tags,
             )
             dig_segments.append(
                 _Segment(
@@ -202,11 +212,15 @@ def cal_groove(
                 # 切级处 current 恰好到达分级标高：数值同旧版递推，算式直接取标高，
                 # 避免 "(累计)+(标高−累计)" 这类未化简写法
                 current = Dim(current.v + delta.v, step_top.e)
-            bottom = bottom + widen(delta, slope)
+            bottom = (bottom + widen(delta, slope)).named(
+                "槽底宽", "上一层底宽 + 2×层厚×放坡系数"
+            )
             if current.v == step_top.v and step > 0:
                 step -= 1
                 if step_heights[step].v != step_heights[step + 1].v and step_heights[step + 1].v != 0:
-                    bottom = bottom + dim(work.levels[step].step_width) * 2
+                    bottom = (
+                        bottom + dim(work.levels[step].step_width) * 2
+                    ).named("槽底宽", "切级平台加宽")
                     jump_pending = True  # 平台加宽处断开，不与上一段合并
             if current.v - target.v >= -0.0001:
                 break
@@ -238,6 +252,7 @@ def cal_groove(
                 trapezoid(segment.bottom.v, total.v, segment.slope.v),
                 trapezoid_expr(segment.bottom, height, segment.slope),
                 _segment_note(notes),
+                tags=segment.bottom.tags + height.tags + segment.slope.tags,
             )
     if not dig.terms:
         out.discard(dig_key)
@@ -266,7 +281,9 @@ def level_slope(level) -> Dim:
             return dim(0.0)
         from app.core.evaluator import evaluate_or_default
 
-        return raw_dim(expression, evaluate_or_default(expression))
+        return raw_dim(expression, evaluate_or_default(expression)).named(
+            "放坡系数", "围护原则·做法参数"
+        )
     return dim(0.0)
 
 
@@ -372,6 +389,7 @@ def cal_groove_sided(
                 trapezoid_lr(bottom.v, delta.v, slope_l.v, slope_r.v),
                 trapezoid_lr_expr(bottom, delta, slope_l, slope_r),
                 note,
+                tags=bottom.tags + delta.tags + slope_l.tags + slope_r.tags,
             )
             dig_segments.append(
                 _SideSegment(
@@ -388,16 +406,22 @@ def cal_groove_sided(
                 current = current + delta
             else:
                 current = Dim(current.v + delta.v, step_top.e)
-            bottom = bottom + widen_lr(delta, slope_l, slope_r)
+            bottom = (bottom + widen_lr(delta, slope_l, slope_r)).named(
+                "槽底宽", "上一层底宽 + 左右放坡外扩"
+            )
             if current.v == top_l.v and step_l > 0:
                 step_l -= 1
                 if heights_l[step_l].v != heights_l[step_l + 1].v and heights_l[step_l + 1].v != 0:
-                    bottom = bottom + dim(work_l.levels[step_l].step_width)
+                    bottom = (
+                        bottom + dim(work_l.levels[step_l].step_width)
+                    ).named("槽底宽", "左侧切级平台加宽")
                     jump_pending = True  # 平台加宽处断开，不与上一段合并
             if current.v == top_r.v and step_r > 0:
                 step_r -= 1
                 if heights_r[step_r].v != heights_r[step_r + 1].v and heights_r[step_r + 1].v != 0:
-                    bottom = bottom + dim(work_r.levels[step_r].step_width)
+                    bottom = (
+                        bottom + dim(work_r.levels[step_r].step_width)
+                    ).named("槽底宽", "右侧切级平台加宽")
                     jump_pending = True
             if current.v - target.v >= -0.0001:
                 break
@@ -428,6 +452,7 @@ def cal_groove_sided(
                 trapezoid_lr(segment.bottom.v, total.v, segment.slope_l.v, segment.slope_r.v),
                 trapezoid_lr_expr(segment.bottom, height, segment.slope_l, segment.slope_r),
                 _segment_note(notes),
+                tags=segment.bottom.tags + height.tags + segment.slope_l.tags + segment.slope_r.tags,
             )
     if not dig.terms:
         out.discard(dig_key)

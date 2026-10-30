@@ -98,6 +98,26 @@ def test_expression_matches_value(project) -> None:
             ), f"{quantity.key}: 算式 {quantity.expression} 重算 {replay} ≠ {quantity.value}"
 
 
+def test_presentation_matches_full_expression(project) -> None:
+    """展示层主算式经定义逐层展开后，仍等于完整算式与工程量。"""
+    import re
+
+    unit = project
+    for element in _elements(unit):
+        for quantity in sorted_items(_results(unit)[element.id]):
+            view = quantity.presentation()
+            expanded = view.main
+            definitions = {item.symbol: item for item in view.definitions}
+            for _ in range(len(definitions) + 1):
+                for symbol, item in definitions.items():
+                    expanded = re.sub(rf"\b{symbol}\b", f"({item.expression})", expanded)
+            assert not any(
+                re.search(rf"\b{symbol}\b", expanded) for symbol in definitions
+            ), f"{quantity.key} 有未展开的中间量：{expanded}"
+            assert evaluate(expanded) == pytest.approx(quantity.value, rel=1e-9)
+            assert evaluate(view.full) == pytest.approx(quantity.value, rel=1e-9)
+
+
 def test_expression_has_no_redundant_parentheses(project) -> None:
     """算式只在语法必需处加括号：与 ast.unparse（最小括号形式）的括号数一致。"""
     import ast
@@ -205,6 +225,64 @@ def test_baseline_file(project) -> None:
         pytest.skip("已生成基准文件，请人工确认数值后重跑")
     frozen = json.loads(baseline_path.read_text(encoding="utf-8"))
     assert current == frozen, "计算结果与基准不一致：若为有意修改，请更新 baselines 文件并复核"
+
+
+def test_compute_elements_only_calculates_selected(project, monkeypatch) -> None:
+    """工程量面板只算选中构件，不再随单位工程构件数线性变慢。"""
+    from app.core.calc import engine
+
+    unit = project
+    elements = _elements(unit)
+    target = elements[0]
+    calls: list[int] = []
+    real = engine.compute_element
+
+    def wrapped(info):
+        calls.append(info.amount)
+        return real(info)
+
+    monkeypatch.setattr(engine, "compute_element", wrapped)
+    summary, detail = unit_vm.compute_elements([target.id])
+
+    assert [row.id for row, _dq in detail] == [target.id]
+    assert len(calls) == 1
+    assert summary.get("开挖|Ⅲ类土|m3") is not None
+
+
+def test_principle_lookup_cache_invalidated_on_create(project) -> None:
+    """原则名称缓存命中“未找到”后，新建同名原则并 commit 必须立即失效。"""
+    from app.core.calc.engine import lookup_principle
+    from app.core.models import base as orm
+    from app.core.models.models import PcpFoundation
+
+    unit = project
+    name = "缓存失效测试地基"
+    session = orm.session()
+    assert lookup_principle(session, PcpFoundation, name) is None
+    created = project_io.create_foundation(name)
+    assert created is not None and created.name == name
+    assert lookup_principle(orm.session(), PcpFoundation, name) is created
+
+
+def test_width_tables_cache_invalidated_on_edit(project) -> None:
+    """面宽表缓存必须随面宽原则 / 宽度行修改而失效。"""
+    from app.core.calc.engine import _width_tables
+    from app.core.models import base as orm
+    from app.core.models.models import PcpWidth, WidthItem
+
+    session = orm.session()
+    pw = session.query(PcpWidth).order_by(PcpWidth.order_no, PcpWidth.id).first()
+    assert pw is not None and pw.items
+    row = session.query(WidthItem).filter(WidthItem.width_id == pw.id).first()
+    assert row is not None
+    before = row.width
+    first_widths, _ = _width_tables(pw)
+    assert first_widths[row.pipe_type][int(row.dn)] == before
+
+    row.width = before + 0.123
+    project_io.commit()
+    after_widths, _ = _width_tables(session.get(PcpWidth, pw.id))
+    assert after_widths[row.pipe_type][int(row.dn)] == pytest.approx(before + 0.123)
 
 
 def _as_baseline(summary: QDict, detail) -> dict:

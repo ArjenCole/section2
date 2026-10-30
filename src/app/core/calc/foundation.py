@@ -16,12 +16,15 @@ import math
 
 from app.core.models.models import CATEGORY_BURIED, CATEGORY_BOX_CULVERT, CATEGORY_ENCASED, CATEGORY_GALLERY
 from app.core.calc.measures import AtlasDims
-from app.core.calc.tracer import Dim, QDict, dim, dim_min, fmt, scale_sum, wrap
+from app.core.calc.tracer import Dim, QDict, dim, dim_min, fmt, scale_sum, tag_dim, wrap
 
 
 def add_dim(out: QDict, key: str, quantity: Dim, note: str = "") -> None:
-    """按 :class:`Dim` 输出一条工程量：数值取 ``v``，算式取 ``e``（不预运算）。"""
-    out.add(key, quantity.v, quantity.e, note)
+    """按 :class:`Dim` 输出一条工程量：数值取 ``v``，算式取 ``e``（不预运算）。
+
+    ``quantity.tags`` 供展示层识别槽底宽 / 外径 / 弓形占位等中间量。
+    """
+    out.add(key, quantity.v, quantity.e, note, tags=quantity.tags)
 
 
 def _circle(diameter: float) -> float:
@@ -47,12 +50,16 @@ def _bow_expr(diameter: Dim, angle: float) -> str:
 
 def _bow_dim(diameter: Dim, angle: float) -> Dim:
     """弓形占位（数值按 mcE1.Bow，算式按 π=3.141593 的代入式）。"""
-    return Dim(_bow(diameter.v, angle), _bow_expr(diameter, angle))
+    return tag_dim(
+        Dim(_bow(diameter.v, angle), _bow_expr(diameter, angle), diameter.tags),
+        "弓形占位面积",
+        f"外径与 {fmt(angle)}° 基础角度",
+    )
 
 
 def _outside_dn(info, ad: AtlasDims) -> Dim:
     """管道外径 m：图集有 oD 用 oD（表值），否则 内径+2×壁厚（旧版 mcE1.cal_found）。"""
-    return ad.od / 1000
+    return tag_dim(ad.od / 1000, "管道外径（m）", "图集外径(mm)/1000")
 
 
 def cal_found(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
@@ -82,9 +89,12 @@ def _found_pipe(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
     remain = info.depth_dim + (ad.t + ad.c1) / 1000
 
     if pf.con_found and ("混凝土" in info.pipes[0].mat or "砼" in info.pipes[0].mat):
-        width = info.size_b_dim + scale_sum((ad.t, ad.a), 2.0) / 1000
+        width = (
+            info.size_b_dim + scale_sum((ad.t, ad.a), 2.0) / 1000
+        ).named("基础宽度", "断面宽 + 2×(壁厚+工作面加宽)/1000")
         found_h = (ad.c1 + ad.c2) / 1000
-        found = found_h * width
+        found_h = tag_dim(found_h, "基础厚度", "垫层厚 C1 + 基础厚 C2")
+        found = (found_h * width).named("基础断面面积", "基础厚度 × 基础宽度")
         bow = _bow_dim(outside, angle)
         add_dim(
             out,
@@ -111,13 +121,14 @@ def _found_pipe(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
         Dim(
             -(half_circle - _bow(outside.v, angle)),
             f"PI()*{wrap(outside.e)}*{wrap(outside.e)}/8-({_bow_expr(outside, angle)})",
+            outside.tags + bow.tags,
         ),
         "坞膀扣弓形",
     )
     add_dim(
         out,
         f"回填|{pp.dock_h}|m3",
-        Dim(-half_circle, f"PI()*{wrap(outside.e)}*{wrap(outside.e)}/8"),
+        Dim(-half_circle, f"PI()*{wrap(outside.e)}*{wrap(outside.e)}/8", outside.tags),
         "上半回填扣半圆",
     )
 
@@ -130,7 +141,9 @@ def _found_encased(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
     add_dim(out, "垫层|混凝土|m3", ad.c1 / 1000 * (info.size_b_dim + ad.a / 1000 * 2))
     add_dim(out, "垫层|模板|m2", ad.c1 / 1000 * 2)
 
-    width = info.size_b_dim + scale_sum((ad.t, ad.a), 2.0) / 1000
+    width = (
+        info.size_b_dim + scale_sum((ad.t, ad.a), 2.0) / 1000
+    ).named("基础宽度", "断面宽 + 2×(壁厚+工作面加宽)/1000")
     deducted = dim_min(remain, (ad.c1 + ad.c2) / 1000)
     add_dim(out, f"垫层|{cushion_name}|m3", -(deducted * width), "垫层扣基础占位")
     remain = remain - deducted
@@ -147,12 +160,14 @@ def _found_encased(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
 
 def _found_box(info, pf, pp, ad: AtlasDims, out: QDict, *, prefix: str, wall_key: str) -> None:
     """箱涵 / 管廊（旧版 mcE3 / mcE6.cal_found）。"""
-    bt = info.param_dim("底板厚", 400) / 1000
-    tt = info.param_dim("顶板厚", 300) / 1000
-    ot = info.param_dim("外壁厚", 350) / 1000
-    it = info.param_dim("内壁厚", 250) / 1000
-    ic = info.param_dim("内壁", 0)
-    steel_rate = info.param_dim("含钢量", 150) / 1000
+    bt = tag_dim(info.param_dim("底板厚", 400) / 1000, "底板厚", "构件参数·底板厚")
+    tt = tag_dim(info.param_dim("顶板厚", 300) / 1000, "顶板厚", "构件参数·顶板厚")
+    ot = tag_dim(info.param_dim("外壁厚", 350) / 1000, "外壁厚", "构件参数·外壁厚")
+    it = tag_dim(info.param_dim("内壁厚", 250) / 1000, "内壁厚", "构件参数·内壁厚")
+    ic = tag_dim(info.param_dim("内壁", 0), "内壁数量", "构件参数·内壁")
+    steel_rate = tag_dim(
+        info.param_dim("含钢量", 150) / 1000, "含钢量", "构件参数·含钢量"
+    )
 
     cushion_name = pf.cushions[0].name if pf.cushions else "中粗砂"
     remain = info.depth_dim + (ad.t + ad.c1) / 1000
@@ -160,7 +175,9 @@ def _found_box(info, pf, pp, ad: AtlasDims, out: QDict, *, prefix: str, wall_key
     add_dim(out, f"{prefix}|垫层|m3", ad.c1 / 1000 * (info.size_b_dim + ad.a / 1000 * 2))
     add_dim(out, f"{prefix}|垫层模板|m2", ad.c1 / 1000 * 2)
 
-    width = info.size_b_dim + scale_sum((ad.t, ad.a), 2.0) / 1000
+    width = (
+        info.size_b_dim + scale_sum((ad.t, ad.a), 2.0) / 1000
+    ).named("基础宽度", "断面宽 + 2×(壁厚+工作面加宽)/1000")
     deducted = dim_min(remain, (ad.c1 + ad.c2) / 1000)
     add_dim(out, f"垫层|{cushion_name}|m3", -(deducted * width), "垫层扣基础占位")
     remain = remain - deducted
@@ -190,7 +207,12 @@ def cal_pipes(info, out: QDict, cat: str = "管材") -> None:
     for pipe, content in zip(info.pipes, info.pipe_content_dims):
         if content.v == 0:
             continue
-        out.add(f"{cat}|{pipe.mat} Dn{fmt(pipe.dn)}|m", content.v, content.e)
+        out.add(
+            f"{cat}|{pipe.mat} Dn{fmt(pipe.dn)}|m",
+            content.v,
+            content.e,
+            tags=content.tags,
+        )
 
 
 def encased_pipe_deduction(info, out: QDict) -> None:
