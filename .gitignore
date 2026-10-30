@@ -6,6 +6,8 @@ build/
 dist/
 .eggs/
 .venv/
+# 备份/试验用虚拟环境（如 .venv-anaconda-bak）
+.venv-*/
 venv/
 .pytest_cache/
 .mypy_cache/
