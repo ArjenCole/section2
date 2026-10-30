@@ -472,7 +472,7 @@ def test_group_center_split_wall_at_center_midpoint(tmp_path) -> None:
         assert hint == "" and scene is not None
         return scene
 
-    scene_slope = scene_of("起坡点分割")
+    scene_slope = scene_of("起坡点分隔")
     scene_center = scene_of("管中心分隔")
     assert len(scene_slope.dashed_lines) == 1
     assert len(scene_center.dashed_lines) == 1
@@ -530,3 +530,142 @@ def test_group_center_split_wall_at_center_midpoint(tmp_path) -> None:
     assert wall_slope[1] == pytest.approx(max(scene_slope.total_h - g1["h"], 0.0), abs=1e-9)
     assert wall_center[1] == pytest.approx(max(scene_center.total_h - g2["h"], 0.0), abs=1e-9)
     assert wall_center[3] == pytest.approx(scene_center.total_h, abs=1e-9)
+
+
+def _center_pair_with_slope(tmp_path, name: str):
+    """浅左 dn600@3 + 右 dn1000@3（壁厚差更深）、共享侧内坡 1:0.5 的合槽组。"""
+    from app.core.models.models import PcpEnclosure
+    from app.services import principle_edit
+    from app.viewmodels import unit_vm
+
+    group, e1, e2 = _group_pair_fixture(tmp_path, name, depth2="3", dn2=1000)
+    pe = PcpEnclosure(name=f"{name}内坡0.5", order_no=96)
+    orm.session().add(pe)
+    project_io.commit()
+    principle_edit.apply_enclosure_works(
+        pe.id,
+        [
+            {
+                "min_depth": 0,
+                "cpnt_cat": "放坡",
+                "stop_type": "无",
+                "levels": [{"level_type": "放坡", "h": -1, "step_width": 0.0}],
+            }
+        ],
+    )
+    for param in orm.session().get(PcpEnclosure, pe.id).works_sorted()[0].levels[0].components[0].params:
+        if param.key == "A":
+            param.value = "放坡系数 1:X|0.5"
+    project_io.commit()
+    unit_vm.update_element(e2.id, pe_left_name=pe.name)
+    return group, e1, e2, pe.name
+
+
+def _pair_division_geometry(e1, e2, mode: str):
+    """手算分界竖线与半宽（自槽左缘起算的平面几何），返回 (div_x, half, wall_x)。"""
+    from sqlalchemy import select
+
+    from app.core.calc.engine import (
+        atlas_dims,
+        build_atlas_query,
+        build_element_input,
+        workwidth_of,
+    )
+    from app.core.calc.measures import foundation_thickness as fd
+    from app.core.models.models import (
+        Element,
+        PcpFoundation,
+        PcpPrecipitation,
+        PcpWidth,
+    )
+    from app.services.atlas import resolve_atlas
+
+    session = orm.session()
+    geometry = []
+    for element_id in (e1.id, e2.id):
+        element = session.get(Element, element_id)
+        pw = session.scalars(select(PcpWidth).where(PcpWidth.name == element.pw_name)).first()
+        pf = session.scalars(select(PcpFoundation).where(PcpFoundation.name == element.pf_name)).first()
+        pp = session.scalars(select(PcpPrecipitation).where(PcpPrecipitation.name == element.pp_name)).first()
+        info = build_element_input(element, None, pf, pp=pp, pw=pw)
+        at = resolve_atlas(build_atlas_query(info, pf, pw))
+        ad = atlas_dims(info, at)
+        geometry.append(
+            {
+                "b": (info.size_b + (ad.t * 2 + ad.a * 2) / 1000).v,
+                "h": (info.depth + (fd(pf).v + ad.t + ad.c1) / 1000).v,
+                "ww": workwidth_of(pw, info) / 1000,
+            }
+        )
+    g1, g2 = geometry
+    assert g2["h"] > g1["h"] + 1e-9
+    run = (g2["h"] - g1["h"]) * 0.5
+    wall_x = g1["ww"] + g1["b"] + g1["ww"]  # 起坡点分界（坡顶）
+    base_left_2 = wall_x + run + g2["ww"]
+    c1 = g1["ww"] + g1["b"] / 2
+    c2 = base_left_2 + g2["b"] / 2
+    half = (wall_x + run + g2["ww"] + g2["b"] + g2["ww"]) / 2.0
+    if mode == "管中心分隔":
+        div_x = (c1 + c2) / 2
+    else:  # 间距平分分隔：锚点 = 两管混凝土基础的共享侧边线
+        anchor_left = g1["ww"] + g1["b"]
+        anchor_right = base_left_2
+        div_x = (anchor_left + anchor_right) / 2
+    return div_x, half, wall_x, g1, g2
+
+
+def test_group_center_split_layer_lines_clip_at_division(tmp_path) -> None:
+    """独立回填标高 + 管中心分隔：分层线在分界竖线处截断（不再按起坡点截断）。
+
+    起坡点分隔下深管分层线自坡顶向右延伸、会跨越管中心分界竖线；切换为
+    管中心分隔后，任何分层线都不得跨越分界竖线，且应有线止于 / 起于该竖线
+    ——即分层线的构件切换位置随分隔竖线调整。
+    """
+    from app.viewmodels import unit_vm
+    from app.views.panels.section_view import _build_group_scene
+
+    group, e1, e2, _pe_name = _center_pair_with_slope(tmp_path, "中心分层线")
+
+    def scene_of(split_mode):
+        unit_vm.update_group(group.id, split_mode=split_mode)
+        scene, hint = _build_group_scene(group.id, 640, 480)
+        assert hint == "" and scene is not None
+        return scene
+
+    scene_slope = scene_of("起坡点分隔")
+    scene_center = scene_of("管中心分隔")
+    div_x, half, _wall_x, _g1, _g2 = _pair_division_geometry(e1, e2, "管中心分隔")
+    div_rel = div_x - half
+
+    def crosses(lines):
+        return any(
+            x1 < div_rel - 1e-9 and x2 > div_rel + 1e-9
+            for x1, _y1, x2, _y2 in lines
+        )
+
+    assert scene_slope.layer_lines and scene_center.layer_lines
+    # 起坡点口径：分层线按起坡点截断，会跨越管中心分界竖线
+    assert crosses(scene_slope.layer_lines)
+    # 管中心分隔：分层线全部在分界竖线处切换
+    assert not crosses(scene_center.layer_lines)
+    assert any(abs(x2 - div_rel) <= 1e-9 for x1, _y1, x2, _y2 in scene_center.layer_lines)
+    assert any(abs(x1 - div_rel) <= 1e-9 for x1, _y1, _x2, _y2 in scene_center.layer_lines)
+
+
+def test_group_spacing_mid_wall_at_anchor_midpoint(tmp_path) -> None:
+    """间距平分分隔：虚拟分界墙移到两构件间距计算起始点（砼基础边线）的中点。"""
+    from app.viewmodels import unit_vm
+    from app.views.panels.section_view import _build_group_scene
+
+    group, e1, e2, _pe_name = _center_pair_with_slope(tmp_path, "间距分界断面")
+    unit_vm.update_group(group.id, split_mode="间距平分分隔")
+    scene, hint = _build_group_scene(group.id, 640, 480)
+    assert hint == "" and scene is not None
+    assert len(scene.dashed_lines) == 1
+    div_x, half, wall_x, g1, g2 = _pair_division_geometry(e1, e2, "间距平分分隔")
+    assert scene.dashed_lines[0][0] == pytest.approx(div_x - half, rel=1e-9)
+    # 与起坡点分界不重合（间距锚点中点在坡顶右侧）
+    assert scene.dashed_lines[0][0] != pytest.approx(wall_x - half)
+    # 分界墙同样下探到较深槽底
+    deeper = max(g1["h"], g2["h"])
+    assert scene.dashed_lines[0][1] == pytest.approx(max(scene.total_h - deeper, 0.0), abs=1e-6)

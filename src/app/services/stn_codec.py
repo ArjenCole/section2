@@ -66,6 +66,7 @@ from app.core.models.models import (
     BACKFILL_INDEPENDENT,
     LR_PE_TEXT,
     PRECIPITATION_COLUMNS,
+    SPLIT_MODE_ALIASES,
     SPLIT_SLOPE_POINT,
     BasicInfo,
     Component,
@@ -381,14 +382,17 @@ def load_database(data: dict) -> None:
             # 合槽组（父节点）先建，元素按 group 下标挂到组上（v3；缺省 = 无编组）
             groups: list[TrenchGroup] = []
             for group_index, group_data in enumerate(unit_data.get("groups") or []):
+                # 旧文件缺省 = 现状口径（独立回填标高 / 起坡点分隔）；
+                # 早期措辞「起坡点分割」归一化到现值
+                split_mode = group_data.get("split_mode") or SPLIT_SLOPE_POINT
+                split_mode = SPLIT_MODE_ALIASES.get(split_mode, split_mode)
                 group = TrenchGroup(
                     name=group_data.get("name") or "合槽组",
                     amount=group_data.get("amount") or "",
                     pe_name=group_data.get("pe_name") or "",
                     pw_name=group_data.get("pw_name") or "",
-                    # 旧文件缺省 = 现状口径（独立回填标高 / 起坡点分割）
                     backfill_mode=group_data.get("backfill_mode") or BACKFILL_INDEPENDENT,
-                    split_mode=group_data.get("split_mode") or SPLIT_SLOPE_POINT,
+                    split_mode=split_mode,
                     order_no=group_index,
                 )
                 unit.groups.append(group)

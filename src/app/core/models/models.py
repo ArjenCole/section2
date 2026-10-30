@@ -96,14 +96,20 @@ BACKFILL_INDEPENDENT = "独立回填标高"
 #: 回填分层方式：每层取组内各构件该层顶的最浅标高作为所有构件的界面
 BACKFILL_UNIFIED = "统一回填标高"
 #: 断面划分方式：相邻面分界在深侧起坡点（现状口径）
-SPLIT_SLOPE_POINT = "起坡点分割"
+SPLIT_SLOPE_POINT = "起坡点分隔"
 #: 断面划分方式：分界取相邻两构件水平中心连线中点的虚拟竖直线
 SPLIT_CENTER_LINE = "管中心分隔"
+#: 断面划分方式：分界取相邻构件"间距计算起始点"水平中点的虚拟竖直线
+#: （砼基础管道取基础共享侧边线、砂基础管道取管外皮共享侧切线、
+#:   混凝土结构取结构本体共享侧最外侧边线）
+SPLIT_SPACING_MID = "间距平分分隔"
 
 #: 合槽回填分层方式的下拉项（按序显示）
 BACKFILL_MODES = (BACKFILL_INDEPENDENT, BACKFILL_UNIFIED)
 #: 合槽断面划分方式的下拉项（按序显示）
-SPLIT_MODES = (SPLIT_SLOPE_POINT, SPLIT_CENTER_LINE)
+SPLIT_MODES = (SPLIT_SLOPE_POINT, SPLIT_CENTER_LINE, SPLIT_SPACING_MID)
+#: 旧版措辞（"起坡点分割"）→ 现值的兼容映射
+SPLIT_MODE_ALIASES = {"起坡点分割": SPLIT_SLOPE_POINT}
 
 
 # --------------------------------------------------------------------------- #
@@ -340,9 +346,11 @@ class TrenchGroup(Base):
     * ``backfill_mode`` 回填分层方式：``独立回填标高``（每条构件按自己的
       回填分层界面计算，现状口径）或 ``统一回填标高``（每条构件先各自算出
       每一层的层顶标高，再逐层统筹取组内最浅标高作为所有构件该层的界面）；
-    * ``split_mode`` 断面划分方式：``起坡点分割``（相邻面的分界在深侧起坡
-      点，现状口径）或 ``管中心分隔``（分界取相邻两构件水平中心连线的中点
-      的虚拟竖直线，分界两侧工程量分别归属）。
+    * ``split_mode`` 断面划分方式：``起坡点分隔``（相邻面的分界在深侧起坡
+      点，现状口径）、``管中心分隔``（分界取相邻两构件水平中心连线的中点
+      的虚拟竖直线）或 ``间距平分分隔``（分界取相邻构件"间距计算起始点"
+      ——砼基础管道的基础共享侧边线 / 砂基础管道的管外皮共享侧切线 /
+      混凝土结构的本体共享侧最外侧边线——的水平中点）。
 
     ``amount`` 是父节点唯一持有的数据：合槽的**计算长度 L_组**，子构件数量
     强制与之一致（改父节点即同步全部子构件）；父节点埋深无效（界面显示 "-"），
@@ -367,7 +375,7 @@ class TrenchGroup(Base):
     pw_name: Mapped[str] = mapped_column(String(200), default="")
     #: 回填分层方式（挖填降水列的下拉）：独立回填标高 / 统一回填标高
     backfill_mode: Mapped[str] = mapped_column(String(50), default=BACKFILL_INDEPENDENT)
-    #: 断面划分方式（面宽列的下拉）：起坡点分割 / 管中心分隔
+    #: 断面划分方式（面宽列的下拉）：起坡点分隔 / 管中心分隔 / 间距平分分隔
     split_mode: Mapped[str] = mapped_column(String(50), default=SPLIT_SLOPE_POINT)
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 

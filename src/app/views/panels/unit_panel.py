@@ -12,8 +12,10 @@
 
 from __future__ import annotations
 
+from html import escape
+
 from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, QRect, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen
+from PySide6.QtGui import QBrush, QColor, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -1151,8 +1153,18 @@ class UnitPanel(QWidget):
         text = item.toolTip()
         if not text:
             return
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        width = height = None
+        if screen:
+            available = screen.availableGeometry()
+            width = int(available.width() * 0.75)
+            height = int(available.height() * 0.75)
         FramelessMessageBox.information(
-            self, "计算表达式", f"<pre style='white-space:pre-wrap'>{text}</pre>"
+            self,
+            "计算表达式",
+            f"<pre style='white-space:pre-wrap'>{escape(text)}</pre>",
+            width=width,
+            max_height=height,
         )
 
     def _fill_element_row(
@@ -1334,9 +1346,12 @@ class UnitPanel(QWidget):
         split_combo.setCurrentText(row.split_mode)
         split_combo.setToolTip(
             "合槽断面划分方式：\n"
-            "· 起坡点分割——相邻构件以深侧起坡点为分界（深侧含放坡投影）；\n"
-            "· 管中心分隔——以相邻两构件水平中心连线的中点作虚拟竖直线分界，"
-            "分界两侧工程量分别归属（管道取管中心，混凝土构件取外包边线中点）。"
+            "· 起坡点分隔——相邻构件以深侧起坡点为分界（深侧含放坡投影）；\n"
+            "· 管中心分隔——以相邻两构件水平中心连线的中点作虚拟竖直线分界；\n"
+            "· 间距平分分隔——以相邻构件「间距计算起始点」的水平中点作虚拟竖直线"
+            "分界（砼基础管道取基础共享侧边线、砂基础管道取管外皮共享侧切线、"
+            "混凝土结构取结构本体共享侧最外侧边线）。"
+            "后两种方式分界两侧工程量分别归属。"
         )
         split_combo.currentTextChanged.connect(
             lambda text, group_id=group_id: update_group(group_id, split_mode=text)

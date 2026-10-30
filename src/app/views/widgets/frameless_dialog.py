@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -29,6 +30,9 @@ from PySide6.QtWidgets import (
 
 from app.views.widgets.mac_window import apply_mac_window_chrome, is_mac
 from app.views.widgets.rounded_window import RoundedWindowHelper
+
+# 消息框正文超出限高时使用的纵向滚动条宽度（显式设置，样式与占位宽度保持一致）
+_SCROLL_BAR_WIDTH = 12
 
 # 消息框按钮文案映射（StandardButton → 中文）
 _BUTTON_TEXT = {
@@ -443,6 +447,8 @@ class FramelessMessageBox(FramelessDialog):
         content.addWidget(self._icon_label, alignment=Qt.AlignmentFlag.AlignTop)
         content.addWidget(self._text_label, stretch=1)
         layout.addLayout(content)
+        self._content_layout = content
+        self._scroll: QScrollArea | None = None
 
         self._button_row = QHBoxLayout()
         self._button_row.addStretch(1)
@@ -463,6 +469,98 @@ class FramelessMessageBox(FramelessDialog):
     def _set_text(self, text: str) -> None:
         self._text_label.setText(text)
         self.adjustSize()
+
+    def _fit_width(self, width: int, max_height: int | None = None) -> None:
+        """按指定窗宽重排正文（长文本换行）；给定最大高度时，超出部分改为纵向滚动。"""
+        self.setFixedWidth(width)
+        text_width = self._text_width_for(width)
+        self._set_text_block_size(text_width)
+        if max_height is None:
+            self.adjustSize()
+            return
+        chrome = self._chrome_height()
+        content_height = max(self._icon_label.height(), self._text_label.height())
+        if chrome + content_height <= max_height:
+            # 正文放得下：窗体按内容定高，不建滚动区
+            self.setFixedSize(width, chrome + content_height)
+            return
+        # 正文超高：移入滚动区；为滚动条预留宽度后重排（避免滚动条出现时再换行）
+        self._set_text_block_size(max(120, text_width - self._scroll_bar_width()))
+        scroll = self._ensure_scroll_area()
+        scroll.setFixedHeight(max(self._icon_label.height(), max_height - chrome))
+        # 直接定死窗体尺寸，不再依赖 adjustSize：布局的最小高度缓存是本轮才失效的，
+        # 交给 adjustSize 会被旧的尺寸提示顶回去（窗体超出屏幕、滚动条落在屏幕外）
+        self.setFixedSize(width, max_height)
+
+    def _text_width_for(self, width: int) -> int:
+        """给定窗宽时正文的换行宽度（扣掉左右内边距、图标与图标间距）。"""
+        margins = self._body_layout.contentsMargins()
+        return max(120, width - margins.left() - margins.right() - self._icon_label.width() - 12)
+
+    def _scroll_bar_width(self) -> int:
+        """滚动条占位宽度：与滚动区样式里显式设置的宽度一致。"""
+        return _SCROLL_BAR_WIDTH
+
+    def _chrome_height(self) -> int:
+        """正文一行之外的全部固定高度：标题栏 + 上下内边距 + 布局间距 + 按钮行。
+
+        不能用 ``QLayout.sizeHint()`` 反推：正文 ``setFixedSize`` 后，布局的尺寸
+        提示缓存不会在同一轮事件循环内失效（实测正文已变成 355px，布局仍按
+        1290px 报 hint），据此算出的可用高度会变成负数、被兜成 80px——正文被
+        压成一条、窗体其余部分留白，看上去就是“没有纵向滚动条”。这里直接按
+        已知固定部件的高度求和，不受布局缓存影响。
+        """
+        title = self._title_bar.height() if self._title_bar is not None else 0
+        margins = self._body_layout.contentsMargins()
+        return (
+            title
+            + margins.top()
+            + margins.bottom()
+            + self._body_layout.spacing()
+            + self._button_container.sizeHint().height()
+        )
+
+    def _set_text_block_size(self, text_width: int) -> None:
+        """按固定宽度给正文换行，并同步设置正文尺寸。"""
+        height = self._text_label.heightForWidth(text_width)
+        if height < 0:  # 未启用换行时 heightForWidth 返回 -1
+            height = self._text_label.height()
+        self._text_label.setFixedSize(text_width, height)
+
+    def _ensure_scroll_area(self) -> QScrollArea:
+        """把正文从内容行挪进滚动区（仅在内容超高时创建一次）。"""
+        if self._scroll is None:
+            scroll = QScrollArea()
+            scroll.setObjectName("FramelessMessageScroll")
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidgetResizable(False)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            scroll.viewport().setAutoFillBackground(False)
+            # 滚动条显式加宽并给滑块实色：全局主题里滚动条只有 10px、滑块很浅，
+            # 长文本弹窗里几乎看不出来，用户会误以为“没有纵向滚动条”
+            scroll.setStyleSheet(
+                "#FramelessMessageScroll, #FramelessMessageScroll > QWidget > QWidget"
+                " { background: transparent; }"
+                "#FramelessMessageScroll QScrollBar:vertical {"
+                f" background: transparent; width: {_SCROLL_BAR_WIDTH}px;"
+                " margin: 2px 0 2px 0; }"
+                "#FramelessMessageScroll QScrollBar::handle:vertical {"
+                " background: #94A3B8; border-radius: 5px; min-height: 40px; }"
+                "#FramelessMessageScroll QScrollBar::handle:vertical:hover {"
+                " background: #64748B; }"
+                "#FramelessMessageScroll QScrollBar::add-line:vertical,"
+                "#FramelessMessageScroll QScrollBar::sub-line:vertical"
+                " { height: 0; width: 0; background: none; border: none; }"
+                "#FramelessMessageScroll QScrollBar::add-page:vertical,"
+                "#FramelessMessageScroll QScrollBar::sub-page:vertical"
+                " { background: transparent; }"
+            )
+            self._content_layout.removeWidget(self._text_label)
+            self._content_layout.insertWidget(1, scroll, 1)
+            scroll.setWidget(self._text_label)
+            self._scroll = scroll
+        return self._scroll
 
     def _add_buttons(
         self,
@@ -518,12 +616,16 @@ class FramelessMessageBox(FramelessDialog):
         text: str,
         buttons: QMessageBox.StandardButton = QMessageBox.StandardButton.Ok,
         default: QMessageBox.StandardButton = QMessageBox.StandardButton.NoButton,
+        width: int | None = None,
+        max_height: int | None = None,
     ) -> QMessageBox.StandardButton:
         box = FramelessMessageBox(parent)
         box.setWindowTitle(title)
         box._set_icon(QMessageBox.Icon.Information)
         box._set_text(text)
         box._add_buttons(buttons, default)
+        if width is not None:
+            box._fit_width(width, max_height)
         box.exec()
         return box._result
 

@@ -136,7 +136,7 @@ class GroupRow:
     member_count: int
     #: 回填分层方式（主表格挖填降水列的下拉）：独立回填标高 / 统一回填标高
     backfill_mode: str = BACKFILL_INDEPENDENT
-    #: 断面划分方式（主表格面宽列的下拉）：起坡点分割 / 管中心分隔
+    #: 断面划分方式（主表格面宽列的下拉）：起坡点分隔 / 管中心分隔 / 间距平分分隔
     split_mode: str = SPLIT_SLOPE_POINT
     #: 供主表格统一装填的显示属性（与 ElementRow 同名同型）
     category: int = 0

@@ -144,7 +144,7 @@ def tool_update_group(arguments: dict) -> dict:
     if not fields:
         raise ToolError(
             "没有给出要修改的字段。可改：name / amount / backfill_mode"
-            "（独立回填标高 / 统一回填标高）/ split_mode（起坡点分割 / 管中心分隔）；"
+            "（独立回填标高 / 统一回填标高）/ split_mode（起坡点分隔 / 管中心分隔 / 间距平分分隔）；"
             "父节点不选围护 / 面宽原则。"
         )
     group = unit_vm.update_group(int(group_id), **fields)
@@ -474,7 +474,8 @@ def register(registry: ToolRegistry) -> None:
             "修改合槽父节点属性（name / amount / backfill_mode / split_mode；"
             "amount = L_组，会强制同步全部子构件；backfill_mode = 回填分层方式"
             "（独立回填标高 / 统一回填标高），split_mode = 断面划分方式"
-            "（起坡点分割 / 管中心分隔）；父节点不持有围护 / 面宽原则，埋深无效）。写操作。",
+            "（起坡点分隔 / 管中心分隔 / 间距平分分隔）；父节点不持有围护 / "
+            "面宽原则，埋深无效）。写操作。",
             {
                 "type": "object",
                 "properties": {
@@ -488,8 +489,9 @@ def register(registry: ToolRegistry) -> None:
                     },
                     "split_mode": {
                         "type": "string",
-                        "enum": ["起坡点分割", "管中心分隔"],
-                        "description": "断面划分方式：管中心 = 相邻构件中心连线中点作虚拟分界",
+                        "enum": ["起坡点分隔", "管中心分隔", "间距平分分隔"],
+                        "description": "断面划分方式：管中心 = 相邻构件中心连线中点；"
+                        "间距平分 = 相邻构件间距计算起始点的水平中点",
                     },
                 },
                 "required": ["group_id"],

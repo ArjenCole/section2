@@ -39,6 +39,7 @@ from app.core.models.models import (
     CATEGORY_STRUCTURE,
     LR_PE_TEXT,
     SPLIT_CENTER_LINE,
+    SPLIT_SPACING_MID,
     Element,
     PcpEnclosure,
     PcpFoundation,
@@ -672,6 +673,21 @@ def _build_trench_scene_lr(
     return scene, ""
 
 
+def _spacing_anchor_half(snap: dict) -> float:
+    """间距平分分隔：构件共享侧「间距计算起始点」到本体中心的半宽（m）。
+
+    与 :func:`app.core.calc.trench_group._spacing_anchor_half` 同口径：
+    混凝土结构（包封 / 箱涵 / 管廊）取结构本体外包半宽；管道有混凝土基础的
+    取基础外皮半宽；砂基础管道取管外皮半径（外径 / 2，壁厚含用户覆盖值）。
+    """
+    info = snap["info"]
+    if info.category in (CATEGORY_ENCASED, CATEGORY_BOX_CULVERT, CATEGORY_GALLERY):
+        return info.size_b_dim.v / 2.0
+    if info.pf is not None and info.pf.con_found:
+        return snap["base_width"] / 2.0
+    return snap["ad"].od.v / 2.0 / 1000.0
+
+
 def _run_at_height(
     points: list[tuple[float, float]], total_depth: float, height: float
 ) -> float:
@@ -761,6 +777,7 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
                 "info": info,
                 "pf": pf,
                 "at": at,
+                "ad": ad,
                 "c1_display": c1_display,
                 "depth": depth,
                 "base_width": base_width,
@@ -835,6 +852,21 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
         cursor += right_ext
         extents.append((base_left, base_right))
     total_flat = cursor
+
+    # 虚拟竖线分界（管中心分隔 / 间距平分分隔）：逐相邻面取分界锚点的水平
+    # 中点（自槽左缘起算）；起坡点分隔无此分界（分层线 / 虚线墙走起坡点）。
+    pair_div_x: list[float | None] = []
+    if group.split_mode in (SPLIT_CENTER_LINE, SPLIT_SPACING_MID):
+        spacing = group.split_mode == SPLIT_SPACING_MID
+        halves = [
+            _spacing_anchor_half(snap) if spacing else 0.0 for snap in snapshots
+        ]
+        for i in range(n - 1):
+            anchor_left = (extents[i][0] + extents[i][1]) / 2.0 + halves[i]
+            anchor_right = (extents[i + 1][0] + extents[i + 1][1]) / 2.0 - halves[i + 1]
+            pair_div_x.append((anchor_left + anchor_right) / 2.0)
+    else:
+        pair_div_x = [None] * (n - 1)
 
     # 槽底折线（自左向右）：工作面 / 本体平段 + 异深内侧坡（浅底 → 坡 → 深底）
     bottoms: list[tuple[float, float]] = [(0.0, first["depth"])]
@@ -929,6 +961,9 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
         # 独立回填标高：每个构件按自己的回填分层在该构件标高的左右边界之间
         # 画水平线；只在回填材料（定额键）变化处画，与单构件断面
         # _Segment.continues 的口径一致：同一材料被围护分级切开时不重复画线。
+        # 虚拟竖线分界（管中心分隔 / 间距平分分隔）下，相邻侧的截断位置随
+        # 分界竖线走：非坡主侧直接取分界 x；坡主侧（自身更深）浅槽底以下仍
+        # 跟随坡面、但被分界切入时从分界 x 起画（条带已划给对侧）。
         for i, snap in enumerate(snapshots):
             base_left, base_right = extents[i]
             depth_i = snap["depth"]
@@ -945,10 +980,23 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
                 previous_key = key
             for top in tops:
                 y = (h_max - depth_i) + top
+                div_left = pair_div_x[i - 1] if i > 0 else None
+                div_right = pair_div_x[i] if i < n - 1 else None
                 if i == 0:
                     left_x = base_left - snap["work_width"] - _run_at_height(
                         _slope_points(work_left, depth_i), depth_i, top
                     )
+                elif div_left is not None:
+                    pair = pairs[i - 1]
+                    if pair["deep_index"] == i and top < depth_i - snapshots[i - 1]["depth"] - 1e-9:
+                        # 自身更深且仍在浅槽底以下的坡区：坡面在分界之外时跟随坡面
+                        delta = depth_i - snapshots[i - 1]["depth"]
+                        slope_x = base_left - snap["work_width"] - _run_at_height(
+                            _slope_points(pair["work"], delta), delta, top
+                        )
+                        left_x = max(slope_x, div_left)
+                    else:
+                        left_x = div_left
                 else:
                     pair = pairs[i - 1]
                     if pair["deep_index"] == i:  # 自身更深（右深）
@@ -962,6 +1010,16 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
                     right_x = base_right + snap["work_width"] + _run_at_height(
                         _slope_points(work_right, depth_i), depth_i, top
                     )
+                elif div_right is not None:
+                    pair = pairs[i]
+                    if pair["deep_index"] == i and top < depth_i - snapshots[i + 1]["depth"] - 1e-9:
+                        delta = depth_i - snapshots[i + 1]["depth"]
+                        slope_x = base_right + snap["work_width"] + _run_at_height(
+                            _slope_points(pair["work"], delta), delta, top
+                        )
+                        right_x = min(slope_x, div_right)
+                    else:
+                        right_x = div_right
                 else:
                     pair = pairs[i]
                     if pair["deep_index"] == i:  # 自身更深（左深）
@@ -971,16 +1029,18 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
                         )
                     else:  # 自身更浅 / 等深：工作面到虚拟墙
                         right_x = base_right + snap["work_width"]
+                if right_x - left_x <= 1e-9:
+                    continue  # 分界切入后区间为空（极端位移保护）
                 layer_lines.append((left_x - half, y, right_x - half, y))
 
     # 虚拟竖直墙：每个相邻面都画——它是构件归属区的计算分界，不是实体墙。
-    # 起坡点分割：分界在深侧起坡点，自浅槽底到地面；管中心分隔：分界移到
-    # 两构件中心连线的中点，并下探到较深槽底（坡区条带也按此分界归属）。
+    # 起坡点分隔：分界在深侧起坡点，自浅槽底到地面；管中心分隔 / 间距平分
+    # 分隔：分界移到锚点（构件中心 / 间距计算起始点）的中点，并下探到较深
+    # 槽底（坡区条带也按此分界归属）。
     for i, pair in enumerate(pairs):
-        if group.split_mode == SPLIT_CENTER_LINE:
-            wall_x = (
-                extents[i][0] + extents[i][1] + extents[i + 1][0] + extents[i + 1][1]
-            ) / 4.0
+        div_x = pair_div_x[i]
+        if div_x is not None:
+            wall_x = div_x
             h_bottom = max(snapshots[i]["depth"], snapshots[i + 1]["depth"])
         else:
             wall_x = extents[i][1] + pair["left_width"]

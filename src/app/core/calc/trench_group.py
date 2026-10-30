@@ -60,9 +60,12 @@ from app.core.calc.tracer import Dim, QDict, dim, dim_min, dim_sum as _dim_sum, 
 from app.core.models import base as orm
 from app.core.models.models import (
     BACKFILL_UNIFIED,
+    CATEGORY_BOX_CULVERT,
     CATEGORY_ENCASED,
+    CATEGORY_GALLERY,
     Element,
     SPLIT_CENTER_LINE,
+    SPLIT_SPACING_MID,
     TrenchGroup,
 )
 from app.services.atlas import resolve_atlas
@@ -267,20 +270,39 @@ def _slope_points(work, depth: float) -> list[tuple[float, float]]:
 
 
 # --------------------------------------------------------------------------- #
-# 管中心分隔：相邻面分界取两构件中心连线中点（覆盖在起坡点口径之上的条带调整）
+# 虚拟竖线分界（管中心分隔 / 间距平分分隔）：分界自起坡点移到锚点中点
 # --------------------------------------------------------------------------- #
-def _center_splits(
-    snapshots: list["_Member"], pairs: list["_Pair"]
-) -> list[_CenterSplit]:
-    """逐相邻面计算管中心分隔的分界位移与条带归属。
+def _spacing_anchor_half(member: "_Member") -> Dim:
+    """间距平分分隔：构件共享侧「间距计算起始点」到本体中心的半宽。
 
-    分界线 = 相邻两构件水平中心连线的中点（管道取管中心、混凝土构件取左右
-    外包边线中点，都等于本体外皮宽的中点）；相对起坡点分界的位移
-    ``δ = (中心连线中点) − (起坡点)``，右正。分界移向的一侧获得条带
-    （``gainer``），另一侧让出（``loser``）；位移为 0 的面不产生条带。
+    混凝土结构（包封 / 箱涵 / 管廊）取结构本体外包半宽；管道有混凝土基础的
+    取基础外皮半宽；砂基础管道取管外皮半径（外径 / 2，壁厚含用户覆盖值）。
+    """
+    info = member.info
+    if info.category in (CATEGORY_ENCASED, CATEGORY_BOX_CULVERT, CATEGORY_GALLERY):
+        return info.size_b_dim / 2
+    if info.pf is not None and info.pf.con_found:
+        return member.base_width / 2
+    return member.ad.od / 2 / 1000
+
+
+def _boundary_splits(
+    snapshots: list["_Member"], pairs: list["_Pair"], split_mode: str
+) -> list[_CenterSplit]:
+    """逐相邻面计算虚拟竖线分界（管中心分隔 / 间距平分分隔）的位移与条带归属。
+
+    分界线 = 相邻两构件分界锚点的水平中点：管中心分隔的锚点是构件本体中心
+    （管道取管中心、混凝土构件取左右外包边线中点，都等于本体外皮宽的中点）；
+    间距平分分隔的锚点是共享侧「间距计算起始点」（砼基础管道 = 基础共享侧
+    边线、砂基础管道 = 管外皮共享侧切线、混凝土结构 = 结构本体共享侧最外侧
+    边线）。相对起坡点分界的位移 ``δ = (锚点中点) − (起坡点)``，右正；分界
+    移向的一侧获得条带（``gainer``），另一侧让出（``loser``）；位移为 0 的
+    面不产生条带。
     """
     n = len(snapshots)
-    centers: list[Dim] = []
+    spacing = split_mode == SPLIT_SPACING_MID
+    left_anchors: list[Dim] = []  # 各构件在其右侧相邻面上的分界锚点
+    right_anchors: list[Dim] = []  # 各构件在其左侧相邻面上的分界锚点
     walls: list[Dim] = []
     cursor = dim(0.0)
     for i, member in enumerate(snapshots):
@@ -288,14 +310,17 @@ def _center_splits(
         right_ext = member.work_width if i == n - 1 else pairs[i].left_width
         base_left = cursor + left_ext
         base_right = base_left + member.base_width
-        centers.append(base_left + member.base_width / 2)
+        center = base_left + member.base_width / 2
+        half = _spacing_anchor_half(member) if spacing else dim(0.0)
+        right_anchors.append(center - half)
+        left_anchors.append(center + half)
         if i < n - 1:
             walls.append(base_right + pairs[i].left_width)  # 起坡点分界（同断面图虚拟墙）
         cursor = base_right + right_ext
 
     splits: list[_CenterSplit] = []
     for i in range(n - 1):
-        delta = (centers[i] + centers[i + 1]) / 2 - walls[i]
+        delta = (left_anchors[i] + right_anchors[i + 1]) / 2 - walls[i]
         if abs(delta.v) <= 1e-9:
             continue
         h_left, h_right = snapshots[i].depth.v, snapshots[i + 1].depth.v
@@ -420,13 +445,13 @@ class _Member:
 
 @dataclass(frozen=True)
 class _CenterSplit:
-    """管中心分隔的一个相邻面：分界自深侧起坡点移到两构件中心连线的中点。
+    """虚拟竖线分界（管中心分隔 / 间距平分分隔）的一个相邻面。
 
-    分界位移扫过的竖直条带归 ``gainer``（分界移向的一侧）：浅槽底以上是
-    宽 ``offset`` 的矩形条带；让出方（``loser``）更深时，浅槽底以下的坡区
-    内还有分界线与内侧坡之间的楔形一并划给获方。让出方在分层积分里扣减
-    （:func:`_center_deduction`），获方把条带作为独立项加入
-    （"分左右两侧分别计算工程量再加起来"）。
+    分界自深侧起坡点移到两构件分界锚点的水平中点。分界位移扫过的竖直条带
+    归 ``gainer``（分界移向的一侧）：浅槽底以上是宽 ``offset`` 的矩形条带；
+    让出方（``loser``）更深时，浅槽底以下的坡区内还有分界线与内侧坡之间的
+    楔形一并划给获方。让出方在分层积分里扣减（:func:`_center_deduction`），
+    获方把条带作为独立项加入（"分左右两侧分别计算工程量再加起来"）。
     """
 
     pair_index: int
@@ -700,11 +725,11 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             flat = flat + pairs[i].left_width
         member.flat_width = flat
 
-    # 管中心分隔：分界移到相邻构件中心连线的中点。让出条带的一方在剖面里
-    # 扣减（挖填随分层积分同步减少），平面归属带宽随分界位移调整
+    # 虚拟竖线分界（管中心分隔 / 间距平分分隔）：分界移到锚点中点。让出条带
+    # 的一方在剖面里扣减（挖填随分层积分同步减少），平面归属带宽随分界位移调整
     splits: list[_CenterSplit] = []
-    if group.split_mode == SPLIT_CENTER_LINE:
-        splits = _center_splits(snapshots, pairs)
+    if group.split_mode in (SPLIT_CENTER_LINE, SPLIT_SPACING_MID):
+        splits = _boundary_splits(snapshots, pairs, group.split_mode)
         for split in splits:
             loser = snapshots[split.loser]
             loser.profiles.append(_center_deduction(split, loser))
@@ -731,8 +756,9 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             errors[member.element.id] = errors.get(member.element.id) or "覆土不足或分层无效，未生成工程量。"
         results[member.element.id] = out
 
-    # 管中心分隔：获方把分界条带作为独立项加进来（矩形条带按自己的分层带
-    # 摊入；获方更浅时坡区楔形按让方=深侧的分层带摊入），挖方同步累加
+    # 虚拟竖线分界（管中心分隔 / 间距平分分隔）：获方把分界条带作为独立项
+    # 加进来（矩形条带按自己的分层带摊入；获方更浅时坡区楔形按让方=深侧的
+    # 分层带摊入），挖方同步累加；说明后缀随所选方式
     for split in splits:
         gainer = snapshots[split.gainer]
         if gainer.element.id not in filled or not gainer.bands:
@@ -740,6 +766,7 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
         loser = snapshots[split.loser]
         out = results[gainer.element.id]
         dig_key = f"开挖|{gainer.info.pp.excvt}|m3"
+        suffix = f"·{group.split_mode}"
         # 矩形条带：浅槽底以上的竖直条带，按获方自己的分层带摊入
         rect_lo = gainer.depth - split.shallow_depth
         for key, lo, hi, _layer, note in gainer.bands:
@@ -747,16 +774,16 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             if hi.v - band_lo.v <= 1e-9:
                 continue
             area = split.offset * (hi - band_lo)
-            out.add(key, area.v, area.e, f"{note}·管中心分隔")
-            out.add(dig_key, area.v, area.e, f"{note}·管中心分隔")
+            out.add(key, area.v, area.e, f"{note}{suffix}")
+            out.add(dig_key, area.v, area.e, f"{note}{suffix}")
         # 坡区楔形：仅当获方更浅（条带在获方槽底以下），按深侧的分层带摊入
         if gainer.depth.v < loser.depth.v - 1e-9:
             for key, lo, hi, _layer, note in loser.bands:
                 area = _wedge_area(split, lo, hi)
                 if area is None or area.v == 0:
                     continue
-                out.add(key, area.v, area.e, f"{note}·管中心分隔")
-                out.add(dig_key, area.v, area.e, f"{note}·管中心分隔")
+                out.add(key, area.v, area.e, f"{note}{suffix}")
+                out.add(dig_key, area.v, area.e, f"{note}{suffix}")
 
     # 围护量（每面 ×1）+ 支撑
     flat_total = _dim_sum(*(member.flat_width for member in snapshots))
