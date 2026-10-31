@@ -52,25 +52,29 @@ def test_component_edit_dialog_close_no_dead_callback(qapp, project, monkeypatch
     sub = ComponentEditDialog(work.levels[0].components[0], outer)
     sub.show()
     qapp.processEvents()
+    tables = list(sub._tables.values())
 
-    # 点确定关闭公式编辑窗体（exec 返回后其局部包裹器在调用方离开作用域时回收）
+    # 点确定关闭公式编辑窗体：done() 收尾后经 0ms 定时器排期 deleteLater，
+    # 事件循环下一拍即销毁（2026-10-31 确定性销毁修复：弹窗 C++ 不再赖到 GC，
+    # exec 返回的调用栈上仍可读结果）。挂起回调此时若未绑定接收者，
+    # 就会打到死对象上。
     sub._accept()
-    qapp.processEvents()
+    qapp.processEvents()  # 派发 0ms 定时器 → 排期 deleteLater
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)  # 完成析构
+    import shiboken6
+
+    assert not shiboken6.isValid(sub)
+    for pending_table in tables:
+        assert not shiboken6.isValid(pending_table)  # 表随弹窗确定性销毁
     outer._fill()
     qapp.processEvents()
 
     # 关闭外层窗体 → C++ 子树（含公式编辑窗体与三张表）析构
     outer._confirm()
     outer.hide()
-    # 模拟真实 Windows 上关闭序列中的最后一轮布局调度（三张表各挂起一个回调）
-    for pending_table in sub._tables.values():
-        pending_table._fit_cell_widgets()
     outer.deleteLater()
     qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)  # 强制完成销毁
-    import shiboken6
 
-    table = next(iter(sub._tables.values()))
-    assert not shiboken6.isValid(table)
     qapp.processEvents()  # 挂起回调若未绑定接收者，会在此打到已删除对象
     qapp.processEvents()
     assert not dead_fires

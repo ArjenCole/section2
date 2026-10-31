@@ -108,3 +108,34 @@ def test_quit_without_close_flag_survives_forget() -> None:
     assert diag._quit_without_close() is True
     diag._main_closed = True
     assert diag._quit_without_close() is False
+
+
+# --------------------------------------------------------------------------- #
+# 2026-10-31 现场之后新增：closeEvent 弹模态确认框期间不算“关闭被取消”
+# （20:32 等五次现场：确认框开着时自检把 _closed 撤了，用户确认后的正常
+# Hide 被误判为异常 Hide，产生了五份假 dump）
+# --------------------------------------------------------------------------- #
+def test_close_was_ignored_false_while_modal_prompt_open(monkeypatch) -> None:
+    """主窗体可见但有模态框在弹（确认保存提示）：不算“关闭被取消”。"""
+    from PySide6.QtWidgets import QApplication
+
+    sentinel = object()
+    monkeypatch.setattr(
+        QApplication, "activeModalWidget", staticmethod(lambda: sentinel)
+    )
+    assert window_diag.WindowDiag._close_was_ignored(_FakeWidget()) is False
+
+
+def test_close_was_ignored_true_when_visible_and_modal_free(monkeypatch) -> None:
+    """Close 之后仍可见、且没有任何模态框：才算“关闭被取消”（点过取消）。"""
+    from PySide6.QtWidgets import QApplication
+
+    monkeypatch.setattr(
+        QApplication, "activeModalWidget", staticmethod(lambda: None)
+    )
+    assert window_diag.WindowDiag._close_was_ignored(_FakeWidget()) is True
+    # 已经隐藏（Hide 已发生）：不能判“被取消”
+    assert (
+        window_diag.WindowDiag._close_was_ignored(_FakeWidget(visible=False))
+        is False
+    )

@@ -456,6 +456,23 @@ class WindowDiag:  # pragma: no cover - 需要真实 Windows 窗口
             return False
         return True
 
+    @staticmethod
+    def _close_was_ignored(widget) -> bool:
+        """收到 Close 后窗口仍可见，且不是“closeEvent 正在弹模态框”。
+
+        closeEvent 里弹“是否保存”确认框（2026-10-31 20:32 等现场）：从弹框到
+        用户点按钮的整段时间窗口都可见，但 Close 并没有被取消。此期间不能把
+        ``_closed`` 撤掉，否则用户确认后的正常 Hide 会被误判为异常 Hide。
+        """
+        from PySide6.QtWidgets import QApplication
+
+        try:
+            if not widget.isVisible():
+                return False
+        except RuntimeError:
+            return False
+        return QApplication.activeModalWidget() is None
+
     def _quit_without_close(self) -> bool:
         """收到 Quit 时主窗体是否没有走过正常 Close（用于过滤正常退出噪音）。"""
         if self._main_hwnd is not None:
@@ -529,21 +546,20 @@ class WindowDiag:  # pragma: no cover - 需要真实 Windows 窗口
 
             # closeEvent 被取消（如“是否保存”里点取消）时窗口仍然可见：
             # 撤销“已关闭”标记，否则后续真正的异常销毁会被误判为正常。
+            # 但 closeEvent 弹出模态确认框期间（2026-10-31 20:32 等五次现场）
+            # 窗口同样可见——那不是“被取消”，此刻撤销标记会把随后的正常
+            # Hide 误判成异常。只在“可见且当前没有任何模态框”时才判取消。
             main = self._main_hwnd
             if main is not None and main in self._closed:
                 reference = self._widgets.get(main)
                 widget = reference() if reference is not None else None
-                if widget is not None:
-                    try:
-                        if widget.isVisible():
-                            self._closed.discard(main)
-                            self._main_closed = False
-                            self.record(
-                                "close_ignored",
-                                f"hwnd={main} Close 被 closeEvent 忽略，窗口仍在",
-                            )
-                    except RuntimeError:
-                        pass
+                if widget is not None and WindowDiag._close_was_ignored(widget):
+                    self._closed.discard(main)
+                    self._main_closed = False
+                    self.record(
+                        "close_ignored",
+                        f"hwnd={main} Close 被 closeEvent 忽略，窗口仍在",
+                    )
 
             for hwnd, label in list(self._hwnds.items()):
                 if _user32.IsWindow(hwnd):

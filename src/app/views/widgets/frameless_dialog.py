@@ -324,6 +324,11 @@ class FramelessDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None, title: str = "") -> None:
         super().__init__(parent)
+        # 注意：这里刻意不设 WA_DeleteOnClose——它经 QDialog.done() 内部的
+        # close() 触发 deferred delete，嵌套 exec 循环一退出（即 exec() 返回到
+        # 调用方之前）就把 C++ 析构掉，``wizard.values()`` 这类"exec 返回后读
+        # 控件"的调用会 RuntimeError（2026-10-31 新建工程报错）。确定性销毁
+        # 统一放在 done() 里用 0ms 定时器排期，见 done() 的注释。
         self._mac = is_mac()
         if self._mac:
             # mac：保留原生标题栏（红绿灯 + 标题文字同一行，Apple HIG），只留关闭红绿灯
@@ -362,6 +367,19 @@ class FramelessDialog(QDialog):
         super().setWindowTitle(title)
         if self._title_bar is not None:
             self._title_bar.set_title(title)
+
+    def done(self, result: int) -> None:  # noqa: N802 - Qt 命名
+        """accept()/reject() 的统一收尾漏斗：收尾后排期销毁。
+
+        QDialog.done() 覆盖 accept/reject/点 X（closeEvent 默认走 reject）三条
+        收尾路径。这里不能用 ``deleteLater()``：deferred delete 的语义是"嵌套
+        事件循环一退出就析构"，exec() 还没返回到调用方 C++ 就没了——
+        ``wizard.values()`` 这类"exec 返回后读控件"的调用直接 RuntimeError
+        （2026-10-31 新建工程报错）。0ms 定时器是普通事件，嵌套循环退出时不
+        派发，析构推迟到调用方栈完全回到主循环之后。
+        """
+        super().done(result)
+        QTimer.singleShot(0, self, self.deleteLater)
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         if self._mac:
