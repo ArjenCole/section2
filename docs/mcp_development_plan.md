@@ -968,7 +968,8 @@ headers = { Authorization = "Bearer <MCP 设置对话框生成的 token>" }
 - 图集参数行：直埋 3 行（工作面加宽/垫层厚/基础厚）、包封/箱涵/管廊 2 行、顶管/牵引 0 行
   （`ATLAS_PARAM_CATEGORIES`；键存在=用户覆盖，空=按图集）；
 - 图集返回单位 **mm**；降水井型值格式 `elevation|gap|sides`；构件参数值格式 `显示名|表达式`；
-- 表达式规则：不做预运算、毫米→米写 `值/1000`、括号只在语法必需处（详见 docs/architecture.md，
+- 表达式规则：不做预运算、几何尺寸全程 mm 记法（体积 /10^6、面积 /10^3）、
+  用户公式保持 m 口径、括号只在语法必需处（详见 docs/architecture.md，
   AI 改算式相关数据前应先取 `get_conventions`）；
 - 多原则：按 ratio 加权合并；支撑 Z 量按主围护原则（main_pe_name）计算。
 

@@ -117,8 +117,9 @@ def test_sloped_vs_vertical_dig_and_enclosure_quantities(project) -> None:
     # ROUND 按 Excel 语义取整：逢 5 远离零（10/4=2.5 → 3），不是 Python 的银行家舍入（→2）
     per_meter = math.floor(amount / 4.0 + 0.5) / amount * 2 * bottom * 233.988 / 1000 + 1 * 2 * 2 * 2 * 38.49 / 1000
     assert support.value == pytest.approx(per_meter * amount, rel=1e-9)
-    # 算式里也能看到槽底宽的完整来源（旧版这里是 (断面宽+2×…)/1000，断面宽被抹掉）
-    assert "(600+60*2+120*2+500*2)/1000" in support.expression  # 公共 /1000 已提到括号外
+    # 算式里也能看到槽底宽的完整来源（用户公式按 m 口径代入，mm 记法的
+    # 槽底宽经 to_m 派生成 (…)/1000；旧版这里断面宽会被抹掉）
+    assert "(600+60*2+120*2+500*2)/1000" in support.expression
     assert evaluate(support.expression) == pytest.approx(support.value, rel=1e-9)
 
     assert any(key.startswith("围护|") for key in result.keys())

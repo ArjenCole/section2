@@ -19,6 +19,7 @@ from app.core.calc.tracer import (
     Dim,
     NamedValue,
     QDict,
+    Quantity,
     dim,
     dim_min,
     dim_sum,
@@ -262,9 +263,9 @@ def test_presentation_extracts_semantic_intermediates() -> None:
     """槽底宽 / 计算深度提成中间量：主算式缩短，但定义仍全是原始参数。"""
     out = QDict()
     expression = (
-        "(2*(600/1000+(65*2+130*2+500*2)/1000)"
-        "+2*(2.5+0.3+(65+130)/1000)*1)"
-        "*(2.5+0.3+(65+130)/1000)/2*100"
+        "(2*(600+(65*2+130*2+500*2))"
+        "+2*((2.5+0.3)*1000+(65+130))*1)"
+        "*((2.5+0.3)*1000+(65+130))/2/10^6*100"
     )
     out.add(
         "开挖|Ⅲ类土|m3",
@@ -273,12 +274,12 @@ def test_presentation_extracts_semantic_intermediates() -> None:
         "垫层~覆土",
         tags=(
             NamedValue(
-                "600/1000+(65*2+130*2+500*2)/1000",
+                "600+(65*2+130*2+500*2)",
                 "槽底宽",
                 "管径+图集+面宽",
             ),
             NamedValue(
-                "2.5+0.3+(65+130)/1000",
+                "(2.5+0.3)*1000+(65+130)",
                 "计算深度",
                 "埋深+壁厚+垫层",
             ),
@@ -286,14 +287,14 @@ def test_presentation_extracts_semantic_intermediates() -> None:
     )
     view = out.get("开挖|Ⅲ类土|m3").presentation()
 
-    assert view.formula == "V=(2*B+2*H*1)*H/2*100"
+    assert view.formula == "V=(2*B+2*H*1)*H/2/10^6*100"
     labels = {item.label for item in view.definitions}
     assert {"槽底宽", "计算深度"} <= labels
     # 派生结果只出现在 value，不允许以算好的数字回填定义式。
     bottom = next(item for item in view.definitions if item.label == "槽底宽")
-    assert bottom.expression == "(600+65*2+130*2+500*2)/1000"
+    assert bottom.expression == "600+(65*2+130*2+500*2)"
     assert "1.99" not in bottom.expression
-    assert bottom.value == pytest.approx(1.99)
+    assert bottom.value == pytest.approx(1990.0)
 
 
 def test_presentation_expands_back_to_full_value() -> None:
@@ -375,7 +376,7 @@ def test_presentation_definitions_are_complete_and_not_precomputed() -> None:
 
 
 def test_expression_outline_does_not_build_presentation() -> None:
-    """表格首屏摘要必须零解析：不调用 presentation，多分项只列说明。"""
+    """表格首屏摘要必须零解析：不调用 presentation，多分项按符号列说明。"""
     out = QDict()
     out.add("回填|中粗砂|m3", 1.0, "1", "垫层")
     out.add("回填|中粗砂|m3", 2.0, "2", "坞膀下半")
@@ -386,14 +387,29 @@ def test_expression_outline_does_not_build_presentation() -> None:
         raise AssertionError("expression_outline 不应生成 presentation")
 
     quantity.presentation = _boom  # type: ignore[method-assign]
-    assert quantity.expression_outline == "3 个分项：垫层 + 坞膀下半 + 扣弓形"
+    assert quantity.expression_outline == "垫层+坞膀下半-扣弓形"
+
+    # 扣除项排最前时以 - 开头；同名说明同符号去重
+    out2 = QDict()
+    out2.add("回填|素土|m3", -1.0, "1", "扣基础占位")
+    out2.add("回填|素土|m3", 2.0, "2", "夯填")
+    out2.add("回填|素土|m3", 0.5, "0.5", "夯填")
+    assert out2.get("回填|素土|m3").expression_outline == "-扣基础占位+夯填"
+
+    out3 = QDict()
+    out3.add("挖|土方|m3", 1.0, "1", "挖土")
+    out3.add("挖|土方|m3", 1.0, "1", "挖土")
+    out3.add("挖|土方|m3", -0.5, "0.5", "扣基础占位")
+    out3.add("挖|土方|m3", -0.5, "0.5", "扣基础占位")
+    assert out3.get("挖|土方|m3").expression_outline == "挖土-扣基础占位"
 
 
-def test_expression_tooltip_is_generated_on_demand(qapp) -> None:
-    """工程量表格子首屏为空 tooltip；悬停时才生成主式、定义和完整算式。"""
+def test_expression_detail_is_generated_on_demand(qapp) -> None:
+    """工程量表格首屏为空 tooltip；双击/复制时才生成主式、定义和完整算式。"""
     from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
 
     from app.views.panels.unit_panel import (
+        _EXPR_DETAIL_ROLE,
         _EXPR_MAIN_ROLE,
         _EXPR_QUANTITY_ROLE,
         _EXPR_READY_ROLE,
@@ -432,33 +448,80 @@ def test_expression_tooltip_is_generated_on_demand(qapp) -> None:
     assert UnitPanel._ensure_expression_item(None, item) is True  # type: ignore[arg-type]
     assert item.data(_EXPR_READY_ROLE)
     assert item.data(_EXPR_MAIN_ROLE) == "(2*B+2*H*1)*H/2*100"
-    assert item.text() == "(2*B+2*H*1)*H/2*100"
-    assert "中间量" in item.toolTip()
-    assert "完整数值算式" in item.toolTip()
+    # 首屏摘要原样保留：悬停不刷新单元格文字、不弹 tooltip
+    assert item.text() == quantity.expression_outline
+    assert item.toolTip() == ""
+    detail = item.data(_EXPR_DETAIL_ROLE)
+    assert "中间量" in detail
+    assert "完整数值算式" in detail
 
 
-def test_extract_common_divisors_pulls_thousandths_out() -> None:
-    """公共 /1000 提到括号外：值不变、式更短；单段、函数参数与函数调用括号不动。"""
-    from app.core.calc.tracer import extract_common_divisors
+def test_mm_notation_construction_and_conversion() -> None:
+    """mm 记法构造器：表值原样进算式（v 已换算 m），m 录入量按规则桥接。"""
+    from app.core.calc.tracer import mm, mm_dim, mm_of_m
 
-    assert (
-        extract_common_divisors("600/1000+(65*2+130*2+500*2)/1000")
-        == "(600+65*2+130*2+500*2)/1000"
+    # mm 表值：算式就是 mm 原值，数值换算成 m
+    assert mm(600).e == "600"
+    assert mm(600).s == 3
+    assert mm(600).v == pytest.approx(0.6)
+
+    # 用户按 mm 录入的参数原文：原文保留、数值 /1000
+    assert mm_dim(dim(400)).e == "400"
+    assert mm_dim(dim(400)).v == pytest.approx(0.4)
+
+    # m 录入量 → mm 记法：纯数字折叠，录入算式保留原文 ×1000
+    assert mm_of_m(dim(2.5)).e == "2500"
+    assert mm_of_m(raw_dim("2.5", 2.5)).e == "2500"
+    assert mm_of_m(raw_dim("2.5+0.3", 2.8)).e == "(2.5+0.3)*1000"
+    assert mm_of_m(raw_dim("2.5+0.3", 2.8)).v == pytest.approx(2.8)
+    # 已是 mm 记法原样返回
+    already = mm(600)
+    assert mm_of_m(already) is already
+
+    # to_m：m 记法视图（公式路径），纯数字折叠回 m 值、复合式补 /1000
+    assert mm(600).to_m().e == "0.6"
+    assert (mm(600) + mm(130)).to_m().e == "(600+130)/1000"
+    assert (mm(600) + mm(130)).to_m().v == pytest.approx(0.73)
+    assert (mm(600) + mm(130)).to_m().s == 0
+
+
+def test_mm_space_algebra_records_scale_suffix() -> None:
+    """mm 记法代数：乘除指数相加减、加减要求同指数；记录时统一 /10^s。"""
+    from app.core.calc.tracer import Dim, mm, mm_of_m, raw_dim
+
+    bottom = mm(600) + mm(65) * 2 + mm(130) * 2
+    assert bottom.s == 3
+    assert bottom.e == "600+65*2+130*2"
+    # 面积 = mm × mm → s=6；记录成 (mm²)/10^6，求值 = 每延米体积（m³/m）
+    area = Dim(
+        bottom.v * bottom.v * 2,
+        f"({bottom.e})*({bottom.e})*2",
+        (),
+        bottom.s + bottom.s,
     )
-    # 负号开头的连续段：段内符号取反（-(A-B)/1000 = -A/1000+B/1000）
-    assert extract_common_divisors("600/1000-500/1000") == "(600-500)/1000"
-    assert extract_common_divisors("50-600/1000-500/1000") == "50-(600+500)/1000"
-    # 单段可提取不动（提取不会更短）
-    assert extract_common_divisors("600/1000+0.5") == "600/1000+0.5"
-    assert extract_common_divisors("2.5+0.3+(65+130)/1000") == "2.5+0.3+(65+130)/1000"
-    # 函数参数表与函数调用括号不动
-    assert extract_common_divisors("CEILING(600/1000+700/1000,1)") == "CEILING(600/1000+700/1000,1)"
-    assert extract_common_divisors("SIN(120*PI()/180)*600/1000") == "SIN(120*PI()/180)*600/1000"
-    # 值等价
-    for text in (
-        "600/1000+(65*2+130*2+500*2)/1000",
-        "2.5+0.3+(65+130)/1000",
-        "50-600/1000-500/1000",
-        "150/1000*(600+65/1000*2)-300/1000",
-    ):
-        assert evaluate(extract_common_divisors(text)) == pytest.approx(evaluate(text))
+    quantity = Quantity(key="开挖|Ⅲ类土|m3")
+    quantity.add_term(area.v, area, "垫层~覆土")
+    assert quantity.terms[0].expr == "(600+65*2+130*2)*(600+65*2+130*2)*2/10^6"
+    assert evaluate(quantity.terms[0].expr) == pytest.approx(area.v, rel=1e-12)
+
+    # m² 每延米（s=3）记录成 /10^3
+    template = mm(100) * 2
+    q2 = Quantity(key="垫层|模板|m2")
+    q2.add_term(template.v, template, "垫层模板")
+    assert q2.terms[0].expr == "100*2/10^3"
+    assert evaluate(q2.terms[0].expr) == pytest.approx(template.v, rel=1e-12)
+
+    # 无量纲（s=0）原样记录：管材含量、井点数
+    q3 = Quantity(key="管材|混凝土管 Dn600|m")
+    q3.add_term(1.0, "1", "管材含量")
+    assert q3.terms[0].expr == "1"
+
+    # 混空间加减立即报错（漏桥接 fail-fast）
+    with pytest.raises(AssertionError):
+        _ = bottom + raw_dim("2.5", 2.5)
+    with pytest.raises(AssertionError):
+        _ = raw_dim("2.5", 2.5) - bottom
+
+    # mm_of_m 折叠规则：纯数字折叠、公式 ×1000
+    assert mm_of_m(raw_dim("2.5+0.3", 2.8)).e == "(2.5+0.3)*1000"
+    assert evaluate(mm_of_m(raw_dim("2.5+0.3", 2.8)).e) == pytest.approx(2800)

@@ -2,18 +2,23 @@
 
 每个工程量条目产出 ``{key, value, expression, terms}``：
 
-* ``expression`` 是一条代入后的完整算式，加减链里公共的 ``/1000`` 已按四则运算
-  规则提到括号外（见 :func:`extract_common_divisors`），如
-  ``(2*(600+(65*2+130*2+500*2))/1000+2*2.995*1)*2.995/2``；
+* ``expression`` 是一条代入后的完整算式。**记法口径**：几何尺寸全程以 mm 进
+  算式（图集 / 原则表值原样、用户按 m 录入的埋深等换算成 mm），每延米的面积 /
+  体积式是纯 mm² 算式，记录时按记法指数统一追加换算 ``/10^6``（体积）、
+  ``/10^3``（面积），末尾再乘数量（m 原文），如
+  ``(2*(600+65*2+130*2+500*2)+2*(2500+300+65+130)*1)*(2500+300+65+130)/2/10^6*100``；
+  用户公式（原则 / 库模板按 m 口径编写）与管材含量、井点数等无量纲式仍为
+  m / 无量纲记法，不做换算。记法指数见 :class:`Dim` 的 ``s`` 字段；
 * **不预运算**：软件派生出来的数字（槽底宽由管径 + 图集参数 + 面宽原则推出、
-  毫米→米的换算、换填总厚、弓形占位…）在算式里把计算过程写全，只有直接
+  埋深的 mm 换算、换填总厚、弓形占位…）在算式里把计算过程写全，只有直接
   录入 / 查表的原始数据与软件常数才以单个数字出现，见 :class:`Dim`；
-* 用户在埋深 / 数量 / 参数 / 含量列写的算式以原文（括号保护）出现在代入位置，
-  见 :class:`Dim` 与 :func:`raw_dim`；
+* 用户在埋深 / 数量 / 参数 / 含量列写的算式以原文（括号保护）出现在代入位置；
+  按 m 录入的纯数字折叠成 mm 整数（单位换算），录入算式保留原文并显式
+  ``*1000``（不预计算），见 :func:`mm_of_m`；
 * 多来源的量（分层土方、多个构件公式）按项累加，算式用 +/− 连接各代入项；
 * 中间步骤（:meth:`Quantity.steps`）＝逐项一行「说明 + 该步算式」（分层、扣减、
   公式类别等），由项本身派生，每步算式按顺序拼起来就是完整算式；
-  供表格 tooltip / 详情弹窗查看，不进主算式。
+  供详情弹窗查看，不进主算式。
 * **展示层**（:meth:`Quantity.presentation`）把长算式拆成“主算式 + 中间量定义”：
   槽底宽、计算深度、外径、弓形面积等重复片段各定义一次，主算式只引用符号；
   定义式仍由原始数字组成，派生结果只放在“计算结果”列，不代回公式。
@@ -70,258 +75,6 @@ def needs_parens(expression: str) -> bool:
     if _NUMERIC.fullmatch(text):
         return False
     return _top_operator(text, _ADDITIVE)
-
-
-# --------------------------------------------------------------------------- #
-# 公共 /1000 提取（输出表达式可读化）
-# --------------------------------------------------------------------------- #
-_OPENERS = "([{"
-_CLOSERS = ")]}"
-_THOUSAND = re.compile(r"1000(?:\.0*)?")
-
-
-def _binary_sign_positions(text: str) -> list[int]:
-    """顶层二元加减号的位置（括号内、一元正负号、科学计数 1E-5 的指数号不算）。"""
-    positions: list[int] = []
-    depth = 0
-    for index, character in enumerate(text):
-        if character in _OPENERS:
-            depth += 1
-        elif character in _CLOSERS:
-            depth -= 1
-        elif depth == 0 and character in "+-":
-            previous = text[index - 1] if index else ""
-            if not previous or not (previous.isalnum() or previous in _CLOSERS):
-                continue  # 一元正负号
-            if (
-                previous in "Ee"
-                and index >= 2
-                and text[index - 2].isdigit()
-            ):
-                continue  # 1E-5 的指数符号
-            positions.append(index)
-    return positions
-
-
-def _term_divisor(term: str) -> tuple[str, int] | None:
-    """乘除链里 ``/1000`` 因子提出后的 (剩余算式, 个数)；没有可提出的因子返回 None。
-
-    因子按顶层 ``*`` / ``/`` 切（``**`` 乘方与括号整体都属于因子内部，不算
-    分隔符）；只有 ``/1000`` 形态（恰好除以常数 1000）的因子可以提出。
-    """
-    factors: list[str] = []
-    depth = 0
-    start = 0
-    for index, character in enumerate(term):
-        if character in _OPENERS:
-            depth += 1
-        elif character in _CLOSERS:
-            depth -= 1
-        elif depth == 0 and character in "*/":
-            if character == "*" and (
-                term[index + 1 : index + 2] == "*" or term[index - 1 : index] == "*"
-            ):
-                continue  # 乘方 ** 的两个星号都不是分隔符
-            factors.append(term[start:index])
-            start = index
-    factors.append(term[start:])
-    kept: list[str] = []
-    count = 0
-    for factor in factors:
-        stripped = factor.strip()
-        operator, body = ("", stripped)
-        if stripped[:1] in "*/":
-            operator, body = stripped[:1], stripped[1:].strip()
-        if operator == "/" and _THOUSAND.fullmatch(body):
-            count += 1
-            continue
-        kept.append(stripped)
-    if count == 0:
-        return None
-    residual = "".join(kept).strip()
-    return (residual, count) if residual else None
-
-
-def _strip_group_parens(residual: str) -> str:
-    """去掉残式外围的一层括号（仅当首括号与末括号正好配对包住整个残式）。"""
-    text = residual.strip()
-    if not (text.startswith("(") and text.endswith(")")):
-        return text
-    depth = 0
-    for index, character in enumerate(text):
-        if character == "(":
-            depth += 1
-        elif character == ")":
-            depth -= 1
-            if depth == 0 and index != len(text) - 1:
-                return text  # 首括号的配对不在末尾：不是整体包裹
-    return text[1:-1].strip()
-
-
-def _joined_residual(residual: str, operator: str) -> str:
-    """残式并回括号组时的形态：按上下文去掉冗余的外层括号。
-
-    组首与加号后的残式括号总可去（加法左结合）；减号后的残式如果剥掉
-    外围括号后顶层出现加减，说明那层括号正是在保护"作为整体被减的加减组"
-    （``X-(A+B)`` ≠ ``X-A+B``），必须保留。
-    """
-    if operator == "-":
-        inner = _strip_group_parens(residual)
-        if _top_operator(inner, _ADDITIVE):
-            return residual if residual.startswith("(") else f"({inner})"
-        return inner
-    return _strip_group_parens(residual)
-
-
-def _extract_chain(text: str) -> str:
-    """把加减链里**连续两段以上**公共的 ``/1000`` 提取到括号外。
-
-    只处理连续的可提取段（段序不变）；函数参数表（顶层逗号）与单段链不动。
-    ``600/1000+(65*2)/1000`` → ``(600+65*2)/1000``；首段带负号的连续段
-    （``X-A/1000-B/1000``）括号内符号取反 → ``X-(A+B)/1000``。
-    """
-    depth = 0
-    for character in text:
-        if character in _OPENERS:
-            depth += 1
-        elif character in _CLOSERS:
-            depth -= 1
-        elif depth == 0 and character == ",":
-            return text  # 顶层逗号 = 函数参数表，不动
-    positions = _binary_sign_positions(text)
-    if not positions:
-        return text
-    terms: list[tuple[str, str]] = []
-    cursor = 0
-    for order, index in enumerate(positions):
-        operator = "" if order == 0 else text[positions[order - 1]]
-        terms.append((operator, text[cursor:index].strip()))
-        cursor = index + 1
-    terms.append((text[positions[-1]], text[cursor:].strip()))
-    if any(not body for _operator, body in terms):
-        return text
-
-    #: (运算符, 原段, 提出后的残式或 None, 提出的个数或 -1)
-    extracted: list[tuple[str, str, str | None, int]] = []
-    for operator, body in terms:
-        found = _term_divisor(body)
-        if found is None:
-            extracted.append((operator, body, None, -1))
-        else:
-            extracted.append((operator, body, found[0], found[1]))
-
-    parts: list[str] = []
-    index = 0
-    total = len(extracted)
-    while index < total:
-        if extracted[index][3] < 0:
-            parts.append(extracted[index][0] + extracted[index][1])
-            index += 1
-            continue
-        run_end = index
-        while run_end < total and extracted[run_end][3] >= 0:
-            run_end += 1
-        if run_end - index >= 2:
-            # 连续可提取段按"提出的个数"再分组：个数不同（如 /1000/1000 与
-            # /1000 混排）不能合进同一个括号，各自成组、单段原样保留
-            sub_index = index
-            while sub_index < run_end:
-                count = extracted[sub_index][3]
-                sub_end = sub_index
-                while sub_end < run_end and extracted[sub_end][3] == count:
-                    sub_end += 1
-                chunk = extracted[sub_index:sub_end]
-                if len(chunk) >= 2:
-                    # 首段运算符留在括号外；为负时括号内各段运算符取反
-                    # （-(A-B)/1000 = -A/1000+B/1000）
-                    first_operator = chunk[0][0]
-                    flip = first_operator == "-"
-                    inner_parts: list[str] = []
-                    for order in range(len(chunk)):
-                        operator = "" if order == 0 else chunk[order][0]
-                        if order == 0:
-                            operator = ""
-                        elif flip:
-                            operator = "+" if operator == "-" else "-"
-                        inner_parts.append(
-                            operator + _joined_residual(chunk[order][2], operator)
-                        )
-                    inner = "".join(inner_parts)
-                    parts.append(first_operator + f"({inner})" + "/1000" * count)
-                else:
-                    parts.append(chunk[0][0] + chunk[0][1])  # 单段原样
-                sub_index = sub_end
-        else:
-            for order in range(index, run_end):
-                parts.append(extracted[order][0] + extracted[order][1])  # 单段原样
-        index = run_end
-    return "".join(parts)
-
-
-def extract_common_divisors(expression: str) -> str:
-    """输出表达式可读化：把公共的 ``/1000`` 按四则运算规则提到括号外。
-
-    引擎按"不预运算"原则把毫米→米换算写成 ``/1000``，同一加减链里反复出现
-    （``600/1000+(65*2+130*2+500*2)/1000``）；连续两段以上公共的 ``/1000``
-    提取为 ``(600+(65*2+130*2+500*2))/1000``，值不变、式更短。逐段扫描
-    （顶层加减号切段、段内乘除链找 ``/1000`` 因子、括号组递归），扫描失败
-    或无公共因子时原样返回。
-    """
-    text = (expression or "").strip()
-    if "/1000" not in text:
-        return text
-    return _extract_chain(_rewrite_groups(text))
-
-
-def _rewrite_groups(text: str) -> str:
-    """递归改写各顶层括号组（组内再找更深的组与加减链）。
-
-    组重写后顶层只剩乘除、且组不在除数 / 乘方底数位置时，外层括号可以
-    去掉（``2*((600+…)/1000)`` → ``2*(600+…)/1000``，左结合下同值），
-    避免改写引入冗余括号。
-    """
-    pieces: list[str] = []
-    cursor = 0
-    depth = 0
-    start = -1
-    for index, character in enumerate(text):
-        if character in _OPENERS:
-            if depth == 0:
-                start = index
-            depth += 1
-        elif character in _CLOSERS:
-            depth -= 1
-            if depth < 0:
-                return text
-            if depth == 0 and start >= 0:
-                original = text[start + 1 : index]
-                content = _extract_chain(_rewrite_groups(original))
-                if content == original:
-                    pieces.append(text[cursor : index + 1])  # 组内没有变化：原样保留
-                    cursor = index + 1
-                    start = -1
-                    continue
-                before = text[cursor:start].rstrip()
-                after = text[index + 1 : index + 3].lstrip()
-                # 除数 / 乘方（前后紧邻 ^ **）位置的组括号不能去；函数调用
-                # （SIN( … 的括号是语法的一部分，更不能动）
-                tight = (
-                    before.endswith(("/", "**", "^"))
-                    or before[-1:].isalnum()
-                    or before[-1:] == "_"
-                    or after.startswith(("^", "**"))
-                )
-                if tight or not content.strip() or _top_operator(content, _ADDITIVE):
-                    pieces.append(text[cursor:start] + "(" + content + ")")
-                else:
-                    pieces.append(text[cursor:start])
-                    pieces.append(content)
-                cursor = index + 1
-                start = -1
-    if depth != 0:
-        return text
-    pieces.append(text[cursor:])
-    return "".join(pieces)
 
 
 def needs_parens_tight(expression: str) -> bool:
@@ -388,31 +141,70 @@ class Dim:
     """带算式的数值（埋深、层厚、宽度、图集参数、数量…）：``v`` 为数值，``e`` 为求值等价的算式。
 
     数值与算式同源：加减乘除都在 Dim 上进行，算式按运算逐级拼出来，
-    **不做预运算**——派生量（槽底宽 = 管径/1000 + 图集与面宽参数、换填总厚、
+    **不做预运算**——派生量（槽底宽 = 管径 + 图集与面宽参数、换填总厚、
     弓形占位…）在算式里保留全部来源，只有直接录入 / 查表的原始数据
     （管径、图集 t/a/C1/C2、面宽表值）和软件常数（0.5、π 系数）才是一个数字。
     ``e`` 是裸算式，嵌入模板前须经 :func:`wrap`。
 
     ``tags`` 记录参与运算的语义量（槽底宽、计算深度…），只供展示层把长算式拆成
     “主算式 + 中间量定义”；它不改变 ``v`` / ``e``，也不影响计算与完整算式。
+
+    ``s`` 是**记法指数**：``e`` 求值 = ``v × 10^s``。``v`` 恒为 m（SI）或无量纲；
+    ``s=0`` 为 m 记法（用户公式、数量、含量等），``s=3`` 为 mm 记法（几何尺寸
+    全程 mm 进算式，见 :func:`mm`）。乘除时指数相加减，加减要求两侧同指数
+    （不同记法空间的量必须先经 :func:`mm_of_m` / :meth:`to_m` 桥接，漏桥接
+    直接报错，不静默出错值）；工程量记录时按 ``s`` 统一追加 ``/10^s``
+    （见 :meth:`Quantity.add_term`）。
     """
 
     v: float
     e: str
     tags: tuple[NamedValue, ...] = ()
+    #: 记法指数：0 = m 记法，3 = mm 记法（e 求值 = v × 10^s）
+    s: int = 0
 
     def named(self, label: str, source: str = "") -> "Dim":
         """给当前量补一个展示名称（返回新 Dim，不改原对象）。"""
-        return Dim(self.v, self.e, _merge_tags(self.tags, (NamedValue(self.e, label, source),)))
+        return Dim(
+            self.v,
+            self.e,
+            _merge_tags(self.tags, (NamedValue(self.e, label, source),)),
+            self.s,
+        )
+
+    def to_m(self) -> "Dim":
+        """mm 记法 → m 记法视图（``v`` 不变）：纯数字折叠回 m 值，算式补 ``/1000``。
+
+        用户公式（原则 / 库模板）按 m 口径编写、变量按 m 代入；几何链是 mm
+        记法，喂给公式前用本方法桥接：``600`` → ``0.6``、``(600+65*2)/1`` 形态的
+        复合式 → ``(600+65*2)/1000``。
+        """
+        if self.s == 0:
+            return self
+        if _NUMERIC.fullmatch(self.e.strip()):
+            return Dim(self.v, fmt(self.v), self.tags, 0)
+        return Dim(self.v, f"({self.e})/1000", self.tags, 0)
+
+    @staticmethod
+    def _space_of(other: "Dim | float") -> int:
+        """操作数的记法指数（普通数字按 m / 无量纲记法处理）。"""
+        return other.s if isinstance(other, Dim) else 0
 
     def __add__(self, other: "Dim | float") -> "Dim":
         value, expr, tags = pair(other)
         if value == 0:
             return self
         if self.v == 0:
-            return Dim(value, expr, _merge_tags(self.tags, tags))
-        # 加法两侧都是同级运算，右操作数加括号只为可读；左操作数无须括号
-        return Dim(self.v + value, f"{self.e}+{wrap(expr)}", _merge_tags(self.tags, tags))
+            return Dim(value, expr, _merge_tags(self.tags, tags), self._space_of(other))
+        # 加法左结合：右操作数无论顶层是不是加减都不需要括号
+        # （A+(B-C) ≡ A+B-C），扁平连接式更短
+        self._assert_same_space(other, expr)
+        return Dim(
+            self.v + value,
+            f"{self.e}+{expr}",
+            _merge_tags(self.tags, tags),
+            self.s,
+        )
 
     __radd__ = __add__
 
@@ -420,11 +212,26 @@ class Dim:
         value, expr, tags = pair(other)
         if value == 0:
             return self
+        self._assert_same_space(other, expr)
         # 减法的右操作数是算式时必须括起来，否则 X-(A+B) 会变成 X-A+B
-        return Dim(self.v - value, f"{self.e}-{wrap(expr)}", _merge_tags(self.tags, tags))
+        return Dim(
+            self.v - value,
+            f"{self.e}-{wrap(expr)}",
+            _merge_tags(self.tags, tags),
+            self.s,
+        )
+
+    def _assert_same_space(self, other: "Dim | float", expr: str) -> None:
+        """加减两侧记法指数必须一致（mm 链里混入 m 记法量 = 漏桥接，立即报错）。"""
+        other_s = self._space_of(other)
+        if other_s != self.s:
+            raise AssertionError(
+                f"记法指数不一致：{self.e!r}(10^{self.s}) 与 {expr!r}(10^{other_s}) "
+                "不能直接加减，请用 mm()/mm_of_m()/to_m() 桥接"
+            )
 
     def __neg__(self) -> "Dim":
-        return Dim(-self.v, f"-{wrap(self.e)}", self.tags)
+        return Dim(-self.v, f"-{wrap(self.e)}", self.tags, self.s)
 
     def __mul__(self, other: "Dim | float") -> "Dim":
         value, expr, tags = pair(other)
@@ -432,6 +239,7 @@ class Dim:
             self.v * value,
             f"{wrap(self.e)}*{wrap(expr)}",
             _merge_tags(self.tags, tags),
+            self.s + self._space_of(other),
         )
 
     __rmul__ = __mul__
@@ -445,6 +253,7 @@ class Dim:
             self.v / value,
             f"{wrap(self.e)}/{wrap(expr, tight=True)}",
             _merge_tags(self.tags, tags),
+            self.s - self._space_of(other),
         )
 
 
@@ -490,6 +299,58 @@ def raw_dim(raw: str, value: float) -> Dim:
     if not text or _NUMERIC.fullmatch(text):
         return dim(value)
     return Dim(value, text)
+
+
+def mm(value: float, expr: str | None = None, tags: Iterable[NamedValue] = ()) -> Dim:
+    """毫米尺寸 → mm 记法：``v`` 仍为 m（毫米值 /1000），算式就是毫米原值。
+
+    几何计算的统一口径：图集表值、原则表值等按 mm 录入的数据用本构造器，
+    参与运算的算式保持 mm 整数、不再手写 ``/1000``；记录工程量时由
+    :meth:`Quantity.add_term` 按记法指数统一追加 ``/10^6``（体积）或 ``/10^3``
+    （面积）。
+    """
+    return Dim(
+        float(value) / 1000.0,
+        expr if expr is not None else fmt(value),
+        tuple(tags),
+        3,
+    )
+
+
+def mm_text(raw: str, value_mm: float) -> Dim:
+    """用户按 mm 录入的原文 → mm 记法尺寸（原文可求值时原文进算式，否则数值）。"""
+    from app.core.evaluator import normalize
+
+    text = normalize(str(raw or ""))
+    if not text or _NUMERIC.fullmatch(text):
+        return mm(value_mm)
+    return Dim(value_mm / 1000.0, text, (), 3)
+
+
+def mm_dim(d: Dim) -> Dim:
+    """mm 值的 Dim（用户按 mm 录入的参数原文）→ mm 记法：原文进算式、数值 /1000。
+
+    与 :func:`mm_of_m` 的区别：这里的 ``d.v`` 本身是毫米数（构件参数“底板厚 400”
+    的 400 是 mm），换算发生在数值上、录入原文原样保留；:func:`mm_of_m` 的
+    ``d.v`` 是米数，换算发生在算式上（×1000）。
+    """
+    if d.s != 0:
+        return d
+    return Dim(d.v / 1000.0, d.e, d.tags, 3)
+
+
+def mm_of_m(d: Dim) -> Dim:
+    """m 记法长度量 → mm 记法：纯数字折叠成 mm 整数，录入算式保留原文 ×1000。
+
+    用户按 m 录入的埋深等量进几何算式时走这里：纯数字 ``2.5`` 是单位换算，
+    直接折叠为 ``2500``；录入算式 ``2.5+0.3`` 保留原文写成 ``(2.5+0.3)*1000``
+    （不预计算，用户能在式里核对自己的输入）。已是 mm 记法（``s=3``）的原样返回。
+    """
+    if d.s != 0:
+        return d
+    if _NUMERIC.fullmatch(d.e.strip()):
+        return Dim(d.v, fmt(d.v * 1000), d.tags, 3)
+    return Dim(d.v, f"({d.e})*1000", d.tags, 3)
 
 
 def prettify(expression: str) -> str:
@@ -649,22 +510,20 @@ def _safe_simplify(node: ast.AST) -> ast.AST:
 
 
 def _format_definition(expression: str) -> str:
-    """中间量定义式的展示格式：先提公共 /1000，再按最小括号形式输出。"""
-    text = extract_common_divisors(expression)
-    node = _parse_expression(text)
+    """中间量定义式的展示格式：按最小括号形式输出。"""
+    node = _parse_expression(expression)
     if node is None:
-        return prettify(text)
+        return prettify(expression)
     return _excel_expression(_safe_simplify(node))
 
 
 def _collect_tag_keys(tags: Iterable[NamedValue]) -> dict[str, NamedValue]:
-    """把来源标记的算式转成语法树 canonical key（原式与提公因式后的形式都收）。"""
+    """把来源标记的算式转成语法树 canonical key。"""
     result: dict[str, NamedValue] = {}
     for tag in tags:
-        for text in {tag.expr, extract_common_divisors(tag.expr)}:
-            node = _parse_expression(text)
-            if node is not None:
-                result.setdefault(_node_key(node), tag)
+        node = _parse_expression(tag.expr)
+        if node is not None:
+            result.setdefault(_node_key(node), tag)
     return result
 
 
@@ -759,10 +618,10 @@ def _select_candidates(
     selected: list[_Candidate] = []
     seen: set[str] = set()
 
-    def take(group: list[_Candidate], limit: int) -> None:
+    def take(group: list[_Candidate], limit: int | None) -> None:
         added = 0
         for candidate in group:
-            if added >= limit or len(selected) >= 8:
+            if limit is not None and added >= limit:
                 return
             if candidate.key in seen:
                 continue
@@ -770,7 +629,10 @@ def _select_candidates(
             selected.append(candidate)
             added += 1
 
-    take(semantic, 8)
+    # 语义量（槽底宽 / 计算深度等 tag 命中）不设上限：多段求和的量每一段都有
+    # 自己的语义量，只有全提成 B/B1…、H/H1… 每个分项行才是短式；
+    # 通用重复片段仍限 8 个，避免符号表失控。
+    take(semantic, None)
     # 通用片段只在“确有重复”时提取；不再把只出现一次的超长片段提成变量
     # （那只会让主算式变成 X1*100，反而多一次跳转）。同时避开语义量的内部，
     # 避免出现“计算深度 = 2.5+0.3+X”这类套娃定义。
@@ -915,8 +777,9 @@ def _prune_definitions(
 class Term:
     """工程量的一个代入项：expr 为未带正负号的算式，value 为带符号数值，note 为该项说明。
 
-    ``raw_expr`` 保留提公共 ``/1000`` 之前的形式，仅供展示层把语义量与语法树
-    对齐；``expr`` 仍是完整数值算式使用的可读形式。
+    ``expr`` 已按记法指数带换算尾（mm 记法的项为 ``(mm 式)/10^s`` 形态），
+    求值 = 该项数值。``raw_expr`` 与 ``expr`` 同值（历史字段，保留供展示层
+    与旧数据兼容）。
     """
 
     expr: str
@@ -996,9 +859,10 @@ class Quantity:
 
     @property
     def expression_outline(self) -> str:
-        """表格首屏用的轻量摘要：**不解析表达式**，悬停/双击时再生成完整说明。
+        """表格首屏用的轻量摘要：**不解析表达式**，双击时再生成完整说明。
 
-        单分项且式不长时直接显示原式；多分项给“几项 + 前几项说明”的摘要，
+        单分项且式不长时直接显示原式；多分项不加“X 个分项”前缀，按各项说明
+        与正负号直接连接——正项用 +、扣除项用 -（如“垫层-基础占位”），
         让用户一眼知道这条量由哪些部分组成，同时避免每次刷新表格都解析所有算式。
         """
         if not self.terms:
@@ -1007,17 +871,25 @@ class Quantity:
             text = self.terms[0].expr
             if len(text) <= 100:
                 return text
-            return f"{self.terms[0].note or '本项'}（悬停查看计算过程）"
+            return f"{self.terms[0].note or '本项'}（双击查看计算过程）"
         notes: list[str] = []
+        seen: set[tuple[bool, str]] = set()
         for term in self.terms:
-            if term.note and term.note not in notes:
-                notes.append(term.note)
-        preview = " + ".join(notes[:3])
-        if len(notes) > 3:
-            preview += "…"
-        if preview:
-            return f"{len(self.terms)} 个分项：{preview}"
-        return f"{len(self.terms)} 个分项（悬停查看计算过程）"
+            note = term.note
+            if not note:
+                continue
+            negative = term.value < 0
+            # 同名说明同符号只列一次（合槽/多构件合并时同一项会重复出现）
+            if (negative, note) in seen:
+                continue
+            seen.add((negative, note))
+            if not notes and not negative:
+                notes.append(note)
+            else:
+                notes.append(f"{'-' if negative else '+'}{note}")
+        if notes:
+            return "".join(notes)
+        return f"{len(self.terms)} 个分项（双击查看计算过程）"
 
     def compact_steps(self) -> list[tuple[str, str]]:
         """展示用分项步骤：``[(说明, “V1=主式”)]``；单分项直接给主式。"""
@@ -1031,24 +903,30 @@ class Quantity:
     def add_term(
         self,
         value: float,
-        expr: str,
+        expr: "str | Dim | None" = None,
         note: str = "",
         tags: Iterable[NamedValue] = (),
     ) -> None:
+        """累加一个代入项；``expr`` 传 :class:`Dim` 时按其记法指数追加 ``/10^s`` 换算尾。
+
+        mm 记法（s=3）的每延米面积 / 体积式存成 ``(mm 式)/10^6``（体积）或
+        ``/10^3``（面积），求值即该项数值（m 制）；m / 无量纲记法（s=0：用户
+        公式、管材含量、井点数）原样存入。算式只存“数值代入”部分，正负号由
+        value 决定，避免出现双重负号。
+        """
         self.value += value
         if value != 0:
-            # 算式只存“数值代入”部分，正负号由 value 决定，避免出现双重负号；
-            # 存入前把公共的 /1000 提到括号外（输出可读化，值不变，见
-            # :func:`extract_common_divisors`）
-            raw = expr.lstrip("-") or "0"
+            if expr is None:
+                text, space = fmt(value), 0
+            elif isinstance(expr, Dim):
+                text, space = expr.e, expr.s
+            else:
+                text, space = expr, 0
+            text = (text or "0").lstrip("-") or "0"
+            if space:
+                text = f"{wrap(text)}/10^{space}"
             self.terms.append(
-                Term(
-                    expr=extract_common_divisors(raw),
-                    value=value,
-                    note=note,
-                    tags=tuple(tags),
-                    raw_expr=raw,
-                )
+                Term(expr=text, value=value, note=note, tags=tuple(tags), raw_expr=text)
             )
             self._presentation_cache = None
 
@@ -1083,12 +961,14 @@ class QDict:
         self,
         key: str,
         value: float,
-        expr: str = "",
+        expr: "str | Dim | None" = None,
         note: str = "",
         tags: Iterable[NamedValue] = (),
     ) -> Quantity:
         """累加一项：``note`` 是该步的说明，挂在项上随 :meth:`Quantity.steps` 一起展示。
 
+        ``expr`` 可传算式原文（m / 无量纲记法，如用户公式结果）或 :class:`Dim`
+        （几何量：mm 记法随 Dim.s 记录，自动追加 ``/10^s`` 换算尾）。
         数值为 0 的项不进算式，其说明也一并丢弃（步骤列表与算式严格一一对应）。
         ``tags`` 只供展示层识别“槽底宽 / 计算深度”等中间量。
         """
@@ -1096,7 +976,7 @@ class QDict:
         if quantity is None:
             quantity = Quantity(key=key)
             self._items[key] = quantity
-        quantity.add_term(value, expr or fmt(value), note, tags)
+        quantity.add_term(value, expr, note, tags)
         return quantity
 
     def discard(self, key: str) -> None:

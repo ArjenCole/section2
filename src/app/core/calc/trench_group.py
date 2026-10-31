@@ -56,7 +56,7 @@ from app.core.calc.engine import (
 from app.core.calc.groove import backfill_layers, layer_roles, level_slope, split_h_by_step
 from app.core.calc.measures import AtlasDims, cushion_thickness as cushion_dim
 from app.core.calc.measures import foundation_thickness as foundation_dim
-from app.core.calc.tracer import Dim, QDict, dim, dim_min, dim_sum as _dim_sum, scale_sum, wrap
+from app.core.calc.tracer import Dim, QDict, dim, dim_min, dim_sum as _dim_sum, mm, mm_of_m, scale_sum, wrap
 from app.core.models import base as orm
 from app.core.models.models import (
     BACKFILL_UNIFIED,
@@ -111,7 +111,7 @@ def _slope_profile(work, height: Dim) -> tuple[list[_SlopeSegment], Dim]:
             run = run + segment * slope
             cum = top
         if step > 0 and top.v != 0 and heights[step - 1].v != top.v:
-            run = run + dim(levels[step - 1].step_width)
+            run = run + mm_of_m(dim(levels[step - 1].step_width))
     return segments, run
 
 
@@ -244,19 +244,22 @@ def _as_dim(value: "Dim | float") -> Dim:
 def _internal_run(work, h_deep: "Dim | float", h_shallow: "Dim | float") -> Dim:
     """内侧放坡的水平投影（Dim）：深侧槽底放坡到浅侧槽底的总外扩宽。
 
-    按做法逐级累加（含切级平台），桩类为 0（竖直隔断）。
+    按做法逐级累加（含切级平台），桩类为 0（竖直隔断）；浮点入参按 m 桥接。
     """
-    deep, shallow = _as_dim(h_deep), _as_dim(h_shallow)
+    deep, shallow = mm_of_m(_as_dim(h_deep)), mm_of_m(_as_dim(h_shallow))
     delta = deep - shallow
     if delta.v <= 0 or work is None:
-        return dim(0.0)
+        return mm(0.0)
     _segments, run = _slope_profile(work, delta)
     return run
 
 
 def _slope_points(work, depth: float) -> list[tuple[float, float]]:
-    """断面图用边坡折线 (绝对深度, 外扩宽 m)：浮点坐标，供 section_view 绘制。"""
-    segments, _run = _slope_profile(work, dim(depth))
+    """断面图用边坡折线 (绝对深度, 外扩宽 m)：浮点坐标，供 section_view 绘制。
+
+    浮点深度按 m 桥接成 mm 记法进剖面函数（内部只取 ``.v`` 浮点）。
+    """
+    segments, _run = _slope_profile(work, mm_of_m(dim(depth)))
     points: list[tuple[float, float]] = [(depth, 0.0)]
     for segment in segments:
         points.append((depth - segment.t1.v, segment.w1.v))
@@ -283,7 +286,7 @@ def _spacing_anchor_half(member: "_Member") -> Dim:
         return info.size_b_dim / 2
     if info.pf is not None and info.pf.con_found:
         return member.base_width / 2
-    return member.ad.od / 2 / 1000
+    return member.ad.od / 2
 
 
 def _boundary_splits(
@@ -530,9 +533,10 @@ def _resolve_member(
     ad = atlas_dims(info, at)
     if ad.c1.v == 0:
         ad = ad.replace(c1=cushion_dim(pf))
-    depth = info.depth_dim + (foundation_dim(pf) + ad.t + ad.c1) / 1000
-    base_width = info.size_b_dim + scale_sum((ad.t, ad.a), 2.0) / 1000
-    work_width = dim(workwidth_of(pw, info)) / 1000
+    # 成员几何一律 mm 记法（与单构件几何链同口径）；用户公式路径用 to_m 派生
+    depth = mm_of_m(info.depth_dim) + foundation_dim(pf) + ad.t + ad.c1
+    base_width = info.size_b_dim + scale_sum((ad.t, ad.a), 2.0)
+    work_width = mm(workwidth_of(pw, info))
     return (
         _Member(
             element=element,
@@ -773,16 +777,16 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             if hi.v - band_lo.v <= 1e-9:
                 continue
             area = split.offset * (hi - band_lo)
-            out.add(key, area.v, area.e, f"{note}{suffix}", tags=area.tags)
-            out.add(dig_key, area.v, area.e, f"{note}{suffix}", tags=area.tags)
+            out.add(key, area.v, area, f"{note}{suffix}", tags=area.tags)
+            out.add(dig_key, area.v, area, f"{note}{suffix}", tags=area.tags)
         # 坡区楔形：仅当获方更浅（条带在获方槽底以下），按深侧的分层带摊入
         if gainer.depth.v < loser.depth.v - 1e-9:
             for key, lo, hi, _layer, note in loser.bands:
                 area = _wedge_area(split, lo, hi)
                 if area is None or area.v == 0:
                     continue
-                out.add(key, area.v, area.e, f"{note}{suffix}", tags=area.tags)
-                out.add(dig_key, area.v, area.e, f"{note}{suffix}", tags=area.tags)
+                out.add(key, area.v, area, f"{note}{suffix}", tags=area.tags)
+                out.add(dig_key, area.v, area, f"{note}{suffix}", tags=area.tags)
 
     # 围护量（每面 ×1）+ 支撑
     flat_total = _dim_sum(*(member.flat_width for member in snapshots))
@@ -791,29 +795,35 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
     strut_emitted = False
 
     def _emit_face(face_work, face_depth: Dim, owner: _Member, note: str, support_flag: str) -> None:
-        """一个面的围护量（类别 ``围护`` ×1）与支撑（围檩 ×1；贯通支撑整槽一次）。"""
+        """一个面的围护量（类别 ``围护`` ×1）与支撑（围檩 ×1；贯通支撑整槽一次）。
+
+        ``face_depth`` / ``flat_total`` 是 mm 记法的几何量，用户公式按 m 口径
+        代入，经 :meth:`Dim.to_m` 派生。
+        """
         nonlocal strut_emitted
         out = results.setdefault(owner.element.id, QDict())
+        depth_m = face_depth.to_m()
+        flat_m = flat_total.to_m()
         works_quantities(
-            face_work, face_depth, amount_dim, "F", owner.ad, owner.info, out, note,
-            sides=1, width=flat_total, categories={"围护"},
+            face_work, depth_m, amount_dim, "F", owner.ad, owner.info, out, note,
+            sides=1, width=flat_m, categories={"围护"},
         )
         if getattr(owner.element, support_flag):
             # 支撑行按公式类别识别（不再看 Z 键前缀）；做法与围护面同一个
             # （含换填层厚度的）档位，贯通支撑行只在首个勾选面出一次
             levels = list(face_work.levels)
-            fixed_h = _dim_sum(*(dim(level.h) for level in levels if level.h >= 0))
+            fixed_h = _dim_sum(*(mm_of_m(dim(level.h)) for level in levels if level.h >= 0))
             fixed_cnt = sum(1 for level in levels if level.h >= 0)
             for level in levels:
                 if level.h >= 0:
-                    height = dim(level.h)
+                    height = mm_of_m(dim(level.h))
                 elif len(levels) > fixed_cnt:
                     height = (face_depth - fixed_h) / (len(levels) - fixed_cnt)
                 else:
                     height = face_depth
                 component = level.components[0] if level.components else None
                 component_side_quantities(
-                    component, height, flat_total, amount_dim, out,
+                    component, height.to_m(), flat_m, amount_dim, out,
                     note=f"{note}·支撑", emit_without_sides=not strut_emitted,
                 )
             strut_emitted = True
@@ -840,7 +850,7 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
         work_well = choice_work(member.pe_r, member.depth.v)
         if pp is not None and work_well is not None:
             # 湿土排水 = 归属带宽 ×（槽深−1m）的简化断面
-            wet = member.flat_width * (member.depth - dim(1.0)) if member.depth.v > 1 else None
+            wet = member.flat_width * (member.depth - mm(1000)) if member.depth.v > 1 else None
             precipitation.cal_precipitation(
                 pp, work_well, pf, member.ad, info, member.depth, out,
                 wet_dig=wet,
@@ -848,7 +858,13 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
         special = pf.components[0] if pf.components else None
         if special is not None:
             component_quantities(
-                special, member.depth, member.flat_width, info.amount_dim, "F", out, "特殊地基"
+                special,
+                member.depth.to_m(),
+                member.flat_width.to_m(),
+                info.amount_dim,
+                "F",
+                out,
+                "特殊地基",
             )
         foundation.cal_found(info, pf, pp, member.ad, out)
         if info.category == CATEGORY_ENCASED:
@@ -998,17 +1014,19 @@ def _member_dig_fill(
             area = low * height
         else:
             # (2*W_下 + Σ(H*s))*H/2：下底只出现一次，与非合槽构件同形
-            doubled = Dim(2 * low.v, f"2*{wrap(low.e)}")
+            doubled = Dim(2 * low.v, f"2*{wrap(low.e)}", (), low.s)
             inner = doubled + slope_terms
             area = Dim(
                 inner.v * height.v / 2.0,
                 f"({inner.e})*{wrap(height.e)}/2",
+                (),
+                inner.s + height.s,
             )
         if area.v == 0:
             continue
         produced = True
-        out.add(key, area.v, area.e, note, tags=area.tags)
-        dig.add_term(area.v, area.e, note, tags=area.tags)
+        out.add(key, area.v, area, note, tags=area.tags)
+        dig.add_term(area.v, area, note, tags=area.tags)
     if not produced:
         out.discard(dig_key)
         return False

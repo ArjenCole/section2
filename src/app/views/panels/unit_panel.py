@@ -110,10 +110,12 @@ _CATEGORY_ABBRS = {
 _QUANTITY_HEADERS = ["编号", "类别", "项目", "单位", "工程量", "计算表达式"]
 _QCOL_EXPRESSION = 5
 _QCOL_AMOUNT = 4
-#: 工程量表“计算表达式”格的懒加载数据：quantity 对象 / 已生成的主式 / 是否已生成
+#: 工程量表“计算表达式”格的懒加载数据：quantity 对象 / 已生成的主式 /
+#: 详情弹窗正文 / 是否已生成（首屏只显示 expression_outline，双击才生成详情）
 _EXPR_QUANTITY_ROLE = Qt.ItemDataRole.UserRole + 10
 _EXPR_MAIN_ROLE = Qt.ItemDataRole.UserRole + 11
 _EXPR_READY_ROLE = Qt.ItemDataRole.UserRole + 12
+_EXPR_DETAIL_ROLE = Qt.ItemDataRole.UserRole + 13
 #: 定额/清单表格列宽默认值（取自运行实例实测；末列不拉伸，保持实测宽度）
 _QUANTITY_WIDTHS = [77, 66, 193, 48, 135, 434]
 
@@ -709,8 +711,8 @@ class UnitPanel(QWidget):
             table = self._make_table(_QUANTITY_HEADERS, card_header=True)
             table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
             table.setWordWrap(False)
-            table.setMouseTracking(True)
-            table.itemEntered.connect(self._on_quantity_item_entered)
+            # 首屏直接显示 expression_outline，悬停不刷新、不弹 tooltip；
+            # 双击打开详情弹窗（详情按需生成一次，缓存在 item data role 里）
             table.itemDoubleClicked.connect(self._show_expression_detail)
             table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             table.customContextMenuRequested.connect(self._on_quantity_context_menu)
@@ -1180,10 +1182,12 @@ class UnitPanel(QWidget):
         ]
 
     def _ensure_expression_item(self, item: QTableWidgetItem) -> bool:
-        """按需生成某条工程量的展示说明（悬停/双击/右键复制时调用）。
+        """按需生成某条工程量的详情说明（双击 / 右键复制主式时调用）。
 
-        表格刷新阶段只写 ``expression_outline``，不解析任何表达式；生成一次后
-        用 item 的 data role 缓存，鼠标在单元格间移动不会重复解析。
+        表格刷新阶段只写 ``expression_outline``，不解析任何表达式；首屏内容
+        就是要显示的内容（单分项原式或多分项带符号说明），悬停不再刷新单元格、
+        也不弹 tooltip。双击打开详情或右键复制时才解析一次，用 item 的
+        data role 缓存，同一格不重复解析。
         """
         if item.column() != _QCOL_EXPRESSION:
             return False
@@ -1198,19 +1202,11 @@ class UnitPanel(QWidget):
         except Exception as error:  # 展示失败不影响工程量表本身
             detail = f"计算过程生成失败：{error}"
             main = None
-        item.setToolTip(detail)
         if main:
             item.setData(_EXPR_MAIN_ROLE, main)
-            if not getattr(quantity, "per_element", False):
-                # 单条工程量：首次悬停时把首屏摘要升级成主算式
-                item.setText(main)
+        item.setData(_EXPR_DETAIL_ROLE, detail)
         item.setData(_EXPR_READY_ROLE, True)
         return True
-
-    def _on_quantity_item_entered(self, item: QTableWidgetItem) -> None:
-        """鼠标进入表达式格才生成说明（QTableWidget 已开 mouseTracking）。"""
-        if item.column() == _QCOL_EXPRESSION and not item.data(_EXPR_READY_ROLE):
-            self._ensure_expression_item(item)
 
     def _on_quantity_context_menu(self, position) -> None:
         """工程量表右键：复制主算式 / 完整数值算式，或打开计算过程。"""
@@ -1239,7 +1235,7 @@ class UnitPanel(QWidget):
         """双击“计算表达式”列：展示主算式、分项、中间量定义和完整数值算式。"""
         if not self._ensure_expression_item(item):
             return
-        text = item.toolTip()
+        text = str(item.data(_EXPR_DETAIL_ROLE) or "")
         if not text:
             return
         screen = self.screen() or QGuiApplication.primaryScreen()

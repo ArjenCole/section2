@@ -71,13 +71,13 @@ def test_closed_form_trapezoid(project) -> None:
     dig_per_meter = (2 * bottom + 2 * groove_depth) * groove_depth / 2
     assert dig_per_meter == pytest.approx(dq.get("开挖|Ⅲ类土|m3").value / 100, rel=1e-9)
 
-    # 算式不预运算：下底边（槽底宽 = 管径/1000 + 2×(壁厚+工作面加宽+工作面)/1000）
-    # 与沟槽深度（埋深原文 + (壁厚+垫层厚)/1000）都把来源写全，不出现算好的数字
+    # 算式不预运算：下底边（槽底宽 = 管径 + 2×(壁厚+工作面加宽+工作面)，mm 记法）
+    # 与沟槽深度（埋深原文 ×1000 + 壁厚+垫层厚）都把来源写全，不出现算好的数字；
+    # 每延米断面式为纯 mm²，记录时统一 /10^6
     dig = dq.get("开挖|Ⅲ类土|m3")
-    # 公共 /1000 已按四则运算规则提到括号外（tracer.extract_common_divisors）
-    assert "(600+65*2+130*2+500*2)/1000" in dig.expression
-    assert "(2.5+0.3+(65+130)/1000)" in dig.expression
-    assert "(2*" in dig.expression  # 梯形 (2*B+2*H*放坡系数)*H/2
+    assert "600+65*2+130*2+500*2" in dig.expression
+    assert "(2.5+0.3)*1000+65+130" in dig.expression
+    assert dig.expression.endswith("/2/10^6*100")  # 梯形 (2*B+2*H*m)*H/2，mm²→m³
 
     # 分层合计 = 挖方（无平台跳级时连续梯形闭合）
     layers = (c1 + c2) / 1000 + (0.3 + (t - c2) / 1000) + (0.3 + t / 1000) + 0.5 + (
@@ -142,8 +142,8 @@ def test_user_expression_in_output(project) -> None:
     dig = _results(unit)[elements["混凝土管"].id].get("开挖|Ⅲ类土|m3")
     # 埋深 "2.5+0.3"：挖方层厚 = 埋深原文 + 垫层/板厚调整（调整量也不预运算，
     # (65+130)/1000 写全图集壁厚与垫层厚）；数量 100 纯数字照旧
-    assert "(2.5+0.3+(65+130)/1000)" in dig.expression
-    assert dig.expression.endswith("*100")
+    assert "(2.5+0.3)*1000+65+130" in dig.expression
+    assert dig.expression.endswith("/10^6*100")
 
     # 数量写算式：*数量 按原文进每条算式（不带多余括号）
     e4 = unit_vm.create_element(unit.id, category=1, name="数量算式", depth="3", amount="50*2")

@@ -62,7 +62,7 @@ from app.core.calc.engine import (
     workwidth_of,
 )
 from app.core.calc.groove import level_slope
-from app.core.calc.tracer import dim, scale_sum
+from app.core.calc.tracer import dim, mm_of_m, scale_sum
 from app.services import project_io
 from app.services.atlas import resolve_atlas
 
@@ -443,7 +443,9 @@ def _build_trench_scene(
 
     cushion_name = pf.cushions[0].name if pf.cushions else "中粗砂"
     ad_display = atlas_dims(info, at_display)  # 图集参数的算式伴随（这里只取数值）
-    layers = groove.backfill_layers(info.pp, pf, ad_display, info.size_h_dim, dim(depth), cushion_name)
+    layers = groove.backfill_layers(
+        info.pp, pf, ad_display, info.size_h_dim, mm_of_m(dim(depth)), cushion_name
+    )
     bottom = groove.groove_width(ad_display, info.size_b_dim).v
     problem: list[str] = []
     segments = _walk_layers(list(work.levels), layers, bottom, depth, problem=problem)
@@ -487,7 +489,7 @@ def _walk_layers(
     提示写进去，由调用方转成断面提示——旧版 ``while True`` 在这种情况下会
     原地打转，界面表现为卡死。
     """
-    step_heights = [step.v for step in groove.split_h_by_step(levels, dim(depth))]
+    step_heights = [step.v for step in groove.split_h_by_step(levels, mm_of_m(dim(depth)))]
     if not step_heights:
         return []
     step = len(levels) - 1
@@ -549,8 +551,8 @@ def _walk_layers_sided(
     ``problem`` 语义同 :func:`_walk_layers`：递推无法前进或步数超限时停下并
     写回原因。
     """
-    heights_l = [step.v for step in groove.split_h_by_step(levels_l, dim(depth))]
-    heights_r = [step.v for step in groove.split_h_by_step(levels_r, dim(depth))]
+    heights_l = [step.v for step in groove.split_h_by_step(levels_l, mm_of_m(dim(depth)))]
+    heights_r = [step.v for step in groove.split_h_by_step(levels_r, mm_of_m(dim(depth)))]
     if not heights_l or not heights_r:
         return [], []
     step_l, step_r = len(levels_l) - 1, len(levels_r) - 1
@@ -640,7 +642,7 @@ def _build_trench_scene_lr(
     ad_display = atlas_dims(info, at_display)
     cushion_name = pf.cushions[0].name if pf.cushions else "中粗砂"
     layers = groove.backfill_layers(
-        info.pp, pf, ad_display, info.size_h_dim, dim(depth), cushion_name
+        info.pp, pf, ad_display, info.size_h_dim, mm_of_m(dim(depth)), cushion_name
     )
     bottom = groove.groove_width(ad_display, info.size_b_dim).v
     problem: list[str] = []
@@ -769,8 +771,8 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
         at = resolve_atlas(build_atlas_query(info, pf, pw))
         ad = atlas_dims(info, at)
         c1_display = at.c1 if at.c1 != 0 else cushion_thickness(pf)
-        depth = info.depth + groove.mm2m(foundation_thickness(pf) + ad.t.v + c1_display)
-        base_width = (info.size_b_dim + scale_sum((ad.t, ad.a), 2.0) / 1000).v
+        depth = info.depth + ad.t.v + groove.mm2m(foundation_thickness(pf) + c1_display)
+        base_width = (info.size_b_dim + scale_sum((ad.t, ad.a), 2.0)).v
         snapshots.append(
             {
                 "element": element,
@@ -927,7 +929,7 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
                 snap["pf"],
                 ad_display,
                 snap["info"].size_h_dim,
-                dim(snap["depth"]),
+                mm_of_m(dim(snap["depth"])),
                 cushion_name,
             )
         )

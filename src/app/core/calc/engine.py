@@ -13,9 +13,12 @@
 height/width/count 代入 → core.evaluator 求值，失败按 0 处理（同旧版 mscExp）。
 
 埋深 / 数量 / 构件参数的录入原文以 :class:`Dim`（数值 + 算式）参与计算：
-算式不做预运算，派生量（断面宽 = 管径/1000、图集外径 = 径+2×壁厚、
-槽底宽 = 断面宽+2×(壁厚+工作面加宽+工作面)、毫米→米换算…）在输出表达式里
-都写全来源，见 :mod:`app.core.calc.tracer` 与 :mod:`app.core.calc.measures`。
+算式不做预运算，派生量（断面宽 = 管径、图集外径 = 径+2×壁厚、槽底宽 =
+断面宽+2×(壁厚+工作面加宽+工作面)、埋深的 mm 换算…）在输出表达式里
+都写全来源。**记法口径**：几何链全程 mm 记算式（:func:`mm` 家族，``Dim.s=3``），
+每延米面积/体积式记录时统一追加 ``/10^6``（体积）、``/10^3``（面积）；用户公式
+（原则 / 库模板按 m 口径编写）的代入量用 :meth:`Dim.to_m` 派生 m 记法视图，
+公式行仍输出 m 制算式，见 :mod:`app.core.calc.tracer` 与 :mod:`app.core.calc.measures`。
 """
 
 from __future__ import annotations
@@ -63,6 +66,9 @@ from app.core.calc.tracer import (
     dim,
     dim_sum,
     fmt,
+    mm,
+    mm_dim,
+    mm_of_m,
     needs_parens,
     needs_parens_tight,
     raw_dim,
@@ -156,23 +162,31 @@ class ElementInput:
 
     @property
     def size_b_dim(self) -> Dim:
-        """断面宽 m 的算式伴随（直埋 = 管径/1000，箱涵 = 净宽 + 2×外壁厚/1000）。"""
+        """断面宽的 mm 记法算式伴随（直埋 = 管径，箱涵 = 净宽 + 2×外壁厚）。
+
+        几何链（槽底宽、梯形断面）直接用本属性；围护等用户公式按 m 口径
+        代入，用 :meth:`Dim.to_m` 派生 m 记法视图。
+        """
         if self.category in (CATEGORY_BURIED, CATEGORY_JACKING, CATEGORY_PULLING):
             return (
-                (dim(self.pipes[0].dn) / 1000).named("断面宽", "管径/1000")
+                mm(self.pipes[0].dn).named("断面宽", "管径")
                 if self.pipes
-                else dim(0.0)
+                else mm(0.0)
             )
         if self.category == CATEGORY_ENCASED:
-            return self.param_dim("包封宽", 1.5).named("断面宽", "构件参数·包封宽")
+            return mm_of_m(self.param_dim("包封宽", 1.5)).named(
+                "断面宽", "构件参数·包封宽"
+            )
         if self.category == CATEGORY_BOX_CULVERT:
             return (
-                self.param_dim("净宽(含内壁厚度)", 3.5)
-                + self.param_dim("外壁厚", 350) * 2 / 1000
-            ).named("断面宽", "净宽 + 2×外壁厚/1000")
+                mm_of_m(self.param_dim("净宽(含内壁厚度)", 3.5))
+                + mm_dim(self.param_dim("外壁厚", 350)) * 2
+            ).named("断面宽", "净宽 + 2×外壁厚")
         if self.category == CATEGORY_GALLERY:
-            return self.param_dim("外包宽", 6.8).named("断面宽", "构件参数·外包宽")
-        return dim(0.0)
+            return mm_of_m(self.param_dim("外包宽", 6.8)).named(
+                "断面宽", "构件参数·外包宽"
+            )
+        return mm(0.0)
 
     @property
     def size_b(self) -> float:
@@ -181,23 +195,28 @@ class ElementInput:
 
     @property
     def size_h_dim(self) -> Dim:
-        """断面高 m 的算式伴随（箱涵 = 净高 + (底板厚+顶板厚)/1000）。"""
+        """断面高的 mm 记法算式伴随（箱涵 = 净高 + 底板厚 + 顶板厚）。"""
         if self.category in (CATEGORY_BURIED, CATEGORY_JACKING, CATEGORY_PULLING):
             return (
-                (dim(self.pipes[0].dn) / 1000).named("断面高", "管径/1000")
+                mm(self.pipes[0].dn).named("断面高", "管径")
                 if self.pipes
-                else dim(0.0)
+                else mm(0.0)
             )
         if self.category == CATEGORY_ENCASED:
-            return self.param_dim("包封高", 1.0).named("断面高", "构件参数·包封高")
+            return mm_of_m(self.param_dim("包封高", 1.0)).named(
+                "断面高", "构件参数·包封高"
+            )
         if self.category == CATEGORY_BOX_CULVERT:
             return (
-                self.param_dim("净高", 2.0)
-                + (self.param_dim("底板厚", 400) + self.param_dim("顶板厚", 300)) / 1000
-            ).named("断面高", "净高 + (底板厚+顶板厚)/1000")
+                mm_of_m(self.param_dim("净高", 2.0))
+                + mm_dim(self.param_dim("底板厚", 400))
+                + mm_dim(self.param_dim("顶板厚", 300))
+            ).named("断面高", "净高 + 底板厚 + 顶板厚")
         if self.category == CATEGORY_GALLERY:
-            return self.param_dim("外包高", 3.2).named("断面高", "构件参数·外包高")
-        return dim(0.0)
+            return mm_of_m(self.param_dim("外包高", 3.2)).named(
+                "断面高", "构件参数·外包高"
+            )
+        return mm(0.0)
 
     @property
     def size_h(self) -> float:
@@ -459,33 +478,35 @@ def workwidth_of(pw: PcpWidth | None, info: ElementInput) -> float:
 
 
 def atlas_dims(info: ElementInput, at: AtlasParam) -> AtlasDims:
-    """图集参数的算式伴随：覆盖值取参数行原文，查表值以原始表值进算式。
+    """图集参数的算式伴随（mm 记法）：覆盖值取参数行原文，查表值以原始表值进算式。
 
     覆盖判定与 :func:`app.services.atlas._apply_overrides` 一致：工作面加宽 /
     垫层厚 / 基础厚按详情面板参数行（:func:`build_element_input` 已按类别滤过，
     键存在即覆盖），壁厚按管材行的用户值（包封 / 箱涵 / 管廊的断面宽由自身
     参数决定，不认管道壁厚）。图集无 oD 列时外径按 ``管径+2×壁厚`` 推出，
-    算式里保留这个推导。
+    算式里保留这个推导。所有 Dim 为 mm 记法（``v`` 已换算成 m）。
     """
     def _override(name: str) -> Dim | None:
-        return info.param_dims.get(name) if name in info.params else None
+        found = info.param_dims.get(name) if name in info.params else None
+        # 用户覆盖值按 mm 录入：原文进算式、数值换到 m（mm 记法）
+        return None if found is None else mm_dim(found)
 
-    a = _override(PARAM_A_NAME) or dim(at.a).named("工作面加宽", "图集参数 a")
-    c1 = _override(PARAM_C1_NAME) or dim(at.c1).named("垫层厚", "图集参数 C1")
-    c2 = _override(PARAM_C2_NAME) or dim(at.c2).named("基础厚", "图集参数 C2")
+    a = _override(PARAM_A_NAME) or mm(at.a).named("工作面加宽", "图集参数 a")
+    c1 = _override(PARAM_C1_NAME) or mm(at.c1).named("垫层厚", "图集参数 C1")
+    c2 = _override(PARAM_C2_NAME) or mm(at.c2).named("基础厚", "图集参数 C2")
     dn = (
-        dim(info.pipes[0].dn).named("管径", "构件管材·管径")
+        mm(info.pipes[0].dn).named("管径", "构件管材·管径")
         if info.pipes
-        else dim(0.0)
+        else mm(0.0)
     )
     wall = info.pipes[0].t if info.pipes else None
     if wall is not None and info.category not in C2_ZERO_CATEGORIES:
-        t = dim(wall).named("管道壁厚", "管材参数·壁厚")
+        t = mm(wall).named("管道壁厚", "管材参数·壁厚")
         od = (dn + t * 2).named("管道外径（mm）", "管径 + 2×壁厚")
     else:
-        t = dim(at.t).named("管道壁厚", "图集参数 t")
+        t = mm(at.t).named("管道壁厚", "图集参数 t")
         od = (
-            dim(at.od).named("管道外径（mm）", "图集参数 oD")
+            mm(at.od).named("管道外径（mm）", "图集参数 oD")
             if at.od > 0
             else (dn + t * 2).named("管道外径（mm）", "管径 + 2×壁厚")
         )
@@ -495,7 +516,7 @@ def atlas_dims(info: ElementInput, at: AtlasParam) -> AtlasDims:
         a=a,
         c1=c1,
         c2=c2,
-        workwidth=dim(at.workwidth).named("工作面宽", "面宽原则·工作面宽度表"),
+        workwidth=mm(at.workwidth).named("工作面宽", "面宽原则·工作面宽度表"),
         groove_b=groove_b_width(at.groove_b),
     )
 
@@ -714,7 +735,7 @@ def support_quantities_sided(
     级高划分同 works_quantities。
     """
     if width is None:
-        width = groove.groove_width(ad, info.size_b_dim)
+        width = groove.groove_width(ad, info.size_b_dim).to_m()
     strut_emitted = not emit_strut
     for work, checked in works:
         if not checked or work is None:
@@ -753,13 +774,17 @@ def prettify_formula(expression: str) -> str:
 # 总入口
 # --------------------------------------------------------------------------- #
 def cushion_thickness(pf: PcpFoundation) -> float:
-    """垫层厚 mm（垫层 v10 起属地基原则）；算式伴随见 measures.cushion_thickness。"""
-    return cushion_dim(pf).v
+    """垫层厚 mm（垫层 v10 起属地基原则）；算式伴随见 measures.cushion_thickness。
+
+    mm 记法后 :func:`measures.cushion_thickness` 的 ``.v`` 是 m，这里换回 mm
+    （图集参数替换 / 断面图等消费方都按 mm 取值）。
+    """
+    return cushion_dim(pf).v * 1000.0
 
 
 def foundation_thickness(pf: PcpFoundation) -> float:
     """换填总厚 mm（旧版 mcPcpFoundation.TiA）；算式伴随见 measures.foundation_thickness。"""
-    return foundation_dim(pf).v
+    return foundation_dim(pf).v * 1000.0
 
 
 def compute_element(info: ElementInput) -> QDict | None:
@@ -793,22 +818,28 @@ def compute_element(info: ElementInput) -> QDict | None:
         ad = ad.replace(c1=cushion_dim(pf))
 
     per_meter = QDict()
+    # mm 记法的 (换填总厚+壁厚+垫层厚)，几何链与公式路径共用
+    mm_extra = foundation_dim(pf) + ad.t + ad.c1
     groove_depth = (
-        depth_dim + (foundation_dim(pf) + ad.t + ad.c1) / 1000
-    ).named("计算深度", "埋深 + (换填总厚+壁厚+垫层厚)/1000")
+        mm_of_m(depth_dim).named("埋深", "构件埋深") + mm_extra
+    ).named("计算深度", "埋深 + 换填总厚 + 壁厚 + 垫层厚")
+    # 用户公式（围护 / 特殊地基）按 m 口径代入：埋深原文保留、换算部分 /1000
+    groove_depth_m = (depth_dim + mm_extra.to_m()).named(
+        "计算深度", "埋深 + (换填总厚+壁厚+垫层厚)/1000"
+    )
     work = choice_work(pe, groove_depth.v)
     if work is None:
         return None
     if not groove.cal_groove(info.pp, work, pf, ad, info.size_b_dim, info.size_h_dim, groove_depth, per_meter):
         return None
     precipitation.cal_precipitation(info.pp, work, pf, ad, info, groove_depth, per_meter)
-    works_quantities(work, groove_depth, amount_dim, "F", ad, info, per_meter, "围护")
+    works_quantities(work, groove_depth_m, amount_dim, "F", ad, info, per_meter, "围护")
     special = pf.components[0] if pf.components else None
     if special is not None:
         component_quantities(
             special,
-            groove_depth,
-            groove.groove_width(ad, info.size_b_dim),
+            groove_depth_m,
+            groove.groove_width(ad, info.size_b_dim).to_m(),
             amount_dim,
             "F",
             per_meter,
@@ -855,9 +886,13 @@ def compute_element_lr(info: ElementInput) -> QDict | None:
         ad = ad.replace(c1=cushion_dim(pf))
 
     per_meter = QDict()
+    mm_extra = foundation_dim(pf) + ad.t + ad.c1
     groove_depth = (
-        depth_dim + (foundation_dim(pf) + ad.t + ad.c1) / 1000
-    ).named("计算深度", "埋深 + (换填总厚+壁厚+垫层厚)/1000")
+        mm_of_m(depth_dim).named("埋深", "构件埋深") + mm_extra
+    ).named("计算深度", "埋深 + 换填总厚 + 壁厚 + 垫层厚")
+    groove_depth_m = (depth_dim + mm_extra.to_m()).named(
+        "计算深度", "埋深 + (换填总厚+壁厚+垫层厚)/1000"
+    )
     work_l = choice_work(pe_l, groove_depth.v)
     work_r = choice_work(pe_r, groove_depth.v)
     if work_l is None or work_r is None:
@@ -868,20 +903,21 @@ def compute_element_lr(info: ElementInput) -> QDict | None:
         groove_depth, per_meter, cushion_name,
     ):
         return None
-    width = groove.groove_width(ad, info.size_b_dim)
     # 围护行：每侧 ×1（库公式 *sides 代入 1；放坡模板无公式天然不出量）
     works_quantities(
-        work_l, groove_depth, amount_dim, "F", ad, info, per_meter,
+        work_l, groove_depth_m, amount_dim, "F", ad, info, per_meter,
         "围护·左侧", sides=1, categories={"围护"},
+        width=groove.groove_width(ad, info.size_b_dim).to_m(),
     )
     works_quantities(
-        work_r, groove_depth, amount_dim, "F", ad, info, per_meter,
+        work_r, groove_depth_m, amount_dim, "F", ad, info, per_meter,
         "围护·右侧", sides=1, categories={"围护"},
+        width=groove.groove_width(ad, info.size_b_dim).to_m(),
     )
     # 支撑行按公式类别识别（不再看 Z 键前缀）：围檩每侧 ×1、贯通支撑整槽一次
     support_quantities_sided(
         [(work_l, info.support_left), (work_r, info.support_right)],
-        groove_depth, amount_dim, ad, info, per_meter, note="支撑",
+        groove_depth_m, amount_dim, ad, info, per_meter, note="支撑",
     )
     # 降水（湿土排水的断面副调用也走双侧几何，垫层材质取地基原则）
     precipitation.cal_precipitation(
@@ -891,7 +927,15 @@ def compute_element_lr(info: ElementInput) -> QDict | None:
     # 特殊地基：按整槽宽（同单原则路径）
     special = pf.components[0] if pf.components else None
     if special is not None:
-        component_quantities(special, groove_depth, width, amount_dim, "F", per_meter, "特殊地基")
+        component_quantities(
+            special,
+            groove_depth_m,
+            groove.groove_width(ad, info.size_b_dim).to_m(),
+            amount_dim,
+            "F",
+            per_meter,
+            "特殊地基",
+        )
     # 管道基础（扣弓形占土，公共参数取地基原则）+ 管材
     foundation.cal_found(info, pf, pp, ad, per_meter)
     if info.category == CATEGORY_ENCASED:
@@ -1006,7 +1050,7 @@ def works_quantities(
     fixed_h = dim_sum(*(dim(level.h) for level in levels if level.h >= 0))
     fixed_cnt = sum(1 for level in levels if level.h >= 0)
     if width is None:
-        width = groove.groove_width(ad, info.size_b_dim)
+        width = groove.groove_width(ad, info.size_b_dim).to_m()
     for level in levels:
         if level.h >= 0:
             height = dim(level.h)

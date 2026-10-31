@@ -19,7 +19,7 @@ from app.core.evaluator import ceil_ratio
 from app.core.models.models import parse_precipitation
 from app.core.calc import groove
 from app.core.calc.measures import AtlasDims
-from app.core.calc.tracer import Dim, NamedValue, QDict, dim, fmt, raw_dim, wrap
+from app.core.calc.tracer import Dim, NamedValue, QDict, fmt, mm, raw_dim, wrap
 
 
 def _enabled(text: str, key: str) -> tuple[bool, float, float, float]:
@@ -81,27 +81,29 @@ def cal_precipitation(
     enabled, _elevation, _gap, _sides = _enabled(pp.wet_soil, "wet_soil")
     if enabled and groove_depth.v > 1:
         if wet_dig is not None:
-            # 合槽：湿土排水 = 归属带宽 ×（槽深−1m）的简化断面（合槽路径预算）
+            # 合槽：湿土排水 = 归属带宽 ×（槽深−1m）的简化断面（合槽路径预算，
+            # mm² 记法 Dim，记录时统一 /10^6）
             if wet_dig.v != 0:
                 out.add(
                     "降水|湿土排水|m3",
                     wet_dig.v,
-                    wet_dig.e,
+                    wet_dig,
                     "湿土排水 = 归属带宽×(槽深−1m)（合槽简化断面）",
                 )
             return
         sub = QDict()
         if work_r is None:
             groove.cal_groove(
-                pp, work, pf, ad, info.size_b_dim, info.size_h_dim, groove_depth - dim(1.0), sub
+                pp, work, pf, ad, info.size_b_dim, info.size_h_dim, groove_depth - mm(1000), sub
             )
         else:
             groove.cal_groove_sided(
                 pp, work, work_r, pf, ad, info.size_b_dim, info.size_h_dim,
-                groove_depth - dim(1.0), sub, cushion_name,
+                groove_depth - mm(1000), sub, cushion_name,
             )
         dig = sub.get(f"开挖|{pp.excvt}|m3")
         if dig is not None:
+            # 复用挖方算式：各项已带 /10^6 换算尾，按原样（m 记法字符串）并入
             out.add(
                 "降水|湿土排水|m3",
                 dig.value,

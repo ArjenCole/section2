@@ -509,8 +509,8 @@ def test_group_center_split_wall_at_center_midpoint(tmp_path) -> None:
         ad = atlas_dims(info, at)
         geometry.append(
             {
-                "b": (info.size_b + (ad.t * 2 + ad.a * 2) / 1000).v,
-                "h": (info.depth + (fd(pf).v + ad.t + ad.c1) / 1000).v,
+                "b": info.size_b + ad.t.v * 2 + ad.a.v * 2,
+                "h": info.depth + fd(pf).v / 1000 + ad.t.v + ad.c1.v,
                 "ww": workwidth_of(pw, info) / 1000,
             }
         )
@@ -592,8 +592,8 @@ def _pair_division_geometry(e1, e2, mode: str):
         ad = atlas_dims(info, at)
         geometry.append(
             {
-                "b": (info.size_b + (ad.t * 2 + ad.a * 2) / 1000).v,
-                "h": (info.depth + (fd(pf).v + ad.t + ad.c1) / 1000).v,
+                "b": info.size_b + ad.t.v * 2 + ad.a.v * 2,
+                "h": info.depth + fd(pf).v / 1000 + ad.t.v + ad.c1.v,
                 "ww": workwidth_of(pw, info) / 1000,
             }
         )
