@@ -747,7 +747,9 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
         member.flat_width = flat
 
     # 虚拟竖线分界（管中心分隔 / 间距平分分隔）：分界移到锚点中点。让出条带
-    # 的一方在剖面里扣减（挖填随分层积分同步减少），平面归属带宽随分界位移调整
+    # 的一方在剖面里扣减（挖填随分层积分同步减少），获方把条带作为恒宽段
+    # 并入分侧剖面——分层梯形自动含条带（每层一整个梯形，不再单独出条带项，
+    # 也就不按起坡点分左中右三列），平面归属带宽随分界位移调整
     splits: list[_CenterSplit] = []
     if group.split_mode in (SPLIT_CENTER_LINE, SPLIT_SPACING_MID):
         splits = _boundary_splits(snapshots, pairs, group.split_mode)
@@ -761,7 +763,19 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
                 loser.profiles_right.append(deduction)
             else:  # 让方在 pair 右侧：扣自己的左缘
                 loser.profiles_left.append(deduction)
-            snapshots[split.gainer].flat_width = snapshots[split.gainer].flat_width + split.offset
+            gainer = snapshots[split.gainer]
+            # 条带 = [条带下缘(浅槽底), 构件槽底] 的恒宽段，并入获方共享侧剖面
+            strip = [
+                _SlopeSegment(
+                    gainer.depth - split.shallow_depth, split.offset, dim(0.0), gainer.depth
+                )
+            ]
+            gainer.profiles.append(strip)
+            if split.gainer == split.pair_index:  # 获方在 pair 左侧：条带并自己的右缘
+                gainer.profiles_right.append(strip)
+            else:  # 获方在 pair 右侧：条带并自己的左缘
+                gainer.profiles_left.append(strip)
+            gainer.flat_width = gainer.flat_width + split.offset
             loser.flat_width = loser.flat_width - split.offset
 
     # 回填分层带：独立回填标高 = 各构件自己的分层界面（现状口径）；
@@ -795,23 +809,6 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
         out = results[gainer.element.id]
         dig_key = f"开挖|{gainer.info.pp.excvt}|m3"
         suffix = f"·{group.split_mode}"
-        # 条带 x 范围（相对获方本体中心，m）：起坡点分界与新分界之间的转移带
-        if split.gainer == split.pair_index:  # 获方在 pair 左侧：条带在分界右侧
-            x_left, x_right = split.wall_x, split.wall_x + split.offset.v
-        else:  # 获方在 pair 右侧：条带在分界左侧
-            x_left, x_right = split.wall_x - split.offset.v, split.wall_x
-        strip_left = x_left - split.gainer_center_x
-        strip_right = x_right - split.gainer_center_x
-        # 矩形条带：浅槽底以上的竖直条带，按获方自己的分层带摊入
-        rect_lo = gainer.depth - split.shallow_depth
-        for key, lo, hi, _layer, note in gainer.bands:
-            band_lo = lo if lo.v >= rect_lo.v - 1e-9 else rect_lo
-            if hi.v - band_lo.v <= 1e-9:
-                continue
-            area = split.offset * (hi - band_lo)
-            geometry = (band_lo.v, hi.v, strip_left, strip_right, strip_left, strip_right)
-            out.add(key, area.v, area, f"{note}{suffix}", tags=area.tags, geometry=geometry)
-            out.add(dig_key, area.v, area, f"{note}{suffix}", tags=area.tags, geometry=geometry)
         # 坡区楔形：获方更浅时，浅槽底以下的坡区楔形划给获方——计入获方自己
         # 最底层的定额键（垫层），每个分界一个三角形/梯形分项（高度自获方
         # 槽底起算为负，几何即楔形外接梯形，悬停高亮用）

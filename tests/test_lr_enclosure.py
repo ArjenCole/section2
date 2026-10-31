@@ -779,11 +779,12 @@ def test_group_center_split_conserves_and_transfers(project) -> None:
     assert dig_shallow_center + dig_deep_center == pytest.approx(total, rel=1e-9)
     assert dig_shallow_center == pytest.approx(dig_shallow + (rect + wedge) * 120, rel=1e-9)
     assert dig_deep_center == pytest.approx(dig_deep - (rect + wedge) * 120, rel=1e-9)
-    # 条带以独立项进入获方挖方（"分左右两侧分别计算再加起来"）
+    # 矩形条带并入获方分层梯形（每层一整个梯形）；坡区楔形作为三角形独立项
     terms = results_center[e1].get("开挖|Ⅲ类土|m3").terms
     transferred = [t for t in terms if "管中心分隔" in t.note]
-    assert transferred, "获方挖方应包含管中心分隔条带项"
-    assert sum(t.value for t in transferred) == pytest.approx((rect + wedge) * 120, rel=1e-9)
+    assert transferred, "获方挖方应包含管中心分隔楔形项"
+    assert sum(t.value for t in transferred) == pytest.approx(wedge * 120, rel=1e-9)
+    # 矩形条带部分在获方各层梯形内（几何越过起坡点分界）：任一层左右缘含条带
 
 
 def test_group_center_split_wedge_to_shallow_cushion(project) -> None:
@@ -1010,10 +1011,12 @@ def test_group_spacing_mid_split_concrete_foundations(project) -> None:
     assert dig1m + dig2m == pytest.approx(total, rel=1e-9)
     assert dig1m == pytest.approx(dig1 + (rect + wedge) * 120, rel=1e-9)
     assert dig2m == pytest.approx(dig2 - (rect + wedge) * 120, rel=1e-9)
+    # 矩形条带并入获方分层梯形；坡区楔形作为三角形独立项
     terms = results_mid[e1].get("开挖|Ⅲ类土|m3").terms
     transferred = [t for t in terms if "间距平分分隔" in t.note]
     assert transferred
-    assert sum(t.value for t in transferred) == pytest.approx((rect + wedge) * 120, rel=1e-9)
+    assert sum(t.value for t in transferred) == pytest.approx(wedge * 120, rel=1e-9)
+    # 矩形条带部分在获方各层梯形内（几何越过起坡点分界）
 
 
 # --------------------------------------------------------------------------- #
