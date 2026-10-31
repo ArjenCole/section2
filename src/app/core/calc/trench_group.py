@@ -307,6 +307,7 @@ def _boundary_splits(
     left_anchors: list[Dim] = []  # 各构件在其右侧相邻面上的分界锚点
     right_anchors: list[Dim] = []  # 各构件在其左侧相邻面上的分界锚点
     walls: list[Dim] = []
+    centers: list[Dim] = []  # 各构件本体中心的 x（自槽平底左缘起算）
     cursor = dim(0.0)
     for i, member in enumerate(snapshots):
         left_ext = snapshots[0].work_width if i == 0 else pairs[i - 1].right_width
@@ -314,6 +315,7 @@ def _boundary_splits(
         base_left = cursor + left_ext
         base_right = base_left + member.base_width
         center = base_left + member.base_width / 2
+        centers.append(center)
         half = _spacing_anchor_half(member) if spacing else dim(0.0)
         right_anchors.append(center - half)
         left_anchors.append(center + half)
@@ -351,6 +353,8 @@ def _boundary_splits(
                 delta_h=delta_h,
                 profile=profile,
                 run_max=run_max,
+                wall_x=walls[i].v,
+                gainer_center_x=centers[gainer].v,
             )
         )
     return splits
@@ -469,6 +473,10 @@ class _CenterSplit:
     delta_h: Dim  # 相邻面的槽底高差（等深为 0）
     profile: tuple[_SlopeSegment, ...]  # 深侧内侧坡的放坡剖面段（覆盖 [0, delta_h]）
     run_max: Dim  # 剖面末端外扩宽（坡区楔形 gap 的基准；直壁 / 等深为 0）
+    #: 起坡点分界的 x（自槽平底左缘起算，m）：条带 = [wall_x, wall_x±offset]
+    wall_x: float = 0.0
+    #: 获方本体中心的 x（同一原点）：条带几何换算成相对获方本体中心
+    gainer_center_x: float = 0.0
 
 
 @dataclass
@@ -745,7 +753,14 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
         splits = _boundary_splits(snapshots, pairs, group.split_mode)
         for split in splits:
             loser = snapshots[split.loser]
-            loser.profiles.append(_center_deduction(split, loser))
+            deduction = _center_deduction(split, loser)
+            loser.profiles.append(deduction)
+            # 分侧剖面同步扣减：分项几何的左右缘才能反映分隔
+            #（否则高亮色块仍按起坡点口径显示）
+            if split.loser == split.pair_index:  # 让方在 pair 左侧：扣自己的右缘
+                loser.profiles_right.append(deduction)
+            else:  # 让方在 pair 右侧：扣自己的左缘
+                loser.profiles_left.append(deduction)
             snapshots[split.gainer].flat_width = snapshots[split.gainer].flat_width + split.offset
             loser.flat_width = loser.flat_width - split.offset
 
@@ -780,6 +795,13 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
         out = results[gainer.element.id]
         dig_key = f"开挖|{gainer.info.pp.excvt}|m3"
         suffix = f"·{group.split_mode}"
+        # 条带 x 范围（相对获方本体中心，m）：起坡点分界与新分界之间的转移带
+        if split.gainer == split.pair_index:  # 获方在 pair 左侧：条带在分界右侧
+            x_left, x_right = split.wall_x, split.wall_x + split.offset.v
+        else:  # 获方在 pair 右侧：条带在分界左侧
+            x_left, x_right = split.wall_x - split.offset.v, split.wall_x
+        strip_left = x_left - split.gainer_center_x
+        strip_right = x_right - split.gainer_center_x
         # 矩形条带：浅槽底以上的竖直条带，按获方自己的分层带摊入
         rect_lo = gainer.depth - split.shallow_depth
         for key, lo, hi, _layer, note in gainer.bands:
@@ -787,16 +809,26 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             if hi.v - band_lo.v <= 1e-9:
                 continue
             area = split.offset * (hi - band_lo)
-            out.add(key, area.v, area, f"{note}{suffix}", tags=area.tags)
-            out.add(dig_key, area.v, area, f"{note}{suffix}", tags=area.tags)
+            geometry = (band_lo.v, hi.v, strip_left, strip_right, strip_left, strip_right)
+            out.add(key, area.v, area, f"{note}{suffix}", tags=area.tags, geometry=geometry)
+            out.add(dig_key, area.v, area, f"{note}{suffix}", tags=area.tags, geometry=geometry)
         # 坡区楔形：仅当获方更浅（条带在获方槽底以下），按深侧的分层带摊入
         if gainer.depth.v < loser.depth.v - 1e-9:
             for key, lo, hi, _layer, note in loser.bands:
                 area = _wedge_area(split, lo, hi)
                 if area is None or area.v == 0:
                     continue
-                out.add(key, area.v, area, f"{note}{suffix}", tags=area.tags)
-                out.add(dig_key, area.v, area, f"{note}{suffix}", tags=area.tags)
+                # 楔形自深侧槽底起算，换算到获方槽底（高差 delta_h）后为负高度
+                geometry = (
+                    lo.v - split.delta_h.v,
+                    hi.v - split.delta_h.v,
+                    strip_left,
+                    strip_right,
+                    strip_left,
+                    strip_right,
+                )
+                out.add(key, area.v, area, f"{note}{suffix}", tags=area.tags, geometry=geometry)
+                out.add(dig_key, area.v, area, f"{note}{suffix}", tags=area.tags, geometry=geometry)
 
     # 围护量（每面 ×1）+ 支撑
     flat_total = _dim_sum(*(member.flat_width for member in snapshots))
