@@ -114,7 +114,9 @@ def test_presentation_matches_full_expression(project) -> None:
             assert not any(
                 re.search(rf"\b{symbol}\b", expanded) for symbol in definitions
             ), f"{quantity.key} 有未展开的中间量：{expanded}"
-            assert evaluate(expanded) == pytest.approx(quantity.value, rel=1e-9)
+            assert evaluate(expanded) == pytest.approx(
+                quantity.value, rel=1e-9
+            ), f"{quantity.key}: 展开式 {expanded} ≠ {quantity.value}"
             assert evaluate(view.full) == pytest.approx(quantity.value, rel=1e-9)
 
 
@@ -133,6 +135,89 @@ def test_expression_has_no_redundant_parentheses(project) -> None:
             assert expression.count("(") == minimal.count("("), (
                 f"{quantity.key} 有多余括号：{quantity.expression}"
             )
+
+
+def test_terms_carry_trapezoid_geometry(project) -> None:
+    """几何分项记录梯形断面范围（自槽底深度区间 + 左右缘），供详情弹窗高亮。"""
+    unit = project
+    elements = {element.name: element for element in _elements(unit)}
+    dq = _results(unit)[elements["混凝土管"].id]
+
+    # 挖方：单段合并项，自槽底 0 到槽深，底宽/顶宽对称（放坡 1:1 双侧）
+    dig = dq.get("开挖|Ⅲ类土|m3")
+    assert len(dig.terms) == 1
+    h0, h1, l0, r0, l1, r1 = dig.terms[0].geometry
+    groove_depth = 2.8 + (65 + 130) / 1000.0
+    assert (h0, h1) == (0.0, pytest.approx(groove_depth))
+    bottom = 0.6 + (2 * 65 + 2 * 130 + 2 * 500) / 1000.0
+    top = bottom + 2 * groove_depth
+    assert (l0, r0) == (pytest.approx(-bottom / 2), pytest.approx(bottom / 2))
+    assert (l1, r1) == (pytest.approx(-top / 2), pytest.approx(top / 2))
+
+    # 回填分层：垫层占 [0, C1+C2]，宽度即基础宽（未放坡前）
+    cushion = dq.get("垫层|中粗砂|m3")
+    ch0, ch1, cl0, cr0, _cl1, _cr1 = cushion.terms[0].geometry
+    assert (ch0, ch1) == (0.0, pytest.approx((130 + 182) / 1000.0))
+    assert cl0 == pytest.approx(-bottom / 2) and cr0 == pytest.approx(bottom / 2)
+
+    # 钢筋记录整体外框（垫层顶到箱涵顶、外包半宽）；管材含量/降水类无断面范围
+    steel = _results(unit)[elements["箱涵"].id].get("箱涵|钢筋|t")
+    assert steel.terms[0].geometry == (
+        0.1,
+        pytest.approx(0.1 + 2.7),
+        pytest.approx(-2.1),
+        pytest.approx(2.1),
+        pytest.approx(-2.1),
+        pytest.approx(2.1),
+    )
+    pipes = _results(unit)[elements["混凝土管"].id].get("管材|Ⅱ级混凝土管 Dn600|m")
+    assert pipes.terms[0].geometry is None
+
+
+def test_detail_dialog_hover_highlights_section(project, qapp) -> None:
+    """表达式详情窗体：真实鼠标移动到分项行 → 断面画布收到高亮梯形。"""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtCore import QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtTest import QTest
+
+    from app.views.dialogs.expression_detail_dialog import ExpressionDetailDialog
+
+    unit = project
+    elements = {element.name: element for element in _elements(unit)}
+    backfill = _results(unit)[elements["混凝土管"].id].get("回填|中粗砂|m3")
+
+    dialog = ExpressionDetailDialog(None, backfill, ("element", elements["混凝土管"].id))
+    dialog.show()
+    qapp.processEvents()
+    assert dialog._scene is not None, "断面场景未加载（弹窗布局后必须构建）"
+
+    table = dialog._term_table
+    assert table.rowCount() >= 2
+    viewport = table.viewport()
+    pos = QPoint(
+        table.columnViewportPosition(0) + 10,
+        table.rowViewportPosition(1) + table.rowHeight(1) // 2,
+    )
+    QTest.mouseMove(viewport, pos)
+    qapp.processEvents()
+    if dialog._canvas._highlight is None:  # 个别平台 QTest 不投递悬停：直接补发移动事件
+        event = QMouseEvent(
+            QEvent.Type.MouseMove, QPointF(pos), QPointF(pos),
+            Qt.MouseButton.NoButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+        )
+        qapp.sendEvent(viewport, event)
+        qapp.processEvents()
+
+    highlight = dialog._canvas._highlight
+    assert highlight is not None, "悬停分项行未产生断面高亮"
+    # 高亮 = 该分项的梯形范围（自槽底深度区间 + 左右缘，m）
+    # 多边形顶点序：(l0,h0) (r0,h0) (r1,h1) (l1,h1)
+    expected = backfill.terms[1].geometry
+    assert len(highlight) == 4
+    assert highlight[0] == pytest.approx((expected[2], expected[0]), abs=1e-9)
+    assert highlight[3] == pytest.approx((expected[4], expected[1]), abs=1e-9)
+    dialog.close()
 
 
 def test_user_expression_in_output(project) -> None:

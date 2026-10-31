@@ -849,7 +849,7 @@ def compute_element(info: ElementInput) -> QDict | None:
     # 管道基础（扣弓形占土）+ 管材
     foundation.cal_found(info, pf, info.pp, ad, per_meter)
     if info.category == CATEGORY_ENCASED:
-        foundation.encased_pipe_deduction(info, per_meter)
+        foundation.encased_pipe_deduction(info, per_meter, z_bottom=ad.c1.v)
     foundation.cal_pipes(info, per_meter)
 
     per_meter.scale(info.amount, expr=amount_dim.e)
@@ -939,7 +939,7 @@ def compute_element_lr(info: ElementInput) -> QDict | None:
     # 管道基础（扣弓形占土，公共参数取地基原则）+ 管材
     foundation.cal_found(info, pf, pp, ad, per_meter)
     if info.category == CATEGORY_ENCASED:
-        foundation.encased_pipe_deduction(info, per_meter)
+        foundation.encased_pipe_deduction(info, per_meter, z_bottom=ad.c1.v)
     foundation.cal_pipes(info, per_meter)
 
     per_meter.scale(info.amount, expr=amount_dim.e)

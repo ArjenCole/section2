@@ -12,8 +12,6 @@
 
 from __future__ import annotations
 
-from html import escape
-
 from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (
@@ -472,6 +470,8 @@ class UnitPanel(QWidget):
         self._collapsed_group_ids: set[int] = set()
         #: 合槽父行选中时的成员 id（工程量合计 / 断面图用；空 = 非父行态）
         self._group_member_ids: list[int] = []
+        #: 合槽父行选中的组 id（表达式详情窗体画整槽断面用；None = 非父行态）
+        self._current_group_id: int | None = None
         #: 格式刷：True = 等待把样板构件的四项原则刷到后续选中的构件上
         self._format_painter_active = False
         self._format_painter_source: int | None = None
@@ -897,6 +897,7 @@ class UnitPanel(QWidget):
         self._unit_id = unit_id
         self._multi_detail = False
         self._current_detail_id = None
+        self._current_group_id = None
         self._pending_select_id = None
         # 切换单位工程 / 关闭工程：样板不再有效，格式刷自动结束（撤销未生效的待刷）
         self._cancel_format_painter()
@@ -1031,7 +1032,7 @@ class UnitPanel(QWidget):
         if len(chosen) == 1:
             quantities = sorted_items(chosen[0][1])
         else:
-            quantities = self._merge_quantities([dq for _row, dq in chosen])
+            quantities = self._merge_quantities([(row.id, dq) for row, dq in chosen])
         digests.setRowCount(len(quantities))
         for row_index, quantity in enumerate(quantities):
             parts = quantity.key.split("|")
@@ -1125,11 +1126,15 @@ class UnitPanel(QWidget):
 
     @staticmethod
     def _merge_quantities(qlists: list) -> list:
-        """把多个构件的工程量按键合并：数值求和、表达式用 " + " 连接，步骤逐条累加。"""
+        """把多个构件的工程量按键合并：数值求和、表达式用 " + " 连接，步骤逐条累加。
+
+        ``qlists`` 的元素是 ``(构件id, QDict)``：合并行 ``quantities`` 记录
+        ``(构件id, Quantity)``，详情弹窗按成员把分项几何定位到整槽断面图上。
+        """
         from app.core.calc.tracer import order_key
 
         merged: dict[str, dict] = {}
-        for element_index, dq in enumerate(qlists, start=1):
+        for element_index, (element_id, dq) in enumerate(qlists, start=1):
             for quantity in sorted(dq.items(), key=lambda q: (order_key(q.key), q.key)):
                 entry = merged.setdefault(
                     quantity.key,
@@ -1138,7 +1143,7 @@ class UnitPanel(QWidget):
                 entry["value"] += quantity.value
                 if quantity.value or quantity.expression not in ("", "0"):
                     entry["exprs"].append(quantity.expression)
-                entry["quantities"].append(quantity)
+                entry["quantities"].append((element_id, quantity))
                 entry["steps"].extend(
                     (f"[构件{element_index}] {note}" if note else f"[构件{element_index}]", text)
                     for note, text in quantity.steps()
@@ -1232,25 +1237,35 @@ class UnitPanel(QWidget):
             self._show_expression_detail(item)
 
     def _show_expression_detail(self, item: QTableWidgetItem) -> None:
-        """双击“计算表达式”列：展示主算式、分项、中间量定义和完整数值算式。"""
+        """双击“计算表达式”列：打开详情窗体（断面图 + 分项/中间量表）。"""
+        from app.views.dialogs.expression_detail_dialog import (
+            _CONTEXT_ELEMENT,
+            _CONTEXT_GROUP,
+            _CONTEXT_MULTI,
+            ExpressionDetailDialog,
+        )
+
         if not self._ensure_expression_item(item):
             return
-        text = str(item.data(_EXPR_DETAIL_ROLE) or "")
-        if not text:
+        quantity = item.data(_EXPR_QUANTITY_ROLE)
+        if quantity is None:
             return
-        screen = self.screen() or QGuiApplication.primaryScreen()
-        width = height = None
-        if screen:
-            available = screen.availableGeometry()
-            width = int(available.width() * 0.75)
-            height = int(available.height() * 0.75)
-        FramelessMessageBox.information(
-            self,
-            "计算表达式",
-            f"<pre style='white-space:pre-wrap'>{escape(text)}</pre>",
-            width=width,
-            max_height=height,
-        )
+        # 断面图上下文：合槽父行画整槽；组员单选也画整槽（与断面面板同口径）；
+        # 普通构件画自己的断面；多选不画
+        if self._group_member_ids:
+            context = (_CONTEXT_GROUP, self._current_group_id)
+        elif self._current_detail_id is not None:
+            from app.viewmodels.unit_vm import _element
+
+            element = _element(self._current_detail_id)
+            if element is not None and element.group_id is not None:
+                context = (_CONTEXT_GROUP, element.group_id)
+            else:
+                context = (_CONTEXT_ELEMENT, self._current_detail_id)
+        else:
+            context = (_CONTEXT_MULTI, None)
+        dialog = ExpressionDetailDialog(self, quantity, context)
+        dialog.exec()
 
     def _fill_element_row(
         self,
@@ -1700,6 +1715,7 @@ class UnitPanel(QWidget):
         self._vm.clear_detail()  # 父行没有构件明细，别让后续重载补发上一个构件的内容
         self._current_detail_id = None
         group = orm.session().get(TrenchGroup, group_id)
+        self._current_group_id = group_id if group is not None else None
         self._group_member_ids = (
             [member.id for member in sorted(group.members, key=lambda item: (item.order_no, item.id))]
             if group is not None
@@ -1714,6 +1730,7 @@ class UnitPanel(QWidget):
     def _show_single_detail(self, element_id: int) -> None:
         self._multi_detail = False
         self._current_detail_id = element_id
+        self._current_group_id = None
         self._group_member_ids = []
         # load_detail 会同步触发 _on_detail_loaded，那里已经刷新断面；
         # 这里不再重复 build 一次断面图。
@@ -1759,6 +1776,7 @@ class UnitPanel(QWidget):
         self._multi_detail = True
         self._vm.clear_detail()  # 多选没有单一构件明细（同上）
         self._current_detail_id = None
+        self._current_group_id = None
         self._group_member_ids = []
         # 多选显示占位行：增删没有明确目标构件，按钮一律禁用
         self._update_pipe_buttons(None)
@@ -1806,6 +1824,7 @@ class UnitPanel(QWidget):
         self._multi_detail = False
         self._vm.clear_detail()  # 无选中构件：清掉明细目标，避免重载补发过期明细
         self._current_detail_id = None
+        self._current_group_id = None
         self._group_member_ids = []
         self._pipe_buttons.clear_row_buttons()
         self._pipe_buttons.set_visible(False)
@@ -2901,7 +2920,9 @@ def _single_expression_detail(quantity) -> str:
 def _merged_expression_detail(quantity) -> str:
     """多选合并行：主算式按构件编号汇总，展开后逐构件给出定义与完整式。"""
     lines = [f"V={quantity.display_expression} ＝ {format_number(quantity.value)}"]
-    for index, component in enumerate(getattr(quantity, "quantities", []), start=1):
+    for index, (_element_id, component) in enumerate(
+        getattr(quantity, "quantities", []), start=1
+    ):
         view = component.presentation()
         lines += ["", f"构件{index}：{view.formula} ＝ {format_number(component.value)}"]
         subtotals = [item for item in view.definitions if item.kind == "subtotal"]

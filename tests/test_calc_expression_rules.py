@@ -217,6 +217,67 @@ def test_steps_survive_merge_and_scale() -> None:
     assert quantity.value == pytest.approx(9.0)
 
 
+def test_compact_terms_factor_volume_tail_into_areas() -> None:
+    """多分项同带 /10^s*数量 尾：主算式合并为 (S1+S2-…)/10^s*数量，分项即面积。"""
+    import re
+
+    area1 = "(2*(600+65*2+130*2+500*2)+2*2995*1)*2995/2"
+    area2 = "(2*(1500+100*2+500*2)+2*3100*1)*3100/2"
+    deduction = "(130+182)*(600+65*2+130*2)"
+    out = QDict()
+    out.add("垫层|中粗砂|m3", evaluate(f"({area1})/10^6*100"), f"({area1})/10^6*100", "垫层")
+    out.add("垫层|中粗砂|m3", evaluate(f"({area2})/10^6*100"), f"({area2})/10^6*100", "坞膀")
+    out.add(
+        "垫层|中粗砂|m3",
+        -evaluate(f"({deduction})/10^6*100"),
+        f"({deduction})/10^6*100",
+        "扣管位",
+    )
+    view = out.get("垫层|中粗砂|m3").presentation()
+
+    assert view.formula == "V=(S1+S2-S3)/10^6*100"
+    assert [term.symbol for term in view.terms] == ["S1", "S2", "S3"]
+    # 分项值 = 面积式的求值（mm²）；扣减项的面积仍为正，负号由主算式表达
+    assert view.terms[2].value == pytest.approx(evaluate(deduction))
+    # 主算式迭代展开后 == 完整式 == 数值
+    expanded = view.main
+    for _ in range(len(view.definitions) + 1):
+        for item in view.definitions:
+            expanded = re.sub(rf"\b{item.symbol}\b", f"({item.expression})", expanded)
+    assert evaluate(expanded) == pytest.approx(evaluate(view.full), rel=1e-9)
+    assert evaluate(view.full) == pytest.approx(
+        evaluate(f"({area1})/10^6*100+({area2})/10^6*100-({deduction})/10^6*100")
+    )
+
+
+def test_compact_terms_keep_v_form_without_common_tail() -> None:
+    """无公共尾（湿土排水复用式头部带加减）或尾不一致：维持 V 形态。"""
+    out = QDict()
+    out.add("降水|湿土排水|m3", 3.0, "(A)/10^6*100+(B)/10^6*100", "湿土排水")
+    out.add("降水|湿土排水|m3", 1.0, "1", "其它")
+    view = out.get("降水|湿土排水|m3").presentation()
+    assert view.formula == "V=V1+V2"
+
+    # 单分项带尾也不合并（主算式就是该式本身）
+    out2 = QDict()
+    out2.add("管材|混凝土管 Dn600|m", 1.0, "1", "管材含量")
+    view2 = out2.get("管材|混凝土管 Dn600|m").presentation()
+    assert view2.formula == "V=1"
+
+
+def test_merged_rows_carry_member_ids() -> None:
+    """合并行的 quantities 记录 (构件id, Quantity)，供详情弹窗按成员定位断面。"""
+    from app.views.panels.unit_panel import UnitPanel
+
+    first = QDict()
+    first.add("开挖|Ⅲ类土|m3", 10.0, "10", "垫层")
+    second = QDict()
+    second.add("开挖|Ⅲ类土|m3", 20.0, "20", "垫层")
+    merged = UnitPanel._merge_quantities([(101, first), (202, second)])[0]
+    assert [member_id for member_id, _q in merged.quantities] == [101, 202]
+    assert [q.value for _mid, q in merged.quantities] == [10.0, 20.0]
+
+
 def test_merged_rows_keep_per_element_steps() -> None:
     """多选构件时（定额页签合并行）：算式用 " + " 连接，步骤按构件分组列出。"""
     from app.views.panels.unit_panel import UnitPanel, _expression_detail
@@ -225,7 +286,7 @@ def test_merged_rows_keep_per_element_steps() -> None:
     first.add("开挖|Ⅲ类土|m3", 10.0, "10", "垫层~覆土")
     second = QDict()
     second.add("开挖|Ⅲ类土|m3", 20.0, "20", "垫层~覆土")
-    merged = UnitPanel._merge_quantities([first, second])[0]
+    merged = UnitPanel._merge_quantities([(None, first), (None, second)])[0]
     assert merged.value == pytest.approx(30.0)
     assert merged.expression == "10 + 20"
     assert merged.display_expression == "V1+V2"

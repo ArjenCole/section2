@@ -352,6 +352,15 @@ def test_group_equal_depth_flat_dig(project) -> None:
     # 挖填拆分：等深相邻面为虚拟垂直空围护，各构件 = 本体 + 自身两侧工作面
     assert dig1 == pytest.approx((b1 + 2 * w1) * depth * 120, rel=1e-9)
     assert dig2 == pytest.approx((b2 + 2 * w2) * depth * 120, rel=1e-9)
+    # 分项几何：等深平槽各分层段左右缘 = ±(本体半宽 + 自身工作面)，合深覆盖全槽
+    dig_terms = results[e1].get("开挖|Ⅲ类土|m3").terms
+    assert dig_terms[0].geometry[0] == 0.0
+    assert dig_terms[-1].geometry[1] == pytest.approx(depth)
+    half_span = b1 / 2 + w1
+    for term in dig_terms:
+        _h0, _h1, l0, r0, l1, r1 = term.geometry
+        assert (l0, r0) == (pytest.approx(-half_span), pytest.approx(half_span))
+        assert (l1, r1) == (pytest.approx(-half_span), pytest.approx(half_span))
     # 父节点零工程量：输出只挂在成员名下
     assert set(results) == {e1, e2}
 

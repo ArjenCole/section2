@@ -21,12 +21,21 @@ from app.core.calc.measures import AtlasDims
 from app.core.calc.tracer import Dim, QDict, mm, mm_dim, mm_of_m, dim_min, fmt, scale_sum, tag_dim, wrap
 
 
-def add_dim(out: QDict, key: str, quantity: Dim, note: str = "") -> None:
+def _rect_geometry(z0: float, z1: float, half_width: float) -> tuple[float, float, float, float, float, float]:
+    """矩形断面范围（梯形几何的等宽特例）：自槽底 [z0, z1]，左右缘 ±half_width。
+
+    供详情弹窗把分项行高亮到断面图上；弓形 / 圆形扣减用它做外接矩形近似。
+    """
+    return (z0, z1, -half_width, half_width, -half_width, half_width)
+
+
+def add_dim(out: QDict, key: str, quantity: Dim, note: str = "", geometry=None) -> None:
     """按 :class:`Dim` 输出一条工程量：数值取 ``v``，算式取 ``e``（记法指数随之记录）。
 
-    ``quantity.tags`` 供展示层识别槽底宽 / 外径 / 弓形占位等中间量。
+    ``quantity.tags`` 供展示层识别槽底宽 / 外径 / 弓形占位等中间量；
+    ``geometry`` 为该项的断面范围（见 :func:`_rect_geometry`）。
     """
-    out.add(key, quantity.v, quantity, note, tags=quantity.tags)
+    out.add(key, quantity.v, quantity, note, tags=quantity.tags, geometry=geometry)
 
 
 def _circle(diameter: float) -> float:
@@ -108,20 +117,27 @@ def _found_pipe(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
             "管道基础|混凝土|m3",
             found - bow,
             f"基础 {fmt(found.v)} − {fmt(angle)}° 弓形占位 {fmt(bow.v)}",
+            geometry=_rect_geometry(0.0, found_h.v, width.v / 2.0),
         )
-        add_dim(out, "管道基础|模板|m2", found_h * 2)
+        add_dim(out, "管道基础|模板|m2", found_h * 2,
+                geometry=_rect_geometry(0.0, found_h.v, width.v / 2.0))
 
         deducted = dim_min(remain, found_h)
-        add_dim(out, f"垫层|{cushion_name}|m3", -(deducted * width), "垫层扣基础占位")
+        add_dim(out, f"垫层|{cushion_name}|m3", -(deducted * width), "垫层扣基础占位",
+                geometry=_rect_geometry(0.0, deducted.v, width.v / 2.0))
         remain = remain - deducted
     else:
         deducted = dim_min(remain, ad.c2) if ad.c2.v > 0 else mm(0.0)
         remain = remain - deducted
-        add_dim(out, f"垫层|{cushion_name}|m3", -_bow_dim(outside, angle), "垫层扣弓形占位")
+        # 弓形占位 = 管底弓形（管底自垫层顶起），高亮用外接矩形近似
+        bow_rect = _rect_geometry(ad.c1.v, ad.c1.v + outside.v / 2.0, outside.v / 2.0)
+        add_dim(out, f"垫层|{cushion_name}|m3", -_bow_dim(outside, angle), "垫层扣弓形",
+                geometry=bow_rect)
 
     chord_height = outside.v / 2 - outside.v / 2 * math.cos(angle / 2 / 180 * math.pi)
     remain = remain - dim_min(remain, mm(chord_height * 1000.0))
 
+    # 管底自垫层顶（C1）起：坞膀扣弓形占下半管带、上半扣半圆占上半管带
     add_dim(
         out,
         f"回填|{pp.dock_l}|m3",
@@ -132,6 +148,7 @@ def _found_pipe(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
             outside.s * 2,
         ),
         "坞膀扣弓形",
+        geometry=_rect_geometry(ad.c1.v, ad.c1.v + outside.v / 2.0, outside.v / 2.0),
     )
     add_dim(
         out,
@@ -143,6 +160,7 @@ def _found_pipe(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
             outside.s * 2,
         ),
         "上半回填扣半圆",
+        geometry=_rect_geometry(ad.c1.v + outside.v / 2.0, ad.c1.v + outside.v, outside.v / 2.0),
     )
 
 
@@ -150,25 +168,39 @@ def _found_encased(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
     """包封埋管（旧版 mcE2.cal_found）。"""
     cushion_name = pf.cushions[0].name if pf.cushions else "中粗砂"
     remain = mm_of_m(info.depth_dim) + ad.t + ad.c1
+    # 包封底自垫层顶（C1）起，高 = 包封高；高亮用外接矩形
+    z_bottom = ad.c1.v
+    encased_rect = _rect_geometry(
+        z_bottom, z_bottom + info.size_h_dim.v, info.size_b_dim.v / 2.0
+    )
 
-    add_dim(out, "垫层|混凝土|m3", ad.c1 * (info.size_b_dim + ad.a * 2))
-    add_dim(out, "垫层|模板|m2", ad.c1 * 2)
+    cushion_half = (info.size_b_dim.v + ad.a.v * 2.0) / 2.0
+    add_dim(out, "垫层|混凝土|m3", ad.c1 * (info.size_b_dim + ad.a * 2),
+            geometry=_rect_geometry(0.0, ad.c1.v, cushion_half))
+    add_dim(out, "垫层|模板|m2", ad.c1 * 2,
+            geometry=_rect_geometry(0.0, ad.c1.v, cushion_half))
 
     width = (
         info.size_b_dim + scale_sum((ad.t, ad.a), 2.0)
     ).named("基础宽度", "断面宽 + 2×(壁厚+工作面加宽)")
     deducted = dim_min(remain, ad.c1 + ad.c2)
-    add_dim(out, f"垫层|{cushion_name}|m3", -(deducted * width), "垫层扣基础占位")
+    add_dim(out, f"垫层|{cushion_name}|m3", -(deducted * width), "垫层扣基础占位",
+            geometry=_rect_geometry(0.0, deducted.v, width.v / 2.0))
     remain = remain - deducted
 
-    add_dim(out, "包封|混凝土|m3", info.size_b_dim * info.size_h_dim, "包封混凝土")
-    add_dim(out, "包封|模板|m2", info.size_h_dim * 2, "包封模板")
+    add_dim(out, "包封|混凝土|m3", info.size_b_dim * info.size_h_dim, "包封混凝土",
+            geometry=encased_rect)
+    add_dim(out, "包封|模板|m2", info.size_h_dim * 2, "包封模板", geometry=encased_rect)
 
     used = dim_min(remain, info.size_h_dim / 2)
-    add_dim(out, f"回填|{pp.dock_l}|m3", -(info.size_b_dim * used), "坞膀扣包封")
+    used0 = used.v
+    add_dim(out, f"回填|{pp.dock_l}|m3", -(info.size_b_dim * used), "坞膀扣包封",
+            geometry=_rect_geometry(z_bottom, z_bottom + used0, info.size_b_dim.v / 2.0))
     remain = remain - used
     used = dim_min(remain, info.size_h_dim / 2)
-    add_dim(out, f"回填|{pp.dock_h}|m3", -(info.size_b_dim * used), "上半扣包封")
+    add_dim(out, f"回填|{pp.dock_h}|m3", -(info.size_b_dim * used), "上半扣包封",
+            geometry=_rect_geometry(z_bottom + used0, z_bottom + used0 + used.v,
+                                    info.size_b_dim.v / 2.0))
 
 
 def _found_box(info, pf, pp, ad: AtlasDims, out: QDict, *, prefix: str, wall_key: str) -> None:
@@ -184,35 +216,55 @@ def _found_box(info, pf, pp, ad: AtlasDims, out: QDict, *, prefix: str, wall_key
 
     cushion_name = pf.cushions[0].name if pf.cushions else "中粗砂"
     remain = mm_of_m(info.depth_dim) + ad.t + ad.c1
+    # 箱涵本体自垫层顶（C1）起：底板 / 墙 / 顶板各自的矩形范围
+    z_bottom = ad.c1.v
+    size_b = info.size_b_dim.v
+    size_h = info.size_h_dim.v
+    bt_v, tt_v, ot_v = bt.v, tt.v, ot.v
 
-    add_dim(out, f"{prefix}|垫层|m3", ad.c1 * (info.size_b_dim + ad.a * 2))
-    add_dim(out, f"{prefix}|垫层模板|m2", ad.c1 * 2)
+    add_dim(out, f"{prefix}|垫层|m3", ad.c1 * (info.size_b_dim + ad.a * 2),
+            geometry=_rect_geometry(0.0, z_bottom, (size_b + ad.a.v * 2.0) / 2.0))
+    add_dim(out, f"{prefix}|垫层模板|m2", ad.c1 * 2,
+            geometry=_rect_geometry(0.0, z_bottom, (size_b + ad.a.v * 2.0) / 2.0))
 
     width = (
         info.size_b_dim + scale_sum((ad.t, ad.a), 2.0)
     ).named("基础宽度", "断面宽 + 2×(壁厚+工作面加宽)")
     deducted = dim_min(remain, ad.c1 + ad.c2)
-    add_dim(out, f"垫层|{cushion_name}|m3", -(deducted * width), "垫层扣基础占位")
+    add_dim(out, f"垫层|{cushion_name}|m3", -(deducted * width), "垫层扣基础占位",
+            geometry=_rect_geometry(0.0, deducted.v, width.v / 2.0))
     remain = remain - deducted
 
     bottom = info.size_b_dim * bt
-    add_dim(out, f"{prefix}|底板|m3", bottom)
-    add_dim(out, f"{prefix}|底板模板|m2", bt * 2)
+    add_dim(out, f"{prefix}|底板|m3", bottom,
+            geometry=_rect_geometry(z_bottom, z_bottom + bt_v, size_b / 2.0))
+    add_dim(out, f"{prefix}|底板模板|m2", bt * 2,
+            geometry=_rect_geometry(z_bottom, z_bottom + bt_v, size_b / 2.0))
     wall = (info.size_h_dim - bt) * ot * 2 + (info.size_h_dim - bt - tt) * ic * it
-    add_dim(out, f"{prefix}|{wall_key}|m3", wall)
+    add_dim(out, f"{prefix}|{wall_key}|m3", wall,
+            geometry=_rect_geometry(z_bottom + bt_v, z_bottom + size_h - tt_v, size_b / 2.0))
     wall_form = (info.size_h_dim - bt) * 2 * 2 + (info.size_h_dim - bt - tt) * ic * 2
-    add_dim(out, f"{prefix}|{wall_key}模板|m2", wall_form)
+    add_dim(out, f"{prefix}|{wall_key}模板|m2", wall_form,
+            geometry=_rect_geometry(z_bottom + bt_v, z_bottom + size_h - tt_v, size_b / 2.0))
     roof = (info.size_b_dim - ot * 2) * tt
-    add_dim(out, f"{prefix}|顶板|m3", roof)
-    add_dim(out, f"{prefix}|顶板模板|m2", info.size_b_dim - ot * 2)
+    roof_rect = _rect_geometry(z_bottom + size_h - tt_v, z_bottom + size_h,
+                               (size_b - ot_v * 2.0) / 2.0)
+    add_dim(out, f"{prefix}|顶板|m3", roof, geometry=roof_rect)
+    add_dim(out, f"{prefix}|顶板模板|m2", info.size_b_dim - ot * 2, geometry=roof_rect)
 
-    add_dim(out, f"{prefix}|钢筋|t", steel_rate * (bottom + wall + roof), "钢筋 = 含钢量 × 混凝土合计")
+    steel_rect = _rect_geometry(z_bottom, z_bottom + size_h, size_b / 2.0)
+    add_dim(out, f"{prefix}|钢筋|t", steel_rate * (bottom + wall + roof),
+            "钢筋 = 含钢量 × 混凝土合计", geometry=steel_rect)
 
     used = dim_min(remain, info.size_h_dim / 2)
-    add_dim(out, f"回填|{pp.dock_l}|m3", -(info.size_b_dim * used), "坞膀扣箱涵")
+    used0 = used.v
+    add_dim(out, f"回填|{pp.dock_l}|m3", -(info.size_b_dim * used), "坞膀扣箱涵",
+            geometry=_rect_geometry(z_bottom, z_bottom + used0, size_b / 2.0))
     remain = remain - used
     used = dim_min(remain, info.size_h_dim / 2)
-    add_dim(out, f"回填|{pp.dock_h}|m3", -(info.size_b_dim * used), "上半扣箱涵")
+    add_dim(out, f"回填|{pp.dock_h}|m3", -(info.size_b_dim * used), "上半扣箱涵",
+            geometry=_rect_geometry(z_bottom + used0, z_bottom + used0 + used.v,
+                                    size_b / 2.0))
 
 
 def cal_pipes(info, out: QDict, cat: str = "管材") -> None:
@@ -228,11 +280,12 @@ def cal_pipes(info, out: QDict, cat: str = "管材") -> None:
         )
 
 
-def encased_pipe_deduction(info, out: QDict) -> None:
+def encased_pipe_deduction(info, out: QDict, z_bottom: float | None = None) -> None:
     """包封混凝土扣管位（旧版 mcE2.cal_pipes 的负项：按每根管取壁厚）。
 
     每根管带自己的管材类别与壁厚（构件库快照 / 详情面板用户值），壁厚为空时
-    才临时按直埋管道图集查（同旧版构造临时 mcE1）。
+    才临时按直埋管道图集查（同旧版构造临时 mcE1）。``z_bottom`` 为垫层顶标高
+    （自槽底，m）：传入时给扣管位分项记录外接矩形几何（高亮用）。
     """
     from app.services.atlas import PipeSpec, resolve_atlas
     from app.core.calc.engine import build_atlas_query
@@ -245,6 +298,11 @@ def encased_pipe_deduction(info, out: QDict) -> None:
         query.pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn, t=pipe.t, cat=pipe.cat)]
         at = resolve_atlas(query)
         radius = mm(pipe.dn) / 2 + mm(at.t)
+        geometry = (
+            _rect_geometry(z_bottom, z_bottom + radius.v * 2.0, radius.v)
+            if z_bottom is not None
+            else None
+        )
         area = Dim(
             -math.pi * radius.v * radius.v * content.v,
             # 底数带除号，^2 前必须括起来（tight），否则 (…)/1000^2 会算错
@@ -257,4 +315,5 @@ def encased_pipe_deduction(info, out: QDict) -> None:
             area.v,
             area,
             f"扣 Dn{fmt(pipe.dn)} 管位",
+            geometry=geometry,
         )

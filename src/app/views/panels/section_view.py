@@ -149,6 +149,119 @@ class _Scene:
     layer_lines: list[tuple[float, float, float, float]] = field(default_factory=list)
     #: 合槽虚拟竖直墙 (x1, y1, x2, y2)，画成虚线
     dashed_lines: list[tuple[float, float, float, float]] = field(default_factory=list)
+    #: 合槽各成员的水平区间：(element_id, 本体中心 x 相对槽中心 m, 槽底深 m)。
+    #: 表达式详情弹窗把分项的断面范围按成员定位到整槽图上用
+    member_spans: tuple[tuple[int, float, float], ...] = ()
+
+
+def _draw_side_line(
+    painter: QPainter, points_m: list[tuple[float, float]], side: int,
+    center_x: float, origin_y: float, zoom: float,
+) -> None:
+    """把以米为单位的折线按 side 镜像画到画布（旧版旋转坐标系下的 DrawLines）。"""
+    previous_x: float | None = None
+    previous_y = 0.0
+    for value_x, value_y in points_m:
+        x = center_x - value_x * 1000.0 * zoom * side
+        y = origin_y - value_y * 1000.0 * zoom
+        if previous_x is not None:
+            painter.drawLine(int(previous_x), int(previous_y), int(x), int(y))
+        previous_x, previous_y = x, y
+
+
+def _shape_rect(shape: _Shape, scene: _Scene, center_x: float, origin_y: float) -> QRectF:
+    zoom = scene.zoom
+    # mm 坐标 → 屏幕：x 镜像（旧版旋转 180°），y 向上，再叠加本体抬升
+    left = center_x - (shape.x + shape.w) * zoom
+    top = origin_y - (shape.y + shape.h + scene.shift) * zoom
+    return QRectF(left, top, shape.w * zoom, shape.h * zoom)
+
+
+def draw_scene(
+    painter: QPainter,
+    scene: _Scene,
+    center_x: float,
+    origin_y: float,
+    width: float,
+) -> None:
+    """把场景画到画布（坐标变换确定，paintEvent 与表达式详情弹窗共用）。
+
+    ``center_x``/``origin_y`` 为屏幕像素原点：x = 画布中线，y = 底边留白线。
+    """
+    pen = QPen(_COLOR_LINE, 1)
+    painter.setPen(pen)
+    if scene.outline is not None:
+        # 合槽断面：一条完整折线（x 相对槽中心右正、y 自槽底向上，单位 m）
+        previous: tuple[float, float] | None = None
+        for value_x, value_y in scene.outline:
+            x = center_x + value_x * 1000.0 * scene.zoom
+            y = origin_y - value_y * 1000.0 * scene.zoom
+            if previous is not None:
+                painter.drawLine(int(previous[0]), int(previous[1]), int(x), int(y))
+            previous = (x, y)
+        # 合槽分层线（换填 / 垫层 / 坞膀 / 管顶 50cm）与虚拟竖直墙
+        if scene.layer_lines:
+            painter.setPen(QPen(_COLOR_LAYER, 1))
+            for x1, y1, x2, y2 in scene.layer_lines:
+                painter.drawLine(
+                    int(center_x + x1 * 1000.0 * scene.zoom),
+                    int(origin_y - y1 * 1000.0 * scene.zoom),
+                    int(center_x + x2 * 1000.0 * scene.zoom),
+                    int(origin_y - y2 * 1000.0 * scene.zoom),
+                )
+        if scene.dashed_lines:
+            painter.setPen(QPen(_COLOR_WALL, 1, Qt.PenStyle.DashLine))
+            for x1, y1, x2, y2 in scene.dashed_lines:
+                painter.drawLine(
+                    int(center_x + x1 * 1000.0 * scene.zoom),
+                    int(origin_y - y1 * 1000.0 * scene.zoom),
+                    int(center_x + x2 * 1000.0 * scene.zoom),
+                    int(origin_y - y2 * 1000.0 * scene.zoom),
+                )
+    else:
+        # 单管断面：左侧 +1 用左做法、右侧 -1 用右做法（左右分设各画各的
+        # 折线；对称断面 segments_r 为空仍是镜像）
+        for side in (1, -1):
+            segments = scene.segments if side == 1 or scene.segments_r is None else scene.segments_r
+            previous: _Segment | None = None
+            for segment in segments:
+                if segment.h_delta <= 0:
+                    previous = segment
+                    continue
+                points_m = []
+                if segment.continues and previous is not None:
+                    start_b = previous.bottom + previous.h_delta * previous.slope * 2
+                    points_m.append((start_b / 2.0, segment.h_current))
+                else:
+                    points_m.append((0.0, segment.h_current))
+                points_m.append((segment.bottom / 2.0, segment.h_current))
+                points_m.append(((segment.bottom + segment.h_delta * segment.slope * 2) / 2.0,
+                                 segment.h_current + segment.h_delta))
+                _draw_side_line(painter, points_m, side, center_x, origin_y, scene.zoom)
+                previous = segment
+
+    # 基坑上口封闭线：一条通长横线（与边坡线同色），取代两侧地坪线
+    top_y = origin_y - scene.total_h * 1000.0 * scene.zoom
+    painter.setPen(QPen(_COLOR_LINE, 1))
+    painter.drawLine(0, int(top_y), int(width), int(top_y))
+
+    # 管体本体（画一次，居中；黑填充挖空 + 描边，与旧版 FillRectangle/FillEllipse 一致）
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    for shape in scene.shapes:
+        rect = _shape_rect(shape, scene, center_x, origin_y)
+        if shape.kind == "Ellipse":
+            painter.setPen(QPen(_COLOR_ELLIPSE, 1))
+            painter.setBrush(_COLOR_BG)
+            painter.drawEllipse(rect)
+        else:
+            painter.setPen(QPen(_COLOR_RECT, 1))
+            painter.setBrush(_COLOR_BG)
+            painter.drawRect(rect)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+    # 图集参数输出（旧版 OnPaint 左下角黄字；面板较高时固定在左上角更清晰）
+    painter.setPen(QPen(_COLOR_TEXT, 1))
+    painter.drawText(4, 14, scene.atlas_text)
 
 
 class SectionView(QWidget):
@@ -202,105 +315,13 @@ class SectionView(QWidget):
             painter.setPen(QPen(QColor("gray")))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._hint)
             return
-        scene = self._scene
-        center_x = self.width() / 2.0
-        origin_y = self.height() - _BOTTOM_GAP
-
-        pen = QPen(_COLOR_LINE, 1)
-        painter.setPen(pen)
-        if scene.outline is not None:
-            # 合槽断面：一条完整折线（x 相对槽中心右正、y 自槽底向上，单位 m）
-            previous: tuple[float, float] | None = None
-            for value_x, value_y in scene.outline:
-                x = center_x + value_x * 1000.0 * scene.zoom
-                y = origin_y - value_y * 1000.0 * scene.zoom
-                if previous is not None:
-                    painter.drawLine(int(previous[0]), int(previous[1]), int(x), int(y))
-                previous = (x, y)
-            # 合槽分层线（换填 / 垫层 / 坞膀 / 管顶 50cm）与虚拟竖直墙
-            if scene.layer_lines:
-                painter.setPen(QPen(_COLOR_LAYER, 1))
-                for x1, y1, x2, y2 in scene.layer_lines:
-                    painter.drawLine(
-                        int(center_x + x1 * 1000.0 * scene.zoom),
-                        int(origin_y - y1 * 1000.0 * scene.zoom),
-                        int(center_x + x2 * 1000.0 * scene.zoom),
-                        int(origin_y - y2 * 1000.0 * scene.zoom),
-                    )
-            if scene.dashed_lines:
-                painter.setPen(QPen(_COLOR_WALL, 1, Qt.PenStyle.DashLine))
-                for x1, y1, x2, y2 in scene.dashed_lines:
-                    painter.drawLine(
-                        int(center_x + x1 * 1000.0 * scene.zoom),
-                        int(origin_y - y1 * 1000.0 * scene.zoom),
-                        int(center_x + x2 * 1000.0 * scene.zoom),
-                        int(origin_y - y2 * 1000.0 * scene.zoom),
-                    )
-        else:
-            # 单管断面：左侧 +1 用左做法、右侧 -1 用右做法（左右分设各画各的
-            # 折线；对称断面 segments_r 为空仍是镜像）
-            for side in (1, -1):
-                segments = scene.segments if side == 1 or scene.segments_r is None else scene.segments_r
-                previous: _Segment | None = None
-                for segment in segments:
-                    if segment.h_delta <= 0:
-                        previous = segment
-                        continue
-                    points_m = []
-                    if segment.continues and previous is not None:
-                        start_b = previous.bottom + previous.h_delta * previous.slope * 2
-                        points_m.append((start_b / 2.0, segment.h_current))
-                    else:
-                        points_m.append((0.0, segment.h_current))
-                    points_m.append((segment.bottom / 2.0, segment.h_current))
-                    points_m.append(((segment.bottom + segment.h_delta * segment.slope * 2) / 2.0,
-                                     segment.h_current + segment.h_delta))
-                    self._draw_side_line(painter, points_m, side, center_x, origin_y, scene.zoom)
-                    previous = segment
-
-        # 基坑上口封闭线：一条通长横线（与边坡线同色），取代两侧地坪线
-        top_y = origin_y - scene.total_h * 1000.0 * scene.zoom
-        painter.setPen(QPen(_COLOR_LINE, 1))
-        painter.drawLine(0, int(top_y), self.width(), int(top_y))
-
-        # 管体本体（画一次，居中；黑填充挖空 + 描边，与旧版 FillRectangle/FillEllipse 一致）
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        for shape in scene.shapes:
-            rect = self._shape_rect(shape, scene, center_x, origin_y)
-            if shape.kind == "Ellipse":
-                painter.setPen(QPen(_COLOR_ELLIPSE, 1))
-                painter.setBrush(_COLOR_BG)
-                painter.drawEllipse(rect)
-            else:
-                painter.setPen(QPen(_COLOR_RECT, 1))
-                painter.setBrush(_COLOR_BG)
-                painter.drawRect(rect)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-
-        # 图集参数输出（旧版 OnPaint 左下角黄字；面板较高时固定在左上角更清晰）
-        painter.setPen(QPen(_COLOR_TEXT, 1))
-        painter.drawText(4, 14, scene.atlas_text)
-
-    def _draw_side_line(
-        self, painter: QPainter, points_m: list[tuple[float, float]], side: int,
-        center_x: float, origin_y: float, zoom: float,
-    ) -> None:
-        """把以米为单位的折线按 side 镜像画到画布（旧版旋转坐标系下的 DrawLines）。"""
-        previous_x: float | None = None
-        previous_y = 0.0
-        for value_x, value_y in points_m:
-            x = center_x - value_x * 1000.0 * zoom * side
-            y = origin_y - value_y * 1000.0 * zoom
-            if previous_x is not None:
-                painter.drawLine(int(previous_x), int(previous_y), int(x), int(y))
-            previous_x, previous_y = x, y
-
-    def _shape_rect(self, shape: _Shape, scene: _Scene, center_x: float, origin_y: float) -> QRectF:
-        zoom = scene.zoom
-        # mm 坐标 → 屏幕：x 镜像（旧版旋转 180°），y 向上，再叠加本体抬升
-        left = center_x - (shape.x + shape.w) * zoom
-        top = origin_y - (shape.y + shape.h + scene.shift) * zoom
-        return QRectF(left, top, shape.w * zoom, shape.h * zoom)
+        draw_scene(
+            painter,
+            self._scene,
+            self.width() / 2.0,
+            self.height() - _BOTTOM_GAP,
+            self.width(),
+        )
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         super().resizeEvent(event)
@@ -1094,6 +1115,14 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
         outline=outline,
         layer_lines=layer_lines,
         dashed_lines=dashed_lines,
+        member_spans=tuple(
+            (
+                snap["element"].id,
+                (extents[i][0] + extents[i][1]) / 2.0 - half,
+                snap["depth"],
+            )
+            for i, snap in enumerate(snapshots)
+        ),
     )
     scene.atlas_text = f"合槽断面：{n} 条构件（从左到右）"
     return scene, ""

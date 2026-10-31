@@ -57,6 +57,19 @@ def widen(delta: Dim, slope: Dim) -> Dim:
     )
 
 
+def _trapezoid_geometry(
+    z0: float, height: float, bottom: float, slope_total: float
+) -> tuple[float, float, float, float, float, float]:
+    """梯形分项的断面范围：自槽底 [z0, z0+height]，底/顶全宽对称展开。
+
+    ``slope_total`` 为两侧放坡系数之和（对称断面 = 2×放坡，不对称 = sL+sR）。
+    返回 ``(h0, h1, l0, r0, l1, r1)``，l/r 相对本体内/槽中心（左负右正，m）。
+    """
+    h1 = z0 + height
+    top = bottom + height * slope_total
+    return (z0, h1, -bottom / 2.0, bottom / 2.0, -top / 2.0, top / 2.0)
+
+
 def min_h(height: Dim, remaining: Dim) -> tuple[Dim, Dim]:
     """本层厚度与剩余深度（旧版 mscGroove.minH：层高 <0 表示吃掉全部剩余）。"""
     if remaining.v <= height.v or height.v < 0:
@@ -93,7 +106,8 @@ class _Segment:
 
     ``note`` 为本段覆盖的分层说明（如 ``垫层``），合并时首尾相接成 ``垫层~坞膀上半``；
     ``breaks_before`` 为 True 表示本段之前发生过平台加宽（换级），
-    不能与上一段合并成一条梯形。
+    不能与上一段合并成一条梯形。``z0``/``z1`` 为本段的自槽底标高范围（m），
+    合并成一条挖方分项时取首段底到末段顶，供详情弹窗高亮断面范围。
     """
 
     bottom: Dim
@@ -101,6 +115,8 @@ class _Segment:
     slope: Dim
     note: str = ""
     breaks_before: bool = False
+    z0: float = 0.0
+    z1: float = 0.0
 
 
 def backfill_layers(
@@ -207,12 +223,14 @@ def cal_groove(
                 clipped = True
             slope = level_slope(work.levels[step])
             area = trapezoid_expr(bottom, delta, slope)
+            geometry = _trapezoid_geometry(current.v, delta.v, bottom.v, slope.v * 2)
             out.add(
                 key,
                 area.v,
                 area,
                 note,
                 tags=bottom.tags + delta.tags + slope.tags,
+                geometry=geometry,
             )
             dig_segments.append(
                 _Segment(
@@ -221,6 +239,8 @@ def cal_groove(
                     slope=slope,
                     note=note,
                     breaks_before=jump_pending,
+                    z0=current.v,
+                    z1=current.v + delta.v,
                 )
             )
             jump_pending = False
@@ -272,6 +292,9 @@ def cal_groove(
                 area,
                 _segment_note(notes),
                 tags=segment.bottom.tags + height.tags + segment.slope.tags,
+                geometry=_trapezoid_geometry(
+                    segment.z0, total.v, segment.bottom.v, segment.slope.v * 2
+                ),
             )
     if not dig.terms:
         out.discard(dig_key)
@@ -359,6 +382,8 @@ class _SideSegment:
     slope_r: Dim
     note: str = ""
     breaks_before: bool = False
+    z0: float = 0.0
+    z1: float = 0.0
 
 
 def cal_groove_sided(
@@ -415,12 +440,16 @@ def cal_groove_sided(
             slope_l = level_slope(work_l.levels[step_l])
             slope_r = level_slope(work_r.levels[step_r])
             area = trapezoid_lr_expr(bottom, delta, slope_l, slope_r)
+            geometry = _trapezoid_geometry(
+                current.v, delta.v, bottom.v, slope_l.v + slope_r.v
+            )
             out.add(
                 key,
                 area.v,
                 area,
                 note,
                 tags=bottom.tags + delta.tags + slope_l.tags + slope_r.tags,
+                geometry=geometry,
             )
             dig_segments.append(
                 _SideSegment(
@@ -430,6 +459,8 @@ def cal_groove_sided(
                     slope_r=slope_r,
                     note=note,
                     breaks_before=jump_pending,
+                    z0=current.v,
+                    z1=current.v + delta.v,
                 )
             )
             jump_pending = False
@@ -485,6 +516,12 @@ def cal_groove_sided(
                 area,
                 _segment_note(notes),
                 tags=segment.bottom.tags + height.tags + segment.slope_l.tags + segment.slope_r.tags,
+                geometry=_trapezoid_geometry(
+                    segment.z0,
+                    total.v,
+                    segment.bottom.v,
+                    segment.slope_l.v + segment.slope_r.v,
+                ),
             )
     if not dig.terms:
         out.discard(dig_key)

@@ -393,12 +393,18 @@ class ExpressionDefinition:
 
 @dataclass(frozen=True)
 class CompactTerm:
-    """展示层的一个工程量分项（对应原来的一个带符号 Term）。"""
+    """展示层的一个工程量分项（对应原来的一个带符号 Term）。
+
+    ``value`` 的量纲随形态：合并形态（主算式 ``(S1+S2-…)/10^s*数量``）下
+    各分项为断面面积（mm²，即面积式的求值），否则为该项自身的数值。
+    ``geometry`` 透传自 :class:`Term`（详情弹窗把分项行高亮到断面图上）。
+    """
 
     symbol: str
     note: str
     expression: str
     value: float
+    geometry: tuple[float, float, float, float, float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -653,18 +659,78 @@ def _select_candidates(
     return selected
 
 
+def _split_volume_tail(expr: str) -> tuple[str, int, str] | None:
+    """识别 ``(面积式)/10^s*数量尾`` 形态：返回 (面积式, s, 尾)；不命中返回 None。
+
+    ``/10^s`` 必须在表达式乘除链的顶层（头部不含顶层加减）——湿土排水复用式
+    ``(A)/10^6*100+(B)/10^6*100`` 这类逐项拼接不命中；``s`` 为正整数，
+    尾部为空（数量 1 不参与缩放）或 ``*`` 开头的系数串。
+    """
+    depth = 0
+    best: tuple[int, int] | None = None
+    for index, character in enumerate(expr):
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif depth == 0 and expr.startswith("/10^", index):
+            end = index + 4
+            while end < len(expr) and expr[end].isdigit():
+                end += 1
+            best = (index, end)
+    if best is None:
+        return None
+    start, end = best
+    exponent = int(expr[start + 4 : end])
+    if exponent <= 0:
+        return None
+    rest = expr[end:]
+    if rest and not rest.startswith("*"):
+        return None
+    head = expr[:start]
+    if not head or _top_operator(head, _ADDITIVE):
+        return None
+    return head, exponent, rest
+
+
+def _next_subtotal_symbol(symbols: dict[str, str], index: int) -> str:
+    """分项符号 S1、S2…：跳过中间量已占用的号（S 与基础断面面积的 S 错开）。"""
+    candidate = f"S{index}"
+    while candidate in symbols.values():
+        index += 1
+        candidate = f"S{index}"
+    return candidate
+
+
 def _compact_terms(
     terms: list["Term"],
 ) -> tuple[str, list[CompactTerm], list[ExpressionDefinition]]:
-    """把一条工程量的各分项压缩成主算式、分项式和中间量定义。"""
+    """把一条工程量的各分项压缩成主算式、分项式和中间量定义。
+
+    多分项且每项都带同一换算尾 ``(面积式)/10^s*数量`` 时进入合并形态：
+    分项即断面面积（符号 S1、S2…，值为面积式的求值 mm²），主算式为
+    ``(S1+S2-…)/10^s*数量``；否则维持 V 形态（分项 = 带换算尾的完整项）。
+    """
+    tails = [_split_volume_tail(term.expr) for term in terms]
+    factored = (
+        len(terms) > 1
+        and all(item is not None for item in tails)
+        and len({(item[1], item[2]) for item in tails}) == 1
+    )
     parsed: list[ast.AST] = []
     notes: list[str] = []
     tags: list[NamedValue] = []
+    if factored:
+        parsed = [_parse_expression(item[0]) for item in tails]
+        if any(node is None for node in parsed):
+            factored = False  # 面积式解析失败：退回完整式形态
+    if not factored:
+        for term in terms:
+            node = _parse_expression(term.raw_expr or term.expr)
+            if node is None:
+                return "", [], []
+            parsed.append(node)
     for term in terms:
-        node = _parse_expression(term.raw_expr or term.expr)
-        if node is None:
-            return "", [], []
-        parsed.append(node)
         notes.append(term.note)
         tags.extend(term.tags)
 
@@ -673,14 +739,25 @@ def _compact_terms(
 
     compact_terms: list[CompactTerm] = []
     for index, (term, root) in enumerate(zip(terms, parsed), start=1):
+        if factored:
+            # 面积值必须在符号替换前求值：_ReplaceNodes 会原地改写 root 的子树
+            area_value = _node_value(root)
         transformed = _ReplaceNodes(symbols).visit(root)
         expression = _excel_expression(_safe_simplify(transformed))
+        if factored:
+            # 合并形态：分项即断面面积（值为面积式的求值，mm²）
+            symbol = _next_subtotal_symbol(symbols, index)
+            value = area_value
+        else:
+            symbol = f"V{index}"
+            value = term.value
         compact_terms.append(
             CompactTerm(
-                symbol=f"V{index}",
+                symbol=symbol,
                 note=term.note,
                 expression=expression,
-                value=term.value,
+                value=value if value is not None else term.value,
+                geometry=term.geometry,
             )
         )
 
@@ -705,22 +782,28 @@ def _compact_terms(
 
     if len(compact_terms) > 1:
         parts: list[str] = []
-        for index, term in enumerate(compact_terms):
+        for index, (term, compact) in enumerate(zip(terms, compact_terms)):
+            # 正负号取原始项的带符号数值：合并形态下 compact.value 是正的面积，
+            # 扣减项的 - 号只能来自 term.value
             sign = "-" if term.value < 0 else ("+" if index else "")
-            parts.append(sign + term.symbol)
+            parts.append(sign + compact.symbol)
             definitions.append(
                 ExpressionDefinition(
-                    symbol=term.symbol,
-                    label=term.note or f"分项 {index + 1}",
-                    expression=term.expression,
+                    symbol=compact.symbol,
+                    label=compact.note or f"分项 {index + 1}",
+                    expression=compact.expression,
                     # 减项在定义表按绝对值展示，正负号由主算式里的 +/− 表达；
-                    # 否则会出现“0.3 = -0.3”这种自相矛盾的行。
-                    value=abs(term.value),
-                    source=term.note or "分项计算",
+                    # 否则会出现“0.3 = -0.3”这种自相矛盾的行。合并形态的分项
+                    # 值本就是面积式的求值（正数），直接沿用。
+                    value=abs(term.value) if not factored else compact.value,
+                    source=compact.note or "分项计算",
                     kind="subtotal",
                 )
             )
         main = "".join(parts)
+        if factored:
+            _, exponent, rest = tails[0]
+            main = f"({main})/10^{exponent}{rest}"
     else:
         main = compact_terms[0].expression if compact_terms else "0"
 
@@ -781,6 +864,12 @@ class Term:
     ``expr`` 已按记法指数带换算尾（mm 记法的项为 ``(mm 式)/10^s`` 形态），
     求值 = 该项数值。``raw_expr`` 与 ``expr`` 同值（历史字段，保留供展示层
     与旧数据兼容）。
+
+    ``geometry`` 是该项对应的梯形断面范围
+    ``(h0, h1, l0, r0, l1, r1)``（单位 m）：深度自槽底向上（h0 深h1 浅），
+    l/r 为区间底/顶的左右缘 x（相对本体中心，左负右正）。只有几何分项
+    （挖方 / 回填梯形）记录，公式 / 系数类项为 None；供详情弹窗把分项行
+    高亮到断面图上，不参与任何计算。
     """
 
     expr: str
@@ -788,6 +877,7 @@ class Term:
     note: str = ""
     tags: tuple[NamedValue, ...] = ()
     raw_expr: str = ""
+    geometry: tuple[float, float, float, float, float, float] | None = None
 
 
 @dataclass
@@ -907,13 +997,15 @@ class Quantity:
         expr: "str | Dim | None" = None,
         note: str = "",
         tags: Iterable[NamedValue] = (),
+        geometry: tuple[float, float, float, float, float, float] | None = None,
     ) -> None:
         """累加一个代入项；``expr`` 传 :class:`Dim` 时按其记法指数追加 ``/10^s`` 换算尾。
 
         mm 记法（s=3）的每延米面积 / 体积式存成 ``(mm 式)/10^6``（体积）或
         ``/10^3``（面积），求值即该项数值（m 制）；m / 无量纲记法（s=0：用户
         公式、管材含量、井点数）原样存入。算式只存“数值代入”部分，正负号由
-        value 决定，避免出现双重负号。
+        value 决定，避免出现双重负号。``geometry`` 记录该项的梯形断面范围
+        （详情弹窗高亮用，见 :class:`Term`）。
         """
         self.value += value
         if value != 0:
@@ -927,7 +1019,14 @@ class Quantity:
             if space:
                 text = f"{wrap(text)}/10^{space}"
             self.terms.append(
-                Term(expr=text, value=value, note=note, tags=tuple(tags), raw_expr=text)
+                Term(
+                    expr=text,
+                    value=value,
+                    note=note,
+                    tags=tuple(tags),
+                    raw_expr=text,
+                    geometry=geometry,
+                )
             )
             self._presentation_cache = None
 
@@ -965,11 +1064,13 @@ class QDict:
         expr: "str | Dim | None" = None,
         note: str = "",
         tags: Iterable[NamedValue] = (),
+        geometry: tuple[float, float, float, float, float, float] | None = None,
     ) -> Quantity:
         """累加一项：``note`` 是该步的说明，挂在项上随 :meth:`Quantity.steps` 一起展示。
 
         ``expr`` 可传算式原文（m / 无量纲记法，如用户公式结果）或 :class:`Dim`
         （几何量：mm 记法随 Dim.s 记录，自动追加 ``/10^s`` 换算尾）。
+        ``geometry`` 记录该项的梯形断面范围（详情弹窗高亮用）。
         数值为 0 的项不进算式，其说明也一并丢弃（步骤列表与算式严格一一对应）。
         ``tags`` 只供展示层识别“槽底宽 / 计算深度”等中间量。
         """
@@ -977,7 +1078,7 @@ class QDict:
         if quantity is None:
             quantity = Quantity(key=key)
             self._items[key] = quantity
-        quantity.add_term(value, expr, note, tags)
+        quantity.add_term(value, expr, note, tags, geometry)
         return quantity
 
     def discard(self, key: str) -> None:
@@ -989,7 +1090,9 @@ class QDict:
         for quantity in other.items():
             target = self.add(quantity.key, 0.0)
             for term in quantity.terms:
-                target.add_term(term.value, term.expr, term.note, term.tags)
+                target.add_term(
+                    term.value, term.expr, term.note, term.tags, term.geometry
+                )
                 target.terms[-1].raw_expr = term.raw_expr or term.expr
 
     def scale(self, coefficient: float, expr: str | None = None) -> None:

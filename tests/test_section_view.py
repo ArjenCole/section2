@@ -476,6 +476,11 @@ def test_group_center_split_wall_at_center_midpoint(tmp_path) -> None:
     scene_center = scene_of("管中心分隔")
     assert len(scene_slope.dashed_lines) == 1
     assert len(scene_center.dashed_lines) == 1
+    # 成员区间：表达式详情弹窗按 element_id 把分项几何定位到整槽图上
+    assert [span[0] for span in scene_slope.member_spans] == [e1.id, e2.id]
+    centers = [span[1] for span in scene_slope.member_spans]
+    assert centers[0] < centers[1]  # 自左向右
+    assert scene_slope.member_spans[1][2] > scene_slope.member_spans[0][2]  # 右管更深
     wall_slope = scene_slope.dashed_lines[0]
     wall_center = scene_center.dashed_lines[0]
 

@@ -440,6 +440,10 @@ class _Member:
     base_width: Dim  # 基础外皮宽 b_i（= 单管槽底宽去掉两侧工作面）
     work_width: Dim  # 自身面宽原则按自身管径查到的单侧工作面宽
     profiles: list[list[_SlopeSegment]] = field(default_factory=list)
+    #: 左右分侧的剖面（与 ``profiles`` 同内容分侧存放）：分项几何的左右缘
+    #: 按"本体半宽 + 该侧外扩"精确计算，供详情弹窗在整槽断面图上高亮
+    profiles_left: list[list[_SlopeSegment]] = field(default_factory=list)
+    profiles_right: list[list[_SlopeSegment]] = field(default_factory=list)
     flat_width: Dim = field(default_factory=lambda: dim(0.0))  # 平面归属带宽（降水 / 特殊地基代入用）
     #: 回填分层带 (定额键, 下界, 上界, 层厚, 说明)，高度自槽底起算；
     #: 独立 / 统一回填标高两种口径下内容不同（见 _member_bands / _unified_member_bands）
@@ -690,33 +694,39 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
     # 逐构件的宽度剖面 + 平面归属带宽（规则 6：工作面宽用自己的 PW）
     for i, member in enumerate(snapshots):
         member.profiles = []
+        member.profiles_left = []
+        member.profiles_right = []
         base = _rect_segments(member.base_width, member.depth)
         if base:
             member.profiles.append(base)
         if i == 0:
-            member.profiles += _outer_side_profiles(
-                work_left, member.depth, member.work_width
-            )
+            left = _outer_side_profiles(work_left, member.depth, member.work_width)
+            member.profiles += left
+            member.profiles_left += left
         else:
             pair = pairs[i - 1]
             if pair.deep is member:  # 自身更深：左侧内侧放坡
-                member.profiles += _internal_side_profiles(
+                left = _internal_side_profiles(
                     pair.work, member.depth, snapshots[i - 1].depth, member.work_width
                 )
             else:  # 自身更浅 / 等深：左侧虚拟竖直围护
-                member.profiles += _wall_profiles(member.work_width, member.depth)
+                left = _wall_profiles(member.work_width, member.depth)
+            member.profiles += left
+            member.profiles_left += left
         if i == n - 1:
-            member.profiles += _outer_side_profiles(
-                work_right, member.depth, member.work_width
-            )
+            right = _outer_side_profiles(work_right, member.depth, member.work_width)
+            member.profiles += right
+            member.profiles_right += right
         else:
             pair = pairs[i]
             if pair.deep is member:  # 自身更深：右侧内侧放坡
-                member.profiles += _internal_side_profiles(
+                right = _internal_side_profiles(
                     pair.work, member.depth, snapshots[i + 1].depth, member.work_width
                 )
             else:  # 自身更浅 / 等深：右侧虚拟竖直围护
-                member.profiles += _wall_profiles(member.work_width, member.depth)
+                right = _wall_profiles(member.work_width, member.depth)
+            member.profiles += right
+            member.profiles_right += right
         flat = member.base_width
         if i == 0:
             flat = flat + member.work_width
@@ -868,7 +878,7 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             )
         foundation.cal_found(info, pf, pp, member.ad, out)
         if info.category == CATEGORY_ENCASED:
-            foundation.encased_pipe_deduction(info, out)
+            foundation.encased_pipe_deduction(info, out, z_bottom=member.ad.c1.v)
         foundation.cal_pipes(info, out)
         out.scale(info.amount, expr=info.amount_dim.e)
     return results, errors
@@ -951,6 +961,38 @@ def _unified_member_bands(
     return bands
 
 
+def _side_extension(pieces: list[list[_SlopeSegment]], height: Dim) -> float:
+    """该侧各剖面段在自槽底高度 ``height`` 处的外扩宽合计（不覆盖该高度的段不计）。
+
+    ``height`` 传 mm 记法 Dim（与剖面段同空间）。
+    """
+    probe = height
+    total = 0.0
+    for profile in pieces:
+        segment = _segment_for_interval(profile, probe, probe)
+        if segment is not None:
+            total += segment.width_at(probe).v
+    return total
+
+
+def _member_geometry(
+    member: "_Member", lo: Dim, hi: Dim
+) -> tuple[float, float, float, float, float, float]:
+    """分层区间的断面范围：自槽底 [lo, hi]，左右缘 = 本体半宽 + 该侧外扩。
+
+    左右缘相对本体中心（m，左负右正）；不对称坡区（深浅相邻）也精确。
+    """
+    base_half = member.base_width.v / 2.0
+    return (
+        lo.v,
+        hi.v,
+        -(base_half + _side_extension(member.profiles_left, lo)),
+        base_half + _side_extension(member.profiles_right, lo),
+        -(base_half + _side_extension(member.profiles_left, hi)),
+        base_half + _side_extension(member.profiles_right, hi),
+    )
+
+
 def _member_dig_fill(
     member: _Member, out: QDict, bands: list[tuple[str, Dim, Dim, Dim, str]]
 ) -> bool:
@@ -1025,8 +1067,9 @@ def _member_dig_fill(
         if area.v == 0:
             continue
         produced = True
-        out.add(key, area.v, area, note, tags=area.tags)
-        dig.add_term(area.v, area, note, tags=area.tags)
+        geometry = _member_geometry(member, lo, hi)
+        out.add(key, area.v, area, note, tags=area.tags, geometry=geometry)
+        dig.add_term(area.v, area, note, tags=area.tags, geometry=geometry)
     if not produced:
         out.discard(dig_key)
         return False
