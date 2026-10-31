@@ -379,6 +379,35 @@ def _group_pair_fixture(tmp_path, name: str, depth2: str = "4", dn2: int = 800):
     return group, e1, e2
 
 
+def test_expression_dialog_member_hover_hits_own_span(qapp, tmp_path) -> None:
+    """合槽成员单选的表达式窗体：悬停分项行 → 整槽图上高亮该成员的断面范围。
+
+    回归（2026-10-31）：成员单选路径此前给行传 member_id=None，合槽场景下
+    按成员定位永远落空，悬停全部无高亮。
+    """
+    from app.viewmodels.unit_vm import compute_elements
+    from app.views.dialogs.expression_detail_dialog import ExpressionDetailDialog
+
+    group, e1, e2 = _group_pair_fixture(tmp_path, "成员悬停高亮")
+    _summary, detail = compute_elements([e1.id])
+    dig = detail[0][1].get("开挖|Ⅲ类土|m3")
+
+    dialog = ExpressionDetailDialog(None, dig, ("group", group.id, e1.id))
+    dialog.show()
+    qapp.processEvents()
+    assert dialog._scene is not None and dialog._scene.outline is not None
+    dialog._on_term_entered(0, 0)
+    highlight = dialog._canvas._highlight
+    assert highlight is not None, "成员单选悬停未产生高亮（member_id 未定位到成员）"
+    # 高亮的 x 都在本成员中心附近，而不是另一成员一侧
+    spans = {span[0]: span for span in dialog._scene.member_spans}
+    own_center = spans[e1.id][1]
+    other_center = spans[e2.id][1]
+    for x, _y in highlight:
+        assert abs(x - own_center) < abs(x - other_center)
+    dialog.close()
+
+
 def test_group_unified_layer_lines_span_trench(tmp_path) -> None:
     """统一回填标高：每条统筹界面画一条贯通整槽的水平线。
 

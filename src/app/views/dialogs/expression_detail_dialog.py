@@ -88,22 +88,26 @@ class _SectionCanvas(QWidget):
 class ExpressionDetailDialog(FramelessDialog):
     """「计算表达式」详情窗体。
 
-    ``context`` 为 ``(种类, id)``：``("element", 构件id)`` 单构件（合槽成员也传
-    成员 id，窗体内部改画整槽）；``("group", 合槽组id)`` 合槽父行；``("multi", None)``
-    多选（不画断面图）。合并行（``per_element``）的分项按成员堆叠，说明带
-    ``[构件N]`` 前缀。
+    ``context`` 为 ``(种类, 场景id, 成员id)``：``("element", 构件id, None)``
+    普通构件单选（画自己的断面）；``("group", 合槽组id, 成员id|None)`` 合槽——
+    成员单选带成员 id（画整槽、分项按成员定位高亮），父行传 None（合并行自带
+    成员 id）；``("multi", None, None)`` 多选（不画断面图）。合并行
+    （``per_element``）的分项按成员堆叠，说明带 ``[构件N]`` 前缀。
     """
 
     def __init__(
         self,
         parent: QWidget | None,
         quantity,
-        context: tuple[str, int | None],
+        context: tuple[str, int | None, int | None],
     ) -> None:
         super().__init__(parent, title="计算表达式")
         self.setModal(True)
         self._quantity = quantity
-        self._context = context
+        kind, scene_id, member_id = self._expand_context(context)
+        self._context = (kind, scene_id)
+        #: 成员单选时的成员 id：合槽场景下用它把分项几何定位到整槽图
+        self._single_member_id = member_id
         self._scene = None
         self._merged_members: list[tuple[int | None, object]] = []
         merged = getattr(quantity, "per_element", False)
@@ -152,10 +156,18 @@ class ExpressionDetailDialog(FramelessDialog):
         QTimer.singleShot(0, self, self._load_scene)
 
     # ------------------------------------------------------------------ 数据
+    @staticmethod
+    def _expand_context(context) -> tuple[str, int | None, int | None]:
+        """兼容 (kind, id) 与 (kind, id, member_id) 两种上下文写法。"""
+        if len(context) == 2:
+            return context[0], context[1], None
+        return context
+
     def _fill_single(self, view) -> None:
         """单条工程量：主算式 + 分项（合并形态为断面面积）+ 中间量。
 
         分项行不设下限：单分项量也建一行（悬停即高亮整个断面范围）。
+        合槽成员单选时行带成员 id，高亮定位到整槽图上该成员的位置。
         """
         self._formula_label.setText(
             f"主算式：{view.formula} ＝ {format_number(self._quantity.value)}"
@@ -167,7 +179,7 @@ class ExpressionDetailDialog(FramelessDialog):
                 term.expression,
                 format_number(term.value),
                 term.geometry,
-                None,
+                self._single_member_id,
             )
         self._refresh_table_height(self._term_table)
         for item in view.definitions:

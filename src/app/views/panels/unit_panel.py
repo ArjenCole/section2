@@ -1250,20 +1250,21 @@ class UnitPanel(QWidget):
         quantity = item.data(_EXPR_QUANTITY_ROLE)
         if quantity is None:
             return
-        # 断面图上下文：合槽父行画整槽；组员单选也画整槽（与断面面板同口径）；
+        # 断面图上下文：合槽父行画整槽（合并行自带成员 id）；组员单选也画
+        # 整槽并带自己的成员 id（分项高亮定位用，与断面面板同口径）；
         # 普通构件画自己的断面；多选不画
         if self._group_member_ids:
-            context = (_CONTEXT_GROUP, self._current_group_id)
+            context = (_CONTEXT_GROUP, self._current_group_id, None)
         elif self._current_detail_id is not None:
             from app.viewmodels.unit_vm import _element
 
             element = _element(self._current_detail_id)
             if element is not None and element.group_id is not None:
-                context = (_CONTEXT_GROUP, element.group_id)
+                context = (_CONTEXT_GROUP, element.group_id, element.id)
             else:
-                context = (_CONTEXT_ELEMENT, self._current_detail_id)
+                context = (_CONTEXT_ELEMENT, self._current_detail_id, None)
         else:
-            context = (_CONTEXT_MULTI, None)
+            context = (_CONTEXT_MULTI, None, None)
         dialog = ExpressionDetailDialog(self, quantity, context)
         dialog.exec()
 

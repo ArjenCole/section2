@@ -187,7 +187,9 @@ def test_detail_dialog_hover_highlights_section(project, qapp) -> None:
     elements = {element.name: element for element in _elements(unit)}
     backfill = _results(unit)[elements["混凝土管"].id].get("回填|中粗砂|m3")
 
-    dialog = ExpressionDetailDialog(None, backfill, ("element", elements["混凝土管"].id))
+    dialog = ExpressionDetailDialog(
+        None, backfill, ("element", elements["混凝土管"].id, None)
+    )
     dialog.show()
     qapp.processEvents()
     assert dialog._scene is not None, "断面场景未加载（弹窗布局后必须构建）"
