@@ -786,6 +786,55 @@ def test_group_center_split_conserves_and_transfers(project) -> None:
     assert sum(t.value for t in transferred) == pytest.approx((rect + wedge) * 120, rel=1e-9)
 
 
+def test_group_center_split_wedge_to_shallow_cushion(project) -> None:
+    """深-浅-深、管中心分隔：坡区楔形计入中间(浅)构件的垫层（左右两个三角形）。
+
+    分层模型：坡区楔形划归获方最底层定额键，几何为三角形（自浅槽底负高度、
+    顶点在下）；深构件的垫层不再包含楔形；整槽挖方与起坡点口径守恒。
+    """
+    from app.core.calc.trench_group import compute_group
+    from app.viewmodels import unit_vm
+
+    e1 = _element("楔形左深", dn=600, depth="4", amount="100")
+    e2 = _element("楔形中浅", dn=600, depth="3", amount="100")
+    e3 = _element("楔形右深", dn=600, depth="4", amount="100")
+    group, error = unit_vm.create_trench_group([e1, e2, e3])
+    assert group is not None and error is None
+
+    results_slope, errors = compute_group(group)  # 默认起坡点分隔
+    assert not any(errors.values()), errors
+    total_slope = sum(
+        q.value for r in results_slope.values() for q in r.items() if q.key == "开挖|Ⅲ类土|m3"
+    )
+
+    unit_vm.update_group(group.id, split_mode="管中心分隔")
+    results, errors = compute_group(group)
+    assert not any(errors.values()), errors
+    total_center = sum(
+        q.value for r in results.values() for q in r.items() if q.key == "开挖|Ⅲ类土|m3"
+    )
+    assert total_center == pytest.approx(total_slope, rel=1e-9)  # 整槽守恒
+
+    # 中间(浅)构件垫层：左右两个楔形三角形（自浅槽底负高度、顶点在下）
+    cushion = results[e2].get("垫层|中粗砂|m3")
+    wedges = [
+        t
+        for t in cushion.terms
+        if "管中心分隔" in t.note and t.geometry and t.geometry[0] < 0
+    ]
+    assert len(wedges) == 2, "中间构件垫层应有左右两个楔形三角形"
+    left, right = sorted(wedges, key=lambda t: t.geometry[2])
+    assert left.geometry[3] < 0 < right.geometry[2]  # 左块在中心左侧、右块在右侧
+    for w in wedges:
+        g = w.geometry
+        assert g[1] == 0.0 and g[0] < 0.0  # 垫层下方（自浅槽底负高度）
+        assert (g[3] - g[2]) <= (g[5] - g[4]) + 1e-9  # 底边不宽于顶边（顶点在下）
+    # 深构件垫层不再包含楔形
+    for eid in (e1, e3):
+        deep_cushion = results[eid].get("垫层|中粗砂|m3")
+        assert not any("管中心分隔" in t.note for t in deep_cushion.terms)
+
+
 def test_group_center_split_gainer_deep_no_wedge(project) -> None:
     """深左浅右、分界右移（获方 = 深侧）：只有矩形条带、无坡区楔形，整槽守恒。
 

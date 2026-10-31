@@ -812,23 +812,35 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             geometry = (band_lo.v, hi.v, strip_left, strip_right, strip_left, strip_right)
             out.add(key, area.v, area, f"{note}{suffix}", tags=area.tags, geometry=geometry)
             out.add(dig_key, area.v, area, f"{note}{suffix}", tags=area.tags, geometry=geometry)
-        # 坡区楔形：仅当获方更浅（条带在获方槽底以下），按深侧的分层带摊入
+        # 坡区楔形：获方更浅时，浅槽底以下的坡区楔形划给获方——计入获方自己
+        # 最底层的定额键（垫层），每个分界一个三角形/梯形分项（高度自获方
+        # 槽底起算为负，几何即楔形外接梯形，悬停高亮用）
         if gainer.depth.v < loser.depth.v - 1e-9:
-            for key, lo, hi, _layer, note in loser.bands:
+            wedge = None
+            for _key, lo, hi, _layer, _note in loser.bands:
                 area = _wedge_area(split, lo, hi)
                 if area is None or area.v == 0:
                     continue
-                # 楔形自深侧槽底起算，换算到获方槽底（高差 delta_h）后为负高度
-                geometry = (
-                    lo.v - split.delta_h.v,
-                    hi.v - split.delta_h.v,
-                    strip_left,
-                    strip_right,
-                    strip_left,
-                    strip_right,
+                wedge = area if wedge is None else wedge + area
+            if wedge is not None and wedge.v != 0:
+                bottom_key, *_rest, bottom_note = gainer.bands[0]
+                geometry = _wedge_geometry(split)
+                out.add(
+                    bottom_key,
+                    wedge.v,
+                    wedge,
+                    f"{bottom_note}{suffix}",
+                    tags=wedge.tags,
+                    geometry=geometry,
                 )
-                out.add(key, area.v, area, f"{note}{suffix}", tags=area.tags, geometry=geometry)
-                out.add(dig_key, area.v, area, f"{note}{suffix}", tags=area.tags, geometry=geometry)
+                out.add(
+                    dig_key,
+                    wedge.v,
+                    wedge,
+                    f"{bottom_note}{suffix}",
+                    tags=wedge.tags,
+                    geometry=geometry,
+                )
 
     # 围护量（每面 ×1）+ 支撑
     flat_total = _dim_sum(*(member.flat_width for member in snapshots))
@@ -1022,6 +1034,50 @@ def _member_geometry(
         base_half + _side_extension(member.profiles_right, lo),
         -(base_half + _side_extension(member.profiles_left, hi)),
         base_half + _side_extension(member.profiles_right, hi),
+    )
+
+
+def _wedge_geometry(split: _CenterSplit) -> tuple[float, float, float, float, float, float]:
+    """坡区楔形的断面范围（自获方槽底坐标，负高度；一般为三角形，放坡很缓时为梯形）。
+
+    楔形在浅槽底水平面处最宽（= offset，介于起坡点分界与新分界之间），向深处
+    随放坡剖面收窄，到 ``gap = offset`` 的高度收为一点（放坡很缓时到深槽底仍是
+    梯形）。x 相对获方本体中心，左负右正。
+    """
+    offset = split.offset.v
+    run_max = split.run_max.v
+    delta_h = split.delta_h.v
+    w_wall = split.wall_x - split.gainer_center_x  # 起坡点分界（相对获方中心）
+    # 楔形顶点高度：放坡剖面宽度增长到 run_max − offset 的高度
+    #（gap(t) = run_max − width_at(t)，宽度过该点后楔形消失）；放坡很缓时顶在深槽底
+    h_apex = 0.0
+    if run_max > offset:
+        target = run_max - offset
+        for segment in split.profile:
+            w1 = segment.width_at(segment.t1).v
+            w2 = segment.width_at(segment.t2).v
+            if w2 > w1 and w2 >= target and w1 < target:
+                h_apex = segment.t1.v + (target - w1) / (w2 - w1) * (
+                    segment.t2.v - segment.t1.v
+                )
+                break
+    y_apex = h_apex - delta_h
+    if split.gainer == split.pair_index:  # 获方在 pair 左侧：条带在分界右侧
+        return (
+            y_apex,
+            0.0,
+            w_wall + min(run_max, offset),
+            w_wall + offset,
+            w_wall,
+            w_wall + offset,
+        )
+    return (
+        y_apex,
+        0.0,
+        w_wall - offset,
+        w_wall - min(run_max, offset),
+        w_wall - offset,
+        w_wall,
     )
 
 
