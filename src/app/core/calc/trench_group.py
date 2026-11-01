@@ -917,7 +917,7 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
                 out,
                 "特殊地基",
             )
-        foundation.cal_found(info, pf, pp, member.ad, out)
+        foundation.cal_found(info, pf, pp, member.ad, out, bands=member.bands)
         if info.category == CATEGORY_ENCASED:
             foundation.encased_pipe_deduction(info, out, z_bottom=member.ad.c1.v)
         foundation.cal_pipes(info, out)

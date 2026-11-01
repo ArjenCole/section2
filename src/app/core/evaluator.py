@@ -104,6 +104,8 @@ _FUNCTIONS: dict[str, Any] = {
     "ceiling": _ceiling,
     "sin": math.sin,
     "cos": math.cos,
+    # 管位扣减按分层切片的弓形面积公式用（Excel 同名函数，弧度制）
+    "acos": math.acos,
 }
 _NAMES: dict[str, Any] = {"pi": math.pi, "PI": math.pi}
 
@@ -148,7 +150,7 @@ def normalize(text: str) -> str:
         result = result.replace(character, f"**{exponent}")
     result = result.replace("PI()", "pi").replace("pi()", "pi")
     # 长名在前：\b 保证 CEIL 不会咬掉 CEILING，ROUND 不会咬掉 ROUNDUP
-    for name in ("CEILING", "ROUNDUP", "ROUND", "SQRT", "ABS", "POWER", "CEIL", "SIN", "COS"):
+    for name in ("CEILING", "ROUNDUP", "ROUND", "SQRT", "ABS", "POWER", "CEIL", "SIN", "COS", "ACOS"):
         result = re.sub(r"\b" + name + r"\b", name.lower(), result, flags=re.IGNORECASE)
     return result
 

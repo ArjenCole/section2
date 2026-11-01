@@ -765,7 +765,7 @@ def prettify_formula(expression: str) -> str:
     贴进 Excel 能用。
     """
     text = expression.replace("**", "^")
-    for name in ("CEILING", "ROUNDUP", "ROUND", "SQRT", "ABS", "POWER", "CEIL", "SIN", "COS"):
+    for name in ("CEILING", "ROUNDUP", "ROUND", "SQRT", "ABS", "POWER", "CEIL", "SIN", "COS", "ACOS"):
         text = re.sub(r"(?<![A-Za-z])" + name + r"(?=\s*\()", name, text, flags=re.IGNORECASE)
     return text
 

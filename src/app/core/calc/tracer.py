@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from typing import Iterable
 
 #: 输出算式里的函数名（Excel 写法，展示时统一转大写）
-_EXCEL_FUNCTIONS = ("CEILING", "ROUNDUP", "ROUND", "SQRT", "ABS", "POWER", "CEIL", "SIN", "COS")
+_EXCEL_FUNCTIONS = ("CEILING", "ROUNDUP", "ROUND", "SQRT", "ABS", "POWER", "CEIL", "SIN", "COS", "ACOS")
 
 #: 纯数字（含负号与小数）——这类算式嵌入模板时无需加括号
 _NUMERIC = re.compile(r"-?\d+(?:\.\d+)?")
@@ -286,9 +286,20 @@ def scale_sum(parts: Iterable[Dim], factor: float) -> Dim:
     return total
 
 
-def dim_min(first: Dim, second: Dim) -> Dim:
+def dim_min(*parts: Dim) -> Dim:
     """取较小者（算式取被选中那一项：min 的结果就是它）。"""
-    return first if first.v <= second.v else second
+    result = parts[0]
+    for part in parts[1:]:
+        result = result if result.v <= part.v else part
+    return result
+
+
+def dim_max(*parts: Dim) -> Dim:
+    """取较大者（算式取被选中那一项：max 的结果就是它）。"""
+    result = parts[0]
+    for part in parts[1:]:
+        result = result if result.v >= part.v else part
+    return result
 
 
 def raw_dim(raw: str, value: float) -> Dim:
@@ -404,7 +415,7 @@ class CompactTerm:
     note: str
     expression: str
     value: float
-    geometry: tuple[float, float, float, float, float, float] | None = None
+    geometry: tuple[float, ...] | tuple[tuple[float, float], ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -877,7 +888,9 @@ class Term:
     note: str = ""
     tags: tuple[NamedValue, ...] = ()
     raw_expr: str = ""
-    geometry: tuple[float, float, float, float, float, float] | None = None
+    #: 断面范围：6 元组梯形 (h0, h1, l0, r0, l1, r1)，或点列多边形
+    #: ((x, y), …)（弓形 / 半圆等弧边形状，弦线 + 采样弧线）
+    geometry: tuple[float, ...] | tuple[tuple[float, float], ...] | None = None
 
 
 @dataclass
@@ -997,7 +1010,7 @@ class Quantity:
         expr: "str | Dim | None" = None,
         note: str = "",
         tags: Iterable[NamedValue] = (),
-        geometry: tuple[float, float, float, float, float, float] | None = None,
+        geometry: tuple[float, ...] | tuple[tuple[float, float], ...] | None = None,
     ) -> None:
         """累加一个代入项；``expr`` 传 :class:`Dim` 时按其记法指数追加 ``/10^s`` 换算尾。
 
@@ -1064,7 +1077,7 @@ class QDict:
         expr: "str | Dim | None" = None,
         note: str = "",
         tags: Iterable[NamedValue] = (),
-        geometry: tuple[float, float, float, float, float, float] | None = None,
+        geometry: tuple[float, ...] | tuple[tuple[float, float], ...] | None = None,
     ) -> Quantity:
         """累加一项：``note`` 是该步的说明，挂在项上随 :meth:`Quantity.steps` 一起展示。
 

@@ -18,7 +18,7 @@ import math
 
 from app.core.models.models import CATEGORY_BURIED, CATEGORY_BOX_CULVERT, CATEGORY_ENCASED, CATEGORY_GALLERY
 from app.core.calc.measures import AtlasDims
-from app.core.calc.tracer import Dim, QDict, mm, mm_dim, mm_of_m, dim_min, fmt, scale_sum, tag_dim, wrap
+from app.core.calc.tracer import Dim, QDict, dim, dim_max, dim_min, mm, mm_dim, mm_of_m, fmt, scale_sum, tag_dim, wrap
 
 
 def _rect_geometry(z0: float, z1: float, half_width: float) -> tuple[float, float, float, float, float, float]:
@@ -27,6 +27,111 @@ def _rect_geometry(z0: float, z1: float, half_width: float) -> tuple[float, floa
     供详情弹窗把分项行高亮到断面图上；弓形 / 圆形扣减用它做外接矩形近似。
     """
     return (z0, z1, -half_width, half_width, -half_width, half_width)
+
+
+def _rect_geometry(z0: float, z1: float, half_width: float) -> tuple[float, float, float, float, float, float]:
+    """矩形断面范围（梯形几何的等宽特例）：自槽底 [z0, z1]，左右缘 ±half_width。
+
+    供详情弹窗把分项行高亮到断面图上。
+    """
+    return (z0, z1, -half_width, half_width, -half_width, half_width)
+
+
+def _segment_polygon(z_bottom: float, r: float, h_lo: float, h_hi: float, samples: int = 12) -> tuple:
+    """圆管在自管底高度 [h_lo, h_hi] 内的弓形段多边形（本体中心相对，m）。
+
+    弦线 + 采样弧线，供详情弹窗按真实形状（弓形 / 半圆）高亮。
+    """
+    def chord(h: float) -> float:
+        return math.sqrt(max(h * (2.0 * r - h), 0.0))
+
+    pts: list[tuple[float, float]] = [
+        (-chord(h_lo), z_bottom + h_lo),
+        (chord(h_lo), z_bottom + h_lo),
+    ]
+    for k in range(1, samples):
+        h = h_lo + (h_hi - h_lo) * k / samples
+        pts.append((chord(h), z_bottom + h))
+    pts.append((chord(h_hi), z_bottom + h_hi))
+    pts.append((-chord(h_hi), z_bottom + h_hi))
+    for k in range(samples - 1, 0, -1):
+        h = h_lo + (h_hi - h_lo) * k / samples
+        pts.append((-chord(h), z_bottom + h))
+    return tuple(pts)
+
+
+def _circle_area_below(h: Dim, r: Dim) -> Dim:
+    """圆内自管底到高度 h 的面积（Excel 语法）：
+    ``R²·ACOS((R−h)/R) − (R−h)·√(h·(2R−h))``。h 须在 [0, 2R] 内（调用方截断）。
+    """
+    h_e, r_e = wrap(h.e), wrap(r.e)
+    expr = (
+        f"POWER({r_e},2)*ACOS(({r_e}-{h_e})/({r_e}))"
+        f"-({r_e}-{h_e})*SQRT({h_e}*(2*({r_e})-{h_e}))"
+    )
+    ratio = max(-1.0, min(1.0, (r.v - h.v) / r.v))
+    value = (
+        r.v * r.v * math.acos(ratio)
+        - (r.v - h.v) * math.sqrt(max(h.v * (2.0 * r.v - h.v), 0.0))
+    )
+    return Dim(value, expr, h.tags + r.tags, h.s + r.s)
+
+
+def _circle_area_between(h_lo: Dim, h_hi: Dim, r: Dim) -> Dim:
+    """圆管在自管底高度 [h_lo, h_hi] 内的截面面积（两端弦之间）。"""
+    return _circle_area_below(h_hi, r) - _circle_area_below(h_lo, r)
+
+
+def _emit_footprint_slices(out: QDict, bands, found_h: Dim, width: Dim) -> None:
+    """基础占位按实际分层标高切片：每个重叠分层一条矩形扣减（负项）。
+
+    统一回填标高下分层界面会移动，占位必须落到几何上真正覆盖它的分层里。
+    """
+    for b_key, b_lo, b_hi, _layer, _b_note in bands:
+        lo_dim = dim_max(b_lo, dim(0.0))
+        hi_dim = dim_min(b_hi, found_h)
+        if hi_dim.v - lo_dim.v <= 1e-9:
+            continue
+        area = (hi_dim - lo_dim) * width
+        out.add(
+            b_key,
+            -area.v,
+            area,
+            "扣基础占位",
+            tags=width.tags,
+            geometry=_rect_geometry(lo_dim.v, hi_dim.v, width.v / 2.0),
+        )
+
+
+def _emit_pipe_slices(out: QDict, bands, z_bottom: Dim, outside: Dim, z_floor: Dim) -> None:
+    """管位占用按实际分层标高切片：每个重叠分层一条弓形 / 半圆扣减（负项）。
+
+    圆管自 ``z_bottom``（垫层顶）到管顶；只扣 ``z_floor``（基础顶，基础混凝土
+    已扣自己范围内的管位）以上的部分；管中心必为切点，每片不超过半圆。
+    """
+    r = outside / 2
+    z_center = z_bottom + r
+    for b_key, b_lo, b_hi, _layer, _b_note in bands:
+        lo_dim = dim_max(b_lo, z_bottom, z_floor)
+        hi_dim = dim_min(b_hi, z_bottom + outside)
+        if hi_dim.v - lo_dim.v <= 1e-9:
+            continue
+        if lo_dim.v < z_center.v < hi_dim.v:
+            pieces = [(lo_dim, z_center), (z_center, hi_dim)]
+        else:
+            pieces = [(lo_dim, hi_dim)]
+        for h_lo, h_hi in pieces:
+            height_lo, height_hi = h_lo - z_bottom, h_hi - z_bottom
+            area = _circle_area_between(height_lo, height_hi, r)
+            is_half = abs(height_lo.v - r.v) < 1e-9 and abs(height_hi.v - 2.0 * r.v) < 1e-9
+            out.add(
+                b_key,
+                -area.v,
+                area,
+                f"扣管位·{'半圆' if is_half else '弓形'}",
+                tags=area.tags,
+                geometry=_segment_polygon(z_bottom.v, r.v, height_lo.v, height_hi.v),
+            )
 
 
 def add_dim(out: QDict, key: str, quantity: Dim, note: str = "", geometry=None) -> None:
@@ -78,14 +183,17 @@ def _outside_dn(info, ad: AtlasDims) -> Dim:
     return tag_dim(ad.od, "管道外径（mm）", "图集外径")
 
 
-def cal_found(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
+def cal_found(info, pf, pp, ad: AtlasDims, out: QDict, bands=None) -> None:
     """管道基础 / 包封 / 箱涵 / 管廊本体量与占土扣减（每延米）。
 
     ``pf``（地基原则）提供砼基础开关 / 基础角度 / 垫层，``pp``（挖填降水原则）
-    提供回填材质（坞膀下半 / 上半）。
+    提供回填材质（坞膀下半 / 上半）。``bands``（合槽路径传入）为该构件的
+    回填分层带 (定额键, 下界, 上界, 层厚, 说明)：垫层占位与管位扣减按实际
+    分层标高切片、扣到几何上真正覆盖它的分层（统一回填标高下分层界面会
+    移动，固定键机械对应会错位）；不传时维持固定扣减项（单构件口径）。
     """
     if info.category == CATEGORY_BURIED:
-        _found_pipe(info, pf, pp, ad, out)
+        _found_pipe(info, pf, pp, ad, out, bands=bands)
     elif info.category == CATEGORY_ENCASED:
         _found_encased(info, pf, pp, ad, out)
     elif info.category == CATEGORY_BOX_CULVERT:
@@ -94,7 +202,7 @@ def cal_found(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
         _found_box(info, pf, pp, ad, out, prefix="管廊", wall_key="管廊壁")
 
 
-def _found_pipe(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
+def _found_pipe(info, pf, pp, ad: AtlasDims, out: QDict, bands=None) -> None:
     """直埋管道基础（旧版 mcE1.cal_found）。"""
     if not info.pipes:
         return
@@ -122,10 +230,17 @@ def _found_pipe(info, pf, pp, ad: AtlasDims, out: QDict) -> None:
         add_dim(out, "管道基础|模板|m2", found_h * 2,
                 geometry=_rect_geometry(0.0, found_h.v, width.v / 2.0))
 
-        deducted = dim_min(remain, found_h)
-        add_dim(out, f"垫层|{cushion_name}|m3", -(deducted * width), "垫层扣基础占位",
-                geometry=_rect_geometry(0.0, deducted.v, width.v / 2.0))
-        remain = remain - deducted
+        if bands is None:
+            deducted = dim_min(remain, found_h)
+            add_dim(out, f"垫层|{cushion_name}|m3", -(deducted * width), "垫层扣基础占位",
+                    geometry=_rect_geometry(0.0, deducted.v, width.v / 2.0))
+            remain = remain - deducted
+        else:
+            # 按实际分层标高切片：占位与管位落到几何上真正覆盖它的分层
+            #（统一回填标高下分层界面会移动，固定键机械对应会错位）
+            _emit_footprint_slices(out, bands, found_h, width)
+            _emit_pipe_slices(out, bands, ad.c1, outside, found_h)
+            return  # 切片口径已完成，跳过固定坞膀扣减（砂基础分支不切片、走固定项）
     else:
         deducted = dim_min(remain, ad.c2) if ad.c2.v > 0 else mm(0.0)
         remain = remain - deducted

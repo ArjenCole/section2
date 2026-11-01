@@ -787,6 +787,46 @@ def test_group_center_split_conserves_and_transfers(project) -> None:
     # 矩形条带部分在获方各层梯形内（几何越过起坡点分界）：任一层左右缘含条带
 
 
+def test_group_unified_backfill_slices_pipe_deduction(project) -> None:
+    """统一回填标高 + 管中心分隔：管位扣减按实际分层标高切片。
+
+    深构件的统一垫层带被浅构件层顶抬高，管位落在带内：扣减以弓形/半圆
+    分片落到该带（多边形几何，每片不超过半圆），切片公式求值与项值一致。
+    """
+    import math
+
+    from app.core.calc.trench_group import compute_group
+    from app.core.evaluator import evaluate
+    from app.viewmodels import unit_vm
+
+    e1 = _element("切片左深", dn=600, depth="4", amount="100")
+    e2 = _element("切片中浅", dn=600, depth="3", amount="100")
+    e3 = _element("切片右深", dn=600, depth="4", amount="100")
+    group, error = unit_vm.create_trench_group([e1, e2, e3])
+    assert group is not None and error is None
+    unit_vm.update_group(group.id, split_mode="管中心分隔", backfill_mode="统一回填标高")
+
+    results, errors = compute_group(group)
+    assert not any(errors.values()), errors
+
+    cushion = results[e1].get("垫层|中粗砂|m3")
+    slices = [t for t in cushion.terms if "扣管位" in t.note]
+    assert slices, "统一垫层带内应有管位切片扣减"
+    for term in slices:
+        # 多边形几何（弓形/半圆，弦线+弧线采样）
+        assert term.geometry and not (
+            len(term.geometry) == 6 and isinstance(term.geometry[0], (int, float))
+        ), "管位切片几何应为多边形"
+        # 切片公式求值 = 项值（符号相反：负项）
+        assert abs(abs(evaluate(term.expr)) - abs(term.value)) < 1e-9
+        # 每片不超过半圆（R = 0.365，每延米 m²；项值含 L_组 = 100 缩放）
+        assert abs(term.value) <= math.pi * 0.365 ** 2 / 2 * 100 + 1e-9
+    # 深构件统一垫层带被抬高：至少一片跨过自身垫层顶（按实际标高切片的证据）
+    assert any(max(p[1] for p in t.geometry) > 0.312 + 1e-9 for t in slices), (
+        "管位切片应按统一分层标高（而非自身垫层顶）切分"
+    )
+
+
 def test_group_center_split_wedge_to_shallow_cushion(project) -> None:
     """深-浅-深、管中心分隔：坡区楔形计入中间(浅)构件的垫层（左右两个三角形）。
 

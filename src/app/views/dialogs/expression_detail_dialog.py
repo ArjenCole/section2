@@ -307,11 +307,19 @@ class ExpressionDetailDialog(FramelessDialog):
         self._canvas.set_scene(scene, hint or "断面图不可用")
 
     def _highlight_polygon(self, geometry, member_id: int | None):
-        """分项几何 → 场景坐标多边形（m）；无场景 / 无几何 / 成员不在图中返回 None。"""
+        """分项几何 → 场景坐标多边形（m）；无场景 / 无几何 / 成员不在图中返回 None。
+
+        几何两种形态：6 元组梯形（左右缘），或点列多边形（弓形 / 半圆等
+        弧边形状，弦线 + 采样弧线）。
+        """
         scene = self._scene
         if scene is None or geometry is None:
             return None
-        h0, h1, l0, r0, l1, r1 = geometry
+        if len(geometry) == 6 and isinstance(geometry[0], (int, float)):
+            h0, h1, l0, r0, l1, r1 = geometry
+            pts_m = [(l0, h0), (r0, h0), (r1, h1), (l1, h1)]
+        else:  # 多边形（点列）
+            pts_m = [(float(x), float(y)) for x, y in geometry]
         if scene.outline is not None:
             # 合槽：按成员定位（成员本体中心 + 该成员槽底在整槽 y 中的位置）
             spans = {span[0]: span for span in scene.member_spans}
@@ -319,13 +327,8 @@ class ExpressionDetailDialog(FramelessDialog):
                 return None
             _eid, center, depth = spans[member_id]
             base_y = scene.total_h - depth
-            return [
-                (center + l0, base_y + h0),
-                (center + r0, base_y + h0),
-                (center + r1, base_y + h1),
-                (center + l1, base_y + h1),
-            ]
-        return [(l0, h0), (r0, h0), (r1, h1), (l1, h1)]
+            return [(center + x, base_y + y) for x, y in pts_m]
+        return list(pts_m)
 
     # ------------------------------------------------------------------ 事件
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt 命名
