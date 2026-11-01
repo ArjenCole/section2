@@ -971,7 +971,13 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
                     continue
                 elevation = snap["depth"] - cum
                 role = (base, occurrence)
-                if role not in best or elevation < best[role] - 1e-9:
+                deeper = base == "垫层"  # 垫层顶分割线取最深（最低的线），其余取最浅
+                take = (
+                    role not in best
+                    or (deeper and elevation > best[role] + 1e-9)
+                    or (not deeper and elevation < best[role] - 1e-9)
+                )
+                if take:
                     best[role] = elevation
         # 只画材质分界：垫层顶 / 管顶50cm（含换填）。坞膀下半顶（≈管中心
         # 标高）与坞膀上半顶（≈管顶标高）只是计算分层界面，不画

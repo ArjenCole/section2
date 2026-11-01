@@ -443,7 +443,13 @@ def test_group_unified_layer_lines_span_trench(tmp_path) -> None:
                 continue
             role = (base, occurrence)
             elevation = member.depth.v - cum
-            if role not in best or elevation < best[role] - 1e-9:
+            deeper = base == "垫层"  # 垫层顶分割线取最深，其余取最浅
+            take = (
+                role not in best
+                or (deeper and elevation > best[role] + 1e-9)
+                or (not deeper and elevation < best[role] - 1e-9)
+            )
+            if take:
                 best[role] = elevation
     h_max = max(member.depth.v for member in (_resolve_member(session, element)[0] for element in group.members))
     # 只画材质分界（垫层顶 / 管顶50cm / 换填）：坞膀下半顶（管中心）与

@@ -963,11 +963,14 @@ def _member_bands(member: _Member) -> list[tuple[str, Dim, Dim, Dim, str]]:
 
 
 def _unified_interfaces(snapshots: list[_Member]) -> dict[tuple[str, int], Dim]:
-    """统一回填标高：逐层角色取组内各构件层顶的最低标高（最浅）。
+    """统一回填标高：逐层角色取组内统筹界面标高。
 
-    层顶标高 = 槽底深 − 自底向上的累计层厚（地面以下深度，越小越浅），只有
-    该层自身厚度为正的构件参与统筹，算式取贡献构件的推导；组内没有正厚度
-    贡献的角色不进结果，构件重建分层带时跳过该界面、由相邻层带并入。
+    * 坞膀各层顶：取**最低标高（最浅）**的那条——最高的分割线（现状口径）；
+    * 垫层顶：取**最高标高（最深）**的那条——最低的分割线，垫层材料只到
+      最深的垫层顶为止，深构件的垫层带不再向上膨胀进回填区；
+    层顶标高 = 槽底深 − 自底向上的累计层厚（地面以下深度），只有该层自身
+    厚度为正的构件参与统筹，算式取贡献构件的推导；组内没有正厚度贡献的
+    角色不进结果，构件重建分层带时跳过该界面、由相邻层带并入。
     """
     layers_by_member = [(member, _member_layers(member)) for member in snapshots]
     best: dict[tuple[str, int], Dim] = {}
@@ -979,7 +982,13 @@ def _unified_interfaces(snapshots: list[_Member]) -> dict[tuple[str, int], Dim]:
                 continue
             elevation = member.depth - cum
             role = (base, occurrence)
-            if role not in best or elevation.v < best[role].v - 1e-9:
+            deeper = base == "垫层"  # 垫层顶取最深（最低的分割线），其余取最浅
+            take = (
+                role not in best
+                or (deeper and elevation.v > best[role].v + 1e-9)
+                or (not deeper and elevation.v < best[role].v - 1e-9)
+            )
+            if take:
                 best[role] = elevation
     return best
 
@@ -996,10 +1005,16 @@ def _unified_member_bands(
     layers = _member_layers(member)
     bands: list[tuple[str, Dim, Dim, Dim, str]] = []
     bottom = member.depth  # 首层带的下缘标高 = 自身槽底
-    for (base, occurrence), (key, _layer, note) in zip(layer_roles(layers), layers):
+    for (base, occurrence), (key, layer, note) in zip(layer_roles(layers), layers):
         top = interfaces.get((base, occurrence))
-        if top is None or top.v >= bottom.v - 1e-9:
-            continue  # 组内没有该层的统筹界面 / 界面不高于上一条：并入相邻层带
+        if top is None:
+            continue
+        if base == "垫层" and layer.v > 1e-9:
+            # 垫层顶分割线取组内最深垫层顶：比自身垫层顶更深时，构件自己的
+            # 垫层带仍按自身厚度保留（分界线以下的区域由条带/楔形分项体现）
+            top = dim_min(top, bottom - layer)
+        if top.v >= bottom.v - 1e-9:
+            continue  # 界面不高于上一条：并入相邻层带
         bands.append((key, member.depth - bottom, member.depth - top, bottom - top, note))
         bottom = top
     if bands and bands[-1][2].v < member.depth.v - 1e-9:

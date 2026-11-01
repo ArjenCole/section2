@@ -570,7 +570,7 @@ def _group_snapshots(group):
 
 
 def _unified_interface_oracle(snapshots):
-    """手算统筹界面：逐层角色取组内各构件层顶的最低标高（地面以下深度）。"""
+    """手算统筹界面：坞膀各层顶取最浅（最高线），垫层顶取最深（最低线）。"""
     from app.core.calc.groove import layer_roles
     from app.core.calc.trench_group import _member_layers
 
@@ -584,7 +584,13 @@ def _unified_interface_oracle(snapshots):
                 continue
             role = (base, occurrence)
             elevation = member.depth.v - cum
-            if role not in best or elevation < best[role] - 1e-9:
+            deeper = base == "垫层"  # 垫层顶分割线取最深（最低的线），其余取最浅
+            take = (
+                role not in best
+                or (deeper and elevation > best[role] + 1e-9)
+                or (not deeper and elevation < best[role] - 1e-9)
+            )
+            if take:
                 best[role] = elevation
     return best
 
@@ -625,6 +631,9 @@ def test_group_unified_backfill_elevation(project) -> None:
             if (base, occurrence) not in expected:
                 continue
             top = expected[(base, occurrence)]
+            if base == "垫层" and layer.v > 1e-9:
+                # 垫层顶取最深：深于自身垫层顶时，构件自己的垫层带按自身厚度保留
+                top = min(top, bottom - layer.v)
             if top >= bottom - 1e-9:
                 continue
             expected_bands.append((key, member.depth.v - top))
@@ -809,22 +818,33 @@ def test_group_unified_backfill_slices_pipe_deduction(project) -> None:
     results, errors = compute_group(group)
     assert not any(errors.values()), errors
 
+    # 垫层顶取最深：深构件统一垫层带 = 自身垫层厚（不再向上膨胀进回填区）
     cushion = results[e1].get("垫层|中粗砂|m3")
-    slices = [t for t in cushion.terms if "扣管位" in t.note]
-    assert slices, "统一垫层带内应有管位切片扣减"
+    cushion_bands = [t for t in cushion.terms if t.note == "垫层"]
+    assert cushion_bands, "深构件应有自己的垫层带"
+    for t in cushion_bands:
+        g = t.geometry
+        assert g and len(g) == 6 and isinstance(g[0], (int, float))
+        # 带的高度范围 = [自身槽底, 自身垫层厚]（不再膨胀到浅构件的垫层顶）
+        assert abs(g[0]) < 1e-9 and abs(g[1] - 0.312) < 1e-9, (t.note, g[0], g[1])
+    # 管位切片按实际分层标高落到覆盖管位的分层（坞膀带），多边形几何
+    slices = [
+        t
+        for r in results.values()
+        for q in r.items()
+        for t in q.terms
+        if "扣管位" in t.note
+    ]
+    assert slices, "管位切片扣减应存在"
     for term in slices:
         # 多边形几何（弓形/半圆，弦线+弧线采样）
         assert term.geometry and not (
             len(term.geometry) == 6 and isinstance(term.geometry[0], (int, float))
         ), "管位切片几何应为多边形"
-        # 切片公式求值 = 项值（符号相反：负项）
-        assert abs(abs(evaluate(term.expr)) - abs(term.value)) < 1e-9
+        # 切片公式求值 = 项值（符号相反：负项；长表达式浮点累加容差）
+        assert abs(abs(evaluate(term.expr)) - abs(term.value)) <= max(abs(term.value) * 1e-7, 1e-6)
         # 每片不超过半圆（R = 0.365，每延米 m²；项值含 L_组 = 100 缩放）
         assert abs(term.value) <= math.pi * 0.365 ** 2 / 2 * 100 + 1e-9
-    # 深构件统一垫层带被抬高：至少一片跨过自身垫层顶（按实际标高切片的证据）
-    assert any(max(p[1] for p in t.geometry) > 0.312 + 1e-9 for t in slices), (
-        "管位切片应按统一分层标高（而非自身垫层顶）切分"
-    )
 
 
 def test_group_center_split_wedge_to_shallow_cushion(project) -> None:
