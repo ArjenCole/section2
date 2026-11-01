@@ -629,6 +629,12 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             errors.setdefault(element.id, "合槽组存在无效成员，整组未计算。")
         return results, errors
 
+    if group.backfill_mode == BACKFILL_UNIFIED and snapshots[0].info.pp is not None:
+        # 统一回填标高：全部组员的挖填原则统一为第一条组员的（数据同步的
+        # 计算侧兜底：历史数据组员原则不一致时也按统一口径计算）
+        for member in snapshots[1:]:
+            member.info.pp = snapshots[0].info.pp
+
     n = len(snapshots)
     # 边缘（规则 3）：左边坡 = 首构件左原则；右边坡 = 末构件右原则
     first, last = snapshots[0], snapshots[n - 1]

@@ -973,7 +973,16 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
                 role = (base, occurrence)
                 if role not in best or elevation < best[role] - 1e-9:
                     best[role] = elevation
-        for depth_u in sorted({round(value, 9) for value in best.values()}):
+        # 只画材质分界：垫层顶 / 管顶50cm（含换填）。坞膀下半顶（≈管中心
+        # 标高）与坞膀上半顶（≈管顶标高）只是计算分层界面，不画
+        selected = sorted(
+            {
+                round(value, 9)
+                for (base, _occurrence), value in best.items()
+                if not base.startswith("坞膀")
+            }
+        )
+        for depth_u in selected:
             y = h_max - depth_u
             if y <= 1e-9 or y >= h_max - 1e-9:
                 continue  # 槽底 / 地面已有轮廓线，不重复画

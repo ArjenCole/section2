@@ -19,6 +19,7 @@ from app.core.models import base as orm
 from app.core.models.models import (
     BACKFILL_INDEPENDENT,
     BACKFILL_MODES,
+    BACKFILL_UNIFIED,
     CATEGORY_BURIED,
     CATEGORY_BOX_CULVERT,
     CATEGORY_ENCASED,
@@ -1160,6 +1161,11 @@ def update_element(element_id: int, **fields) -> Element | None:
     if element.group_id is not None:
         # 合槽子节点强制左右分设：不允许通过 pe_name 退回普通模式
         fields.pop("pe_name", None)
+        # 统一回填标高：组员挖填原则强制一致——改任意一个，全部组员跟随
+        if "pp_name" in fields:
+            group = orm.session().get(TrenchGroup, element.group_id)
+            if group is not None and group.backfill_mode == BACKFILL_UNIFIED:
+                fields["pp_name"] = str(fields["pp_name"])
         # 合槽子节点数量强制 = 父节点数量（旧数据父节点为空时以本次值补齐）
         if "amount" in fields:
             group = orm.session().get(TrenchGroup, element.group_id)
@@ -1194,6 +1200,13 @@ def update_element(element_id: int, **fields) -> Element | None:
             setattr(element, key, bool(value) if not isinstance(value, bool) else value)
         else:
             setattr(element, key, str(value))
+    if element.group_id is not None and "pp_name" in fields:
+        group = orm.session().get(TrenchGroup, element.group_id)
+        if group is not None and group.backfill_mode == BACKFILL_UNIFIED:
+            new_pp = str(fields["pp_name"])
+            for member in group.members:
+                if member.id != element.id and member.pp_name != new_pp:
+                    member.pp_name = new_pp
     if category_changed and element.category == CATEGORY_STRUCTURE:
         # 旧版 mcE7 构造：mList.Clear() + 名称/单位参数 + 默认工程量行（构筑物不带管材）
         for pipe in list(element.pipes):
@@ -1558,6 +1571,12 @@ def update_group(group_id: int, **fields) -> TrenchGroup | None:
                 member.amount = group.amount
         elif key == "backfill_mode" and value in BACKFILL_MODES:
             group.backfill_mode = str(value)
+            if group.backfill_mode == BACKFILL_UNIFIED:
+                # 统一为第一条组员的挖填原则（此后改任意组员的，全组跟随）
+                members = sorted(group.members, key=lambda item: (item.order_no, item.id))
+                if members and members[0].pp_name:
+                    for member in members[1:]:
+                        member.pp_name = members[0].pp_name
         elif key == "split_mode" and value in SPLIT_MODES:
             group.split_mode = str(value)
     project_io.commit()

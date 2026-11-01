@@ -446,10 +446,12 @@ def test_group_unified_layer_lines_span_trench(tmp_path) -> None:
             if role not in best or elevation < best[role] - 1e-9:
                 best[role] = elevation
     h_max = max(member.depth.v for member in (_resolve_member(session, element)[0] for element in group.members))
+    # 只画材质分界（垫层顶 / 管顶50cm / 换填）：坞膀下半顶（管中心）与
+    # 坞膀上半顶（管顶）是计算分层界面，不画
     expected_ys = sorted(
         round(h_max - value, 9)
-        for value in best.values()
-        if 1e-9 < value < h_max - 1e-9
+        for (base, _occurrence), value in best.items()
+        if not base.startswith("坞膀") and 1e-9 < value < h_max - 1e-9
     )
     actual_ys = sorted({round(line[1], 9) for line in unified.layer_lines})
     assert actual_ys == expected_ys
