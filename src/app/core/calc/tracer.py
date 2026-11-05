@@ -1378,7 +1378,7 @@ def _compact_terms(
     basic_values = {
         item.symbol: item.value
         for item in definitions
-        if item.symbol in ("B", "b", "b1", "a", "C1", "C2", "Do")
+        if item.symbol in ("B", "b", "b1", "a", "C1", "C2", "D", "Do", "t")
     }
     b_mm = basic_values.get("b")
     if not b_mm:
