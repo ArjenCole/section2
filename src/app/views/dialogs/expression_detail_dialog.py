@@ -51,6 +51,8 @@ _MAX_INTER_ROWS = 8
 
 _HIGHLIGHT_FILL = QColor(255, 255, 0, 90)
 _HIGHLIGHT_EDGE = QColor("yellow")
+#: 中间参数行悬停时的描边色（CAD 标注亮绿）
+_LINE_HIGHLIGHT = QColor("#00FF00")
 
 #: 上下文种类：单构件 / 合槽（成员或父行）/ 多选（不画断面图）
 _CONTEXT_ELEMENT = "element"
@@ -67,6 +69,8 @@ class _SectionCanvas(QWidget):
         self._hint = ""
         #: 高亮多边形（场景坐标，m）：单构件为 4 点梯形，合槽已按成员平移
         self._highlight: list[tuple[float, float]] | None = None
+        #: 中间参数行悬停时的描边线（场景坐标，m）：横线 / 竖线
+        self._line_highlight: list[tuple[float, float]] | None = None
 
     def set_scene(self, scene, hint: str = "") -> None:
         self._scene = scene
@@ -75,6 +79,10 @@ class _SectionCanvas(QWidget):
 
     def set_highlight(self, polygon_m: list[tuple[float, float]] | None) -> None:
         self._highlight = polygon_m
+        self.update()
+
+    def set_line_highlight(self, line_m: list[tuple[float, float]] | None) -> None:
+        self._line_highlight = line_m
         self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt 命名
@@ -87,21 +95,33 @@ class _SectionCanvas(QWidget):
         center_x = self.width() / 2.0
         origin_y = self.height() - section_view._BOTTOM_GAP
         section_view.draw_scene(painter, self._scene, center_x, origin_y, self.width())
-        if not self._highlight:
-            return
-        # 半透明色块盖在分项对应的梯形上（黄描边 + 低透明度黄填充，黑底可见）
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setPen(QPen(_HIGHLIGHT_EDGE, 1))
-        painter.setBrush(_HIGHLIGHT_FILL)
         zoom = self._scene.zoom
-        polygon = QPolygonF(
-            [
-                QPointF(center_x + x * 1000.0 * zoom, origin_y - y * 1000.0 * zoom)
-                for x, y in self._highlight
-            ]
-        )
-        painter.drawPolygon(polygon)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        if self._highlight:
+            # 半透明色块盖在分项对应的梯形上（黄描边 + 低透明度黄填充，黑底可见）
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setPen(QPen(_HIGHLIGHT_EDGE, 1))
+            painter.setBrush(_HIGHLIGHT_FILL)
+            polygon = QPolygonF(
+                [
+                    QPointF(center_x + x * 1000.0 * zoom, origin_y - y * 1000.0 * zoom)
+                    for x, y in self._highlight
+                ]
+            )
+            painter.drawPolygon(polygon)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        if self._line_highlight:
+            # 中间参数行：用 CAD 标注亮绿描出对应的横线 / 竖线
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setPen(QPen(_LINE_HIGHLIGHT, 3))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            line = QPolygonF(
+                [
+                    QPointF(center_x + x * 1000.0 * zoom, origin_y - y * 1000.0 * zoom)
+                    for x, y in self._line_highlight
+                ]
+            )
+            painter.drawPolyline(line)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
 
 class ExpressionDetailDialog(FramelessDialog):
@@ -154,6 +174,7 @@ class ExpressionDetailDialog(FramelessDialog):
         self._term_table = self._make_table(["符号", "说明", "算式", "计算结果"])
         self._inter_tabs = QTabWidget()
         self._inter_tabs.setDocumentMode(True)
+        self._inter_tabs.currentChanged.connect(self._on_inter_tab_changed)
         self._inter_tables: list[QTableWidget] = []
         self._inter_table: QTableWidget | None = None
         if merged:
@@ -238,10 +259,10 @@ class ExpressionDetailDialog(FramelessDialog):
         self._refresh_table_height(self._term_table)
 
         self._start_tabs()
-        self._add_inter_tab("基本参数", view.basic_definitions)
+        self._add_inter_tab("基本参数", view.basic_definitions, self._single_member_id)
         for group in view.groups:
             title = f"{group.symbol} {group.note}".strip()
-            self._add_inter_tab(title, group.definitions)
+            self._add_inter_tab(title, group.definitions, self._single_member_id)
         self._fit_tab_height()
 
     def _fill_merged(self) -> None:
@@ -253,7 +274,7 @@ class ExpressionDetailDialog(FramelessDialog):
             f"主算式：{self._quantity.display_expression} ＝ {format_number(self._quantity.value)}"
         )
         basic: list = []
-        member_groups: list[tuple[int, object]] = []
+        member_groups: list[tuple[int, int | None, object]] = []
         index = 0
         for member_no, (element_id, member) in enumerate(self._merged_members, start=1):
             view = member.presentation()
@@ -269,21 +290,26 @@ class ExpressionDetailDialog(FramelessDialog):
                 )
             for item in view.basic_definitions:
                 basic.append(
-                    replace(
-                        item,
-                        label=f"[构件{member_no}] {item.label}",
-                        source=(
-                            f"构件{member_no}·{item.source}" if item.source else f"构件{member_no}"
+                    (
+                        replace(
+                            item,
+                            label=f"[构件{member_no}] {item.label}",
+                            source=(
+                                f"构件{member_no}·{item.source}"
+                                if item.source
+                                else f"构件{member_no}"
+                            ),
                         ),
+                        element_id,
                     )
                 )
             for group in view.groups:
-                member_groups.append((member_no, group))
+                member_groups.append((member_no, element_id, group))
         self._refresh_table_height(self._term_table)
 
         self._start_tabs()
         self._add_inter_tab("基本参数", basic)
-        for member_no, group in member_groups:
+        for member_no, element_id, group in member_groups:
             title = f"构件{member_no}·{group.symbol} {group.note}".strip()
             definitions = [
                 replace(
@@ -295,7 +321,7 @@ class ExpressionDetailDialog(FramelessDialog):
                 )
                 for item in group.definitions
             ]
-            self._add_inter_tab(title, definitions)
+            self._add_inter_tab(title, definitions, element_id)
         self._fit_tab_height()
 
     def _full_text(self) -> str:
@@ -394,6 +420,8 @@ class ExpressionDetailDialog(FramelessDialog):
         expression: str,
         value_text: str,
         source: str,
+        geometry=None,
+        member_id: int | None = None,
     ) -> None:
         row = table.rowCount()
         table.insertRow(row)
@@ -401,6 +429,9 @@ class ExpressionDetailDialog(FramelessDialog):
             item = QTableWidgetItem(text)
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             table.setItem(row, col, item)
+        table.item(row, 0).setData(
+            Qt.ItemDataRole.UserRole, (geometry, member_id)
+        )
 
     def _start_tabs(self) -> None:
         """清空中间符号页，准备按面积行重建。"""
@@ -411,10 +442,18 @@ class ExpressionDetailDialog(FramelessDialog):
         self._inter_tables = []
         self._inter_table = None
 
-    def _add_inter_tab(self, title: str, definitions) -> QTableWidget:
-        """新建一页中间符号表（列：符号 / 含义 / 代入式 / 计算结果 / 来源）。"""
+    def _add_inter_tab(self, title: str, definitions, member_id: int | None = None) -> QTableWidget:
+        """新建一页中间符号表（列：符号 / 含义 / 代入式 / 计算结果 / 来源）。
+
+        ``definitions`` 里每项可以是 ``ExpressionDefinition``，也可以是
+        ``(ExpressionDefinition, member_id)``（合并行按成员区分断面位置）。
+        """
         table = self._make_table(["符号", "含义", "代入式", "计算结果", "来源"])
-        for item in definitions:
+        for entry in definitions:
+            if isinstance(entry, tuple):
+                item, item_member = entry
+            else:
+                item, item_member = entry, member_id
             self._add_inter_row(
                 table,
                 item.symbol,
@@ -422,12 +461,20 @@ class ExpressionDetailDialog(FramelessDialog):
                 item.expression,
                 format_number(item.value),
                 item.source,
+                item.geometry,
+                item_member,
             )
         self._refresh_table_height(table, _MAX_INTER_ROWS)
         self._inter_tabs.addTab(table, title)
         self._inter_tables.append(table)
         if self._inter_table is None:
             self._inter_table = table
+        table.cellEntered.connect(
+            lambda row, column, source=table: self._on_inter_entered(
+                source, row, column
+            )
+        )
+        table.viewport().installEventFilter(self)
         return table
 
     def _fit_tab_height(self) -> None:
@@ -495,9 +542,51 @@ class ExpressionDetailDialog(FramelessDialog):
         return list(pts_m)
 
     # ------------------------------------------------------------------ 事件
+    def _scene_line_for(self, symbol: str):
+        """B / H 行的兜底描边：从断面分段取横线 / 竖线。
+
+        层底宽 / 层高在面积行里已有 ``ExpressionDefinition.geometry``；这里只
+        补基本参数页里没有对应面积行的 B、H、H1（例如回填页的垫层高度）。
+        """
+        scene = self._scene
+        if scene is None or scene.outline is not None:
+            return None
+        segments = list(scene.segments)
+        if not segments:
+            return None
+        if symbol == "B":
+            seg = segments[0]
+            return [
+                (-seg.bottom / 2.0, seg.h_current),
+                (seg.bottom / 2.0, seg.h_current),
+            ]
+        if symbol == "H":
+            seg = segments[0]
+            return [(seg.bottom / 2.0, 0.0), (seg.bottom / 2.0, scene.total_h)]
+        if symbol.startswith("B") and symbol[1:].isdigit():
+            index = int(symbol[1:])
+            if 1 <= index < len(segments):
+                seg = segments[index]
+                return [
+                    (-seg.bottom / 2.0, seg.h_current),
+                    (seg.bottom / 2.0, seg.h_current),
+                ]
+        if symbol.startswith("H") and symbol[1:].isdigit():
+            index = int(symbol[1:])
+            if 1 <= index <= len(segments):
+                seg = segments[index - 1]
+                return [
+                    (seg.bottom / 2.0, seg.h_current),
+                    (seg.bottom / 2.0, seg.h_current + seg.h_delta),
+                ]
+        return None
+
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt 命名
-        if obj is self._term_table and event.type() == QEvent.Type.Leave:
-            self._canvas.set_highlight(None)
+        if event.type() == QEvent.Type.Leave:
+            if obj is self._term_table:
+                self._canvas.set_highlight(None)
+            elif any(obj is table.viewport() for table in self._inter_tables):
+                self._canvas.set_line_highlight(None)
         return super().eventFilter(obj, event)
 
     def _on_term_entered(self, row: int, _column: int) -> None:
@@ -507,6 +596,23 @@ class ExpressionDetailDialog(FramelessDialog):
             return
         geometry, member_id = item.data(Qt.ItemDataRole.UserRole) or (None, None)
         self._canvas.set_highlight(self._highlight_polygon(geometry, member_id))
+
+    def _on_inter_entered(
+        self, table: QTableWidget, row: int, _column: int
+    ) -> None:
+        item = table.item(row, 0)
+        if item is None:
+            self._canvas.set_line_highlight(None)
+            return
+        geometry, member_id = item.data(Qt.ItemDataRole.UserRole) or (None, None)
+        if geometry is None:
+            geometry = self._scene_line_for(item.text())
+        self._canvas.set_line_highlight(
+            self._highlight_polygon(geometry, member_id)
+        )
+
+    def _on_inter_tab_changed(self, _index: int) -> None:
+        self._canvas.set_line_highlight(None)
 
     # ------------------------------------------------------------------ 尺寸
     def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名

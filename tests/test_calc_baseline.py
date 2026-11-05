@@ -385,6 +385,44 @@ def test_bow_and_half_circle_highlights_use_arc_polygons(project) -> None:
         assert len(geometry) > 6
 
 
+def test_inter_table_hover_highlights_layer_edges(project, qapp) -> None:
+    """中间符号行悬停：宽度行给横线，高度行给竖线（断面图上亮绿描边）。"""
+    from app.views.dialogs.expression_detail_dialog import ExpressionDetailDialog
+
+    unit = project
+    elements = {element.name: element for element in _elements(unit)}
+    backfill = _results(unit)[elements["混凝土管"].id].get("回填|中粗砂|m3")
+    dialog = ExpressionDetailDialog(
+        None, backfill, ("element", elements["混凝土管"].id, None)
+    )
+    dialog.show()
+    qapp.processEvents()
+    assert dialog._scene is not None
+
+    def line_for(table, symbol):
+        rows = {
+            table.item(row, 0).text(): row for row in range(table.rowCount())
+        }
+        dialog._on_inter_entered(table, rows[symbol], 0)
+        return dialog._canvas._line_highlight
+
+    s1_table = dialog._inter_tabs.widget(1)
+    # u1 / B1 是横线：两端 y 相同
+    for symbol in ("u1", "B1"):
+        line = line_for(s1_table, symbol)
+        assert line and len(line) == 2
+        assert line[0][1] == pytest.approx(line[1][1])
+    # h1 是竖线：两端 x 相同
+    for symbol in ("h1", "H1"):
+        line = line_for(s1_table, symbol)
+        assert line and len(line) == 2
+        assert line[0][0] == pytest.approx(line[1][0])
+    # 基本参数页的 B 也描出整个槽底横线
+    basic_line = line_for(dialog._inter_tabs.widget(0), "B")
+    assert basic_line and basic_line[0][1] == pytest.approx(basic_line[1][1])
+    dialog.close()
+
+
 def test_user_expression_in_output(project) -> None:
     """埋深 / 数量列写的算式要以算式形式进入工程量计算表达式。"""
     unit = project

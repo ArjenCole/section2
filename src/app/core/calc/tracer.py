@@ -533,6 +533,8 @@ class ExpressionDefinition:
     basic: bool = False
     #: 层底宽 / 分层高角色（Bx / Hx）：始终保留，跨 tab 统一
     role: str = ""
+    #: 悬停该行时在断面图上描出的线（场景坐标，m）：横线 / 竖线
+    geometry: tuple[tuple[float, float], ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -1132,6 +1134,15 @@ def _compact_terms(
             return symbol, part_values[id(part)]
         return _render_dim_expression(part, symbols, selected_keys, tag_map)
 
+    symbol_geometry: dict[str, tuple[tuple[float, float], ...]] = {}
+
+    def _part_symbol(part: Dim) -> str:
+        """面积分解量对应的层底宽 / 层高符号（B、B1…、H1…）。"""
+        node = _parse_expression(part.e)
+        if node is None:
+            return ""
+        return symbols.get(_node_key(node)) or part_symbols.get(id(part), "")
+
     compact_terms: list[CompactTerm] = []
     area_definitions: list[ExpressionDefinition] = []
     for index, (term, root) in enumerate(zip(terms, parsed), start=1):
@@ -1160,43 +1171,76 @@ def _compact_terms(
         area = term.area
         if area is not None and area.kind in ("trapezoid", "triangle", "rectangle"):
             source = f"{symbol}·{term.note or '面积行'}"
+            area_geometry = term.geometry
+            bottom_line = top_line = height_line = None
+            if (
+                area_geometry
+                and len(area_geometry) == 6
+                and isinstance(area_geometry[0], (int, float))
+            ):
+                h0, h1, l0, r0, l1, r1 = area_geometry
+                bottom_line = ((l0, h0), (r0, h0))
+                top_line = ((l1, h1), (r1, h1))
+                # 高度 / 厚度：层底右端点向上到层顶
+                height_line = ((r0, h0), (r0, h1))
+
+            def _remember(part: Dim, geometry) -> None:
+                """把该分解量对应的层底宽 / 层高符号与边线关联。"""
+                sym = _part_symbol(part)
+                if sym and geometry is not None:
+                    symbol_geometry.setdefault(sym, geometry)
+
             if area.kind == "rectangle" and area.u is not None:
+                _remember(area.u, bottom_line)
+                _remember(area.h, height_line)
                 u_text, u_value = _part_expression(area.u)
                 h_text, h_value = _part_expression(area.h)
                 parts = [
                     ExpressionDefinition(
-                        f"u{index}", "宽", u_text, u_value, source, "area_part"
+                        f"u{index}", "宽", u_text, u_value, source, "area_part",
+                        geometry=bottom_line,
                     ),
                     ExpressionDefinition(
-                        f"h{index}", "高", h_text, h_value, source, "area_part"
+                        f"h{index}", "高", h_text, h_value, source, "area_part",
+                        geometry=height_line,
                     ),
                 ]
                 expression = f"u{index}*h{index}"
             elif area.kind == "trapezoid" and area.u is not None and area.v is not None:
+                _remember(area.u, bottom_line)
+                _remember(area.v, top_line)
+                _remember(area.h, height_line)
                 u_text, u_value = _part_expression(area.u)
                 v_text, v_value = _part_expression(area.v)
                 h_text, h_value = _part_expression(area.h)
                 parts = [
                     ExpressionDefinition(
-                        f"u{index}", "下底宽", u_text, u_value, source, "area_part"
+                        f"u{index}", "下底宽", u_text, u_value, source, "area_part",
+                        geometry=bottom_line,
                     ),
                     ExpressionDefinition(
-                        f"v{index}", "上底宽", v_text, v_value, source, "area_part"
+                        f"v{index}", "上底宽", v_text, v_value, source, "area_part",
+                        geometry=top_line,
                     ),
                     ExpressionDefinition(
-                        f"h{index}", "高", h_text, h_value, source, "area_part"
+                        f"h{index}", "高", h_text, h_value, source, "area_part",
+                        geometry=height_line,
                     ),
                 ]
                 expression = f"(u{index}+v{index})*h{index}/2"
             else:
+                _remember(area.v, top_line)
+                _remember(area.h, height_line)
                 v_text, v_value = _part_expression(area.v)
                 h_text, h_value = _part_expression(area.h)
                 parts = [
                     ExpressionDefinition(
-                        f"v{index}", "底宽", v_text, v_value, source, "area_part"
+                        f"v{index}", "底宽", v_text, v_value, source, "area_part",
+                        geometry=top_line,
                     ),
                     ExpressionDefinition(
-                        f"h{index}", "高", h_text, h_value, source, "area_part"
+                        f"h{index}", "高", h_text, h_value, source, "area_part",
+                        geometry=height_line,
                     ),
                 ]
                 expression = f"v{index}*h{index}/2"
@@ -1317,6 +1361,59 @@ def _compact_terms(
             main = f"({main})/10^{exponent}{rest}"
     else:
         main = compact_terms[0].expression if compact_terms else "0"
+
+    # 层底宽 / 层高符号（B、B1…、H1…）挂上悬停描边线
+    if symbol_geometry:
+        definitions = [
+            replace(
+                item,
+                geometry=symbol_geometry.get(item.symbol, item.geometry),
+            )
+            if item.symbol in symbol_geometry
+            else item
+            for item in definitions
+        ]
+
+    # 基本参数页里的宽度 / 厚度也给出对应边线：b、b1、a 为横线，C1、C2 为竖线
+    basic_values = {
+        item.symbol: item.value
+        for item in definitions
+        if item.symbol in ("B", "b", "b1", "a", "C1", "C2", "Do")
+    }
+    b_mm = basic_values.get("b")
+    if not b_mm:
+        b_mm = basic_values.get("B", 0.0) - 2 * basic_values.get("b1", 0.0)
+    b_half = b_mm / 2000.0
+    b1 = basic_values.get("b1", 0.0) / 1000.0
+    c1 = basic_values.get("C1", 0.0) / 1000.0
+    c2 = basic_values.get("C2", 0.0) / 1000.0
+    do_mm = basic_values.get("Do") or (
+        basic_values.get("D", 0.0) + 2 * basic_values.get("t", 0.0)
+    )
+    do_half = do_mm / 2000.0
+    basic_geometry: dict[str, tuple[tuple[float, float], ...]] = {}
+    if b_half > 0:
+        basic_geometry["b"] = ((-b_half, 0.0), (b_half, 0.0))
+        if b1 > 0:
+            basic_geometry["B"] = (
+                (-(b_half + b1), 0.0),
+                (b_half + b1, 0.0),
+            )
+        if c1 > 0:
+            basic_geometry["C1"] = ((b_half, 0.0), (b_half, c1))
+        if c2 > 0:
+            basic_geometry["C2"] = ((b_half, c1), (b_half, c1 + c2))
+        if b1 > 0:
+            basic_geometry["b1"] = ((b_half, 0.0), (b_half + b1, 0.0))
+        if do_half > 0 and b_half > do_half:
+            basic_geometry["a"] = ((do_half, 0.0), (b_half, 0.0))
+    if basic_geometry:
+        definitions = [
+            replace(item, geometry=basic_geometry.get(item.symbol, item.geometry))
+            if item.symbol in basic_geometry
+            else item
+            for item in definitions
+        ]
 
     definitions = _order_definitions(definitions)
     definitions = _prune_definitions(main, definitions)
