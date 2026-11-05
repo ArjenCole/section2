@@ -426,6 +426,33 @@ def test_inter_table_hover_highlights_layer_edges(project, qapp) -> None:
     dialog.close()
 
 
+def test_inter_table_hover_annotates_pipe_wall_and_diameter(project, qapp) -> None:
+    """基本参数页悬停 t / D / Do：管顶壁厚、内径、外径竖向标注。"""
+    from app.views.dialogs.expression_detail_dialog import ExpressionDetailDialog
+
+    unit = project
+    elements = {element.name: element for element in _elements(unit)}
+    backfill = _results(unit)[elements["混凝土管"].id].get("回填|中粗砂|m3")
+    dialog = ExpressionDetailDialog(
+        None, backfill, ("element", elements["混凝土管"].id, None)
+    )
+    dialog.show()
+    qapp.processEvents()
+    assert dialog._scene is not None
+
+    basic = dialog._inter_tabs.widget(0)
+    rows = {basic.item(row, 0).text(): row for row in range(basic.rowCount())}
+    for symbol, expected in (("t", 0.065), ("D", 0.6), ("Do", 0.73)):
+        dialog._on_inter_entered(basic, rows[symbol], 0)
+        dimension = dialog._canvas._dimension
+        assert dimension is not None, f"{symbol} 没有尺寸标注"
+        assert dimension.text.startswith(symbol)
+        (x1, y1), (x2, y2) = dimension.points
+        assert x1 == pytest.approx(x2)  # 竖向标注
+        assert abs(y2 - y1) == pytest.approx(expected, abs=1e-6)
+    dialog.close()
+
+
 def test_user_expression_in_output(project) -> None:
     """埋深 / 数量列写的算式要以算式形式进入工程量计算表达式。"""
     unit = project

@@ -667,6 +667,23 @@ class ExpressionDetailDialog(FramelessDialog):
         segments = list(scene.segments)
         if not segments:
             return None
+        # 管壁厚度 t / 管径 D、Do：从管体椭圆取内外圆
+        ellipses = [shape for shape in scene.shapes if shape.kind == "Ellipse"]
+        if len(ellipses) >= 2:
+            ellipses.sort(key=lambda shape: shape.w, reverse=True)
+            outer, inner = ellipses[0], ellipses[1]
+            outer_bottom = (outer.y + scene.shift) / 1000.0
+            outer_top = (outer.y + outer.h + scene.shift) / 1000.0
+            inner_bottom = (inner.y + scene.shift) / 1000.0
+            inner_top = (inner.y + inner.h + scene.shift) / 1000.0
+            center_x = (outer.x + outer.w / 2.0) / 1000.0
+            if symbol == "t":
+                # 管顶处的壁厚：内圆顶 → 外圆顶
+                return [(center_x, inner_top), (center_x, outer_top)]
+            if symbol == "D":
+                return [(center_x, inner_bottom), (center_x, inner_top)]
+            if symbol == "Do":
+                return [(center_x, outer_bottom), (center_x, outer_top)]
         if symbol == "B":
             seg = segments[0]
             return [
