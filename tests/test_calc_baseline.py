@@ -427,7 +427,11 @@ def test_inter_table_hover_highlights_layer_edges(project, qapp) -> None:
 
 
 def test_inter_table_hover_annotates_pipe_wall_and_diameter(project, qapp) -> None:
-    """基本参数页悬停 t / D / Do：管顶壁厚、内径、外径竖向标注。"""
+    """基本参数页悬停 t / D / Do：管中心标高水平切线的交点向下引出标注。
+
+    测量切面取管中心标高处的水平切线（与内外圆的交点为引出线起点），
+    与工作面宽度 a 同款向下引出，不再是管顶竖向标注。
+    """
     from app.views.dialogs.expression_detail_dialog import ExpressionDetailDialog
 
     unit = project
@@ -448,8 +452,8 @@ def test_inter_table_hover_annotates_pipe_wall_and_diameter(project, qapp) -> No
         assert dimension is not None, f"{symbol} 没有尺寸标注"
         assert dimension.text.startswith(symbol)
         (x1, y1), (x2, y2) = dimension.points
-        assert x1 == pytest.approx(x2)  # 竖向标注
-        assert abs(y2 - y1) == pytest.approx(expected, abs=1e-6)
+        assert y1 == pytest.approx(y2)  # 水平切线：两端同在管中心标高
+        assert abs(x2 - x1) == pytest.approx(expected, abs=1e-6)
     dialog.close()
 
 

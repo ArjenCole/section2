@@ -526,6 +526,169 @@ def test_expression_dialog_member_hover_hits_own_span(qapp, tmp_path) -> None:
     dialog.close()
 
 
+def test_expression_dialog_pipe_chords_horizontal(qapp, project_with_element) -> None:
+    """管径 / 壁厚标注：测量切面取管中心标高处的水平切线（向下引出）。
+
+    回归（2026-11-06）：t/D/Do 此前从管体椭圆取竖向尺寸、往右侧引出标注；
+    改为水平切线与内外圆的交点作为引出线起点，与工作面宽度 a 同款画法。
+    """
+    from app.core.calc.tracer import sorted_items
+    from app.viewmodels.unit_vm import compute_elements
+    from app.views.dialogs.expression_detail_dialog import ExpressionDetailDialog
+
+    _summary, detail = compute_elements([project_with_element])
+    quantity = sorted_items(detail[0][1])[0]
+    dialog = ExpressionDetailDialog(
+        None, quantity, ("element", project_with_element, None)
+    )
+    dialog.show()
+    qapp.processEvents()
+    scene = dialog._scene
+    assert scene is not None and scene.shapes
+    ellipses = sorted(
+        (shape for shape in scene.shapes if shape.kind == "Ellipse"),
+        key=lambda shape: shape.w,
+        reverse=True,
+    )
+    outer, inner = ellipses[0], ellipses[1]
+    cy = (outer.y + outer.h / 2.0 + scene.shift) / 1000.0
+    cx = (outer.x + outer.w / 2.0) / 1000.0
+
+    d_line = dialog._scene_line_for("D")
+    assert d_line is not None
+    (x1, y1), (x2, y2) = d_line
+    assert y1 == pytest.approx(cy)
+    assert y2 == pytest.approx(cy)  # 水平切线在管中心标高
+    assert x2 - x1 == pytest.approx(inner.w / 1000.0)  # 弦长 = 内径
+    assert (x1 + x2) / 2.0 == pytest.approx(cx)
+
+    do_line = dialog._scene_line_for("Do")
+    assert do_line is not None
+    assert do_line[1][0] - do_line[0][0] == pytest.approx(outer.w / 1000.0)
+
+    t_line = dialog._scene_line_for("t")
+    assert t_line is not None
+    # 管右侧壁厚：内圆交点 → 外圆交点，弦长 = (Do - D) / 2
+    assert t_line[1][0] - t_line[0][0] == pytest.approx(
+        (outer.w - inner.w) / 2000.0
+    )
+    dialog.close()
+
+
+def test_expression_dialog_group_member_chord_and_placement(qapp, tmp_path) -> None:
+    """合槽成员：t/D/Do 按成员取自己的管体弦线；竖向标注贴成员布置。
+
+    最左构件的竖向标注放到构件左侧（引出线自断面左缘起画，不横穿构件断面），
+    中间构件放到就近虚拟分割线外侧，最右构件放到构件右侧（与最左镜像）。
+    """
+    from app.core.calc.tracer import sorted_items
+    from app.viewmodels import unit_vm
+    from app.views.dialogs.expression_detail_dialog import (
+        _Dimension,
+        ExpressionDetailDialog,
+    )
+    from app.views.panels import section_view
+
+    spec = NewProjectSpec(path=tmp_path / "三管合槽标注.stn", unit_names=["雨水工程"])
+    project_io.new_project(spec)
+    unit_id = project_io.units(project_io.segments()[0].id)[0].id
+    ids = []
+    for name, dn, depth in (
+        ("左管", 600, "3"),
+        ("中管", 1000, "4"),
+        ("右管", 800, "3.5"),
+    ):
+        element = unit_vm.create_element(
+            unit_id, category=1, name=name, depth=depth, amount="100",
+            pipes=[("Ⅱ级混凝土管", dn, "1")], seed_atlas_defaults=True,
+        )
+        ids.append(element.id)
+    group, error = unit_vm.create_trench_group(ids)
+    assert group is not None and error is None, error
+
+    _summary, detail = unit_vm.compute_elements([ids[0]])
+    quantity = sorted_items(detail[0][1])[0]
+    dialog = ExpressionDetailDialog(None, quantity, ("group", group.id, ids[0]))
+    dialog.show()
+    qapp.processEvents()
+    canvas = dialog._canvas
+    scene = dialog._scene
+    assert scene is not None and scene.outline is not None
+    spans = {span[0]: span for span in scene.member_spans}
+    # 用画布自己的视图变换（场景按画布尺寸适配，端部标注不会被画布边裁掉）
+    zoom = scene.zoom
+    center_x = canvas.view_origin()[0]
+
+    # 悬停基本参数页的 D 行：弦心 = 本成员管中心（不再因合槽场景返回 None）
+    table = dialog._inter_tables[0]
+    row = next(
+        index for index in range(table.rowCount()) if table.item(index, 0).text() == "D"
+    )
+    dialog._on_inter_entered(table, row, 0)
+    dimension = canvas._dimension
+    assert dimension is not None and dimension.member_id == ids[0]
+    (x1, y1), (x2, y2) = dimension.points
+    assert y1 == pytest.approx(y2)
+    assert (x1 + x2) / 2.0 == pytest.approx(spans[ids[0]][1])
+
+    # 最左构件的竖向标注 → 构件左侧，引出线起点 = 该标高处断面左缘
+    own = spans[ids[0]][1]
+    base_y = scene.total_h - spans[ids[0]][2]  # 该成员槽底在整槽图中的高度
+    left_dim = _Dimension(
+        points=((own, base_y + 0.3), (own, base_y + 0.6)),
+        text="H=0.5",
+        member_id=ids[0],
+    )
+    placement = canvas._group_vertical_placement(left_dim, zoom, center_x)
+    assert placement is not None
+    right, start1, _start2, dim_x = placement
+    assert right is False
+    span_left = section_view._outline_span(scene.outline, base_y + 0.3)[0]
+    assert start1 == pytest.approx(center_x + span_left * 1000.0 * zoom)
+    assert dim_x < start1
+
+    # 中间构件：测量线靠右缘 → 右侧分割线外；靠左缘 → 左侧分割线外
+    mid = spans[ids[1]][1]
+    dividers = sorted(
+        x1 for x1, y1, x2, _y2 in scene.dashed_lines if abs(x2 - x1) <= 1e-6
+    )
+    assert len(dividers) == 2
+    for offset_x, divider, expect_right in (
+        (0.3, dividers[1], True),
+        (-0.3, dividers[0], False),
+    ):
+        mid_dim = _Dimension(
+            points=((mid + offset_x, 1.0), (mid + offset_x, 1.5)),
+            text="H=0.5",
+            member_id=ids[1],
+        )
+        placement = canvas._group_vertical_placement(mid_dim, zoom, center_x)
+        assert placement is not None
+        right, _s1, _s2, dim_x = placement
+        assert right is expect_right
+        # 尺寸线落在分割线外侧 24px（避让到分割线外侧即可，不必到整槽外缘）
+        assert dim_x == pytest.approx(
+            center_x + divider * 1000.0 * zoom + (24.0 if expect_right else -24.0)
+        )
+
+    # 最右构件 → 构件右侧（与最左构件镜像），引出线起点 = 该标高处断面右缘
+    rightmost = spans[ids[2]][1]
+    base_right = scene.total_h - spans[ids[2]][2]
+    right_dim = _Dimension(
+        points=((rightmost, base_right + 0.3), (rightmost, base_right + 0.6)),
+        text="H=0.5",
+        member_id=ids[2],
+    )
+    placement = canvas._group_vertical_placement(right_dim, zoom, center_x)
+    assert placement is not None
+    right, start1, _start2, dim_x = placement
+    assert right is True
+    span_right = section_view._outline_span(scene.outline, base_right + 0.3)[1]
+    assert start1 == pytest.approx(center_x + span_right * 1000.0 * zoom)
+    assert dim_x > start1
+    dialog.close()
+
+
 def test_group_unified_layer_lines_span_trench(tmp_path) -> None:
     """统一回填标高：每条统筹界面画一条贯通整槽的水平线。
 

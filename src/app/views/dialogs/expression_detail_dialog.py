@@ -8,6 +8,13 @@
 中间符号表按分项行分页：第一页“基本参数”（t/a/C1/C2/D/Do/b/b1/B），后面
 每个面积行（S1、S2…）一页，只列该行用到的中间符号；梯形 / 三角形面积行在
 上方算式列统一显示成 ``(u+v)*h/2`` / ``v*h/2``。底部保留完整数值算式。
+
+悬停中间符号行时的尺寸标注画法：横向测量（b/b1/a、管径 D/Do、壁厚 t——
+t/D/Do 的测量切面取管中心标高处的水平切线，与内外圆的交点为引出线起点）
+统一向下引出，尺寸线放断面图下方；竖向测量（C1/C2、层高 Hx）横向引出，
+单管放断面外缘之外，合槽成员贴成员布置——最左构件放构件左侧（引出线自
+边坡线左缘起画，不横穿构件断面），中间构件放就近虚拟分割线外侧（文字不必
+避让到整槽基坑外边线以外），最右构件放构件右侧（与最左构件镜像）。
 """
 
 from __future__ import annotations
@@ -66,6 +73,8 @@ class _Dimension:
 
     points: tuple[tuple[float, float], ...]
     text: str
+    #: 标注所属的合槽成员 id：竖向标注按成员位置贴边布置用
+    member_id: int | None = None
 
 
 class _SectionCanvas(section_view.SectionCanvasBase):
@@ -90,10 +99,15 @@ class _SectionCanvas(section_view.SectionCanvasBase):
         self.update()
 
     def set_dimension(
-        self, points_m: list[tuple[float, float]] | tuple[tuple[float, float], ...] | None, text: str = ""
+        self,
+        points_m: list[tuple[float, float]] | tuple[tuple[float, float], ...] | None,
+        text: str = "",
+        member_id: int | None = None,
     ) -> None:
         self._dimension = (
-            _Dimension(tuple(points_m), text) if points_m and len(points_m) >= 2 else None
+            _Dimension(tuple(points_m), text, member_id)
+            if points_m and len(points_m) >= 2
+            else None
         )
         self.update()
 
@@ -184,26 +198,40 @@ class _SectionCanvas(section_view.SectionCanvasBase):
             painter.drawLine(QPointF(x1, dim_y), QPointF(x2, dim_y))
             text = dim.text
             metrics = painter.fontMetrics()
-            painter.drawText(
-                QPointF(
-                    (x1 + x2) / 2.0 - metrics.horizontalAdvance(text) / 2.0,
-                    dim_y - 6,
-                ),
-                text,
-            )
+            if metrics.horizontalAdvance(text) > abs(x2 - x1) + 8:
+                # 窄标注（如壁厚 t）：文字放到尺寸线右端外侧，不压在引出线上
+                painter.drawText(QPointF(max(x1, x2) + 8, dim_y - 6), text)
+            else:
+                painter.drawText(
+                    QPointF(
+                        (x1 + x2) / 2.0 - metrics.horizontalAdvance(text) / 2.0,
+                        dim_y - 6,
+                    ),
+                    text,
+                )
         else:
-            # 竖向尺寸线放在断面图整体右缘之外，右侧留足引出距离
-            offset = 60.0
-            dim_x = center_x + right_m * 1000.0 * zoom + offset
-            right = True
-            if dim_x > self.width() - 8:
-                dim_x = center_x - left_m * 1000.0 * zoom - offset
-                right = False
-            start1 = x1 + (8 if right else -8)
-            start2 = x2 + (8 if right else -8)
-            end = dim_x + (4 if right else -4)
-            painter.drawLine(QPointF(start1, y1), QPointF(end, y1))
-            painter.drawLine(QPointF(start2, y2), QPointF(end, y2))
+            # 合槽成员的竖向标注贴成员布置（最左构件 → 构件左侧、中间构件 →
+            # 就近虚拟分割线外侧、最右构件 → 构件右侧）；不适用时放到断面图
+            # 整体外缘之外
+            placement = self._group_vertical_placement(dim, zoom, center_x)
+            if placement is not None:
+                right, start1, start2, dim_x = placement
+                end = dim_x + (4 if right else -4)
+                painter.drawLine(QPointF(start1, y1), QPointF(end, y1))
+                painter.drawLine(QPointF(start2, y2), QPointF(end, y2))
+            else:
+                # 竖向尺寸线放在断面图整体右缘之外，右侧留足引出距离
+                offset = 60.0
+                dim_x = center_x + right_m * 1000.0 * zoom + offset
+                right = True
+                if dim_x > self.width() - 8:
+                    dim_x = center_x - left_m * 1000.0 * zoom - offset
+                    right = False
+                start1 = x1 + (8 if right else -8)
+                start2 = x2 + (8 if right else -8)
+                end = dim_x + (4 if right else -4)
+                painter.drawLine(QPointF(start1, y1), QPointF(end, y1))
+                painter.drawLine(QPointF(start2, y2), QPointF(end, y2))
             self._dimension_tick(painter, dim_x, y1, horizontal=False)
             self._dimension_tick(painter, dim_x, y2, horizontal=False)
             # 尺寸线为直线（中部不再画波浪折线），文字放在线外侧
@@ -222,12 +250,76 @@ class _SectionCanvas(section_view.SectionCanvasBase):
             else:
                 painter.drawText(
                     QPointF(
-                        dim_x - 6 - text_width,
+                        max(2.0, dim_x - 6 - text_width),
                         (y1 + y2) / 2.0 + metrics.ascent() / 2.0,
                     ),
                     text,
                 )
         painter.restore()
+
+    def _group_vertical_placement(
+        self, dim: _Dimension, zoom: float, center_x: float
+    ) -> tuple[bool, float, float, float] | None:
+        """合槽成员竖向标注的贴边位置：(右侧?, 引出线起点x1, x2, 尺寸线x)，px。
+
+        最左构件放到构件左侧、最右构件放到构件右侧：引出线起点取该标高处
+        边坡线的左 / 右缘（对应线的边点），不横穿整个构件断面；中间构件放到
+        就近虚拟分割线外侧，文字不必避让到整个合槽基坑外边线以外。
+        单管断面 / 非成员行返回 None。
+        """
+        scene = self._scene
+        if scene is None or scene.outline is None or dim.member_id is None:
+            return None
+        spans = sorted(scene.member_spans, key=lambda span: span[1])
+        ids = [span[0] for span in spans]
+        if dim.member_id not in ids:
+            return None
+        index = ids.index(dim.member_id)
+        count = len(spans)
+
+        def to_px(x_m: float) -> float:
+            return center_x + x_m * 1000.0 * zoom
+
+        offset = 24.0
+        if index == 0 or index == count - 1:
+            # 端部构件：引出线起点 = 引出高度处断面边缘（边坡线），比测量线
+            # 更靠外才用；尺寸线放在断面边缘之外（与最左构件镜像）
+            go_right = index == count - 1
+            starts_px = []
+            for line_x, y in dim.points:
+                span = section_view._outline_span(scene.outline, y)
+                if span is None:
+                    edge = line_x
+                elif go_right:
+                    edge = max(span[1], line_x)
+                else:
+                    edge = min(span[0], line_x)
+                starts_px.append(to_px(edge))
+            if go_right:
+                dim_x = min(max(starts_px) + offset, self.width() - 8.0)
+            else:
+                dim_x = max(min(starts_px) - offset, 8.0)
+            return go_right, starts_px[0], starts_px[1], dim_x
+        dividers = sorted(
+            {
+                round(x1, 6)
+                for x1, y1, x2, _y2 in scene.dashed_lines
+                if abs(x2 - x1) <= 1e-6
+            }
+        )
+        if len(dividers) != count - 1:
+            return None
+        left_div, right_div = dividers[index - 1], dividers[index]
+        line_x = dim.points[0][0]
+        # 就近分割线：测量线靠左缘 → 放左侧分割线外，靠右缘 → 放右侧分割线外
+        go_right = (right_div - line_x) < (line_x - left_div)
+        if go_right:
+            dim_x = to_px(right_div) + offset
+            starts_px = [to_px(x) + 8.0 for x, _y in dim.points]
+        else:
+            dim_x = to_px(left_div) - offset
+            starts_px = [to_px(x) - 8.0 for x, _y in dim.points]
+        return go_right, starts_px[0], starts_px[1], dim_x
 
     @staticmethod
     def _dimension_tick(
@@ -655,35 +747,58 @@ class ExpressionDetailDialog(FramelessDialog):
         return list(pts_m)
 
     # ------------------------------------------------------------------ 事件
-    def _scene_line_for(self, symbol: str):
-        """B / H 行的兜底描边：从断面分段取横线 / 竖线。
+    def _scene_line_for(self, symbol: str, member_id: int | None = None):
+        """B / H 行的兜底描边：从断面分段取横线 / 竖线；合槽按成员取管体。
 
         层底宽 / 层高在面积行里已有 ``ExpressionDefinition.geometry``；这里只
-        补基本参数页里没有对应面积行的 B、H、H1（例如回填页的垫层高度）。
+        补基本参数页里没有对应面积行的 B、H、H1（例如回填页的垫层高度），
+        以及管径 / 壁厚：管中心标高处的水平切线与内外圆的交点（引出线从
+        交点向下引出，与工作面宽度 a 同款画法）。
         """
         scene = self._scene
-        if scene is None or scene.outline is not None:
+        if scene is None:
+            return None
+        group = scene.outline is not None
+        if group:
+            # 合槽：先挑出该成员自己的管体椭圆（椭圆的轮廓坐标中心 = 成员
+            # 本体中心；shape 的 x 镜像，+x 朝屏幕左，故取负）
+            if member_id is None:
+                return None
+            spans = {span[0]: span for span in scene.member_spans}
+            if member_id not in spans:
+                return None
+            center = spans[member_id][1]
+            ellipses = [
+                shape
+                for shape in scene.shapes
+                if shape.kind == "Ellipse"
+                and abs(-(shape.x + shape.w / 2.0) / 1000.0 - center) <= 1e-3
+            ]
+        else:
+            ellipses = [shape for shape in scene.shapes if shape.kind == "Ellipse"]
+        if len(ellipses) >= 2:
+            ellipses.sort(key=lambda shape: shape.w, reverse=True)
+            outer, inner = ellipses[0], ellipses[1]
+            # 管中心标高（内外圆同心）：水平切线与圆的交点
+            cy = (outer.y + outer.h / 2.0 + scene.shift) / 1000.0
+            if group:
+                cx = -(outer.x + outer.w / 2.0) / 1000.0
+            else:
+                cx = (outer.x + outer.w / 2.0) / 1000.0
+            r_outer = outer.w / 2000.0
+            r_inner = inner.w / 2000.0
+            if symbol == "t":
+                # 管右侧的壁厚：内圆交点 → 外圆交点
+                return [(cx + r_inner, cy), (cx + r_outer, cy)]
+            if symbol == "D":
+                return [(cx - r_inner, cy), (cx + r_inner, cy)]
+            if symbol == "Do":
+                return [(cx - r_outer, cy), (cx + r_outer, cy)]
+        if group:
             return None
         segments = list(scene.segments)
         if not segments:
             return None
-        # 管壁厚度 t / 管径 D、Do：从管体椭圆取内外圆
-        ellipses = [shape for shape in scene.shapes if shape.kind == "Ellipse"]
-        if len(ellipses) >= 2:
-            ellipses.sort(key=lambda shape: shape.w, reverse=True)
-            outer, inner = ellipses[0], ellipses[1]
-            outer_bottom = (outer.y + scene.shift) / 1000.0
-            outer_top = (outer.y + outer.h + scene.shift) / 1000.0
-            inner_bottom = (inner.y + scene.shift) / 1000.0
-            inner_top = (inner.y + inner.h + scene.shift) / 1000.0
-            center_x = (outer.x + outer.w / 2.0) / 1000.0
-            if symbol == "t":
-                # 管顶处的壁厚：内圆顶 → 外圆顶
-                return [(center_x, inner_top), (center_x, outer_top)]
-            if symbol == "D":
-                return [(center_x, inner_bottom), (center_x, inner_top)]
-            if symbol == "Do":
-                return [(center_x, outer_bottom), (center_x, outer_top)]
         if symbol == "B":
             seg = segments[0]
             return [
@@ -736,12 +851,17 @@ class ExpressionDetailDialog(FramelessDialog):
             return
         geometry, member_id = item.data(Qt.ItemDataRole.UserRole) or (None, None)
         if geometry is None:
-            geometry = self._scene_line_for(item.text())
-        line = self._highlight_polygon(geometry, member_id)
+            # 兜底线（t/D/Do 切线、B/H 分段线）已是场景最终坐标（合槽已按
+            # 成员定位），不再走按成员平移的 _highlight_polygon
+            line = self._scene_line_for(item.text(), member_id)
+        else:
+            line = self._highlight_polygon(geometry, member_id)
         value_item = table.item(row, 3)
         value_text = value_item.text() if value_item is not None else ""
         self._canvas.set_dimension(
-            line, f"{item.text()}={value_text}" if line else ""
+            line,
+            f"{item.text()}={value_text}" if line else "",
+            member_id,
         )
 
     def _on_inter_tab_changed(self, _index: int) -> None:

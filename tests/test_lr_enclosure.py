@@ -895,10 +895,84 @@ def test_group_center_split_wedge_to_shallow_cushion(project) -> None:
         g = w.geometry
         assert g[1] == 0.0 and g[0] < 0.0  # 垫层下方（自浅槽底负高度）
         assert (g[3] - g[2]) <= (g[5] - g[4]) + 1e-9  # 底边不宽于顶边（顶点在下）
+        # 面积行分解：三角形 v*h/2（底宽 = 分界偏移，高 = 底/放坡系数），
+        # 展示层据此把 S 行统一成 底×高÷2 的分项公式；分项值含数量系数
+        # （amount=100m），断面面积 = v*h/2
+        assert w.area is not None and w.area.kind == "triangle" and w.area.u is None
+        assert w.area.v.v * w.area.h.v / 2 == pytest.approx(w.value / 100, rel=1e-9)
     # 深构件垫层不再包含楔形
     for eid in (e1, e3):
         deep_cushion = results[eid].get("垫层|中粗砂|m3")
         assert not any("管中心分隔" in t.note for t in deep_cushion.terms)
+
+
+def test_wedge_pieces_shapes() -> None:
+    """坡区楔形按放坡段拆分成项：每段梯形 / 三角形 / 矩形，面积行统一成底×高÷2。
+
+    段内宽度线性：整段在楔形内是梯形 ``(u+v)*h/2``；分界在段内切入坡面时
+    自切点裁剪成三角形 ``底*(底/放坡系数)/2``；桩类 / 直壁坡面竖直是矩形；
+    分级放坡逐段各自成项（与 ``_center_deduction`` 的逐段扣减一一对应）。
+    """
+    from app.core.calc.trench_group import _CenterSplit, _SlopeSegment, _wedge_pieces
+    from app.core.calc.tracer import dim
+
+    def make(offset: float, profile: list[_SlopeSegment], delta: float = 1000.0):
+        run_max = profile[-1].width_at(dim(delta)) if profile else dim(0.0)
+        return _CenterSplit(
+            pair_index=0,
+            offset=dim(offset),
+            gainer=0,
+            loser=1,
+            shallow_depth=dim(3.0),
+            delta_h=dim(delta),
+            profile=tuple(profile),
+            run_max=run_max,
+            wall_x=-1000.0,
+            gainer_center_x=0.0,
+        )
+
+    # 三角形：分界在带内切入坡面（offset < run_max），面积 = 底²/(2×放坡系数)
+    pieces = _wedge_pieces(
+        make(250.0, [_SlopeSegment(dim(0.0), dim(0.0), dim(0.5), dim(1000.0))])
+    )
+    assert len(pieces) == 1
+    area, geometry = pieces[0]
+    assert area.area.kind == "triangle" and area.area.u is None
+    assert area.area.v.v == pytest.approx(250.0)  # 底宽 = 分界偏移
+    assert area.area.h.v == pytest.approx(500.0)  # 高 = 底 / 放坡系数
+    assert area.v == pytest.approx(250.0 * 500.0 / 2)
+    assert geometry[0] == pytest.approx(-500.0) and geometry[1] == 0.0
+    assert geometry[3] == pytest.approx(geometry[2])  # 底边收为一点（顶点在下）
+    assert geometry[5] - geometry[4] == pytest.approx(250.0)  # 顶边 = 分界偏移
+
+    # 梯形：分界未切入坡面（offset ≥ run_max），(u+v)*h/2
+    pieces = _wedge_pieces(
+        make(600.0, [_SlopeSegment(dim(0.0), dim(0.0), dim(0.5), dim(1000.0))])
+    )
+    assert len(pieces) == 1
+    area, _geometry = pieces[0]
+    assert area.area.kind == "trapezoid"
+    assert area.area.u.v == pytest.approx(100.0)  # 下底 = offset − run_max
+    assert area.area.v.v == pytest.approx(600.0)  # 上底 = offset
+    assert area.v == pytest.approx((100.0 + 600.0) * 1000.0 / 2)
+
+    # 矩形：桩类 / 直壁（坡面竖直），u*h
+    pieces = _wedge_pieces(make(300.0, []))
+    assert len(pieces) == 1
+    area, _geometry = pieces[0]
+    assert area.area.kind == "rectangle"
+    assert area.area.u.v == pytest.approx(300.0)
+    assert area.v == pytest.approx(300.0 * 1000.0)
+
+    # 分级放坡：切点前一段三角形、其后一段梯形，各自成项
+    profile = [
+        _SlopeSegment(dim(0.0), dim(0.0), dim(0.5), dim(500.0)),
+        _SlopeSegment(dim(500.0), dim(250.0), dim(1.0), dim(1000.0)),
+    ]
+    pieces = _wedge_pieces(make(600.0, profile))
+    assert [area.area.kind for area, _ in pieces] == ["triangle", "trapezoid"]
+    assert pieces[0][0].v == pytest.approx(100.0 * 200.0 / 2)  # 自切点 300 到 500
+    assert pieces[1][0].v == pytest.approx((100.0 + 600.0) * 500.0 / 2)
 
 
 def test_group_center_split_gainer_deep_no_wedge(project) -> None:
