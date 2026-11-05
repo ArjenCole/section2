@@ -318,6 +318,7 @@ def test_detail_dialog_hover_highlights_section(project, qapp) -> None:
 def test_detail_dialog_copy_expression(project, qapp) -> None:
     """数值计算式右侧的复制按钮：点击后完整算式进入系统剪贴板。"""
     from PySide6.QtGui import QGuiApplication
+    from PySide6.QtWidgets import QTextBrowser
 
     from app.views.dialogs.expression_detail_dialog import ExpressionDetailDialog
 
@@ -330,10 +331,19 @@ def test_detail_dialog_copy_expression(project, qapp) -> None:
     dialog.show()
     qapp.processEvents()
 
+    # 底部完整算式框固定为 6 行文字高度，其余高度给断面图
+    full = dialog.findChild(QTextBrowser)
+    line_height = full.fontMetrics().lineSpacing()
+    assert line_height * 6 <= full.height() <= line_height * 6 + 14
+
+    copy_icon_key = dialog._copy_button.icon().cacheKey()
     dialog._copy_button.click()
     qapp.processEvents()
     assert QGuiApplication.clipboard().text() == dialog._full_text()
     assert dialog._copy_button.toolTip() == "已复制"
+    assert dialog._copy_button.icon().cacheKey() != copy_icon_key  # 变成勾
+    dialog._reset_copy_button()
+    assert dialog._copy_button.icon().cacheKey() == copy_icon_key
     dialog.close()
 
 

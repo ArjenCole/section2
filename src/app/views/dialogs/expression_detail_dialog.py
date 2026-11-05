@@ -138,9 +138,8 @@ class ExpressionDetailDialog(FramelessDialog):
         body.setSpacing(6)
 
         self._canvas = _SectionCanvas()
-        # 断面画布按剩余空间伸缩：窗口较矮时让出高度给中间符号表 / 下方文字
+        # 断面画布吃掉除固定表格 / 6 行算式框之外的全部剩余高度
         self._canvas.setMinimumHeight(140)
-        self._canvas.setMaximumHeight(320)
         self._canvas.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
@@ -169,11 +168,12 @@ class ExpressionDetailDialog(FramelessDialog):
         copy_layout.setContentsMargins(0, 0, 0, 0)
         copy_layout.setSpacing(4)
         copy_layout.addWidget(QLabel("完整数值算式（可复制到 Excel 复核）："))
-        copy_layout.addStretch(1)
         self._copy_button = QToolButton()
         self._copy_button.setAutoRaise(True)
         self._copy_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._copy_button.setIcon(self._copy_icon())
+        self._copy_icon_cache = self._copy_icon()
+        self._check_icon_cache = self._check_icon()
+        self._copy_button.setIcon(self._copy_icon_cache)
         self._copy_button.setIconSize(QSize(16, 16))
         self._copy_button.setFixedSize(24, 24)
         self._copy_button.setToolTip("复制计算式")
@@ -181,18 +181,22 @@ class ExpressionDetailDialog(FramelessDialog):
             "QToolButton { border: none; background: transparent; padding: 0; }"
         )
         self._copy_button.clicked.connect(self._copy_full_expression)
+        # 复制按钮紧贴左侧文字，右侧留白
         copy_layout.addWidget(self._copy_button)
+        copy_layout.addStretch(1)
         body.addWidget(copy_row)
 
         full = QTextBrowser()
         full.setReadOnly(True)
         full.setText(self._full_text())
-        # 空间不足时优先压缩最下方数值算式（中间符号表固定 8 行）
-        full.setMinimumHeight(1)
+        # 只保留 6 行文字的高度，节省的空间全部给上方断面图
+        line_height = full.fontMetrics().lineSpacing()
+        chrome = 2 * full.frameWidth() + 2 * round(full.document().documentMargin())
+        full.setFixedHeight(line_height * 6 + chrome)
         full.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
-        body.addWidget(full, stretch=1)
+        body.addWidget(full)
 
         self._term_table.cellEntered.connect(self._on_term_entered)
         self._term_table.installEventFilter(self)
@@ -320,13 +324,32 @@ class ExpressionDetailDialog(FramelessDialog):
         painter.end()
         return QIcon(pixmap)
 
-    def _copy_full_expression(self) -> None:
-        """把完整数值计算式复制到系统剪贴板。"""
-        QGuiApplication.clipboard().setText(self._full_text())
-        self._copy_button.setToolTip("已复制")
-        QTimer.singleShot(1500, self, self._reset_copy_tooltip)
+    @staticmethod
+    def _check_icon() -> QIcon:
+        """复制成功后的绿色勾图标（显示 1 秒）。"""
+        pixmap = QPixmap(32, 32)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(QColor("#22C55E"), 3)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.drawPolyline(
+            QPolygonF([QPointF(7, 17), QPointF(13, 23), QPointF(25, 9)])
+        )
+        painter.end()
+        return QIcon(pixmap)
 
-    def _reset_copy_tooltip(self) -> None:
+    def _copy_full_expression(self) -> None:
+        """把完整数值计算式复制到系统剪贴板，并短暂显示勾图标。"""
+        QGuiApplication.clipboard().setText(self._full_text())
+        self._copy_button.setIcon(self._check_icon_cache)
+        self._copy_button.setToolTip("已复制")
+        QTimer.singleShot(1000, self, self._reset_copy_button)
+
+    def _reset_copy_button(self) -> None:
+        self._copy_button.setIcon(self._copy_icon_cache)
         self._copy_button.setToolTip("复制计算式")
 
     # ------------------------------------------------------------------ 表格
