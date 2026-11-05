@@ -205,6 +205,34 @@ def cal_found(info, pf, pp, ad: AtlasDims, out: QDict, bands=None) -> None:
         _found_box(info, pf, pp, ad, out, prefix="管廊", wall_key="管廊壁")
 
 
+def _lower_half_minus_bow_polygon(
+    z_bottom: float, r: float, angle: float, samples: int = 12
+) -> tuple:
+    """下半圆扣除弓形（弦以下）后的区域多边形（本体中心相对，m）。
+
+    边界：左半圆端 → 左下弧到弦左端 → 弦 → 弦右端 → 右下弧到右半圆端 →
+    直径闭合。用于“坞膀扣弓形”的高亮，避免退化成外包矩形。
+    """
+    half = math.radians(angle) / 2.0
+    chord_y = r - r * math.cos(half)
+    points: list[tuple[float, float]] = [(-r, z_bottom + r)]
+    # 左下弧：圆心 (0, r)，从 π 到 3π/2 - half
+    for k in range(1, samples + 1):
+        theta = math.pi + (math.pi / 2 - half) * k / samples
+        points.append(
+            (r * math.cos(theta), z_bottom + r + r * math.sin(theta))
+        )
+    # 弦：从左端到右端
+    points.append((r * math.sin(half), z_bottom + chord_y))
+    # 右下弧：从 3π/2 + half 到 2π
+    for k in range(1, samples + 1):
+        theta = 3 * math.pi / 2 + half + (math.pi / 2 - half) * k / samples
+        points.append(
+            (r * math.cos(theta), z_bottom + r + r * math.sin(theta))
+        )
+    return tuple(points)
+
+
 def _found_pipe(info, pf, pp, ad: AtlasDims, out: QDict, bands=None) -> None:
     """直埋管道基础（旧版 mcE1.cal_found）。"""
     if not info.pipes:
@@ -247,11 +275,16 @@ def _found_pipe(info, pf, pp, ad: AtlasDims, out: QDict, bands=None) -> None:
     else:
         deducted = dim_min(remain, ad.c2) if ad.c2.v > 0 else mm(0.0)
         remain = remain - deducted
-        # 弓形占位 = 管底弓形（管底自垫层顶起），高亮用外接矩形近似
+        # 弓形占位 = 管底弓形（管底自垫层顶起），高亮按实际圆弧段绘制
         bow = _bow_dim(outside, angle)
-        bow_rect = _rect_geometry(ad.c1.v, ad.c1.v + outside.v / 2.0, outside.v / 2.0)
+        chord_height = outside.v / 2 - outside.v / 2 * math.cos(
+            angle / 2 / 180 * math.pi
+        )
+        bow_polygon = _segment_polygon(
+            ad.c1.v, outside.v / 2.0, 0.0, chord_height
+        )
         add_dim(out, f"垫层|{cushion_name}|m3", -bow, "垫层扣弓形",
-                geometry=bow_rect)
+                geometry=bow_polygon)
 
     chord_height = outside.v / 2 - outside.v / 2 * math.cos(angle / 2 / 180 * math.pi)
     remain = remain - dim_min(remain, mm(chord_height * 1000.0))
@@ -267,7 +300,9 @@ def _found_pipe(info, pf, pp, ad: AtlasDims, out: QDict, bands=None) -> None:
             outside.s * 2,
         ),
         "坞膀扣弓形",
-        geometry=_rect_geometry(ad.c1.v, ad.c1.v + outside.v / 2.0, outside.v / 2.0),
+        geometry=_lower_half_minus_bow_polygon(
+            ad.c1.v, outside.v / 2.0, angle
+        ),
     )
     add_dim(
         out,
@@ -279,7 +314,9 @@ def _found_pipe(info, pf, pp, ad: AtlasDims, out: QDict, bands=None) -> None:
             outside.s * 2,
         ),
         "上半回填扣半圆",
-        geometry=_rect_geometry(ad.c1.v + outside.v / 2.0, ad.c1.v + outside.v, outside.v / 2.0),
+        geometry=_segment_polygon(
+            ad.c1.v, outside.v / 2.0, outside.v / 2.0, outside.v
+        ),
     )
 
 

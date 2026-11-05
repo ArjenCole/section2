@@ -3,21 +3,31 @@
 双击工程量表的“计算表达式”格打开。顶部嵌入断面示意图（单构件画单构件、
 合槽成员 / 父行画整槽全景，复用 :mod:`app.views.panels.section_view` 的场景
 构建与绘制），其下是主算式；**鼠标悬停分项表的某一行，断面图上用半透明
-色块高亮该分项计算的梯形范围**——几何来自引擎随分项记录的 ``Term.geometry``
-（自槽底向上的深度区间 + 左右缘，m）。中间符号表按分项行分页：第一页“基本
-参数”（t/a/C1/C2/D/Do），后面每个面积行（S1、S2…）一页，只列该行用到的
-中间符号；梯形 / 三角形面积行在上方算式列统一显示成 ``(u+v)*h/2`` /
-``v*h/2``。底部保留完整数值算式。
+色块高亮该分项计算的断面范围**（梯形 / 矩形 / 弓形 / 半圆等，几何来自引擎
+随分项记录的 ``Term.geometry``，自槽底向上的深度区间 + 左右缘或弧线点列，m）。
+中间符号表按分项行分页：第一页“基本参数”（t/a/C1/C2/D/Do/b/b1/B），后面
+每个面积行（S1、S2…）一页，只列该行用到的中间符号；梯形 / 三角形面积行在
+上方算式列统一显示成 ``(u+v)*h/2`` / ``v*h/2``。底部保留完整数值算式。
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
 
-from PySide6.QtCore import QEvent, QPointF, Qt, QTimer
-from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPen, QPolygonF
+from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer
+from PySide6.QtGui import (
+    QColor,
+    QGuiApplication,
+    QIcon,
+    QPainter,
+    QPalette,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QSizePolicy,
@@ -25,6 +35,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QTabWidget,
     QTextBrowser,
+    QToolButton,
     QWidget,
 )
 
@@ -32,9 +43,11 @@ from app.core.evaluator import format_number
 from app.views.panels import section_view
 from app.views.widgets.frameless_dialog import FramelessDialog
 
-#: 分项 / 中间量表的行高与可见行数上限（超出表格内部滚动）
+#: 分项表的行高与可见行数上限（超出表格内部滚动）
 _ROW_HEIGHT = 30
 _MAX_VISIBLE_ROWS = 5
+#: 中间符号页至少容纳 8 行（窗口高度已按 +15% 放大）
+_MAX_INTER_ROWS = 8
 
 _HIGHLIGHT_FILL = QColor(255, 255, 0, 90)
 _HIGHLIGHT_EDGE = QColor("yellow")
@@ -125,9 +138,8 @@ class ExpressionDetailDialog(FramelessDialog):
         body.setSpacing(6)
 
         self._canvas = _SectionCanvas()
-        # 断面画布按剩余空间伸缩：窗口较矮时让出高度给下方文字，避免画布
-        # 盖住主算式（旧版固定 260px，窗口一矮就被压到算式标签上）
-        self._canvas.setMinimumHeight(160)
+        # 断面画布按剩余空间伸缩：窗口较矮时让出高度给中间符号表 / 下方文字
+        self._canvas.setMinimumHeight(140)
         self._canvas.setMaximumHeight(320)
         self._canvas.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
@@ -152,10 +164,34 @@ class ExpressionDetailDialog(FramelessDialog):
         body.addWidget(self._term_table)
         body.addWidget(self._inter_tabs)
 
-        body.addWidget(QLabel("完整数值算式（可复制到 Excel 复核）："))
+        copy_row = QWidget()
+        copy_layout = QHBoxLayout(copy_row)
+        copy_layout.setContentsMargins(0, 0, 0, 0)
+        copy_layout.setSpacing(4)
+        copy_layout.addWidget(QLabel("完整数值算式（可复制到 Excel 复核）："))
+        copy_layout.addStretch(1)
+        self._copy_button = QToolButton()
+        self._copy_button.setAutoRaise(True)
+        self._copy_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._copy_button.setIcon(self._copy_icon())
+        self._copy_button.setIconSize(QSize(16, 16))
+        self._copy_button.setFixedSize(24, 24)
+        self._copy_button.setToolTip("复制计算式")
+        self._copy_button.setStyleSheet(
+            "QToolButton { border: none; background: transparent; padding: 0; }"
+        )
+        self._copy_button.clicked.connect(self._copy_full_expression)
+        copy_layout.addWidget(self._copy_button)
+        body.addWidget(copy_row)
+
         full = QTextBrowser()
         full.setReadOnly(True)
         full.setText(self._full_text())
+        # 空间不足时优先压缩最下方数值算式（中间符号表固定 8 行）
+        full.setMinimumHeight(1)
+        full.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored
+        )
         body.addWidget(full, stretch=1)
 
         self._term_table.cellEntered.connect(self._on_term_entered)
@@ -266,6 +302,33 @@ class ExpressionDetailDialog(FramelessDialog):
             return "\n".join(lines)
         return self._quantity.presentation().full
 
+    # ------------------------------------------------------------------ 复制
+    @staticmethod
+    def _copy_icon() -> QIcon:
+        """画一个无边框的“复制”小图标（两张叠放的纸）。"""
+        color = QGuiApplication.palette().color(QPalette.ColorRole.WindowText)
+        background = QGuiApplication.palette().color(QPalette.ColorRole.Window)
+        pixmap = QPixmap(32, 32)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(QPen(color, 2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(4, 9, 15, 18, 2, 2)
+        painter.setBrush(background)
+        painter.drawRoundedRect(11, 4, 15, 18, 2, 2)
+        painter.end()
+        return QIcon(pixmap)
+
+    def _copy_full_expression(self) -> None:
+        """把完整数值计算式复制到系统剪贴板。"""
+        QGuiApplication.clipboard().setText(self._full_text())
+        self._copy_button.setToolTip("已复制")
+        QTimer.singleShot(1500, self, self._reset_copy_tooltip)
+
+    def _reset_copy_tooltip(self) -> None:
+        self._copy_button.setToolTip("复制计算式")
+
     # ------------------------------------------------------------------ 表格
     @staticmethod
     def _make_table(headers: list[str]) -> QTableWidget:
@@ -337,7 +400,7 @@ class ExpressionDetailDialog(FramelessDialog):
                 format_number(item.value),
                 item.source,
             )
-        self._refresh_table_height(table)
+        self._refresh_table_height(table, _MAX_INTER_ROWS)
         self._inter_tabs.addTab(table, title)
         self._inter_tables.append(table)
         if self._inter_table is None:
@@ -357,10 +420,10 @@ class ExpressionDetailDialog(FramelessDialog):
         self._inter_tabs.setFixedHeight(bar_height + table_height + 4)
 
     @staticmethod
-    def _refresh_table_height(table: QTableWidget) -> None:
+    def _refresh_table_height(table: QTableWidget, max_rows: int = _MAX_VISIBLE_ROWS) -> None:
         """行数少时按内容收高，行数多时封顶内部滚动。"""
         rows = table.rowCount()
-        visible = max(1, min(rows, _MAX_VISIBLE_ROWS))
+        visible = max(1, min(rows, max_rows))
         table.verticalHeader().setDefaultSectionSize(_ROW_HEIGHT)
         table.setFixedHeight(
             table.horizontalHeader().height() + visible * _ROW_HEIGHT + 2
@@ -423,6 +486,26 @@ class ExpressionDetailDialog(FramelessDialog):
         self._canvas.set_highlight(self._highlight_polygon(geometry, member_id))
 
     # ------------------------------------------------------------------ 尺寸
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        """首次显示时居中到父窗体（无父窗体则居中到屏幕）。"""
+        super().showEvent(event)
+        if getattr(self, "_centered", False):
+            return
+        self._centered = True
+        parent = self.parentWidget()
+        screen = None
+        if parent is not None and parent.windowHandle() is not None:
+            screen = parent.screen()
+        if screen is None:
+            screen = QGuiApplication.primaryScreen()
+        if parent is not None:
+            area = parent.window().frameGeometry()
+        elif screen is not None:
+            area = screen.availableGeometry()
+        else:
+            return
+        self.move(area.center() - self.rect().center())
+
     def _apply_size(self) -> None:
         # 不能对未显示的窗体调 self.screen()：windowHandle 还没创建时
         # QWidget::screen() 在 Qt 6.11 会空指针访问冲突（现场 0xC0000005 闪退）。
@@ -435,7 +518,13 @@ class ExpressionDetailDialog(FramelessDialog):
             screen = QGuiApplication.primaryScreen()
         available = screen.availableGeometry() if screen else None
         width = min(980, int(available.width() * 0.8)) if available else 980
-        height = min(840, int(available.height() * 0.85)) if available else 840
+        # 高度在原来 85% 屏高的基础上放大 15%，并给中间符号表留出 8 行空间
+        base_height = (
+            min(840, int(available.height() * 0.85)) if available else 840
+        )
+        height = int(base_height * 1.15)
+        if available:
+            height = min(height, int(available.height() * 0.98))
         self.setFixedSize(width, height)
         # 列宽：算式列吃剩余，其余按内容
         for table in (self._term_table, *self._inter_tables):

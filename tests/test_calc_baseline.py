@@ -136,11 +136,14 @@ def test_presentation_symbolizes_component_parameters(project) -> None:
     # a 与 C1 同为 130，但定义式各归各的：B 用 a、H 用 C1
     assert definitions["B"].expression == "D+t*2+a*2+b1*2"
     assert definitions["H"].expression == "h0+t+C1"
+    assert definitions["B"].label == "槽底宽"
+    assert definitions["H"].label == "计算深度"
     # 梯形面积行统一成 (u1+v1)*h1/2
     assert view.terms[0].expression == "((u1+v1)*h1/2)/10^6*100"
-    assert definitions["u1"].expression == "B"
+    # u/v/h 只代入一个符号时直接写该符号的计算式
+    assert definitions["u1"].expression == "D+t*2+a*2+b1*2"
     assert definitions["v1"].expression == "B+2*H*1"
-    assert definitions["h1"].expression == "H"
+    assert definitions["h1"].expression == "h0+t+C1"
     # 完整数值算式保持数字（复制 Excel / 复核用）
     assert "65" in view.full and "t" not in view.full
 
@@ -155,23 +158,39 @@ def test_presentation_area_tabs_and_u_v_h(project) -> None:
     terms = {term.symbol: term for term in view.terms}
     assert terms["S1"].expression == "(u1+v1)*h1/2"
     assert [part.symbol for part in terms["S1"].parts] == ["u1", "v1", "h1"]
-    # u=下底宽、v=上底宽、h=高
-    assert terms["S1"].parts[0].expression == "B3"
+    # u=下底宽、v=上底宽、h=高：回填从垫层上方开始，底宽 B1、顶宽 B2、层高 H2
+    assert terms["S1"].parts[0].expression == "B1"
     assert terms["S1"].parts[1].expression == "B2"
-    assert terms["S1"].parts[2].expression == "X"
+    assert terms["S1"].parts[2].expression == "H2"
 
     basic = {item.symbol for item in view.basic_definitions}
-    assert {"t", "a", "C1", "C2", "D", "Do"} <= basic
-    assert "b1" not in basic  # 工作面宽度归面积页
+    assert {"t", "a", "C1", "C2", "D", "Do", "b1", "B"} <= basic
+    # 基础宽度 b 只在用到它的数量（垫层 / 管道基础）里出现
+    cushion = _results(unit)[elements["混凝土管"].id].get("垫层|中粗砂|m3")
+    cushion_basic = {item.symbol for item in cushion.presentation().basic_definitions}
+    assert {"b", "b1", "B"} <= cushion_basic
 
     groups = {group.symbol: group for group in view.groups}
     s1_symbols = {item.symbol for item in groups["S1"].definitions}
-    assert {"u1", "v1", "h1", "b1", "B3", "B2", "X"} <= s1_symbols
+    assert {"u1", "v1", "h1", "B1", "B2", "H2"} <= s1_symbols
     assert not (s1_symbols & basic)
-    # 垫层厚度不再提成 h_c，直接展开成 C1+C2
+    # u/v/h 只代入一个符号时，直接写该符号的计算式
+    s1_defs = {item.symbol: item for item in groups["S1"].definitions}
+    assert s1_defs["u1"].expression == "B+2*H1*1"
+    assert s1_defs["v1"].expression == "B1+2*H2*1"
+    assert s1_defs["h1"].expression == "H3-C2"
+    # 垫层厚度不再提成 h_c：分层高度是 H1，代入式展开 C1+C2
     assert "h_c" not in {item.symbol for item in view.definitions}
-    b3 = next(item for item in view.definitions if item.symbol == "B3")
-    assert "C1+C2" in b3.expression
+    h1 = next(item for item in view.definitions if item.symbol == "H1")
+    assert h1.expression == "C1+C2"
+    assert h1.label == "垫层厚度"
+    # 层高用到管道内径时必须引用 D，不能落成裸数字 600
+    h3 = next(item for item in view.definitions if item.symbol == "H3")
+    assert h3.expression == "D/2+t"
+    assert "D" in h3.expression
+    # 整个槽底宽叫 B，层底宽叫 B1/B2…；分层高 H1/H2…，总高 H
+    assert next(item for item in view.definitions if item.symbol == "B").label == "槽底宽"
+    assert next(item for item in view.definitions if item.symbol == "B1").label == "层底宽"
 
 
 def test_expression_has_no_redundant_parentheses(project) -> None:
@@ -255,7 +274,7 @@ def test_detail_dialog_hover_highlights_section(project, qapp) -> None:
         dialog._inter_table.item(row, 0).text()
         for row in range(dialog._inter_table.rowCount())
     ]
-    assert {"t", "a", "C1", "C2", "D", "Do"} <= set(inter_symbols)
+    assert {"t", "a", "C1", "C2", "D", "Do", "b1", "B"} <= set(inter_symbols)
     titles = [
         dialog._inter_tabs.tabText(index)
         for index in range(dialog._inter_tabs.count())
@@ -267,7 +286,9 @@ def test_detail_dialog_hover_highlights_section(project, qapp) -> None:
     s1_symbols = {
         s1_table.item(row, 0).text() for row in range(s1_table.rowCount())
     }
-    assert not (s1_symbols & {"t", "a", "C1", "C2", "D", "Do"})
+    assert not (
+        s1_symbols & {"t", "a", "C1", "C2", "D", "Do", "b", "b1", "B"}
+    )
     viewport = table.viewport()
     pos = QPoint(
         table.columnViewportPosition(0) + 10,
@@ -292,6 +313,66 @@ def test_detail_dialog_hover_highlights_section(project, qapp) -> None:
     assert highlight[0] == pytest.approx((expected[2], expected[0]), abs=1e-9)
     assert highlight[3] == pytest.approx((expected[4], expected[1]), abs=1e-9)
     dialog.close()
+
+
+def test_detail_dialog_copy_expression(project, qapp) -> None:
+    """数值计算式右侧的复制按钮：点击后完整算式进入系统剪贴板。"""
+    from PySide6.QtGui import QGuiApplication
+
+    from app.views.dialogs.expression_detail_dialog import ExpressionDetailDialog
+
+    unit = project
+    elements = {element.name: element for element in _elements(unit)}
+    backfill = _results(unit)[elements["混凝土管"].id].get("回填|中粗砂|m3")
+    dialog = ExpressionDetailDialog(
+        None, backfill, ("element", elements["混凝土管"].id, None)
+    )
+    dialog.show()
+    qapp.processEvents()
+
+    dialog._copy_button.click()
+    qapp.processEvents()
+    assert QGuiApplication.clipboard().text() == dialog._full_text()
+    assert dialog._copy_button.toolTip() == "已复制"
+    dialog.close()
+
+
+def test_detail_dialog_centers_on_parent(project, qapp) -> None:
+    """计算表达式窗体首次显示时居中到父窗体。"""
+    from PySide6.QtWidgets import QWidget
+
+    from app.views.dialogs.expression_detail_dialog import ExpressionDetailDialog
+
+    unit = project
+    elements = {element.name: element for element in _elements(unit)}
+    backfill = _results(unit)[elements["混凝土管"].id].get("回填|中粗砂|m3")
+    parent = QWidget()
+    parent.setGeometry(120, 80, 1200, 900)
+    parent.show()
+    qapp.processEvents()
+
+    dialog = ExpressionDetailDialog(
+        parent, backfill, ("element", elements["混凝土管"].id, None)
+    )
+    dialog.show()
+    qapp.processEvents()
+    assert dialog.frameGeometry().center() == parent.frameGeometry().center()
+    dialog.close()
+    parent.close()
+
+
+def test_bow_and_half_circle_highlights_use_arc_polygons(project) -> None:
+    """弓形 / 半圆扣减的高亮几何是弧线多边形，不再退化成外包矩形。"""
+    unit = project
+    elements = {element.name: element for element in _elements(unit)}
+    backfill = _results(unit)[elements["混凝土管"].id].get("回填|中粗砂|m3")
+    terms = {term.note: term for term in backfill.terms}
+    for note in ("坞膀扣弓形", "上半回填扣半圆"):
+        geometry = terms[note].geometry
+        assert geometry, f"{note} 缺少高亮几何"
+        # 弧线多边形：元素是 (x, y) 点，而不是 6 元组矩形
+        assert isinstance(geometry[0], tuple), f"{note} 仍是外包矩形"
+        assert len(geometry) > 6
 
 
 def test_user_expression_in_output(project) -> None:

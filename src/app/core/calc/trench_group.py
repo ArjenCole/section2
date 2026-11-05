@@ -664,7 +664,7 @@ def _resolve_member(
     depth = mm_of_m(info.depth_dim) + foundation_dim(pf) + ad.t + ad.c1
     base_width = info.size_b_dim + scale_sum((ad.t, ad.a), 2.0)
     work_width = mm(workwidth_of(pw, info)).as_param(
-        "b1", "工作面宽度", "面宽原则·工作面宽度表", basic=False
+        "b1", "工作面宽度", "面宽原则·工作面宽度表"
     )
     return (
         _Member(

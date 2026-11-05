@@ -160,30 +160,57 @@ def backfill_layers(
     （挖填降水原则，v10 起挖填类型不再随左右围护分侧）。
     """
     layers: list[tuple[str, Dim, str]] = []
+    # 分层高度编号：从下往上 1、2、3…（H1、H2…）；整个槽的总高度是 H
+    order = 0
     for replacement in reversed(list(pf.replacements)):
+        order += 1
         h = mm(replacement.h).named(
-            "换填层厚", f"地基原则·换填 {replacement.name}"
+            "换填层厚",
+            f"地基原则·换填 {replacement.name}",
+            role="layer_height",
+            order=order,
         )
         layers.append((f"换填|{replacement.name}|m3", h, f"换填 {replacement.name} {fmt(h.v)}m"))
     total = depth if depth.v >= 0 else mm(0.0)
     remaining = total - foundation_thickness(pf)
 
-    # 垫层厚度 = C1 + C2：不单独提成 h_c，算式里直接展开成 C1 与 C2
-    # （见计算表达式窗体的“基本参数”页）
+    # 垫层厚度 = C1 + C2：高度符号按分层编号（H1…），代入式里展开 C1 与 C2
+    order += 1
     height, remaining = min_h(ad.c1 + ad.c2, remaining)
+    height = height.named(
+        "垫层厚度", "垫层厚 C1 + 基础厚 C2", role="layer_height", order=order
+    )
     layers.append((f"垫层|{cushion_name}|m3", height, "垫层"))
+    order += 1
     height, remaining = min_h(size_h / 2 + (ad.t - ad.c2), remaining)
-    height = height.named("坞膀下半层厚", "断面高/2 + (壁厚−基础厚)")
+    height = height.named(
+        "坞膀下半层厚",
+        "断面高/2 + (壁厚−基础厚)",
+        role="layer_height",
+        order=order,
+    )
     layers.append((f"回填|{pp.dock_l}|m3", height, "坞膀下半"))
+    order += 1
     height, remaining = min_h(size_h / 2 + ad.t, remaining)
-    height = height.named("坞膀上半层厚", "断面高/2 + 壁厚")
+    height = height.named(
+        "坞膀上半层厚", "断面高/2 + 壁厚", role="layer_height", order=order
+    )
     layers.append((f"回填|{pp.dock_h}|m3", height, "坞膀上半"))
+    order += 1
     height, remaining = min_h(mm(500), remaining)
-    height = height.named("管顶50cm层厚", "管顶 50cm 范围")
+    height = height.named(
+        "管顶50cm层厚", "管顶 50cm 范围", role="layer_height", order=order
+    )
     layers.append((f"回填|{pp.cover50}|m3", height, "管顶50cm"))
     cover = total - size_h - (foundation_thickness(pf) + ad.t * 2 + ad.c1) - mm(500)
+    order += 1
     height, remaining = min_h(cover, remaining)
-    height = height.named("覆土层厚", "计算深度−断面高−基础厚度−0.5")
+    height = height.named(
+        "覆土层厚",
+        "计算深度−断面高−基础厚度−0.5",
+        role="layer_height",
+        order=order,
+    )
     layers.append((f"回填|{pp.cover}|m3", height, "覆土"))
     return layers
 
@@ -212,10 +239,16 @@ def groove_width(ad: AtlasDims, size_b: Dim) -> Dim:
     几何链直接用本结果；围护等用户公式按 m 口径代入，用 :meth:`Dim.to_m` 派生。
     """
     if ad.groove_b.v != 0:
-        return ad.groove_b.named("槽底宽", "面宽原则·沟槽宽度表")
+        return ad.groove_b.named(
+            "槽底宽", "面宽原则·沟槽宽度表", role="bottom_width"
+        )
     return (
         size_b + scale_sum((ad.t, ad.a, ad.workwidth), 2.0)
-    ).named("槽底宽", "断面宽 + 2×(壁厚+工作面加宽+工作面)")
+    ).named(
+        "槽底宽",
+        "断面宽 + 2×(壁厚+工作面加宽+工作面)",
+        role="bottom_width",
+    )
 
 
 def cal_groove(
@@ -239,6 +272,8 @@ def cal_groove(
     dig_key = f"开挖|{pp.excvt}|m3"
     dig_segments: list[_Segment] = []
     jump_pending = False
+    # 层底宽编号：整个槽底 B 之后，每加宽一次依次 B1、B2…
+    width_order = 1
     for key, layer, note in layers:
         target = current + layer
         clipped = False
@@ -255,14 +290,30 @@ def cal_groove(
                 delta = step_top - current
                 clipped = True
             slope = level_slope(work.levels[step])
+            # 本层顶宽 = 加宽后的层底宽（同一个量，统一用 B/B1/B2… 表示）
+            widened = widen(delta, slope)
+            if widened.v != 0:
+                next_bottom = (bottom + widened).named(
+                    "层底宽",
+                    "上一层底宽 + 2×层厚×放坡系数",
+                    role="layer_width",
+                    order=width_order,
+                )
+                width_order += 1
+            else:
+                next_bottom = bottom
             area = trapezoid_expr(bottom, delta, slope)
+            if area.area is not None and area.area.v is not None:
+                area.area = AreaParts(
+                    area.area.kind, area.area.u, next_bottom, area.area.h
+                )
             geometry = _trapezoid_geometry(current.v, delta.v, bottom.v, slope.v * 2)
             out.add(
                 key,
                 area.v,
                 area,
                 note,
-                tags=bottom.tags + delta.tags + slope.tags,
+                tags=bottom.tags + delta.tags + slope.tags + next_bottom.tags,
                 geometry=geometry,
             )
             dig_segments.append(
@@ -283,15 +334,19 @@ def cal_groove(
                 # 切级处 current 恰好到达分级标高：数值同旧版递推，算式直接取标高，
                 # 避免 "(累计)+(标高−累计)" 这类未化简写法
                 current = Dim(current.v + delta.v, step_top.e, step_top.tags, step_top.s)
-            bottom = (bottom + widen(delta, slope)).named(
-                "槽底宽", "上一层底宽 + 2×层厚×放坡系数"
-            )
+            bottom = next_bottom
             if current.v == step_top.v and step > 0:
                 step -= 1
                 if step_heights[step].v != step_heights[step + 1].v and step_heights[step + 1].v != 0:
                     bottom = (
                         bottom + mm_of_m(dim(work.levels[step].step_width)) * 2
-                    ).named("槽底宽", "切级平台加宽")
+                    ).named(
+                        "层底宽",
+                        "切级平台加宽",
+                        role="layer_width",
+                        order=width_order,
+                    )
+                    width_order += 1
                     jump_pending = True  # 平台加宽处断开，不与上一段合并
             if current.v - target.v >= -0.0001:
                 break
@@ -466,6 +521,7 @@ def cal_groove_sided(
     dig_key = f"开挖|{pp.excvt}|m3"
     dig_segments: list[_SideSegment] = []
     jump_pending = False
+    width_order = 1
     for key, layer, note in layers:
         target = current + layer
         clipped = False
@@ -485,7 +541,22 @@ def cal_groove_sided(
                 clipped = True
             slope_l = level_slope(work_l.levels[step_l])
             slope_r = level_slope(work_r.levels[step_r])
+            widened = widen_lr(delta, slope_l, slope_r)
+            if widened.v != 0:
+                next_bottom = (bottom + widened).named(
+                    "层底宽",
+                    "上一层底宽 + 左右放坡外扩",
+                    role="layer_width",
+                    order=width_order,
+                )
+                width_order += 1
+            else:
+                next_bottom = bottom
             area = trapezoid_lr_expr(bottom, delta, slope_l, slope_r)
+            if area.area is not None and area.area.v is not None:
+                area.area = AreaParts(
+                    area.area.kind, area.area.u, next_bottom, area.area.h
+                )
             geometry = _trapezoid_geometry(
                 current.v, delta.v, bottom.v, slope_l.v + slope_r.v
             )
@@ -494,7 +565,7 @@ def cal_groove_sided(
                 area.v,
                 area,
                 note,
-                tags=bottom.tags + delta.tags + slope_l.tags + slope_r.tags,
+                tags=bottom.tags + delta.tags + slope_l.tags + slope_r.tags + next_bottom.tags,
                 geometry=geometry,
             )
             dig_segments.append(
@@ -514,22 +585,32 @@ def cal_groove_sided(
                 current = current + delta
             else:
                 current = Dim(current.v + delta.v, step_top.e, step_top.tags, step_top.s)
-            bottom = (bottom + widen_lr(delta, slope_l, slope_r)).named(
-                "槽底宽", "上一层底宽 + 左右放坡外扩"
-            )
+            bottom = next_bottom
             if current.v == top_l.v and step_l > 0:
                 step_l -= 1
                 if heights_l[step_l].v != heights_l[step_l + 1].v and heights_l[step_l + 1].v != 0:
                     bottom = (
                         bottom + mm_of_m(dim(work_l.levels[step_l].step_width))
-                    ).named("槽底宽", "左侧切级平台加宽")
+                    ).named(
+                        "层底宽",
+                        "左侧切级平台加宽",
+                        role="layer_width",
+                        order=width_order,
+                    )
+                    width_order += 1
                     jump_pending = True  # 平台加宽处断开，不与上一段合并
             if current.v == top_r.v and step_r > 0:
                 step_r -= 1
                 if heights_r[step_r].v != heights_r[step_r + 1].v and heights_r[step_r + 1].v != 0:
                     bottom = (
                         bottom + mm_of_m(dim(work_r.levels[step_r].step_width))
-                    ).named("槽底宽", "右侧切级平台加宽")
+                    ).named(
+                        "层底宽",
+                        "右侧切级平台加宽",
+                        role="layer_width",
+                        order=width_order,
+                    )
+                    width_order += 1
                     jump_pending = True
             if current.v - target.v >= -0.0001:
                 break

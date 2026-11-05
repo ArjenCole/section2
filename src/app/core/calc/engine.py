@@ -200,7 +200,9 @@ class ElementInput:
         """断面高的 mm 记法算式伴随（箱涵 = 净高 + 底板厚 + 顶板厚）。"""
         if self.category in (CATEGORY_BURIED, CATEGORY_JACKING, CATEGORY_PULLING):
             return (
-                mm(self.pipes[0].dn).named("断面高", "管径")
+                mm(self.pipes[0].dn)
+                .as_param("D", "管道内径", "构件管材·管径")
+                .named("断面高", "管径")
                 if self.pipes
                 else mm(0.0)
             )
@@ -538,7 +540,7 @@ def atlas_dims(info: ElementInput, at: AtlasParam) -> AtlasDims:
         c1=c1,
         c2=c2,
         workwidth=mm(at.workwidth).as_param(
-            "b1", "工作面宽度", "面宽原则·工作面宽度表", basic=False
+            "b1", "工作面宽度", "面宽原则·工作面宽度表"
         ),
         groove_b=groove_b_width(at.groove_b),
     )
@@ -845,10 +847,16 @@ def compute_element(info: ElementInput) -> QDict | None:
     mm_extra = foundation_dim(pf) + ad.t + ad.c1
     groove_depth = (
         mm_of_m(depth_dim).named("埋深", "构件埋深") + mm_extra
-    ).named("计算深度", "埋深 + 换填总厚 + 壁厚 + 垫层厚")
+    ).named(
+        "计算深度",
+        "埋深 + 换填总厚 + 壁厚 + 垫层厚",
+        role="total_height",
+    )
     # 用户公式（围护 / 特殊地基）按 m 口径代入：埋深原文保留、换算部分 /1000
     groove_depth_m = (depth_dim + mm_extra.to_m()).named(
-        "计算深度", "埋深 + (换填总厚+壁厚+垫层厚)/1000"
+        "计算深度",
+        "埋深 + (换填总厚+壁厚+垫层厚)/1000",
+        role="total_height",
     )
     work = choice_work(pe, groove_depth.v)
     if work is None:
@@ -912,9 +920,15 @@ def compute_element_lr(info: ElementInput) -> QDict | None:
     mm_extra = foundation_dim(pf) + ad.t + ad.c1
     groove_depth = (
         mm_of_m(depth_dim).named("埋深", "构件埋深") + mm_extra
-    ).named("计算深度", "埋深 + 换填总厚 + 壁厚 + 垫层厚")
+    ).named(
+        "计算深度",
+        "埋深 + 换填总厚 + 壁厚 + 垫层厚",
+        role="total_height",
+    )
     groove_depth_m = (depth_dim + mm_extra.to_m()).named(
-        "计算深度", "埋深 + (换填总厚+壁厚+垫层厚)/1000"
+        "计算深度",
+        "埋深 + (换填总厚+壁厚+垫层厚)/1000",
+        role="total_height",
     )
     work_l = choice_work(pe_l, groove_depth.v)
     work_r = choice_work(pe_r, groove_depth.v)

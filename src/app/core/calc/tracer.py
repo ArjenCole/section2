@@ -33,7 +33,7 @@ from __future__ import annotations
 import ast
 import copy
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Iterable
 
 #: 输出算式里的函数名（Excel 写法，展示时统一转大写）
@@ -142,6 +142,11 @@ class NamedValue:
     params: tuple[ParamRef, ...] = ()
     #: 参数符号标签（t/a/C1/C2）：只用于定义符号，不参与中间量提取
     param_tag: bool = False
+    #: 语义角色（bottom_width / layer_width / layer_height / total_height）：
+    #: 展示层据此分配 B、B1…、H、H1… 固定符号，而不是按候选顺序编号
+    role: str = ""
+    #: 角色序号（从下往上 1、2、3…）
+    order: int = 0
 
 
 def _merge_params(*groups: Iterable[ParamRef]) -> tuple[ParamRef, ...]:
@@ -177,6 +182,8 @@ def _merge_tags(*groups: Iterable[NamedValue]) -> tuple[NamedValue, ...]:
                     existing.source,
                     _merge_params(existing.params, tag.params),
                     existing.param_tag or tag.param_tag,
+                    tag.role or existing.role,
+                    tag.order or existing.order,
                 )
     return tuple(merged[key] for key in order)
 
@@ -234,17 +241,23 @@ class Dim:
     #: 统一成 ``(u+v)*h/2`` / ``v*h/2``
     area: AreaParts | None = None
 
-    def named(self, label: str, source: str = "") -> "Dim":
+    def named(
+        self, label: str, source: str = "", role: str = "", order: int = 0
+    ) -> "Dim":
         """给当前量补一个展示名称（返回新 Dim，不改原对象）。
 
         同时把已有 tags 里的参数符号（t/a/C1/C2）汇总到新标签上，展示层据此
-        知道这个片段内部用到了哪些构件参数。
+        知道这个片段内部用到了哪些构件参数。``role`` / ``order`` 用于固定符号
+        （B、B1…、H、H1…）：见 :func:`_assign_symbols`。
         """
         params = _merge_params(*(tag.params for tag in self.tags))
         return Dim(
             self.v,
             self.e,
-            _merge_tags(self.tags, (NamedValue(self.e, label, source, params),)),
+            _merge_tags(
+                self.tags,
+                (NamedValue(self.e, label, source, params, False, role, order),),
+            ),
             self.s,
             self.area,
         )
@@ -518,6 +531,8 @@ class ExpressionDefinition:
     source: str = ""
     kind: str = "intermediate"  # intermediate | subtotal | parameter | area_part
     basic: bool = False
+    #: 层底宽 / 分层高角色（Bx / Hx）：始终保留，跨 tab 统一
+    role: str = ""
 
 
 @dataclass(frozen=True)
@@ -580,10 +595,13 @@ class _Candidate:
     depth: int
     label: str = ""
     source: str = ""
+    role: str = ""
+    order: int = 0
 
 
 _PREFERRED_SYMBOLS = {
     "槽底宽": "B",
+    "层底宽": "B",
     "计算深度": "H",
     "基础宽度": "b",
     "基础厚度": "h",
@@ -701,12 +719,31 @@ def _walk_nodes(node: ast.AST, depth: int = 0):
         yield from _walk_nodes(child, depth + 1)
 
 
+def _role_symbol(role: str, order: int) -> str:
+    """语义角色 → 固定符号：整个槽底宽 B、层底宽 B1/B2…、总高 H、分层高 H1/H2…。"""
+    if role == "bottom_width":
+        return "B"
+    if role == "layer_width":
+        return f"B{order}"
+    if role == "layer_height":
+        return f"H{order}"
+    if role == "total_height":
+        return "H"
+    return ""
+
+
 def _assign_symbols(candidates: list[_Candidate]) -> dict[str, str]:
-    """给候选片段分配短符号：语义量优先用 B/H/D 等，其余用 X1、X2…。"""
+    """给候选片段分配短符号：语义量优先用 B/H/D 等，其余用 X1、X2…。
+
+    带 ``role`` 的候选按固定规则编号：整个槽底宽 B、层底宽 B1/B2…（按加宽
+    顺序）、总高 H、分层高 H1/H2…（按从下往上的层号）。
+    """
     used: set[str] = set()
     symbols: dict[str, str] = {}
     for candidate in candidates:
-        base = _PREFERRED_SYMBOLS.get(candidate.label, "X")
+        base = _role_symbol(candidate.role, candidate.order) or _PREFERRED_SYMBOLS.get(
+            candidate.label, "X"
+        )
         symbol = base
         index = 2
         while symbol in used:
@@ -894,6 +931,8 @@ def _select_candidates(
                     depth=depth,
                     label=tag.label if tag else "",
                     source=(tag.source if tag and tag.source else note),
+                    role=tag.role if tag else "",
+                    order=tag.order if tag else 0,
                 )
             else:
                 existing.count += 1
@@ -1034,6 +1073,65 @@ def _compact_terms(
     symbols = _assign_symbols(selected)
     selected_keys = set(symbols)
 
+    # 面积行的“顶宽”不一定作为独立子式出现在面积式里（(2B+2Hs)*H/2），
+    # 但它带着 B1/B2… 角色：补一条定义，展示层才能在 u/v/h 里引用它。
+    extra_definitions: list[ExpressionDefinition] = []
+    part_symbols: dict[int, str] = {}
+    part_values: dict[int, float] = {}
+    used_symbols = set(symbols.values())
+    for term in terms:
+        area = term.area
+        if area is None:
+            continue
+        for part in (area.u, area.v, area.h):
+            if part is None:
+                continue
+            role_tag = next(
+                (tag for tag in part.tags if tag.role and tag.expr == part.e), None
+            )
+            if role_tag is None:
+                continue
+            parsed_part = _parse_expression(part.e)
+            if parsed_part is None:
+                continue
+            key = _node_key(parsed_part)
+            if key in symbols:
+                continue
+            base = _role_symbol(role_tag.role, role_tag.order)
+            if not base:
+                continue
+            symbol = base
+            suffix = 2
+            while symbol in used_symbols:
+                symbol = f"{base}{suffix}"
+                suffix += 1
+            text, value = _render_dim_expression(part, symbols, selected_keys, tag_map)
+            extra_definitions.append(
+                ExpressionDefinition(
+                    symbol=symbol,
+                    label=role_tag.label,
+                    expression=text,
+                    value=value,
+                    source=role_tag.source or "分层",
+                    kind="intermediate",
+                    role=role_tag.role,
+                )
+            )
+            part_symbols[id(part)] = symbol
+            part_values[id(part)] = value
+            # 纯数字（如管顶 50cm 的 500）不进全局符号表，避免把同值的其它
+            # 参数（工作面宽度 b1=500）也替换掉；面积行按对象身份直接引用。
+            if not _NUMERIC.fullmatch(part.e.strip()):
+                symbols[key] = symbol
+            used_symbols.add(symbol)
+
+    def _part_expression(part: Dim) -> tuple[str, float]:
+        """面积分解量的展示式：角色符号优先，否则按当前符号表渲染。"""
+        symbol = part_symbols.get(id(part))
+        if symbol is not None:
+            return symbol, part_values[id(part)]
+        return _render_dim_expression(part, symbols, selected_keys, tag_map)
+
     compact_terms: list[CompactTerm] = []
     area_definitions: list[ExpressionDefinition] = []
     for index, (term, root) in enumerate(zip(terms, parsed), start=1):
@@ -1063,12 +1161,8 @@ def _compact_terms(
         if area is not None and area.kind in ("trapezoid", "triangle", "rectangle"):
             source = f"{symbol}·{term.note or '面积行'}"
             if area.kind == "rectangle" and area.u is not None:
-                u_text, u_value = _render_dim_expression(
-                    area.u, symbols, selected_keys, tag_map
-                )
-                h_text, h_value = _render_dim_expression(
-                    area.h, symbols, selected_keys, tag_map
-                )
+                u_text, u_value = _part_expression(area.u)
+                h_text, h_value = _part_expression(area.h)
                 parts = [
                     ExpressionDefinition(
                         f"u{index}", "宽", u_text, u_value, source, "area_part"
@@ -1079,15 +1173,9 @@ def _compact_terms(
                 ]
                 expression = f"u{index}*h{index}"
             elif area.kind == "trapezoid" and area.u is not None and area.v is not None:
-                u_text, u_value = _render_dim_expression(
-                    area.u, symbols, selected_keys, tag_map
-                )
-                v_text, v_value = _render_dim_expression(
-                    area.v, symbols, selected_keys, tag_map
-                )
-                h_text, h_value = _render_dim_expression(
-                    area.h, symbols, selected_keys, tag_map
-                )
+                u_text, u_value = _part_expression(area.u)
+                v_text, v_value = _part_expression(area.v)
+                h_text, h_value = _part_expression(area.h)
                 parts = [
                     ExpressionDefinition(
                         f"u{index}", "下底宽", u_text, u_value, source, "area_part"
@@ -1101,12 +1189,8 @@ def _compact_terms(
                 ]
                 expression = f"(u{index}+v{index})*h{index}/2"
             else:
-                v_text, v_value = _render_dim_expression(
-                    area.v, symbols, selected_keys, tag_map
-                )
-                h_text, h_value = _render_dim_expression(
-                    area.h, symbols, selected_keys, tag_map
-                )
+                v_text, v_value = _part_expression(area.v)
+                h_text, h_value = _part_expression(area.h)
                 parts = [
                     ExpressionDefinition(
                         f"v{index}", "底宽", v_text, v_value, source, "area_part"
@@ -1181,11 +1265,31 @@ def _compact_terms(
                 expression=expression,
                 value=value if value is not None else 0.0,
                 source=candidate.source or "本步原始参数",
+                role=candidate.role,
             )
         )
 
     # 面积行的 u/v/h 分解（梯形 / 三角形）也是中间符号
     definitions.extend(area_definitions)
+    definitions.extend(extra_definitions)
+
+    # 基础宽度 b / 工作面宽度 b1 / 槽底宽 B 归“基本参数”页
+    definitions = [
+        replace(item, basic=True)
+        if item.label in ("基础宽度", "工作面宽度", "槽底宽")
+        else item
+        for item in definitions
+    ]
+    # u1/v1/h1 如果只代入一个符号，直接写该符号的计算式（不在这里再套一层符号）
+    by_symbol = {item.symbol: item for item in definitions}
+    definitions = [
+        replace(
+            item, expression=_expand_single_symbol(item.expression, by_symbol)
+        )
+        if item.kind == "area_part"
+        else item
+        for item in definitions
+    ]
 
     if len(compact_terms) > 1:
         parts: list[str] = []
@@ -1247,9 +1351,14 @@ def _order_definitions(
 def _prune_definitions(
     main: str, definitions: list[ExpressionDefinition]
 ) -> list[ExpressionDefinition]:
-    """只保留主算式或其它定义真正引用到的中间量（避免出现一堆没用上的 B4）。"""
+    """只保留主算式或其它定义真正引用到的中间量（避免出现一堆没用上的 B4）。
+
+    “基本参数”（t/a/C1/C2/D/Do/b/b1/B）始终保留：它们单独占一页，即使
+    u/v/h 展开后不再直接引用也要能查到。
+    """
     by_symbol = {item.symbol: item for item in definitions}
     used = set(_TOKEN.findall(main)) & by_symbol.keys()
+    used |= {item.symbol for item in definitions if item.basic or item.role}
     changed = True
     while changed:
         changed = False
@@ -1262,6 +1371,21 @@ def _prune_definitions(
                     used.add(token)
                     changed = True
     return [item for item in definitions if item.symbol in used]
+
+
+def _expand_single_symbol(
+    expression: str,
+    by_symbol: dict[str, ExpressionDefinition],
+    seen: frozenset[str] = frozenset(),
+) -> str:
+    """u/v/h 的代入式只有一个符号时，展开成该符号的计算式（递归到多符号为止）。"""
+    text = (expression or "").strip()
+    if not _TOKEN.fullmatch(text) or text in seen:
+        return text
+    definition = by_symbol.get(text)
+    if definition is None:
+        return text
+    return _expand_single_symbol(definition.expression, by_symbol, seen | {text})
 
 
 def _group_definitions(
@@ -1292,14 +1416,17 @@ def _group_definitions(
             used.add(symbol)
             frontier.extend(_TOKEN.findall(item.expression))
         part_symbols = {part.symbol for part in term.parts}
+        # u/v/h 用展开后的定义（单符号已换成计算式），其余依赖按全局定义顺序
+        part_definitions = tuple(
+            by_symbol.get(part.symbol, part) for part in term.parts
+        )
         groups.append(
             ExpressionGroup(
                 symbol=term.symbol,
                 note=term.note,
                 expression=term.expression,
                 value=term.value,
-                # u/v/h（面积分解）排最前，其余依赖按全局定义顺序
-                definitions=tuple(term.parts)
+                definitions=part_definitions
                 + tuple(
                     item
                     for item in definitions
