@@ -378,6 +378,11 @@ def _dump_element(element: Element, group_index: int | None = None) -> dict:
         data["pe_right_name"] = element.pe_right_name or ""
         data["support_left"] = bool(element.support_left)
         data["support_right"] = bool(element.support_right)
+    # 合槽子构件的中心距离（v3.2）：只写有值的侧，旧文件 / 未填时缺省
+    if element.center_distance_left:
+        data["center_distance_left"] = element.center_distance_left
+    if element.center_distance_right:
+        data["center_distance_right"] = element.center_distance_right
     if group_index is not None:
         data["group"] = int(group_index)
     return data
@@ -671,6 +676,8 @@ def _load_element(data: dict, *, order_no: int) -> Element:
         pe_right_name=str(data.get("pe_right_name") or ""),
         support_left=bool(data.get("support_left", True)),
         support_right=bool(data.get("support_right", True)),
+        center_distance_left=str(data.get("center_distance_left") or ""),
+        center_distance_right=str(data.get("center_distance_right") or ""),
         source=data.get("source") or "",
         order_no=order_no,
     )

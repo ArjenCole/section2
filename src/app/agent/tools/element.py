@@ -219,7 +219,7 @@ def tool_update_element(arguments: dict) -> dict:
     fields: dict = {}
     for key in (
         "name", "depth", "amount", "pe_name", "pf_name", "pp_name", "pw_name", "source",
-        "pe_left_name", "pe_right_name",
+        "pe_left_name", "pe_right_name", "center_distance_left", "center_distance_right",
     ):
         if arguments.get(key) is not None:
             fields[key] = str(arguments[key])
@@ -231,7 +231,8 @@ def tool_update_element(arguments: dict) -> dict:
     if not fields:
         raise ToolError(
             "没有给出要修改的字段。可改：name/category/depth/amount/pe_name/pf_name/pp_name/pw_name/source"
-            "/pe_left_name/pe_right_name/support_left/support_right。"
+            "/pe_left_name/pe_right_name/support_left/support_right"
+            "/center_distance_left/center_distance_right。"
         )
     validate_principle_names(
         fields.get("pe_name"), fields.get("pf_name"), fields.get("pp_name"), fields.get("pw_name")
@@ -384,6 +385,10 @@ def register(registry: ToolRegistry) -> None:
                     "pe_right_name": {"type": "string", "description": "右侧围护原则（左右分设模式）"},
                     "support_left": {"type": "boolean", "description": "左侧支撑（类别为“支撑”的公式）是否计算"},
                     "support_right": {"type": "boolean", "description": "右侧支撑是否计算"},
+                    "center_distance_left": {"type": "string",
+                                             "description": "合槽子构件与左侧构件的中心距离 mm（可写算式）；只有更浅一侧可填，留空=按面宽原则"},
+                    "center_distance_right": {"type": "string",
+                                              "description": "合槽子构件与右侧构件的中心距离 mm（可写算式）；只有更浅一侧可填（等深填在左侧构件），留空=按面宽原则"},
                 },
             },
             tool_update_element,

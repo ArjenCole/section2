@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QLabel,
+    QLineEdit,
     QMenu,
     QStyle,
     QTabWidget,
@@ -91,6 +92,15 @@ _ELEMENT_WIDTHS = [130, 48, 280, 70, 48, 70, 130, 130, 130, 130, 80]
 
 #: 详情面板「围护原则」tab（左右分设构件显示）：四行的行头
 _LR_ROWS = ("左侧围护", "右侧围护", "左侧支撑", "右侧支撑")
+
+#: 详情面板「工作面宽」tab（合槽子构件显示）：四行的行头。前两行只读展示
+#: 面宽原则匹配到的工作面宽，后两行是「与相邻构件中心距离」输入（mm）
+_DISTANCE_ROWS = (
+    "左侧工作面宽(mm)",
+    "右侧工作面宽(mm)",
+    "与左侧构件中心距离(mm)",
+    "与右侧构件中心距离(mm)",
+)
 
 #: 类型列简称（仅显示层，数据库 / 工程量 / 导出等仍用完整类别名）：
 #: 直埋管道→直；包封埋管/箱涵/管廊（构件库“混凝土结构”组）→箱；
@@ -660,10 +670,43 @@ class UnitPanel(QWidget):
         self._lr_placeholder.setVisible(False)
         lr_layout.addWidget(self._lr_placeholder, 1)
 
+        # 合槽子构件的「工作面宽」页：四行（行头见 _DISTANCE_ROWS）。前两行只读
+        # 展示面宽原则匹配到的工作面宽；后两行可填「与相邻构件中心距离」（mm），
+        # 填了的一侧该侧工作面宽失效，按中心距离摆放构件。非合槽子构件整页
+        # 显示占位说明（与「围护原则」页同款）。
+        distance_page = QWidget()
+        distance_page.setProperty("role", "panel")
+        distance_page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        distance_layout = QVBoxLayout(distance_page)
+        distance_layout.setContentsMargins(6, 6, 6, 6)
+        distance_layout.setSpacing(4)
+        self._distance_table = QTableWidget(0, 1)
+        self._distance_table.setVerticalHeaderLabels([])
+        self._distance_table.setHorizontalHeaderLabels(["取值"])
+        self._distance_table.setProperty("cardHeader", True)
+        self._distance_table.horizontalHeader().setHighlightSections(False)
+        self._distance_table.verticalHeader().setVisible(True)
+        self._distance_table.verticalHeader().setDefaultSectionSize(32)
+        fixed_width_behavior(self._distance_table)
+        self._distance_table.setColumnWidth(0, 200)
+        self._distance_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._distance_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        distance_layout.addWidget(self._distance_table, 1)
+        self._distance_placeholder = QLabel(
+            "该页仅对合槽子构件有效。\n"
+            "选中合槽子构件后，可在此查看工作面宽并填写与相邻构件的中心距离。"
+        )
+        self._distance_placeholder.setProperty("role", "placeholder")
+        self._distance_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._distance_placeholder.setWordWrap(True)
+        self._distance_placeholder.setVisible(False)
+        distance_layout.addWidget(self._distance_placeholder, 1)
+
         detail.addTab(pipe_page, "管材")
         detail.addTab(param_page, "构件参数")
         detail.addTab(qty_page, "工程量")
         detail.addTab(lr_page, "围护原则")
+        detail.addTab(distance_page, "工作面宽")
 
         # 三个页签（管材/构件参数/工程量）在窄面板下会被省略并出现滚动箭头：
         # 按页签条完整宽度设最小宽度，保证全部页签可见
@@ -867,6 +910,14 @@ class UnitPanel(QWidget):
         if self._unit_id is None:
             return
         self._fill_quantities()
+        # 面宽原则改了矩阵 / 围护原则改了做法：合槽子构件「工作面宽」tab 的
+        # 工作面宽与可填侧（槽深推导）都要跟着刷新
+        from app.viewmodels.unit_vm import _element
+
+        element_id = self._current_element_id()
+        element = _element(element_id) if element_id is not None else None
+        if element is not None and element.group_id is not None:
+            self._fill_distance_tab(element)
         if self._multi_detail:
             self._section_view.show_multi()
         else:
@@ -996,6 +1047,8 @@ class UnitPanel(QWidget):
         self._loading = True
         try:
             self._fill_lr_tab(element)
+            # 埋深变化也会改变「工作面宽」tab 哪一侧可填（更浅侧）
+            self._fill_distance_tab(element)
         finally:
             self._loading = False
 
@@ -1800,6 +1853,10 @@ class UnitPanel(QWidget):
         self._lr_table.setRowCount(0)
         self._lr_table.setVisible(False)
         self._lr_placeholder.setVisible(True)
+        _clear_cell_widgets(self._distance_table)
+        self._distance_table.setRowCount(0)
+        self._distance_table.setVisible(False)
+        self._distance_placeholder.setVisible(True)
         for table, text in (
             (self._pipe_table, "*多种管材"),
             (self._param_table, "*多种参数"),
@@ -1845,6 +1902,10 @@ class UnitPanel(QWidget):
         self._lr_table.setRowCount(0)
         self._lr_table.setVisible(False)
         self._lr_placeholder.setVisible(True)
+        _clear_cell_widgets(self._distance_table)
+        self._distance_table.setRowCount(0)
+        self._distance_table.setVisible(False)
+        self._distance_placeholder.setVisible(True)
         self._section_view.set_element(None)
         self._fill_quantities()
         bus().ai_context_changed.emit({"element_id": None, "element_name": ""})
@@ -2628,8 +2689,10 @@ class UnitPanel(QWidget):
             else:
                 self._qty_table.setRowCount(0)
 
-            # 「围护原则」tab：左右分设构件显示六行设置，其余显示占位说明
+            # 「围护原则」tab：左右分设构件显示四行设置，其余显示占位说明；
+            # 「工作面宽」tab：合槽子构件显示工作面宽与中心距离
             self._fill_lr_tab(element)
+            self._fill_distance_tab(element)
         finally:
             self._loading = False
         # 管径/壁厚/参数/工程量都影响断面几何与工程量结果，明细变化后重绘；
@@ -2720,6 +2783,130 @@ class UnitPanel(QWidget):
         self._lr_table.setVerticalHeaderLabels(list(_LR_ROWS))
         for row, widget in enumerate(widgets):
             self._lr_table.setCellWidget(row, 0, widget)
+
+    def _fill_distance_tab(self, element) -> None:
+        """「工作面宽」tab：合槽子构件显示工作面宽与相邻构件中心距离。
+
+        前两行只读展示面宽原则匹配到的单侧工作面宽；后两行是可填的中心距离
+        （mm，可写算式）。只有共享面的更浅一侧可填（等深时按规则填在左侧
+        构件的右侧），外边缘 / 更深侧显示 "-" 并禁用。填了距离的一侧，其
+        工作面宽行标注「已失效」。
+        """
+        from app.viewmodels.unit_vm import (
+            element_work_width,
+            group_distance_plan,
+            group_neighbor_names,
+        )
+
+        grouped = element is not None and element.group_id is not None
+        _clear_cell_widgets(self._distance_table)
+        self._distance_table.setRowCount(0)
+        self._distance_table.setVisible(grouped)
+        self._distance_placeholder.setVisible(not grouped)
+        if not grouped:
+            return
+
+        plan = group_distance_plan(element.group_id)
+        left_active, right_active = plan.get(element.id, (False, False))
+        left_name, right_name = group_neighbor_names(element.id)
+        width = element_work_width(element.id)
+        width_text = "-" if width is None else format_number(width)
+        left_distance = (element.center_distance_left or "").strip()
+        right_distance = (element.center_distance_right or "").strip()
+
+        def _width_item(side: str, active: bool, distance_text: str, neighbor: str):
+            item = QTableWidgetItem(width_text)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            if distance_text and active:
+                item.setText(f"{width_text}（已失效）")
+                item.setForeground(QBrush(_secondary_color()))
+                item.setToolTip(
+                    f"该侧已填写与{'左' if side == 'left' else '右'}侧构件"
+                    f"「{neighbor}」的中心距离，面宽原则匹配的工作面宽不再控制这一侧。"
+                )
+            elif width is None:
+                item.setToolTip("面宽原则没有匹配到工作面宽（按 0 处理）。")
+            else:
+                item.setToolTip(
+                    f"面宽原则匹配到的{'左' if side == 'left' else '右'}侧工作面宽（mm）。"
+                )
+            return item
+
+        def _distance_editor(
+            side: str, active: bool, current: str, neighbor: str, outer: bool
+        ) -> QLineEdit:
+            editor = QLineEdit(current)
+            editor.setFrame(False)
+            if active:
+                editor.setPlaceholderText("留空 = 按面宽原则")
+                editor.setToolTip(
+                    f"与{'左' if side == 'left' else '右'}侧构件「{neighbor}」的中心距离"
+                    "（mm，可写算式）。填写后本侧按中心距离摆放，面宽原则匹配的"
+                    "工作面宽失效；留空 = 仍按面宽原则。"
+                )
+                editor.editingFinished.connect(
+                    lambda eid=element.id, s=side, w=editor: self._on_distance_edited(
+                        eid, s, w
+                    )
+                )
+            else:
+                editor.setText("-")
+                editor.setReadOnly(True)
+                editor.setEnabled(False)
+                if outer:
+                    editor.setToolTip(
+                        "合槽外边缘没有相邻构件，按面宽原则匹配的工作面宽控制。"
+                    )
+                else:
+                    editor.setToolTip(
+                        "该侧不是更浅侧：中心距离填在更浅一侧的构件（等深时填在"
+                        "左侧构件的「工作面宽」页）。"
+                    )
+            return editor
+
+        self._distance_table.setRowCount(len(_DISTANCE_ROWS))
+        self._distance_table.setVerticalHeaderLabels(list(_DISTANCE_ROWS))
+        self._distance_table.setItem(
+            0, 0, _width_item("left", left_active, left_distance, left_name)
+        )
+        self._distance_table.setItem(
+            1, 0, _width_item("right", right_active, right_distance, right_name)
+        )
+        self._distance_table.setCellWidget(
+            2,
+            0,
+            _distance_editor(
+                "left", left_active, left_distance, left_name, not left_name
+            ),
+        )
+        self._distance_table.setCellWidget(
+            3,
+            0,
+            _distance_editor(
+                "right", right_active, right_distance, right_name, not right_name
+            ),
+        )
+
+    def _on_distance_edited(
+        self, element_id: int, side: str, editor: QLineEdit
+    ) -> None:
+        """中心距离输入完成：校验 → 写库；不合法时提示并还原原值。"""
+        from app.viewmodels.unit_vm import _element, distance_validation_error
+
+        element = _element(element_id)
+        if element is None:
+            return
+        field = "center_distance_left" if side == "left" else "center_distance_right"
+        current = (getattr(element, field) or "").strip()
+        text = editor.text().strip()
+        if text == current:
+            return
+        error = distance_validation_error(element_id, side, text)
+        if error:
+            FramelessMessageBox.warning(self, "构件中心距离", error)
+            editor.setText(current)
+            return
+        self._vm.set_element_field(element_id, field, text)
 
     def _on_pipe_item_changed(self, item: QTableWidgetItem) -> None:
         if self._loading:
@@ -2851,6 +3038,9 @@ def _clear_cell_widgets(table: QTableWidget) -> None:
         for column in range(table.columnCount()):
             old = table.cellWidget(row, column)
             if old is not None:
+                # 先断信号再删除：移除带焦点的输入框时 Qt 可能补发
+                # editingFinished，控件已进入销毁流程时回调会访问半销毁的面板
+                old.blockSignals(True)
                 table.removeCellWidget(row, column)
                 old.deleteLater()
 
@@ -2908,7 +3098,7 @@ def _single_expression_detail(quantity) -> str:
         lines += ["", "分项（按主算式中的符号相加）："]
         lines += _definition_lines(subtotals)
     if intermediates:
-        lines += ["", "中间量（数值仍由原始参数代入；结果只用于核对，不代回公式）："]
+        lines += ["", "中间量与参数（符号定义；数值仍由原始参数代入，结果只用于核对，不代回公式）："]
         lines += _definition_lines(intermediates)
     elif not subtotals:
         notes = [note for note, _text in quantity.steps() if note]
@@ -2931,7 +3121,7 @@ def _merged_expression_detail(quantity) -> str:
         if subtotals:
             lines += _definition_lines(subtotals)
         if intermediates:
-            lines.append("中间量：")
+            lines.append("中间量与参数：")
             lines += _definition_lines(intermediates)
         lines += [f"完整式：{view.full}"]
     return "\n".join(lines)

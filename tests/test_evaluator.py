@@ -24,7 +24,7 @@ from app.core.evaluator import EvalError, evaluate, evaluate_or_default, format_
         ("（1+2）×3", 9.0),
         ("sqrt(9)", 3.0),
         ("abs(-3.5)", 3.5),
-        ("power(2,10)", 1024.0),
+        ("2^10", 1024.0),
         ("round(3.14159,2)", 3.14),
         # Excel 语义：ROUND 逢 5 远离零（Python 内置 round 会给 0.12）
         ("ROUND(0.125,2)", 0.13),
@@ -54,6 +54,7 @@ def test_pi_constant() -> None:
         "2.5+",
         "abc",
         "1/0",
+        "power(2,10)",  # 乘方统一写 ^，不再提供 power 函数
         "2 & 3",  # 位运算不在白名单
         "[1,2][0]",  # 下标不允许
         "__import__('os').system('dir')",  # 属性访问不允许

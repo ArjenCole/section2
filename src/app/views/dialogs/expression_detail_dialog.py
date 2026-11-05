@@ -1,14 +1,18 @@
-"""计算表达式详情窗体：断面示意图 + 分项 / 中间量表 + 完整算式。
+"""计算表达式详情窗体：断面示意图 + 分项 / 中间符号页 + 完整算式。
 
 双击工程量表的“计算表达式”格打开。顶部嵌入断面示意图（单构件画单构件、
 合槽成员 / 父行画整槽全景，复用 :mod:`app.views.panels.section_view` 的场景
 构建与绘制），其下是主算式；**鼠标悬停分项表的某一行，断面图上用半透明
 色块高亮该分项计算的梯形范围**——几何来自引擎随分项记录的 ``Term.geometry``
-（自槽底向上的深度区间 + 左右缘，m）。中间量与分项都用表格呈现，底部保留
-完整数值算式。
+（自槽底向上的深度区间 + 左右缘，m）。中间符号表按分项行分页：第一页“基本
+参数”（t/a/C1/C2/D/Do），后面每个面积行（S1、S2…）一页，只列该行用到的
+中间符号；梯形 / 三角形面积行在上方算式列统一显示成 ``(u+v)*h/2`` /
+``v*h/2``。底部保留完整数值算式。
 """
 
 from __future__ import annotations
+
+from dataclasses import replace
 
 from PySide6.QtCore import QEvent, QPointF, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPen, QPolygonF
@@ -16,8 +20,10 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
     QLabel,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QTextBrowser,
     QWidget,
 )
@@ -119,7 +125,14 @@ class ExpressionDetailDialog(FramelessDialog):
         body.setSpacing(6)
 
         self._canvas = _SectionCanvas()
-        body.addWidget(self._canvas)
+        # 断面画布按剩余空间伸缩：窗口较矮时让出高度给下方文字，避免画布
+        # 盖住主算式（旧版固定 260px，窗口一矮就被压到算式标签上）
+        self._canvas.setMinimumHeight(160)
+        self._canvas.setMaximumHeight(320)
+        self._canvas.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        body.addWidget(self._canvas, stretch=1)
 
         self._formula_label = QLabel()
         self._formula_label.setTextInteractionFlags(
@@ -128,15 +141,16 @@ class ExpressionDetailDialog(FramelessDialog):
         body.addWidget(self._formula_label)
 
         self._term_table = self._make_table(["符号", "说明", "算式", "计算结果"])
-        self._inter_table = self._make_table(
-            ["符号", "含义", "代入式", "计算结果", "来源"]
-        )
+        self._inter_tabs = QTabWidget()
+        self._inter_tabs.setDocumentMode(True)
+        self._inter_tables: list[QTableWidget] = []
+        self._inter_table: QTableWidget | None = None
         if merged:
             self._fill_merged()
         else:
             self._fill_single(quantity.presentation())
         body.addWidget(self._term_table)
-        body.addWidget(self._inter_table)
+        body.addWidget(self._inter_tabs)
 
         body.addWidget(QLabel("完整数值算式（可复制到 Excel 复核）："))
         full = QTextBrowser()
@@ -149,7 +163,7 @@ class ExpressionDetailDialog(FramelessDialog):
 
         # 空表隐藏（无量可悬停时不占版面）
         self._term_table.setVisible(self._term_table.rowCount() > 0)
-        self._inter_table.setVisible(self._inter_table.rowCount() > 0)
+        self._inter_tabs.setVisible(bool(self._inter_tables))
 
         self._apply_size()
         # 场景在布局落定后再构建：zoom 按画布真实尺寸计算（构造期画布还没布局）
@@ -164,10 +178,10 @@ class ExpressionDetailDialog(FramelessDialog):
         return context
 
     def _fill_single(self, view) -> None:
-        """单条工程量：主算式 + 分项（合并形态为断面面积）+ 中间量。
+        """单条工程量：主算式 + 分项（合并形态为断面面积）+ 中间符号页。
 
-        分项行不设下限：单分项量也建一行（悬停即高亮整个断面范围）。
-        合槽成员单选时行带成员 id，高亮定位到整槽图上该成员的位置。
+        中间符号表按面积行分页：第一页是基本参数（t/a/C1/C2/D/Do），后面
+        每个分项（S1、S2…）一页，只列该面积行用到的中间符号。
         """
         self._formula_label.setText(
             f"主算式：{view.formula} ＝ {format_number(self._quantity.value)}"
@@ -182,23 +196,24 @@ class ExpressionDetailDialog(FramelessDialog):
                 self._single_member_id,
             )
         self._refresh_table_height(self._term_table)
-        for item in view.definitions:
-            if item.kind != "intermediate":
-                continue
-            self._add_inter_row(
-                item.symbol,
-                item.label,
-                item.expression,
-                format_number(item.value),
-                item.source,
-            )
-        self._refresh_table_height(self._inter_table)
+
+        self._start_tabs()
+        self._add_inter_tab("基本参数", view.basic_definitions)
+        for group in view.groups:
+            title = f"{group.symbol} {group.note}".strip()
+            self._add_inter_tab(title, group.definitions)
+        self._fit_tab_height()
 
     def _fill_merged(self) -> None:
-        """多选 / 合槽合并行：分项与中间量逐成员堆叠，说明带 [构件N] 前缀。"""
+        """多选 / 合槽合并行：分项与中间量逐成员堆叠，说明带 [构件N] 前缀。
+
+        基本参数页汇总各成员的 t/a/C1/C2/D/Do；每个成员的分项各占一页。
+        """
         self._formula_label.setText(
             f"主算式：{self._quantity.display_expression} ＝ {format_number(self._quantity.value)}"
         )
+        basic: list = []
+        member_groups: list[tuple[int, object]] = []
         index = 0
         for member_no, (element_id, member) in enumerate(self._merged_members, start=1):
             view = member.presentation()
@@ -212,18 +227,36 @@ class ExpressionDetailDialog(FramelessDialog):
                     term.geometry,
                     element_id,
                 )
-            for item in view.definitions:
-                if item.kind != "intermediate":
-                    continue
-                self._add_inter_row(
-                    item.symbol,
-                    f"[构件{member_no}] {item.label}",
-                    item.expression,
-                    format_number(item.value),
-                    f"构件{member_no}·{item.source}" if item.source else f"构件{member_no}",
+            for item in view.basic_definitions:
+                basic.append(
+                    replace(
+                        item,
+                        label=f"[构件{member_no}] {item.label}",
+                        source=(
+                            f"构件{member_no}·{item.source}" if item.source else f"构件{member_no}"
+                        ),
+                    )
                 )
+            for group in view.groups:
+                member_groups.append((member_no, group))
         self._refresh_table_height(self._term_table)
-        self._refresh_table_height(self._inter_table)
+
+        self._start_tabs()
+        self._add_inter_tab("基本参数", basic)
+        for member_no, group in member_groups:
+            title = f"构件{member_no}·{group.symbol} {group.note}".strip()
+            definitions = [
+                replace(
+                    item,
+                    label=f"[构件{member_no}] {item.label}",
+                    source=(
+                        f"构件{member_no}·{item.source}" if item.source else f"构件{member_no}"
+                    ),
+                )
+                for item in group.definitions
+            ]
+            self._add_inter_tab(title, definitions)
+        self._fit_tab_height()
 
     def _full_text(self) -> str:
         if getattr(self._quantity, "per_element", False):
@@ -268,15 +301,60 @@ class ExpressionDetailDialog(FramelessDialog):
         table.item(row, 0).setData(Qt.ItemDataRole.UserRole, (geometry, member_id))
 
     def _add_inter_row(
-        self, symbol: str, label: str, expression: str, value_text: str, source: str
+        self,
+        table: QTableWidget,
+        symbol: str,
+        label: str,
+        expression: str,
+        value_text: str,
+        source: str,
     ) -> None:
-        table = self._inter_table
         row = table.rowCount()
         table.insertRow(row)
         for col, text in enumerate((symbol, label, expression, value_text, source)):
             item = QTableWidgetItem(text)
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             table.setItem(row, col, item)
+
+    def _start_tabs(self) -> None:
+        """清空中间符号页，准备按面积行重建。"""
+        while self._inter_tabs.count():
+            widget = self._inter_tabs.widget(0)
+            self._inter_tabs.removeTab(0)
+            widget.deleteLater()
+        self._inter_tables = []
+        self._inter_table = None
+
+    def _add_inter_tab(self, title: str, definitions) -> QTableWidget:
+        """新建一页中间符号表（列：符号 / 含义 / 代入式 / 计算结果 / 来源）。"""
+        table = self._make_table(["符号", "含义", "代入式", "计算结果", "来源"])
+        for item in definitions:
+            self._add_inter_row(
+                table,
+                item.symbol,
+                item.label,
+                item.expression,
+                format_number(item.value),
+                item.source,
+            )
+        self._refresh_table_height(table)
+        self._inter_tabs.addTab(table, title)
+        self._inter_tables.append(table)
+        if self._inter_table is None:
+            self._inter_table = table
+        return table
+
+    def _fit_tab_height(self) -> None:
+        """tab 框按“标签栏 + 最高一页表格”收高，其余页内部滚动。"""
+        if not self._inter_tables or not any(
+            table.rowCount() for table in self._inter_tables
+        ):
+            self._inter_tabs.setVisible(False)
+            return
+        self._inter_tabs.setVisible(True)
+        table_height = max(table.height() for table in self._inter_tables)
+        bar_height = self._inter_tabs.tabBar().sizeHint().height()
+        self._inter_tabs.setFixedHeight(bar_height + table_height + 4)
 
     @staticmethod
     def _refresh_table_height(table: QTableWidget) -> None:
@@ -297,8 +375,8 @@ class ExpressionDetailDialog(FramelessDialog):
             return
         from app.views.panels.section_view import _build_group_scene, _build_scene
 
-        width = max(self._canvas.width(), 600)
-        height = max(self._canvas.height(), 240)
+        width = max(self._canvas.width(), 400)
+        height = max(self._canvas.height(), 160)
         if kind == _CONTEXT_GROUP:
             scene, hint = _build_group_scene(context_id, width, height)
         else:
@@ -359,9 +437,8 @@ class ExpressionDetailDialog(FramelessDialog):
         width = min(980, int(available.width() * 0.8)) if available else 980
         height = min(840, int(available.height() * 0.85)) if available else 840
         self.setFixedSize(width, height)
-        self._canvas.setFixedHeight(260)
         # 列宽：算式列吃剩余，其余按内容
-        for table in (self._term_table, self._inter_table):
+        for table in (self._term_table, *self._inter_tables):
             table.resizeColumnsToContents()
             table.horizontalHeader().setSectionResizeMode(
                 2, QHeaderView.ResizeMode.Stretch

@@ -696,6 +696,30 @@ def _build_trench_scene_lr(
     return scene, ""
 
 
+def _center_distance_m(element, side: str) -> float | None:
+    """构件某侧的中心距离（m）；空 / 算式不合法 / 非正数返回 None。"""
+    from app.core.evaluator import EvalError, evaluate
+
+    text = (
+        element.center_distance_right if side == "right" else element.center_distance_left
+    ) or ""
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        value = evaluate(text)
+    except EvalError:
+        return None
+    return value / 1000.0 if value > 0 else None
+
+
+def _pair_distance_m(left: dict, right: dict) -> tuple[float | None, str]:
+    """相邻面的中心距离（m）与填写侧：只有更浅一侧可填，等深填左侧。"""
+    if right["depth"] >= left["depth"] - 1e-9:
+        return _center_distance_m(left["element"], "right"), "left"
+    return _center_distance_m(right["element"], "left"), "right"
+
+
 def _spacing_anchor_half(snap: dict) -> float:
     """间距平分分隔：构件共享侧「间距计算起始点」到本体中心的半宽（m）。
 
@@ -706,9 +730,16 @@ def _spacing_anchor_half(snap: dict) -> float:
     info = snap["info"]
     if info.category in (CATEGORY_ENCASED, CATEGORY_BOX_CULVERT, CATEGORY_GALLERY):
         return info.size_b_dim.v / 2.0
-    if info.pf is not None and info.pf.con_found:
+    # 混凝土基础只对混凝土管生效（与 foundation._found_pipe 同判据）；其余管
+    # 取管外皮半径（垂直切线）
+    if (
+        info.pf is not None
+        and info.pf.con_found
+        and info.pipes
+        and ("混凝土" in info.pipes[0].mat or "砼" in info.pipes[0].mat)
+    ):
         return snap["base_width"] / 2.0
-    return snap["ad"].od.v / 2.0 / 1000.0
+    return snap["ad"].od.v / 2.0
 
 
 def _run_at_height(
@@ -766,7 +797,12 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
     """
     if not project_io.is_open():
         return None, "尚未打开工程"
-    from app.core.calc.trench_group import _internal_run, _side_name, _slope_points
+    from app.core.calc.trench_group import (
+        _internal_run,
+        _side_name,
+        _slope_points,
+        resolve_shared_widths,
+    )
 
     session = orm.session()
     group = session.get(TrenchGroup, group_id)
@@ -804,7 +840,13 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
                 "c1_display": c1_display,
                 "depth": depth,
                 "base_width": base_width,
+                # 左右基础边界到本体中心的距离（默认对称；侵入时侵入侧收到外半径）
+                "half_left": base_width / 2.0,
+                "half_right": base_width / 2.0,
                 "work_width": workwidth_of(pw, info) / 1000,
+                # 该侧是否侵入相邻构件的放坡范围（用于在浅槽底补完整分层线）
+                "intrudes_left": False,
+                "intrudes_right": False,
             }
         )
 
@@ -821,43 +863,67 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
     if work_left is None or work_right is None:
         return None, "边缘围护原则没有任何围护分级，无法绘制断面。"
 
-    # 相邻区（规则 4 / 5）：等深两侧 "-"；异深时深侧选原则放坡到浅槽底
+    # 相邻区（规则 4 / 5）：等深两侧 "-"；异深时深侧选原则放坡到浅槽底。
+    # 填了「与相邻构件中心距离」的共享面：浅侧工作面宽失效，按距离摆放构件。
     pairs: list[dict] = []
     for i in range(n - 1):
         left, right = snapshots[i], snapshots[i + 1]
         h_left, h_right = left["depth"], right["depth"]
-        if abs(h_right - h_left) <= 1e-9:
-            pairs.append(
-                {
-                    "deep_index": None,
-                    "run": 0.0,
-                    "work": None,
-                    "left_width": left["work_width"],
-                    "right_width": right["work_width"],
-                }
-            )
-            continue
-        if h_right > h_left:
-            deep_index, deep = i + 1, right
-            pe_name = _side_name(deep["element"], "left")
+        equal = abs(h_right - h_left) <= 1e-9
+        left_deep = h_left > h_right + 1e-9
+        if equal:
+            deep_index, deep, work, run = None, None, None, 0.0
         else:
-            deep_index, deep = i, left
-            pe_name = _side_name(deep["element"], "right")
-        pe_deep = _enclosure_by_name(session, pe_name) or _first_of(session, PcpEnclosure)
-        delta = abs(h_right - h_left)
-        work = choice_work(pe_deep, delta) if pe_deep is not None else None
-        if work is None:
-            return None, "深侧围护原则没有任何围护分级，无法绘制断面。"
-        run = _internal_run(work, deep["depth"], min(h_left, h_right)).v
-        deep_is_right = h_right > h_left
-        deep_work = deep["work_width"]
+            if h_right > h_left:
+                deep_index, deep = i + 1, right
+                pe_name = _side_name(deep["element"], "left")
+            else:
+                deep_index, deep = i, left
+                pe_name = _side_name(deep["element"], "right")
+            pe_deep = _enclosure_by_name(session, pe_name) or _first_of(
+                session, PcpEnclosure
+            )
+            delta = abs(h_right - h_left)
+            work = choice_work(pe_deep, delta) if pe_deep is not None else None
+            if work is None:
+                return None, "深侧围护原则没有任何围护分级，无法绘制断面。"
+            run = _internal_run(work, deep["depth"], min(h_left, h_right)).v
+        distance, filled_side = _pair_distance_m(left, right)
+        if distance is not None:
+            # 唯一的下限：两构件外边线半径之和（浅构件允许侵入深侧放坡范围）
+            radius_sum = _spacing_anchor_half(left) + _spacing_anchor_half(right)
+            if distance < radius_sum - 1e-9:
+                return None, "构件中心距离小于两构件外边线半径之和，无法绘制断面。"
+        left_width, right_width = resolve_shared_widths(
+            left_base=left["base_width"],
+            right_base=right["base_width"],
+            left_work=left["work_width"],
+            right_work=right["work_width"],
+            run=run,
+            left_deep=left_deep,
+            equal=equal,
+            distance=distance,
+        )
+        if distance is not None:
+            # 浅构件侵入深侧放坡：侵入侧边界收到构件外边线半径（砼基础边线 /
+            # 管外皮切线），工作面宽按 0；深侧共享侧宽度从该边界算到深侧基础边
+            if filled_side == "left" and left_width < -1e-9:
+                left["half_right"] = _spacing_anchor_half(left)
+                left["intrudes_right"] = True
+                left_width = 0.0
+                right_width = distance - left["half_right"] - right["half_left"]
+            elif filled_side == "right" and right_width < -1e-9:
+                right["half_left"] = _spacing_anchor_half(right)
+                right["intrudes_left"] = True
+                right_width = 0.0
+                left_width = distance - right["half_left"] - left["half_right"]
         pairs.append(
             {
                 "deep_index": deep_index,
                 "run": run,
                 "work": work,
-                "left_width": left["work_width"] if deep_is_right else deep_work + run,
-                "right_width": deep_work + run if deep_is_right else right["work_width"],
+                "left_width": left_width,
+                "right_width": right_width,
             }
         )
 
@@ -870,7 +936,7 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
         right_ext = snap["work_width"] if i == n - 1 else pairs[i]["left_width"]
         cursor += left_ext
         base_left = cursor
-        cursor += snap["base_width"]
+        cursor += snap["half_left"] + snap["half_right"]
         base_right = cursor
         cursor += right_ext
         extents.append((base_left, base_right))
@@ -885,8 +951,8 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
             _spacing_anchor_half(snap) if spacing else 0.0 for snap in snapshots
         ]
         for i in range(n - 1):
-            anchor_left = (extents[i][0] + extents[i][1]) / 2.0 + halves[i]
-            anchor_right = (extents[i + 1][0] + extents[i + 1][1]) / 2.0 - halves[i + 1]
+            anchor_left = extents[i][0] + snapshots[i]["half_left"] + halves[i]
+            anchor_right = extents[i + 1][0] + snapshots[i + 1]["half_left"] - halves[i + 1]
             pair_div_x.append((anchor_left + anchor_right) / 2.0)
     else:
         pair_div_x = [None] * (n - 1)
@@ -1042,8 +1108,11 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
                         left_x = base_left - snap["work_width"] - _run_at_height(
                             _slope_points(pair["work"], delta), delta, min(top, delta)
                         )
-                    else:  # 自身更浅 / 等深：工作面到虚拟墙
-                        left_x = base_left - snap["work_width"]
+                        # 侵入时浅侧边界（虚拟墙）在坡面以内：分层线截到墙为止
+                        left_x = max(left_x, extents[i - 1][1])
+                    else:  # 自身更浅 / 等深：工作面到虚拟墙（填了中心距离时按剩余宽度）
+                        # 侵入深侧放坡时剩余宽度为负：该侧没有工作面，按 0 取边界
+                        left_x = base_left - max(0.0, pair["right_width"])
                 if i == n - 1:
                     right_x = base_right + snap["work_width"] + _run_at_height(
                         _slope_points(work_right, depth_i), depth_i, top
@@ -1065,11 +1134,40 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
                         right_x = base_right + snap["work_width"] + _run_at_height(
                             _slope_points(pair["work"], delta), delta, min(top, delta)
                         )
-                    else:  # 自身更浅 / 等深：工作面到虚拟墙
-                        right_x = base_right + snap["work_width"]
+                        # 侵入时浅侧边界（虚拟墙）在坡面以内：分层线截到墙为止
+                        right_x = min(right_x, extents[i + 1][0])
+                    else:  # 自身更浅 / 等深：工作面到虚拟墙（填了中心距离时按剩余宽度）
+                        # 侵入深侧放坡时剩余宽度为负：该侧没有工作面，按 0 取边界
+                        right_x = base_right + max(0.0, pair["left_width"])
                 if right_x - left_x <= 1e-9:
                     continue  # 分界切入后区间为空（极端位移保护）
                 layer_lines.append((left_x - half, y, right_x - half, y))
+
+    # 侵入其他构件放坡范围的浅构件：在它自己的沟槽底标高补一条完整分层线，
+    # 从该构件左侧分割线贯穿到右侧分割线（首 / 末构件取外缘）
+    for i, snap in enumerate(snapshots):
+        if not (snap["intrudes_left"] or snap["intrudes_right"]):
+            continue
+        base_left, base_right = extents[i]
+        if i > 0:
+            pair_left = pairs[i - 1]
+            if pair_div_x[i - 1] is not None:
+                left_x = pair_div_x[i - 1]
+            else:
+                left_x = extents[i - 1][1] + pair_left["left_width"]
+        else:
+            left_x = base_left - first["work_width"]
+        if i < n - 1:
+            pair_right = pairs[i]
+            if pair_div_x[i] is not None:
+                right_x = pair_div_x[i]
+            else:
+                right_x = extents[i][1] + pair_right["left_width"]
+        else:
+            right_x = base_right + last["work_width"]
+        if right_x - left_x > 1e-9:
+            y = h_max - snap["depth"]
+            layer_lines.append((left_x - half, y, right_x - half, y))
 
     # 虚拟竖直墙：每个相邻面都画——它是构件归属区的计算分界，不是实体墙。
     # 起坡点分隔：分界在深侧起坡点，自浅槽底到地面；管中心分隔 / 间距平分
@@ -1092,7 +1190,7 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
     shapes: list[_Shape] = []
     for i, snap in enumerate(snapshots):
         base_left, base_right = extents[i]
-        center_x = (base_left + base_right) / 2.0 - half
+        center_x = base_left + snap["half_left"] - half
         depth_raise_mm = (h_max - snap["depth"]) * 1000.0
         raise_mm = foundation_thickness(snap["pf"]) + snap["c1_display"] - snap["at"].c1
         if not snap["info"].pipes and snap["info"].category in (
@@ -1133,7 +1231,7 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
         member_spans=tuple(
             (
                 snap["element"].id,
-                (extents[i][0] + extents[i][1]) / 2.0 - half,
+                extents[i][0] + snapshots[i]["half_left"] - half,
                 snap["depth"],
             )
             for i, snap in enumerate(snapshots)

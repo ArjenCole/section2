@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from typing import Iterable
 
 #: 输出算式里的函数名（Excel 写法，展示时统一转大写）
-_EXCEL_FUNCTIONS = ("CEILING", "ROUNDUP", "ROUND", "SQRT", "ABS", "POWER", "CEIL", "SIN", "COS", "ACOS")
+_EXCEL_FUNCTIONS = ("CEILING", "ROUNDUP", "ROUND", "SQRT", "ABS", "CEIL", "SIN", "COS", "ACOS")
 
 #: 纯数字（含负号与小数）——这类算式嵌入模板时无需加括号
 _NUMERIC = re.compile(r"-?\d+(?:\.\d+)?")
@@ -102,30 +102,83 @@ def wrap(expression: str, tight: bool = False) -> str:
 
 
 @dataclass(frozen=True)
+class ParamRef:
+    """固定符号（构件参数 / 图集参数 / 工作面宽度）的符号定义（只用于展示层）。
+
+    ``symbol`` 是展示层用的符号（``t`` / ``a`` / ``C1`` / ``C2`` / ``D`` / ``Do`` /
+    ``b1``），``expr`` 是它的数值代入式（查表值或用户录入原文），``value`` 是
+    代入式的值。参数在算式里仍以原始数值参与计算；展示层把对应数值替换成符号，
+    并在中间量定义表里补一行 ``symbol = expr``，见 :meth:`Dim.as_param`。
+
+    ``basic`` 为 True 的符号（t/a/C1/C2/D/Do）统一放进计算表达式窗体的
+    “基本参数”页；``b1``（工作面宽度）等按面积行归入各自的页。
+    """
+
+    symbol: str
+    expr: str
+    value: float
+    label: str
+    source: str = ""
+    basic: bool = True
+    #: 定义表里显示的代入式（默认同 ``expr``）；如 Do 显示成 ``D+t*2``
+    display: str = ""
+
+
+@dataclass(frozen=True)
 class NamedValue:
     """算式片段与它的人类可读含义（只用于展示层，不参与求值）。
 
     ``expr`` 必须与 :class:`Dim` 当时的 ``e`` 完全一致；展示层按语法树比对，
     命中后把该片段提成中间量。数字本身仍由原始 ``e`` 提供，绝不用 ``value``
     反代回公式，因此不会把派生量预先算成一个数字。
+
+    ``params`` 记录该片段里用到的构件参数符号（t/a/C1/C2）：由 :meth:`Dim.named`
+    从 ``Dim.tags`` 汇总，供展示层在定义式里把参数值替换成符号。
     """
 
     expr: str
     label: str
     source: str = ""
+    params: tuple[ParamRef, ...] = ()
+    #: 参数符号标签（t/a/C1/C2）：只用于定义符号，不参与中间量提取
+    param_tag: bool = False
+
+
+def _merge_params(*groups: Iterable[ParamRef]) -> tuple[ParamRef, ...]:
+    """合并参数符号定义（同一符号只保留第一次出现的定义）。"""
+    merged: list[ParamRef] = []
+    seen: set[str] = set()
+    for group in groups:
+        for ref in group:
+            if not ref.symbol or ref.symbol in seen:
+                continue
+            seen.add(ref.symbol)
+            merged.append(ref)
+    return tuple(merged)
 
 
 def _merge_tags(*groups: Iterable[NamedValue]) -> tuple[NamedValue, ...]:
-    """合并算式来源标记（同一段算式只保留第一次出现的说明）。"""
-    merged: list[NamedValue] = []
-    seen: set[str] = set()
+    """合并算式来源标记（同一段算式 + 同一含义只保留一条，参数定义取并集）。"""
+    merged: dict[tuple[str, str], NamedValue] = {}
+    order: list[tuple[str, str]] = []
     for group in groups:
         for tag in group:
-            if not tag.expr or not tag.label or tag.expr in seen:
+            if not tag.expr or not tag.label:
                 continue
-            seen.add(tag.expr)
-            merged.append(tag)
-    return tuple(merged)
+            key = (tag.expr, tag.label)
+            existing = merged.get(key)
+            if existing is None:
+                merged[key] = tag
+                order.append(key)
+            else:
+                merged[key] = NamedValue(
+                    existing.expr,
+                    existing.label,
+                    existing.source,
+                    _merge_params(existing.params, tag.params),
+                    existing.param_tag or tag.param_tag,
+                )
+    return tuple(merged[key] for key in order)
 
 
 def pair(other: "Dim | float") -> tuple[float, str, tuple[NamedValue, ...]]:
@@ -134,6 +187,21 @@ def pair(other: "Dim | float") -> tuple[float, str, tuple[NamedValue, ...]]:
         return other.v, other.e, other.tags
     value = float(other)
     return value, fmt(value), ()
+
+
+@dataclass(frozen=True)
+class AreaParts:
+    """面积行的几何分解（只用于展示层）。
+
+    梯形面积统一显示成 ``(u+v)*h/2``，三角形显示成 ``v*h/2``，矩形显示成
+    ``u*h``：``u`` 为下底宽 / 矩形宽、``v`` 为上底宽、``h`` 为高。``v`` 为
+    None 表示矩形 / 三角形没有上底（三角形用 ``v`` 作底宽，``u`` 为 None）。
+    """
+
+    kind: str  # "trapezoid" | "triangle" | "rectangle"
+    u: "Dim | None"
+    v: "Dim | None"
+    h: "Dim"
 
 
 @dataclass
@@ -162,15 +230,58 @@ class Dim:
     tags: tuple[NamedValue, ...] = ()
     #: 记法指数：0 = m 记法，3 = mm 记法（e 求值 = v × 10^s）
     s: int = 0
+    #: 面积行的几何分解（梯形 / 三角形）：只有面积 Dim 才有，供展示层
+    #: 统一成 ``(u+v)*h/2`` / ``v*h/2``
+    area: AreaParts | None = None
 
     def named(self, label: str, source: str = "") -> "Dim":
-        """给当前量补一个展示名称（返回新 Dim，不改原对象）。"""
+        """给当前量补一个展示名称（返回新 Dim，不改原对象）。
+
+        同时把已有 tags 里的参数符号（t/a/C1/C2）汇总到新标签上，展示层据此
+        知道这个片段内部用到了哪些构件参数。
+        """
+        params = _merge_params(*(tag.params for tag in self.tags))
         return Dim(
             self.v,
             self.e,
-            _merge_tags(self.tags, (NamedValue(self.e, label, source),)),
+            _merge_tags(self.tags, (NamedValue(self.e, label, source, params),)),
             self.s,
+            self.area,
         )
+
+    def as_param(
+        self,
+        symbol: str,
+        label: str,
+        source: str = "",
+        basic: bool = True,
+        display: str = "",
+    ) -> "Dim":
+        """把图集 / 构件参数挂上展示符号（t / a / C1 / C2 / D / Do / b1）。
+
+        返回新 Dim，算式与数值不变；只是多一条带 :class:`ParamRef` 的标签，
+        展示层据此在中间量定义表里补 ``symbol = expr``，并把算式里的数值替换
+        成符号。``value`` 按算式记法换算（``v × 10^s``），与 ``expr`` 求值一致。
+        ``basic=True`` 的符号进“基本参数”页，其余按面积行分页；``display``
+        用于定义表的代入式（如 Do 显示成 ``D+t*2``），``expr`` 仍是数值式。
+        """
+        ref = ParamRef(
+            symbol, self.e, self.v * (10 ** self.s), label, source, basic, display
+        )
+        return Dim(
+            self.v,
+            self.e,
+            _merge_tags(
+                self.tags,
+                (NamedValue(self.e, label, source, (ref,), param_tag=True),),
+            ),
+            self.s,
+            self.area,
+        )
+
+    def is_param(self) -> bool:
+        """本量是否就是构件参数本身（参数标签的算式与当前算式一致）。"""
+        return any(tag.param_tag and tag.expr == self.e for tag in self.tags)
 
     def to_m(self) -> "Dim":
         """mm 记法 → m 记法视图（``v`` 不变）：纯数字折叠回 m 值，算式补 ``/1000``。
@@ -196,9 +307,12 @@ class Dim:
             return self
         if self.v == 0:
             return Dim(value, expr, _merge_tags(self.tags, tags), self._space_of(other))
-        # 加法左结合：右操作数无论顶层是不是加减都不需要括号
-        # （A+(B-C) ≡ A+B-C），扁平连接式更短
+        # 加法左结合：普通算式右操作数无论顶层是不是加减都不需要括号
+        # （A+(B-C) ≡ A+B-C），扁平连接式更短。构件参数的录入算式例外：
+        # C2 写成 "180+2" 时保留成独立语法树节点，展示层才能整段替换成 C2。
         self._assert_same_space(other, expr)
+        if isinstance(other, Dim) and other.is_param() and needs_parens(expr):
+            expr = f"({expr})"
         return Dim(
             self.v + value,
             f"{self.e}+{expr}",
@@ -392,6 +506,9 @@ class ExpressionDefinition:
 
     ``expression`` 仍是一条包含原始数字的代入式；``value`` 只用于“计算结果”
     列展示，**不会代回**主算式或其它定义式。
+
+    ``basic`` 为 True 的定义（t/a/C1/C2/D/Do）统一放进计算表达式窗体的
+    “基本参数”页；``kind="area_part"`` 是面积行的 u/v/h 分解。
     """
 
     symbol: str
@@ -399,7 +516,8 @@ class ExpressionDefinition:
     expression: str
     value: float
     source: str = ""
-    kind: str = "intermediate"  # intermediate | subtotal
+    kind: str = "intermediate"  # intermediate | subtotal | parameter | area_part
+    basic: bool = False
 
 
 @dataclass(frozen=True)
@@ -409,6 +527,8 @@ class CompactTerm:
     ``value`` 的量纲随形态：合并形态（主算式 ``(S1+S2-…)/10^s*数量``）下
     各分项为断面面积（mm²，即面积式的求值），否则为该项自身的数值。
     ``geometry`` 透传自 :class:`Term`（详情弹窗把分项行高亮到断面图上）。
+    ``parts`` 是面积行的 u/v/h 分解（梯形 / 三角形），归入该分项自己的
+    中间符号页。
     """
 
     symbol: str
@@ -416,6 +536,21 @@ class CompactTerm:
     expression: str
     value: float
     geometry: tuple[float, ...] | tuple[tuple[float, float], ...] | None = None
+    parts: tuple[ExpressionDefinition, ...] = ()
+
+
+@dataclass(frozen=True)
+class ExpressionGroup:
+    """计算表达式窗体的一页：一个面积行（S1 / S2…）及其用到的中间符号。
+
+    ``definitions`` 不含基本参数（t/a/C1/C2/D/Do，统一在“基本参数”页）。
+    """
+
+    symbol: str
+    note: str
+    expression: str
+    value: float
+    definitions: tuple[ExpressionDefinition, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -427,6 +562,10 @@ class ExpressionPresentation:
     definitions: tuple[ExpressionDefinition, ...]
     terms: tuple[CompactTerm, ...]
     full: str
+    #: 基本参数页（t/a/C1/C2/D/Do）
+    basic_definitions: tuple[ExpressionDefinition, ...] = ()
+    #: 每个面积行一页的中间符号
+    groups: tuple[ExpressionGroup, ...] = ()
 
 
 @dataclass
@@ -446,10 +585,6 @@ class _Candidate:
 _PREFERRED_SYMBOLS = {
     "槽底宽": "B",
     "计算深度": "H",
-    "管道外径": "D",
-    "管道外径（m）": "D",
-    # mm 记法后外径恒为 mm，沿用 D（旧口径按 m 记法时曾用 Dmm 区分）
-    "管道外径（mm）": "D",
     "基础宽度": "b",
     "基础厚度": "h",
     "基础断面面积": "S",
@@ -458,7 +593,6 @@ _PREFERRED_SYMBOLS = {
     "数量": "L",
     "长度": "L",
     "埋深": "h0",
-    "垫层厚度": "h_c",
     "底板厚": "t_b",
     "顶板厚": "t_t",
     "外壁厚": "t_w",
@@ -536,12 +670,18 @@ def _format_definition(expression: str) -> str:
 
 
 def _collect_tag_keys(tags: Iterable[NamedValue]) -> dict[str, NamedValue]:
-    """把来源标记的算式转成语法树 canonical key。"""
+    """把来源标记的算式转成语法树 canonical key。
+
+    同一个节点既有参数标签又有语义标签时优先语义标签（参数标签只用于符号定义）。
+    """
     result: dict[str, NamedValue] = {}
     for tag in tags:
         node = _parse_expression(tag.expr)
         if node is not None:
-            result.setdefault(_node_key(node), tag)
+            key = _node_key(node)
+            existing = result.get(key)
+            if existing is None or (existing.param_tag and not tag.param_tag):
+                result[key] = tag
     return result
 
 
@@ -591,23 +731,160 @@ class _ReplaceNodes(ast.NodeTransformer):
         return super().visit(node)
 
 
+class _ReplaceParams(ast.NodeTransformer):
+    """把构件参数（t/a/C1/C2）的数值节点替换成对应符号。
+
+    ``keys`` 的值可以是符号，也可以是“同一数值对应的多个参数符号”列表：语法树
+    分不清两个 100 哪个是 a、哪个是 C1 时，按出现顺序依次对应（表达式拼接与
+    标签合并都按左→右进行，顺序一致）。
+    """
+
+    def __init__(self, keys: dict[str, str | list[str]]) -> None:
+        self.keys = keys
+
+    def visit(self, node: ast.AST) -> ast.AST:
+        symbol = self.keys.get(_node_key(node))
+        if isinstance(symbol, list):
+            if not symbol:  # 出现次数比参数多：多出来的保留数字
+                return super().visit(node)
+            symbol = symbol.pop(0)
+        if symbol is not None:
+            return ast.Name(id=symbol, ctx=ast.Load())
+        return super().visit(node)
+
+
+#: 参数符号的展示顺序（与构件参数行一致：壁厚 / 工作面加宽 / 垫层厚 / 基础厚）
+_PARAM_ORDER = {"t": 0, "a": 1, "C1": 2, "C2": 3}
+
+
+def _collect_param_refs(tags: Iterable[NamedValue]) -> list[ParamRef]:
+    """从来源标记里汇总构件参数符号定义（保持标签出现顺序，同一符号取第一次）。"""
+    refs: dict[str, ParamRef] = {}
+    for tag in tags:
+        for ref in tag.params:
+            refs.setdefault(ref.symbol, ref)
+    return list(refs.values())
+
+
+def _node_keys_within(node: ast.AST, skip_keys: set[str]) -> set[str]:
+    """节点内出现过的 canonical key；``skip_keys`` 的子树（已提成符号）不进入。"""
+    keys: set[str] = set()
+
+    def walk(current: ast.AST) -> None:
+        key = _node_key(current)
+        if key in skip_keys:
+            return
+        keys.add(key)
+        for child in ast.iter_child_nodes(current):
+            walk(child)
+
+    walk(node)
+    return keys
+
+
+def _candidate_params(tag_map: dict[str, NamedValue], keys: Iterable[str]) -> set[str]:
+    """这些候选片段内部用到的固定符号（已随片段提成符号，不在本式里展开）。"""
+    params: set[str] = set()
+    for key in keys:
+        tag = tag_map.get(key)
+        if tag is not None:
+            params.update(ref.symbol for ref in tag.params)
+    return params
+
+
+def _param_key_map(
+    refs: Iterable[ParamRef],
+    node: ast.AST,
+    skip_keys: set[str],
+    nested_params: set[str] | frozenset[str] = frozenset(),
+) -> dict[str, str | list[str]]:
+    """当前算式里“参数数值节点 → 符号”的映射。
+
+    只保留确实出现在节点里的参数。两个参数数值相同（如 a 与 C1 都是 130）时
+    同一个语法树节点对应多个符号，交给 :class:`_ReplaceParams` 按出现顺序分配。
+
+    ``nested_params`` 是已提成符号的子片段里的参数：若同一数值既有“候选片段
+    内”的参数、又有候选外的参数（如槽底宽里的 a 与垫层厚里的 C1 同为 100），
+    候选外的才是当前算式里剩下的那个，候选内的不参与本式替换。
+    """
+    present = _node_keys_within(node, skip_keys)
+    refs = list(refs)
+    # 按数值分组；同值里只要有候选外的参数，就只保留候选外的那几路
+    by_value: dict[float, list[ParamRef]] = {}
+    for ref in refs:
+        by_value.setdefault(round(ref.value, 9), []).append(ref)
+    keep: set[str] = set()
+    for group in by_value.values():
+        outside = [ref for ref in group if ref.symbol not in nested_params]
+        chosen = outside if len(group) > 1 and outside else group
+        keep.update(ref.symbol for ref in chosen)
+
+    mapping: dict[str, str | list[str]] = {}
+    for ref in refs:
+        if ref.symbol not in keep:
+            continue
+        parsed = _parse_expression(ref.expr)
+        if parsed is None:
+            continue
+        key = _node_key(parsed)
+        if key not in present:
+            continue
+        existing = mapping.get(key)
+        if existing is None:
+            mapping[key] = ref.symbol
+        elif isinstance(existing, str):
+            if existing != ref.symbol:
+                mapping[key] = [existing, ref.symbol]
+        elif ref.symbol not in existing:
+            existing.append(ref.symbol)
+    return mapping
+
+
+def _render_dim_expression(
+    dim: Dim,
+    symbols: dict[str, str],
+    selected_keys: set[str],
+    tag_map: dict[str, NamedValue],
+) -> tuple[str, float]:
+    """把 Dim 的算式按当前符号 / 固定符号替换后输出（展示用），并返回原式值。"""
+    node = _parse_expression(dim.e)
+    if node is None:
+        return dim.e, dim.v * (10 ** dim.s)
+    value = _node_value(node)
+    refs = _collect_param_refs(dim.tags)
+    candidates = selected_keys & _node_keys_within(node, set())
+    param_keys = _param_key_map(
+        refs, node, selected_keys, _candidate_params(tag_map, candidates)
+    )
+    transformed = _ReplaceNodes(symbols).visit(copy.deepcopy(node))
+    transformed = _ReplaceParams(param_keys).visit(transformed)
+    text = _format_definition(_excel_expression(_safe_simplify(transformed)))
+    return text, value if value is not None else dim.v * (10 ** dim.s)
+
+
 def _select_candidates(
     roots: list[ast.AST],
     tag_map: dict[str, NamedValue],
     notes: list[str],
+    exclude_keys: set[str] | frozenset[str] = frozenset(),
 ) -> list[_Candidate]:
-    """从所有分项语法树中选可提取片段（语义量 → 确有重复的片段）。"""
+    """从所有分项语法树中选可提取片段（语义量 → 确有重复的片段）。
+
+    ``exclude_keys`` 是构件参数自身的数值节点：参数走符号定义，不再提成 X1。
+    """
     root_keys = {_node_key(root) for root in roots}
     aggregated: dict[str, _Candidate] = {}
     for root, note in zip(roots, notes):
         for node, depth in _walk_nodes(root):
             key = _node_key(node)
-            if not _candidate_key(node, root_keys):
+            if key in exclude_keys or not _candidate_key(node, root_keys):
+                continue
+            tag = tag_map.get(key)
+            if tag is not None and tag.param_tag:
                 continue
             text = _excel_expression(node)
             existing = aggregated.get(key)
             if existing is None:
-                tag = tag_map.get(key)
                 aggregated[key] = _Candidate(
                     key=key,
                     text=text,
@@ -745,40 +1022,156 @@ def _compact_terms(
         notes.append(term.note)
         tags.extend(term.tags)
 
-    selected = _select_candidates(parsed, _collect_tag_keys(tags), notes)
+    tag_map = _collect_tag_keys(tags)
+    param_refs = _collect_param_refs(tags)
+    # 固定符号（t/a/C1/C2/D/Do/b1）自身的数值节点不提成 X1
+    param_expr_keys: set[str] = set()
+    for ref in param_refs:
+        parsed_ref = _parse_expression(ref.expr)
+        if parsed_ref is not None:
+            param_expr_keys.add(_node_key(parsed_ref))
+    selected = _select_candidates(parsed, tag_map, notes, param_expr_keys)
     symbols = _assign_symbols(selected)
+    selected_keys = set(symbols)
 
     compact_terms: list[CompactTerm] = []
+    area_definitions: list[ExpressionDefinition] = []
     for index, (term, root) in enumerate(zip(terms, parsed), start=1):
         if factored:
             # 面积值必须在符号替换前求值：_ReplaceNodes 会原地改写 root 的子树
             area_value = _node_value(root)
-        transformed = _ReplaceNodes(symbols).visit(root)
-        expression = _excel_expression(_safe_simplify(transformed))
-        if factored:
-            # 合并形态：分项即断面面积（值为面积式的求值，mm²）
             symbol = _next_subtotal_symbol(symbols, index)
-            value = area_value
+            value = area_value if area_value is not None else term.value
         else:
             symbol = f"V{index}"
             value = term.value
+        # 参数替换映射也要在候选替换前算：候选子树里的参数已归到各自的定义里。
+        # 用该分项自己的标签顺序，数值相同的参数才能按算式左→右的出现顺序对上。
+        term_refs = _collect_param_refs(term.tags)
+        # 本式里实际出现的候选片段（含嵌套的）才把参数算作“已提成符号”
+        root_candidates = selected_keys & _node_keys_within(root, set())
+        param_keys = _param_key_map(
+            term_refs, root, selected_keys, _candidate_params(tag_map, root_candidates)
+        )
+        transformed = _ReplaceNodes(symbols).visit(root)
+        transformed = _ReplaceParams(param_keys).visit(transformed)
+        expression = _excel_expression(_safe_simplify(transformed))
+
+        # 面积行统一显示：梯形 (u+v)*h/2、三角形 v*h/2、矩形 u*h
+        parts: list[ExpressionDefinition] = []
+        area = term.area
+        if area is not None and area.kind in ("trapezoid", "triangle", "rectangle"):
+            source = f"{symbol}·{term.note or '面积行'}"
+            if area.kind == "rectangle" and area.u is not None:
+                u_text, u_value = _render_dim_expression(
+                    area.u, symbols, selected_keys, tag_map
+                )
+                h_text, h_value = _render_dim_expression(
+                    area.h, symbols, selected_keys, tag_map
+                )
+                parts = [
+                    ExpressionDefinition(
+                        f"u{index}", "宽", u_text, u_value, source, "area_part"
+                    ),
+                    ExpressionDefinition(
+                        f"h{index}", "高", h_text, h_value, source, "area_part"
+                    ),
+                ]
+                expression = f"u{index}*h{index}"
+            elif area.kind == "trapezoid" and area.u is not None and area.v is not None:
+                u_text, u_value = _render_dim_expression(
+                    area.u, symbols, selected_keys, tag_map
+                )
+                v_text, v_value = _render_dim_expression(
+                    area.v, symbols, selected_keys, tag_map
+                )
+                h_text, h_value = _render_dim_expression(
+                    area.h, symbols, selected_keys, tag_map
+                )
+                parts = [
+                    ExpressionDefinition(
+                        f"u{index}", "下底宽", u_text, u_value, source, "area_part"
+                    ),
+                    ExpressionDefinition(
+                        f"v{index}", "上底宽", v_text, v_value, source, "area_part"
+                    ),
+                    ExpressionDefinition(
+                        f"h{index}", "高", h_text, h_value, source, "area_part"
+                    ),
+                ]
+                expression = f"(u{index}+v{index})*h{index}/2"
+            else:
+                v_text, v_value = _render_dim_expression(
+                    area.v, symbols, selected_keys, tag_map
+                )
+                h_text, h_value = _render_dim_expression(
+                    area.h, symbols, selected_keys, tag_map
+                )
+                parts = [
+                    ExpressionDefinition(
+                        f"v{index}", "底宽", v_text, v_value, source, "area_part"
+                    ),
+                    ExpressionDefinition(
+                        f"h{index}", "高", h_text, h_value, source, "area_part"
+                    ),
+                ]
+                expression = f"v{index}*h{index}/2"
+            # 单分项（V 形态）的换算尾 /10^s*数量 仍要保留；合并形态由主算式带尾
+            if not factored:
+                tail = _split_volume_tail(term.expr)
+                if tail is not None:
+                    _, exponent, rest = tail
+                    expression = f"({expression})/10^{exponent}{rest}"
+            area_definitions.extend(parts)
+
         compact_terms.append(
             CompactTerm(
                 symbol=symbol,
                 note=term.note,
                 expression=expression,
-                value=value if value is not None else term.value,
+                value=value,
                 geometry=term.geometry,
+                parts=tuple(parts),
             )
         )
 
     definitions: list[ExpressionDefinition] = []
+    # 构件参数（t/a/C1/C2）先给定义：主算式 / 定义式里的数值被替换成符号，
+    # 结果列只用于核对，不代回公式。
+    for ref in sorted(param_refs, key=lambda item: _PARAM_ORDER.get(item.symbol, 99)):
+        definitions.append(
+            ExpressionDefinition(
+                symbol=ref.symbol,
+                label=ref.label,
+                expression=_format_definition(ref.display or ref.expr),
+                value=ref.value,
+                source=ref.source or "构件参数",
+                kind="parameter",
+                basic=ref.basic,
+            )
+        )
     # 深层定义先输出，父级定义可以引用已定义的子式（排序只为阅读，不参与计算）。
     for candidate in sorted(selected, key=lambda item: item.depth, reverse=True):
         value = _node_value(candidate.node)  # 必须在替换子式前求值
+        tag = tag_map.get(candidate.key)
+        # 语义量标签带着“该片段用到哪些构件参数”；通用片段退回全部参数，
+        # 由 _param_key_map 按实际出现的数值节点过滤。
+        candidate_refs = tag.params if tag is not None and tag.params else param_refs
+        # 只把确实嵌套在本定义式里的候选片段算作“已提成符号”（别的分项的
+        # 候选片段不影响本式，否则同值参数会被误判成都在候选内）
+        nested_keys = (
+            selected_keys & _node_keys_within(candidate.node, set())
+        ) - {candidate.key}
+        param_keys = _param_key_map(
+            candidate_refs,
+            candidate.node,
+            selected_keys - {candidate.key},
+            _candidate_params(tag_map, nested_keys),
+        )
         transformed = _ReplaceNodes(symbols, stop=candidate.key).visit(
             copy.deepcopy(candidate.node)
         )
+        transformed = _ReplaceParams(param_keys).visit(transformed)
         expression = _format_definition(_excel_expression(_safe_simplify(transformed)))
         definitions.append(
             ExpressionDefinition(
@@ -790,6 +1183,9 @@ def _compact_terms(
                 source=candidate.source or "本步原始参数",
             )
         )
+
+    # 面积行的 u/v/h 分解（梯形 / 三角形）也是中间符号
+    definitions.extend(area_definitions)
 
     if len(compact_terms) > 1:
         parts: list[str] = []
@@ -868,6 +1264,54 @@ def _prune_definitions(
     return [item for item in definitions if item.symbol in used]
 
 
+def _group_definitions(
+    compact_terms: list[CompactTerm],
+    definitions: list[ExpressionDefinition],
+) -> tuple[tuple[ExpressionDefinition, ...], tuple[ExpressionGroup, ...]]:
+    """按面积行分组：基本参数一页，每个分项一页（不含基本参数）。
+
+    每页包含该分项算式（含 u/v/h 分解）递归引用到的全部非基本符号；基本参数
+    （t/a/C1/C2/D/Do）只出现在“基本参数”页，不在各面积页重复。
+    """
+    basic = tuple(item for item in definitions if item.basic)
+    by_symbol = {item.symbol: item for item in definitions if not item.basic}
+    groups: list[ExpressionGroup] = []
+    for term in compact_terms:
+        roots = set(_TOKEN.findall(term.expression))
+        for part in term.parts:
+            roots.update(_TOKEN.findall(part.expression))
+        used: set[str] = set()
+        frontier = list(roots)
+        while frontier:
+            symbol = frontier.pop()
+            if symbol in used:
+                continue
+            item = by_symbol.get(symbol)
+            if item is None:
+                continue
+            used.add(symbol)
+            frontier.extend(_TOKEN.findall(item.expression))
+        part_symbols = {part.symbol for part in term.parts}
+        groups.append(
+            ExpressionGroup(
+                symbol=term.symbol,
+                note=term.note,
+                expression=term.expression,
+                value=term.value,
+                # u/v/h（面积分解）排最前，其余依赖按全局定义顺序
+                definitions=tuple(term.parts)
+                + tuple(
+                    item
+                    for item in definitions
+                    if item.symbol in used
+                    and not item.basic
+                    and item.symbol not in part_symbols
+                ),
+            )
+        )
+    return basic, tuple(groups)
+
+
 @dataclass
 class Term:
     """工程量的一个代入项：expr 为未带正负号的算式，value 为带符号数值，note 为该项说明。
@@ -891,6 +1335,8 @@ class Term:
     #: 断面范围：6 元组梯形 (h0, h1, l0, r0, l1, r1)，或点列多边形
     #: ((x, y), …)（弓形 / 半圆等弧边形状，弦线 + 采样弧线）
     geometry: tuple[float, ...] | tuple[tuple[float, float], ...] | None = None
+    #: 面积行的几何分解（梯形 / 三角形 / 矩形）：供计算表达式窗体统一显示
+    area: AreaParts | None = None
 
 
 @dataclass
@@ -947,12 +1393,18 @@ class Quantity:
         if not main:
             main = self.expression
         formula = f"V={main}"
+        basic_definitions: tuple[ExpressionDefinition, ...] = ()
+        groups: tuple[ExpressionGroup, ...] = ()
+        if compact_terms:
+            basic_definitions, groups = _group_definitions(compact_terms, definitions)
         self._presentation_cache = ExpressionPresentation(
             formula=formula,
             main=main,
             definitions=tuple(definitions),
             terms=tuple(compact_terms),
             full=self.expression,
+            basic_definitions=basic_definitions,
+            groups=groups,
         )
         return self._presentation_cache
 
@@ -1011,6 +1463,7 @@ class Quantity:
         note: str = "",
         tags: Iterable[NamedValue] = (),
         geometry: tuple[float, ...] | tuple[tuple[float, float], ...] | None = None,
+        area: AreaParts | None = None,
     ) -> None:
         """累加一个代入项；``expr`` 传 :class:`Dim` 时按其记法指数追加 ``/10^s`` 换算尾。
 
@@ -1039,6 +1492,7 @@ class Quantity:
                     tags=tuple(tags),
                     raw_expr=text,
                     geometry=geometry,
+                    area=expr.area if isinstance(expr, Dim) else area,
                 )
             )
             self._presentation_cache = None
@@ -1078,6 +1532,7 @@ class QDict:
         note: str = "",
         tags: Iterable[NamedValue] = (),
         geometry: tuple[float, ...] | tuple[tuple[float, float], ...] | None = None,
+        area: AreaParts | None = None,
     ) -> Quantity:
         """累加一项：``note`` 是该步的说明，挂在项上随 :meth:`Quantity.steps` 一起展示。
 
@@ -1085,13 +1540,14 @@ class QDict:
         （几何量：mm 记法随 Dim.s 记录，自动追加 ``/10^s`` 换算尾）。
         ``geometry`` 记录该项的梯形断面范围（详情弹窗高亮用）。
         数值为 0 的项不进算式，其说明也一并丢弃（步骤列表与算式严格一一对应）。
-        ``tags`` 只供展示层识别“槽底宽 / 计算深度”等中间量。
+        ``tags`` 只供展示层识别“槽底宽 / 计算深度”等中间量；``area`` 在复用
+        字符串算式（如湿土排水）时透传面积行的 u/v/h 分解。
         """
         quantity = self._items.get(key)
         if quantity is None:
             quantity = Quantity(key=key)
             self._items[key] = quantity
-        quantity.add_term(value, expr, note, tags, geometry)
+        quantity.add_term(value, expr, note, tags, geometry, area)
         return quantity
 
     def discard(self, key: str) -> None:
@@ -1107,6 +1563,7 @@ class QDict:
                     term.value, term.expr, term.note, term.tags, term.geometry
                 )
                 target.terms[-1].raw_expr = term.raw_expr or term.expr
+                target.terms[-1].area = term.area
 
     def scale(self, coefficient: float, expr: str | None = None) -> None:
         """整体乘系数（旧版 MultDic_StrmcQ）；系数进算式，``expr`` 为系数的算式原文。

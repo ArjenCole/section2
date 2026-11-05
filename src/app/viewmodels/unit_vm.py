@@ -67,6 +67,8 @@ _ELEMENT_FIELDS = {
     "pe_right_name",
     "support_left",
     "support_right",
+    "center_distance_left",
+    "center_distance_right",
 }
 _PIPE_FIELDS = {"mat", "cat", "dn", "content", "t"}
 _PARAM_FIELDS = {"key", "unit", "value"}
@@ -111,6 +113,9 @@ class ElementRow:
     pe_right_name: str = ""
     support_left: bool = True
     support_right: bool = True
+    #: 合槽子构件与左 / 右相邻构件的中心距离（mm，原文可写算式；空 = 按面宽匹配）
+    center_distance_left: str = ""
+    center_distance_right: str = ""
     #: 合槽编组（v3）：所属组的 id；None = 独立构件
     group_id: int | None = None
     #: 组内位置（从左到右 0 起）；独立构件恒 0
@@ -519,6 +524,8 @@ def _element_row(element: Element) -> ElementRow:
         pe_right_name=element.pe_right_name or "",
         support_left=bool(element.support_left),
         support_right=bool(element.support_right),
+        center_distance_left=element.center_distance_left or "",
+        center_distance_right=element.center_distance_right or "",
         group_id=element.group_id,
     )
 
@@ -745,6 +752,8 @@ def create_element(
     pe_right_name: str = "",
     support_left: bool = True,
     support_right: bool = True,
+    center_distance_left: str = "",
+    center_distance_right: str = "",
 ) -> Element | None:
     """新增构件条目；未指定原则时取库中第一条（旧版 mcElement.GetData 的做法）。
 
@@ -781,6 +790,8 @@ def create_element(
         pe_right_name=pe_right_name or "",
         support_left=bool(support_left),
         support_right=bool(support_right),
+        center_distance_left=str(center_distance_left or ""),
+        center_distance_right=str(center_distance_right or ""),
         order_no=order_no
         if order_no is not None
         else project_io.next_order_no(Element, unit_id=unit_id),
@@ -873,6 +884,8 @@ def element_snapshot(element_id: int) -> dict | None:
         "pe_right_name": element.pe_right_name or "",
         "support_left": bool(element.support_left),
         "support_right": bool(element.support_right),
+        "center_distance_left": element.center_distance_left or "",
+        "center_distance_right": element.center_distance_right or "",
         "pipes": [
             (pipe.mat, pipe.pipe_category, pipe.dn, pipe.content, pipe.t)
             for pipe in element.pipes
@@ -927,6 +940,8 @@ def insert_element_data(
         pe_right_name=str(data.get("pe_right_name") or ""),
         support_left=bool(data.get("support_left", True)),
         support_right=bool(data.get("support_right", True)),
+        center_distance_left=str(data.get("center_distance_left") or ""),
+        center_distance_right=str(data.get("center_distance_right") or ""),
     )
 
 
@@ -975,6 +990,10 @@ def element_copy_snapshot(element_id: int) -> dict | None:
         data["pe_name"] = pe_name
         data["pe_left_name"] = left_name
         data["pe_right_name"] = right_name
+        # 复制成组外构件：共享面不存在了，中心距离一并清空（整组复制仍保留，
+        # 见 group_snapshot → element_snapshot）
+        data["center_distance_left"] = ""
+        data["center_distance_right"] = ""
     return data
 
 
@@ -1268,6 +1287,10 @@ def delete_element(element_id: int) -> None:
             _revert_members(remaining, plan)
             orm.session().delete(group)
             project_io.commit()
+        else:
+            # 相邻关系变了：剩余组员的中心距离不再指向原邻居，统一清空
+            _clear_center_distances(remaining)
+            project_io.commit()
     bus().unit_changed.emit(unit_id)
 
 
@@ -1300,6 +1323,11 @@ def move_element(element_id: int, delta: int) -> None:
         if ordered[new_index].group_id is not None:
             return  # 不拆组：相邻是组成员时不移动
         ordered[index], ordered[new_index] = ordered[new_index], ordered[index]
+    if element.group_id is not None:
+        # 组内左右换序：中心距离指向的是旧邻居，换序后不再成立，统一清空重填
+        group = orm.session().get(TrenchGroup, element.group_id)
+        if group is not None:
+            _clear_center_distances(group.members)
     for position, item in enumerate(ordered):
         item.order_no = position
     project_io.commit()
@@ -1397,6 +1425,9 @@ def create_trench_group(element_ids: list[int]) -> tuple[TrenchGroup | None, str
             else (internal or _original_side_name(element, "right"))
         )
         element.pe_name = LR_PE_TEXT
+        # 新组的相邻关系尚未填写：清掉可能残留的旧中心距离
+        element.center_distance_left = ""
+        element.center_distance_right = ""
         # 数量统一取父节点（首成员的值；组员不单独持有数量）
         element.amount = group.amount
     for index, member in enumerate(members):
@@ -1493,6 +1524,8 @@ def add_to_group(
         for member in members:
             member.amount = group.amount
     element.amount = group.amount
+    # 插入点两侧的相邻关系变了：组内已有的中心距离全部清空重填
+    _clear_center_distances([*members, element])
     project_io.commit()
     bus().unit_changed.emit(element.unit_id)
     return True, None
@@ -1513,9 +1546,19 @@ def remove_from_group(element_id: int) -> None:
         _revert_members(remaining, plan)
         if group is not None:
             orm.session().delete(group)
+    else:
+        # 相邻关系变了：剩余组员的中心距离不再指向原邻居，统一清空
+        _clear_center_distances(remaining)
     project_io.commit()
     bus().unit_changed.emit(unit_id)
     bus().tree_structure_changed.emit()
+
+
+def _clear_center_distances(members) -> None:
+    """清空一组构件的中心距离（编组顺序 / 相邻关系变化后调用）。"""
+    for member in members:
+        member.center_distance_left = ""
+        member.center_distance_right = ""
 
 
 def _revert_members(
@@ -1540,6 +1583,10 @@ def _revert_members(
         member.pe_left_name = left_name
         member.pe_right_name = right_name
         member.group_id = None
+        # 中心距离只对合槽共享面有意义：还原为独立构件后清空，避免以后重新编组
+        # 时残留指向旧邻居的距离
+        member.center_distance_left = ""
+        member.center_distance_right = ""
 
 
 def group_side_plan(group_id: int) -> dict[int, tuple[bool, bool]]:
@@ -1550,6 +1597,94 @@ def group_side_plan(group_id: int) -> dict[int, tuple[bool, bool]]:
     from app.core.calc.trench_group import group_side_plan as _plan
 
     return _plan(group)
+
+
+def group_distance_plan(group_id: int) -> dict[int, tuple[bool, bool]]:
+    """组内 (与左侧构件中心距离可填, 与右侧构件中心距离可填)：界面「工作面宽」tab 用。"""
+    group = orm.session().get(TrenchGroup, group_id) if project_io.is_open() else None
+    if group is None:
+        return {}
+    from app.core.calc.trench_group import group_distance_plan as _plan
+
+    return _plan(group)
+
+
+def group_neighbor_names(element_id: int) -> tuple[str, str]:
+    """合槽子构件的 (左邻名称, 右邻名称)；不在组内 / 无相邻侧返回空串。"""
+    element = _element(element_id)
+    if element is None or element.group_id is None:
+        return "", ""
+    group = orm.session().get(TrenchGroup, element.group_id)
+    if group is None:
+        return "", ""
+    members = sorted(group.members, key=lambda item: (item.order_no, item.id))
+    index = next((i for i, item in enumerate(members) if item.id == element_id), None)
+    if index is None:
+        return "", ""
+    left = members[index - 1].name if index > 0 else ""
+    right = members[index + 1].name if index < len(members) - 1 else ""
+    return left, right
+
+
+def element_work_width(element_id: int) -> float | None:
+    """构件按自身面宽原则匹配到的工作面宽（mm，单侧）；解析失败返回 None。"""
+    element = _element(element_id)
+    if element is None:
+        return None
+    from app.core.calc.engine import (
+        build_element_input,
+        resolve_element_principles,
+        workwidth_of,
+    )
+
+    session = orm.session()
+    pe, pf, pp, pw = resolve_element_principles(element, session)
+    if pw is None:
+        return None
+    try:
+        info = build_element_input(element, pe, pf, pp, pw)
+        return workwidth_of(pw, info)
+    except Exception:
+        return None
+
+
+def distance_validation_error(element_id: int, side: str, text: str) -> str | None:
+    """校验「与相邻构件中心距离」原文；返回错误提示，None = 合法。
+
+    唯一的下限是**两构件外边线半径之和**：浅构件允许侵入深构件的放坡范围
+    之上，不再要求距离容纳对侧工作面 / 放坡。空文本 = 未填，直接通过。
+    """
+    element = _element(element_id)
+    if element is None:
+        return "构件不存在。"
+    if element.group_id is None:
+        return "该构件不在合槽组内，不能填写构件中心距离。"
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    from app.core.evaluator import EvalError, evaluate
+
+    try:
+        value = evaluate(raw)
+    except EvalError:
+        return "构件中心距离需为数字或算式（mm）。"
+    if value <= 0:
+        return "构件中心距离需大于 0。"
+    from app.core.calc.trench_group import group_distance_limits
+
+    group = orm.session().get(TrenchGroup, element.group_id)
+    if group is None:
+        return "合槽组不存在。"
+    limits = group_distance_limits(group, element_id, side)
+    if limits is None:
+        return "该侧不是可填写的共享面（只有更浅一侧可填；等深时填在左侧构件）。"
+    radius_sum, neighbor_label = limits
+    if value < radius_sum - 1e-6:
+        return (
+            f"填写的距离 {format_number(value)} mm 小于两构件外边线半径之和 "
+            f"{format_number(radius_sum)} mm（与「{neighbor_label}」）。"
+        )
+    return None
 
 
 def update_group(group_id: int, **fields) -> TrenchGroup | None:

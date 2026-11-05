@@ -17,7 +17,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.core.calc.measures import AtlasDims, foundation_thickness
-from app.core.calc.tracer import Dim, QDict, dim, dim_sum, fmt, mm, mm_of_m, raw_dim, scale_sum, wrap
+from app.core.calc.tracer import (
+    AreaParts,
+    Dim,
+    QDict,
+    dim,
+    dim_sum,
+    fmt,
+    mm,
+    mm_of_m,
+    raw_dim,
+    scale_sum,
+    wrap,
+)
 
 
 def mm2m(value: float) -> float:
@@ -37,14 +49,34 @@ def trapezoid_expr(bottom: Dim, height: Dim, slope: Dim) -> Dim:
     算式展开写全、不做预运算；B 只在算式里出现一次，避免长算式重复。
     返回 :class:`Dim`：``v`` 为每延米断面面积（m²），``e`` 为 mm² 记法算式
     （记法指数 = 底宽指数 + 高指数），记录工程量时统一 ``/10^6``。
+
+    同时带 :class:`AreaParts`（u=下底宽、v=上底宽、h=高）：计算表达式窗体把
+    面积行统一显示成 ``(u+v)*h/2``；下底为 0 时是三角形，显示 ``v*h/2``。
     """
     h = wrap(height.e)
     b = wrap(bottom.e)
     if slope.v == 0:
         text = f"{b}*{h}"
+        parts = AreaParts("rectangle", bottom, None, height)
     else:
         text = f"(2*{b}+2*{h}*{wrap(slope.e)})*{h}/2"
-    return Dim(trapezoid(bottom.v, height.v, slope.v), text, (), bottom.s + height.s)
+        rise = Dim(
+            2.0 * height.v * slope.v,
+            f"2*{h}*{wrap(slope.e)}",
+            height.tags + slope.tags,
+            height.s + slope.s,
+        )
+        if bottom.v == 0:
+            parts = AreaParts("triangle", None, rise, height)
+        else:
+            parts = AreaParts("trapezoid", bottom, bottom + rise, height)
+    return Dim(
+        trapezoid(bottom.v, height.v, slope.v),
+        text,
+        bottom.tags + height.tags + slope.tags,
+        bottom.s + height.s,
+        parts,
+    )
 
 
 def widen(delta: Dim, slope: Dim) -> Dim:
@@ -52,7 +84,7 @@ def widen(delta: Dim, slope: Dim) -> Dim:
     return Dim(
         delta.v * slope.v * 2,
         f"2*{wrap(delta.e)}*{wrap(slope.e)}",
-        (),
+        delta.tags + slope.tags,
         delta.s + slope.s,
     )
 
@@ -136,8 +168,9 @@ def backfill_layers(
     total = depth if depth.v >= 0 else mm(0.0)
     remaining = total - foundation_thickness(pf)
 
+    # 垫层厚度 = C1 + C2：不单独提成 h_c，算式里直接展开成 C1 与 C2
+    # （见计算表达式窗体的“基本参数”页）
     height, remaining = min_h(ad.c1 + ad.c2, remaining)
-    height = height.named("垫层厚度", "垫层厚 C1 + 基础厚 C2")
     layers.append((f"垫层|{cushion_name}|m3", height, "垫层"))
     height, remaining = min_h(size_h / 2 + (ad.t - ad.c2), remaining)
     height = height.named("坞膀下半层厚", "断面高/2 + (壁厚−基础厚)")
@@ -216,7 +249,7 @@ def cal_groove(
                 delta = (
                     target - current
                     if clipped
-                    else Dim(target.v - current.v, layer.e, (), layer.s)
+                    else Dim(target.v - current.v, layer.e, layer.tags, layer.s)
                 )
             else:
                 delta = step_top - current
@@ -249,7 +282,7 @@ def cal_groove(
             else:
                 # 切级处 current 恰好到达分级标高：数值同旧版递推，算式直接取标高，
                 # 避免 "(累计)+(标高−累计)" 这类未化简写法
-                current = Dim(current.v + delta.v, step_top.e, (), step_top.s)
+                current = Dim(current.v + delta.v, step_top.e, step_top.tags, step_top.s)
             bottom = (bottom + widen(delta, slope)).named(
                 "槽底宽", "上一层底宽 + 2×层厚×放坡系数"
             )
@@ -340,11 +373,16 @@ def trapezoid_lr(bottom: float, height: float, slope_l: float, slope_r: float) -
 
 
 def trapezoid_lr_expr(bottom: Dim, height: Dim, slope_l: Dim, slope_r: Dim) -> Dim:
-    """不对称梯形的代入算式（mm 记法）：直壁侧省略 ``H*s`` 项（与对称版同风格，不出 ``*0``）。"""
+    """不对称梯形的代入算式（mm 记法）：直壁侧省略 ``H*s`` 项（与对称版同风格，不出 ``*0``）。
+
+    同时带 :class:`AreaParts`：u=下底宽、v=上底宽（下底 + 两侧坡高项之和）、
+    h=高；下底为 0 时是三角形。
+    """
     h = wrap(height.e)
     b = wrap(bottom.e)
     if slope_l.v == 0 and slope_r.v == 0:
         text = f"{b}*{h}"
+        parts = AreaParts("rectangle", bottom, None, height)
     else:
         terms = [f"2*{b}"]
         if slope_l.v != 0:
@@ -352,11 +390,19 @@ def trapezoid_lr_expr(bottom: Dim, height: Dim, slope_l: Dim, slope_r: Dim) -> D
         if slope_r.v != 0:
             terms.append(f"{h}*{wrap(slope_r.e)}")
         text = "(" + "+".join(terms) + f")*{h}/2"
+        rise = dim_sum(
+            *(height * slope for slope in (slope_l, slope_r) if slope.v != 0)
+        )
+        if bottom.v == 0:
+            parts = AreaParts("triangle", None, rise, height)
+        else:
+            parts = AreaParts("trapezoid", bottom, bottom + rise, height)
     return Dim(
         trapezoid_lr(bottom.v, height.v, slope_l.v, slope_r.v),
         text,
-        (),
+        bottom.tags + height.tags + slope_l.tags + slope_r.tags,
         bottom.s + height.s,
+        parts,
     )
 
 
@@ -432,7 +478,7 @@ def cal_groove_sided(
                 delta = (
                     target - current
                     if clipped
-                    else Dim(target.v - current.v, layer.e, (), layer.s)
+                    else Dim(target.v - current.v, layer.e, layer.tags, layer.s)
                 )
             else:
                 delta = step_top - current
@@ -467,7 +513,7 @@ def cal_groove_sided(
             if target.v <= step_top.v:
                 current = current + delta
             else:
-                current = Dim(current.v + delta.v, step_top.e, (), step_top.s)
+                current = Dim(current.v + delta.v, step_top.e, step_top.tags, step_top.s)
             bottom = (bottom + widen_lr(delta, slope_l, slope_r)).named(
                 "槽底宽", "上一层底宽 + 左右放坡外扩"
             )

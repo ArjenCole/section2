@@ -120,6 +120,60 @@ def test_presentation_matches_full_expression(project) -> None:
             assert evaluate(view.full) == pytest.approx(quantity.value, rel=1e-9)
 
 
+def test_presentation_symbolizes_component_parameters(project) -> None:
+    """计算表达式：图集参数 t/a/C1/C2 进中间符号表，算式里用符号代替数值。"""
+    unit = project
+    elements = {element.name: element for element in _elements(unit)}
+    dig = _results(unit)[elements["混凝土管"].id].get("开挖|Ⅲ类土|m3")
+    view = dig.presentation()
+    definitions = {item.symbol: item for item in view.definitions}
+
+    assert {"t", "a", "C1"} <= definitions.keys()
+    assert definitions["t"].expression == "65"
+    assert definitions["a"].expression == "130"
+    assert definitions["C1"].expression == "130"
+    assert definitions["D"].expression == "600"
+    # a 与 C1 同为 130，但定义式各归各的：B 用 a、H 用 C1
+    assert definitions["B"].expression == "D+t*2+a*2+b1*2"
+    assert definitions["H"].expression == "h0+t+C1"
+    # 梯形面积行统一成 (u1+v1)*h1/2
+    assert view.terms[0].expression == "((u1+v1)*h1/2)/10^6*100"
+    assert definitions["u1"].expression == "B"
+    assert definitions["v1"].expression == "B+2*H*1"
+    assert definitions["h1"].expression == "H"
+    # 完整数值算式保持数字（复制 Excel / 复核用）
+    assert "65" in view.full and "t" not in view.full
+
+
+def test_presentation_area_tabs_and_u_v_h(project) -> None:
+    """梯形面积行统一成 (u+v)*h/2；基本参数单独一页，面积页不重复。"""
+    unit = project
+    elements = {element.name: element for element in _elements(unit)}
+    backfill = _results(unit)[elements["混凝土管"].id].get("回填|中粗砂|m3")
+    view = backfill.presentation()
+
+    terms = {term.symbol: term for term in view.terms}
+    assert terms["S1"].expression == "(u1+v1)*h1/2"
+    assert [part.symbol for part in terms["S1"].parts] == ["u1", "v1", "h1"]
+    # u=下底宽、v=上底宽、h=高
+    assert terms["S1"].parts[0].expression == "B3"
+    assert terms["S1"].parts[1].expression == "B2"
+    assert terms["S1"].parts[2].expression == "X"
+
+    basic = {item.symbol for item in view.basic_definitions}
+    assert {"t", "a", "C1", "C2", "D", "Do"} <= basic
+    assert "b1" not in basic  # 工作面宽度归面积页
+
+    groups = {group.symbol: group for group in view.groups}
+    s1_symbols = {item.symbol for item in groups["S1"].definitions}
+    assert {"u1", "v1", "h1", "b1", "B3", "B2", "X"} <= s1_symbols
+    assert not (s1_symbols & basic)
+    # 垫层厚度不再提成 h_c，直接展开成 C1+C2
+    assert "h_c" not in {item.symbol for item in view.definitions}
+    b3 = next(item for item in view.definitions if item.symbol == "B3")
+    assert "C1+C2" in b3.expression
+
+
 def test_expression_has_no_redundant_parentheses(project) -> None:
     """算式只在语法必需处加括号：与 ast.unparse（最小括号形式）的括号数一致。"""
     import ast
@@ -196,6 +250,24 @@ def test_detail_dialog_hover_highlights_section(project, qapp) -> None:
 
     table = dialog._term_table
     assert table.rowCount() >= 2
+    # 中间符号表按面积行分页：第一页基本参数，后面每个面积行一页
+    inter_symbols = [
+        dialog._inter_table.item(row, 0).text()
+        for row in range(dialog._inter_table.rowCount())
+    ]
+    assert {"t", "a", "C1", "C2", "D", "Do"} <= set(inter_symbols)
+    titles = [
+        dialog._inter_tabs.tabText(index)
+        for index in range(dialog._inter_tabs.count())
+    ]
+    assert titles[0] == "基本参数"
+    assert any(title.startswith("S1") for title in titles)
+    # 面积页不再重复基本参数
+    s1_table = dialog._inter_tabs.widget(1)
+    s1_symbols = {
+        s1_table.item(row, 0).text() for row in range(s1_table.rowCount())
+    }
+    assert not (s1_symbols & {"t", "a", "C1", "C2", "D", "Do"})
     viewport = table.viewport()
     pos = QPoint(
         table.columnViewportPosition(0) + 10,

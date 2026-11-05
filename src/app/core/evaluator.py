@@ -3,9 +3,12 @@
 录入框（埋深、数量、含量…）允许直接写算式，如 `2.5+0.3`。求值结果不落库：
 库里存字符串原文，运行时用本模块算，避免两份数据不一致。
 
-安全边界：只放开 + - * / ** 与括号，以及旧版 mscExp 支持的 abs/round/sqrt/power
-四个函数和常量 pi（另加计算引擎输出算式要用的 sin/cos/ceiling/roundup）；没有
+安全边界：只放开 + - * / ** 与括号，以及旧版 mscExp 支持的 abs/round/sqrt
+三个函数和常量 pi（另加计算引擎输出算式要用的 sin/cos/ceiling/roundup）；没有
 属性访问、下标、lambda、比较、位运算。
+
+**乘方约定**：项目表达式一律用 ``^``（Excel 写法）表示幂次方，不再提供旧版
+``power(a,b)`` 函数；``normalize`` 把 ``^`` 归一化成 Python 的 ``**`` 后求值。
 （simpleeval 自带的 ``1 if 1 else 2`` 这类条件表达式无副作用，未额外收紧。）
 
 **输出侧是 Excel 语法**（`*` `/` `^`、`CEILING(x,1)`、`SIN(...)`、`PI()`），
@@ -99,7 +102,6 @@ _FUNCTIONS: dict[str, Any] = {
     "round": _excel_round,
     "roundup": _excel_roundup,
     "sqrt": math.sqrt,
-    "power": safe_power,
     "ceil": _ceiling,
     "ceiling": _ceiling,
     "sin": math.sin,
@@ -150,7 +152,7 @@ def normalize(text: str) -> str:
         result = result.replace(character, f"**{exponent}")
     result = result.replace("PI()", "pi").replace("pi()", "pi")
     # 长名在前：\b 保证 CEIL 不会咬掉 CEILING，ROUND 不会咬掉 ROUNDUP
-    for name in ("CEILING", "ROUNDUP", "ROUND", "SQRT", "ABS", "POWER", "CEIL", "SIN", "COS", "ACOS"):
+    for name in ("CEILING", "ROUNDUP", "ROUND", "SQRT", "ABS", "CEIL", "SIN", "COS", "ACOS"):
         result = re.sub(r"\b" + name + r"\b", name.lower(), result, flags=re.IGNORECASE)
     return result
 

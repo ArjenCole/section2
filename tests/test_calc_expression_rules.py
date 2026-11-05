@@ -427,13 +427,102 @@ def test_presentation_definitions_are_complete_and_not_precomputed() -> None:
     view = out.get("开挖|Ⅲ类土|m3").presentation()
     names = {item.symbol for item in view.definitions}
     used = set(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", view.main))
-    used -= {"V", "PI", "SIN", "CEILING", "ROUND", "ROUNDUP", "SQRT", "ABS", "POWER"}
+    used -= {"V", "PI", "SIN", "CEILING", "ROUND", "ROUNDUP", "SQRT", "ABS"}
     assert used <= names, f"主算式用了未定义符号：{used - names}"
     for item in view.definitions:
         assert item.expression
         # 定义式的数值部分仍是原始数据；派生结果放在 value 列。
         if item.label == "槽底宽":
             assert "600" in item.expression and "65" in item.expression
+
+
+def test_presentation_symbolizes_component_parameters() -> None:
+    """构件参数 t/a/C1/C2：中间量表给出符号定义，主算式 / 定义式用符号代替数值。
+
+    a 与 C1 数值相同（都是 130）也必须各归各的：定义式按参数集合区分，
+    B（断面宽 + 2×(壁厚+工作面加宽)）里是 a，H（埋深 + 壁厚 + 垫层厚）里是 C1。
+    """
+    from app.core.calc.tracer import mm
+
+    t = mm(65).as_param("t", "管道壁厚", "图集参数 t")
+    a = mm(130).as_param("a", "工作面加宽", "图集参数 a")
+    c1 = mm(130).as_param("C1", "垫层厚", "图集参数 C1")
+    bottom = (mm(600) + scale_sum((t, a), 2.0)).named(
+        "槽底宽", "断面宽 + 2×(壁厚+工作面加宽)"
+    )
+    height = (mm(2500) + t + c1).named("计算深度", "埋深 + 壁厚 + 垫层厚")
+    area = Dim(
+        (2 * bottom.v + 2 * height.v) * height.v / 2,
+        f"(2*{wrap(bottom.e)}+2*{wrap(height.e)}*1)*{wrap(height.e)}/2",
+        bottom.tags + height.tags,
+        bottom.s + height.s,
+    )
+    out = QDict()
+    out.add("开挖|Ⅲ类土|m3", area.v, area, "垫层~覆土", tags=area.tags)
+    quantity = out.get("开挖|Ⅲ类土|m3")
+    view = quantity.presentation()
+
+    definitions = {item.symbol: item for item in view.definitions}
+    assert {"t", "a", "C1"} <= definitions.keys()
+    assert "C2" not in definitions  # 没用到就不进符号表
+    assert definitions["t"].expression == "65"
+    assert definitions["t"].value == pytest.approx(65.0)
+    assert definitions["a"].expression == "130"
+    assert definitions["C1"].expression == "130"
+    assert definitions["B"].expression == "600+t*2+a*2"
+    assert definitions["H"].expression == "2500+t+C1"
+    assert view.main == "(2*B+2*H*1)*H/2/10^6"
+    # 完整数值算式保持数字，供复制 Excel / 复核
+    assert "t" not in view.full and "65" in view.full
+
+    # 定义逐层展开后仍等于工程量
+    import re
+
+    expanded = view.main
+    for _ in range(len(definitions) + 1):
+        for symbol, item in definitions.items():
+            expanded = re.sub(rf"\b{symbol}\b", f"({item.expression})", expanded)
+    assert evaluate(expanded) == pytest.approx(quantity.value, rel=1e-12)
+
+
+def test_presentation_assigns_equal_valued_parameters_in_order() -> None:
+    """a 与 C1 数值相同时，按算式左→右的出现顺序分别对应，不写错符号。"""
+    from app.core.calc.tracer import mm
+
+    a = mm(130).as_param("a", "工作面加宽", "图集参数 a")
+    c1 = mm(130).as_param("C1", "垫层厚", "图集参数 C1")
+    total = a + c1  # 130+130：标签顺序 a → C1，算式出现顺序也是 a → C1
+    out = QDict()
+    out.add("测试|量|m", total.v, total, "a+C1", tags=total.tags)
+    view = out.get("测试|量|m").presentation()
+
+    assert view.main == "(a+C1)/10^3"
+    definitions = {item.symbol: item for item in view.definitions}
+    assert definitions["a"].expression == "130"
+    assert definitions["C1"].expression == "130"
+    assert view.full == "(130+130)/10^3"
+
+
+def test_presentation_triangle_area_uses_v_h_form() -> None:
+    """三角形面积行统一成 v*h/2（下底为 0，没有 u）。"""
+    from app.core.calc.groove import trapezoid_expr
+    from app.core.calc.tracer import mm
+
+    height = mm(2000).named("高", "测试高")
+    slope = dim(1.0).named("放坡系数", "测试坡")
+    area = trapezoid_expr(mm(0.0), height, slope)
+    assert area.area is not None and area.area.kind == "triangle"
+
+    out = QDict()
+    out.add("测试|三角|m2", area.v, area, "三角形", tags=area.tags)
+    view = out.get("测试|三角|m2").presentation()
+
+    assert view.main == "(v1*h1/2)/10^6"
+    term = view.terms[0]
+    assert [part.symbol for part in term.parts] == ["v1", "h1"]
+    assert term.parts[0].expression == "2*2000*1"  # 底宽 = 2×高×放坡
+    assert term.parts[1].expression == "2000"  # 高
+    assert "u1" not in {part.symbol for part in term.parts}
 
 
 def test_expression_outline_does_not_build_presentation() -> None:

@@ -103,10 +103,15 @@ def cal_precipitation(
             )
         dig = sub.get(f"开挖|{pp.excvt}|m3")
         if dig is not None:
-            # 复用挖方算式：各项已带 /10^6 换算尾，按原样（m 记法字符串）并入
+            # 复用挖方算式：各项已带 /10^6 换算尾，按原样（m 记法字符串）并入；
+            # 来源标记随算式一起带过来，展示层才能把槽底宽 / 计算深度等提成符号，
+            # 并把图集参数（t/a/C1/C2）提到中间符号表。
+            tags = tuple(tag for term in dig.terms for tag in term.tags)
             out.add(
                 "降水|湿土排水|m3",
                 dig.value,
                 dig.expression,
                 "湿土排水 = 沟槽深度−1m 断面挖方",
+                tags=tags,
+                area=dig.terms[0].area if len(dig.terms) == 1 else None,
             )

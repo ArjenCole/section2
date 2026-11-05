@@ -291,6 +291,11 @@ class Element(Base):
     #: 左侧 / 右侧支撑（类别为“支撑”的公式）是否参与计算（左右分设模式）
     support_left: Mapped[bool] = mapped_column(Boolean, default=True)
     support_right: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: 与左侧 / 右侧相邻构件的中心距离（mm，字符串原文可写算式）。仅合槽子构件
+    #: 的共享面使用：只有更浅一侧可填写（等深时填在左侧构件的右侧），空 = 按
+    #: 自身面宽原则匹配的工作面宽控制该侧；填了的一侧按中心距离摆放构件位置。
+    center_distance_left: Mapped[str] = mapped_column(String(100), default="")
+    center_distance_right: Mapped[str] = mapped_column(String(100), default="")
     #: 所属合槽组（父节点）；空 = 独立构件
     group_id: Mapped[int | None] = mapped_column(
         ForeignKey("trench_group.id", ondelete="CASCADE"), index=True, nullable=True

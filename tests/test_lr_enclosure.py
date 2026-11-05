@@ -520,7 +520,12 @@ def test_group_layered_trapezoid_multilevel_slope() -> None:
     work = SimpleNamespace(levels=[level(0.5, 0.8), level(0.3, 1.0)])
     # 剖面函数走 mm 记法几何链（与生产一致），m 浮点经 mm_of_m 桥接
     depth, shallow = mm_of_m(dim(4.0)), mm_of_m(dim(3.0))
-    profile = _internal_side_profiles(work, depth, shallow, mm_of_m(dim(0.0)))[0]
+    # 剖面现分「浅槽底以下 / 以上」两段存放，按高度顺序摊平后核对
+    profile = [
+        segment
+        for item in _internal_side_profiles(work, depth, shallow, mm_of_m(dim(0.0)))
+        for segment in item
+    ]
 
     # 0→0.5：0.3；换级平台 0.8；0.5→1.0：0.5；1.0→4.0：竖直 1.2
     assert [round(seg.t1.v, 6) for seg in profile] == [0.0, 0.5, 1.0]
@@ -1674,3 +1679,25 @@ def test_group_parent_amount_edit_first_row_not_stale(project, qapp) -> None:
         listing.item(row, 4) is not None and listing.item(row, 4).text() == "150"
         for row in range(listing.rowCount())
     )
+
+
+def test_group_expression_symbolizes_component_parameters(project) -> None:
+    """合槽构件的计算表达式同样把 t/a/C1/C2 提到中间符号表。"""
+    from app.core.calc.tracer import sorted_items
+
+    group, (_e1, _e2) = _group_fixture(project)
+    results, errors = _group_results(group)
+    assert not errors, errors
+
+    checked = False
+    for dq in results.values():
+        for quantity in sorted_items(dq):
+            view = quantity.presentation()
+            definitions = {item.symbol: item for item in view.definitions}
+            if "t" not in definitions:
+                continue
+            checked = True
+            assert definitions["t"].expression == "65"
+            # 符号只出现在展示式里；完整数值算式保持数字
+            assert "t" not in view.full
+    assert checked, "合槽算例里应有使用图集壁厚 t 的工程量"

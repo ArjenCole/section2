@@ -169,7 +169,9 @@ class ElementInput:
         """
         if self.category in (CATEGORY_BURIED, CATEGORY_JACKING, CATEGORY_PULLING):
             return (
-                mm(self.pipes[0].dn).named("断面宽", "管径")
+                mm(self.pipes[0].dn)
+                .as_param("D", "管道内径", "构件管材·管径")
+                .named("断面宽", "管径")
                 if self.pipes
                 else mm(0.0)
             )
@@ -485,30 +487,49 @@ def atlas_dims(info: ElementInput, at: AtlasParam) -> AtlasDims:
     键存在即覆盖），壁厚按管材行的用户值（包封 / 箱涵 / 管廊的断面宽由自身
     参数决定，不认管道壁厚）。图集无 oD 列时外径按 ``管径+2×壁厚`` 推出，
     算式里保留这个推导。所有 Dim 为 mm 记法（``v`` 已换算成 m）。
+
+    t / a / C1 / C2 同时挂上展示符号（:meth:`Dim.as_param`）：计算仍用原始数值，
+    计算表达式窗体把它们提到中间符号表，算式里显示成 ``t`` / ``a`` / ``C1`` /
+    ``C2``（见 :mod:`app.core.calc.tracer` 展示层）。
     """
-    def _override(name: str) -> Dim | None:
+    def _override(name: str, symbol: str, label: str) -> Dim | None:
         found = info.param_dims.get(name) if name in info.params else None
         # 用户覆盖值按 mm 录入：原文进算式、数值换到 m（mm 记法）
-        return None if found is None else mm_dim(found)
+        return (
+            None
+            if found is None
+            else mm_dim(found).as_param(symbol, label, f"构件参数·{label}")
+        )
 
-    a = _override(PARAM_A_NAME) or mm(at.a).named("工作面加宽", "图集参数 a")
-    c1 = _override(PARAM_C1_NAME) or mm(at.c1).named("垫层厚", "图集参数 C1")
-    c2 = _override(PARAM_C2_NAME) or mm(at.c2).named("基础厚", "图集参数 C2")
+    a = _override(PARAM_A_NAME, "a", "工作面加宽") or mm(at.a).as_param(
+        "a", "工作面加宽", "图集参数 a"
+    )
+    c1 = _override(PARAM_C1_NAME, "C1", "垫层厚") or mm(at.c1).as_param(
+        "C1", "垫层厚", "图集参数 C1"
+    )
+    c2 = _override(PARAM_C2_NAME, "C2", "基础厚") or mm(at.c2).as_param(
+        "C2", "基础厚", "图集参数 C2"
+    )
     dn = (
-        mm(info.pipes[0].dn).named("管径", "构件管材·管径")
+        mm(info.pipes[0].dn).as_param("D", "管道内径", "构件管材·管径")
         if info.pipes
         else mm(0.0)
     )
     wall = info.pipes[0].t if info.pipes else None
+    od_display = "D+t*2" if info.pipes else ""
     if wall is not None and info.category not in C2_ZERO_CATEGORIES:
-        t = mm(wall).named("管道壁厚", "管材参数·壁厚")
-        od = (dn + t * 2).named("管道外径（mm）", "管径 + 2×壁厚")
+        t = mm(wall).as_param("t", "管道壁厚", "管材参数·壁厚")
+        od = (dn + t * 2).as_param(
+            "Do", "管道外径（mm）", "管径 + 2×壁厚", display=od_display
+        )
     else:
-        t = mm(at.t).named("管道壁厚", "图集参数 t")
+        t = mm(at.t).as_param("t", "管道壁厚", "图集参数 t")
         od = (
-            mm(at.od).named("管道外径（mm）", "图集参数 oD")
+            mm(at.od).as_param("Do", "管道外径（mm）", "图集参数 oD")
             if at.od > 0
-            else (dn + t * 2).named("管道外径（mm）", "管径 + 2×壁厚")
+            else (dn + t * 2).as_param(
+                "Do", "管道外径（mm）", "管径 + 2×壁厚", display=od_display
+            )
         )
     return AtlasDims(
         od=od,
@@ -516,7 +537,9 @@ def atlas_dims(info: ElementInput, at: AtlasParam) -> AtlasDims:
         a=a,
         c1=c1,
         c2=c2,
-        workwidth=mm(at.workwidth).named("工作面宽", "面宽原则·工作面宽度表"),
+        workwidth=mm(at.workwidth).as_param(
+            "b1", "工作面宽度", "面宽原则·工作面宽度表", basic=False
+        ),
         groove_b=groove_b_width(at.groove_b),
     )
 
@@ -765,7 +788,7 @@ def prettify_formula(expression: str) -> str:
     贴进 Excel 能用。
     """
     text = expression.replace("**", "^")
-    for name in ("CEILING", "ROUNDUP", "ROUND", "SQRT", "ABS", "POWER", "CEIL", "SIN", "COS", "ACOS"):
+    for name in ("CEILING", "ROUNDUP", "ROUND", "SQRT", "ABS", "CEIL", "SIN", "COS", "ACOS"):
         text = re.sub(r"(?<![A-Za-z])" + name + r"(?=\s*\()", name, text, flags=re.IGNORECASE)
     return text
 

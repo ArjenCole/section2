@@ -56,7 +56,20 @@ from app.core.calc.engine import (
 from app.core.calc.groove import backfill_layers, layer_roles, level_slope, split_h_by_step
 from app.core.calc.measures import AtlasDims, cushion_thickness as cushion_dim
 from app.core.calc.measures import foundation_thickness as foundation_dim
-from app.core.calc.tracer import Dim, QDict, dim, dim_min, dim_sum as _dim_sum, mm, mm_of_m, scale_sum, wrap
+from app.core.calc.tracer import (
+    AreaParts,
+    Dim,
+    QDict,
+    dim,
+    dim_min,
+    dim_sum as _dim_sum,
+    mm,
+    mm_of_m,
+    mm_text,
+    scale_sum,
+    wrap,
+)
+from app.core.evaluator import EvalError, evaluate
 from app.core.models import base as orm
 from app.core.models.models import (
     BACKFILL_UNIFIED,
@@ -64,6 +77,7 @@ from app.core.models.models import (
     CATEGORY_ENCASED,
     CATEGORY_GALLERY,
     Element,
+    PcpEnclosure,
     SPLIT_CENTER_LINE,
     SPLIT_SPACING_MID,
     TrenchGroup,
@@ -165,27 +179,41 @@ def _outer_side_profiles(work, depth: Dim, workface: Dim) -> list[list[_SlopeSeg
 
 
 def _internal_side_profiles(
-    work, depth: Dim, shallow: Dim, workface: Dim
+    work,
+    depth: Dim,
+    shallow: Dim,
+    workface: Dim,
+    wall_width: Dim | None = None,
 ) -> list[list[_SlopeSegment]]:
-    """相邻侧（深侧）：工作面矩形 + 深槽底放坡到浅槽底 + 以上等宽竖直条带。
+    """相邻侧（深侧）的宽度剖面。
 
-    返回的剖面覆盖 [0, depth]；桩类 / 直壁的 ``run`` 为 0，只剩工作面矩形。
-    工作面是深侧构件在共享侧自己的施工面，坡从工作面外缘起算。
+    浅槽底（``shallow``）以下：工作面矩形 + 深槽底放坡到浅槽底，按**单沟槽**
+    完整计算（起坡点分隔时这部分全部归深侧构件）。
+    浅槽底以上：到虚拟分割线为止的等宽条带。``wall_width`` 为深侧基础边到
+    虚拟墙的距离（起坡点分隔且浅构件侵入时小于 ``工作面 + 坡顶外扩``）；
+    ``None`` = 按完整宽度 ``工作面 + 坡顶外扩``（管中心 / 间距平分分隔由
+    ``_boundary_splits`` 再按分割线调整）。
     """
     profiles: list[list[_SlopeSegment]] = []
-    rect = _rect_segments(workface, depth)
-    if rect:
-        profiles.append(rect)
-    delta = depth - shallow
-    if delta.v <= 0:
+    delta = depth - shallow  # 深槽底到浅槽底的高度差
+    # 浅槽底以下：工作面 + 放坡（单沟槽完整断面）
+    low = _rect_segments(workface, delta) if delta.v > 0 else []
+    if low:
+        profiles.append(low)
+    segments: list[_SlopeSegment] = []
+    if delta.v > 0:
+        segments = _profile_segments(work, delta)
+        if segments:
+            profiles.append(segments)
+    if depth.v <= delta.v + 1e-9:
         return profiles
-    segments = _profile_segments(work, delta)
-    if not segments:
-        return profiles
-    run = segments[-1].width_at(delta)
-    if depth.v > delta.v + 1e-9:
-        segments = segments + [_SlopeSegment(delta, run, dim(0.0), depth)]
-    profiles.append(segments)
+    # 浅槽底以上：到虚拟墙（或完整坡顶外扩）
+    if wall_width is None:
+        run = segments[-1].width_at(delta) if segments else dim(0.0)
+        above = workface + run
+    else:
+        above = wall_width if wall_width.v > 0 else dim(0.0)
+    profiles.append([_SlopeSegment(delta, above, dim(0.0), depth)])
     return profiles
 
 
@@ -284,9 +312,81 @@ def _spacing_anchor_half(member: "_Member") -> Dim:
     info = member.info
     if info.category in (CATEGORY_ENCASED, CATEGORY_BOX_CULVERT, CATEGORY_GALLERY):
         return info.size_b_dim / 2
-    if info.pf is not None and info.pf.con_found:
+    # 混凝土基础只对混凝土管生效（与 foundation._found_pipe 同判据）；其余管
+    # 取管外皮半径（垂直切线），即「构件外边线」
+    if (
+        info.pf is not None
+        and info.pf.con_found
+        and info.pipes
+        and ("混凝土" in info.pipes[0].mat or "砼" in info.pipes[0].mat)
+    ):
         return member.base_width / 2
     return member.ad.od / 2
+
+
+def member_outer_radius(member: "_Member") -> Dim:
+    """构件外边线半径（mm）：与「间距计算起始点」同口径。
+
+    砼基础管道取基础外皮半宽、砂基础管道取管外皮半径、混凝土结构（包封 /
+    箱涵 / 管廊）取结构本体外包半宽。合槽「与相邻构件中心距离」的下限校验
+    用它：填写的距离不得小于两构件外边线半径之和。
+    """
+    return _spacing_anchor_half(member)
+
+
+def _member_label(member: "_Member") -> str:
+    """构件显示名：名称 + 规格；没有名称时只显示规格。"""
+    name = (member.element.name or "").strip()
+    try:
+        spec = (member.info.spec() or "").strip()
+    except Exception:  # 原则缺失等异常时退回名称
+        spec = ""
+    if name:
+        return f"{name} {spec}".strip()
+    return spec or "相邻构件"
+
+
+def resolve_shared_widths(
+    *,
+    left_base,
+    right_base,
+    left_work,
+    right_work,
+    run,
+    left_deep: bool,
+    equal: bool,
+    distance,
+):
+    """相邻面两侧的共享侧宽度（距离非空时按中心距离覆盖浅侧工作面）。
+
+    输入 / 输出可为 :class:`Dim`（mm 记法，计算用）或 float（m，断面图用），
+    两种调用方共用同一套分支，避免几何与算式各写一遍：
+
+    * 未填距离：等深 = 两侧各自工作面；异深 = 浅侧工作面 + 深侧（工作面 + 放坡）；
+    * 填了距离：间距 = 距离 − 两侧基础半宽；**未填距离一侧**仍按工作面 / 放坡，
+      填了距离的一侧取剩余宽度（该侧匹配的工作面宽失效）。等深时按规则填在
+      左侧构件的右侧，即左宽取剩余、右宽仍按右构件工作面。
+
+    返回 ``(左宽, 右宽)``。剩余宽度**允许为负**：中心距离只受两构件外边线
+    半径之和限制，浅构件可以侵入深构件的放坡范围之上（负宽度在剖面里按 0
+    处理，构件位置仍按中心距离摆放）。
+    """
+    if equal:
+        base_left, base_right = left_work, right_work
+        fixed = right_work
+    elif left_deep:
+        base_left, base_right = left_work + run, right_work
+        fixed = left_work + run
+    else:
+        base_left, base_right = left_work, right_work + run
+        fixed = right_work + run
+    if distance is None:
+        return base_left, base_right
+    gap = distance - left_base / 2.0 - right_base / 2.0
+    if equal or not left_deep:
+        # 距离填在左侧构件（等深 / 右深）：左宽取剩余，右宽保持对侧工作面
+        return gap - fixed, fixed
+    return fixed, gap - fixed
 
 
 def _boundary_splits(
@@ -310,11 +410,15 @@ def _boundary_splits(
     centers: list[Dim] = []  # 各构件本体中心的 x（自槽平底左缘起算）
     cursor = dim(0.0)
     for i, member in enumerate(snapshots):
-        left_ext = snapshots[0].work_width if i == 0 else pairs[i - 1].right_width
-        right_ext = member.work_width if i == n - 1 else pairs[i].left_width
+        left_ext = (
+            snapshots[0].work_width_left if i == 0 else pairs[i - 1].right_width
+        )
+        right_ext = (
+            member.work_width_right if i == n - 1 else pairs[i].left_width
+        )
         base_left = cursor + left_ext
-        base_right = base_left + member.base_width
-        center = base_left + member.base_width / 2
+        base_right = base_left + member.half_left + member.half_right
+        center = base_left + member.half_left
         centers.append(center)
         half = _spacing_anchor_half(member) if spacing else dim(0.0)
         right_anchors.append(center - half)
@@ -443,6 +547,15 @@ class _Member:
     depth: Dim  # 槽底深 H_i（埋深 + 换填 + 壁厚 + 垫层）
     base_width: Dim  # 基础外皮宽 b_i（= 单管槽底宽去掉两侧工作面）
     work_width: Dim  # 自身面宽原则按自身管径查到的单侧工作面宽
+    #: 左 / 右侧实际生效的单侧工作面宽：默认等于 ``work_width``；某一侧填写了
+    #: 与相邻构件的中心距离时，该侧改为按距离推导出的剩余宽度（匹配值失效）
+    work_width_left: Dim = field(default_factory=lambda: dim(0.0))
+    work_width_right: Dim = field(default_factory=lambda: dim(0.0))
+    #: 左 / 右基础边界到本体中心的距离（默认 = base_width / 2）。浅构件侵入深侧
+    #: 放坡时，侵入侧边界收到「构件外边线半径」（砼基础边线 / 管外皮切线），
+    #: 即该侧的工作面加宽 a 不再计入本体基础
+    half_left: Dim = field(default_factory=lambda: dim(0.0))
+    half_right: Dim = field(default_factory=lambda: dim(0.0))
     profiles: list[list[_SlopeSegment]] = field(default_factory=list)
     #: 左右分侧的剖面（与 ``profiles`` 同内容分侧存放）：分项几何的左右缘
     #: 按"本体半宽 + 该侧外扩"精确计算，供详情弹窗在整槽断面图上高亮
@@ -488,6 +601,8 @@ class _Pair:
     work: object | None  # 深侧内侧坡做法
     left_width: Dim  # 左构件在该相邻面的归属宽（浅侧 = 工作面，深侧 = 工作面 + 放坡投影）
     right_width: Dim  # 右构件在该相邻面的归属宽
+    #: 本相邻面填写的构件中心距离（mm 记法）；None = 两侧都按工作面宽
+    distance: Dim | None = None
 
 
 def _side_name(element: Element, side: str) -> str:
@@ -548,7 +663,9 @@ def _resolve_member(
     # 成员几何一律 mm 记法（与单构件几何链同口径）；用户公式路径用 to_m 派生
     depth = mm_of_m(info.depth_dim) + foundation_dim(pf) + ad.t + ad.c1
     base_width = info.size_b_dim + scale_sum((ad.t, ad.a), 2.0)
-    work_width = mm(workwidth_of(pw, info))
+    work_width = mm(workwidth_of(pw, info)).as_param(
+        "b1", "工作面宽度", "面宽原则·工作面宽度表", basic=False
+    )
     return (
         _Member(
             element=element,
@@ -558,6 +675,10 @@ def _resolve_member(
             depth=depth,
             base_width=base_width,
             work_width=work_width,
+            work_width_left=work_width,
+            work_width_right=work_width,
+            half_left=base_width / 2.0,
+            half_right=base_width / 2.0,
         ),
         None,
     )
@@ -599,14 +720,142 @@ def group_side_plan(group: TrenchGroup) -> dict[int, tuple[bool, bool]]:
     return plan
 
 
+def _center_distance_dim(element: Element, side: str) -> Dim | None:
+    """构件某侧的构件中心距离（mm 记法）；空 / 算式不合法 / 非正数返回 None。"""
+    text = (
+        element.center_distance_right if side == "right" else element.center_distance_left
+    ) or ""
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        value = evaluate(text)
+    except EvalError:
+        return None
+    if value <= 0:
+        return None
+    return mm_text(text, value).named("构件中心距离", "工作面宽·与相邻构件中心距离")
+
+
+def _pair_distance(left: "_Member", right: "_Member") -> tuple[Dim | None, str]:
+    """相邻面的中心距离与填写侧。
+
+    只有更浅一侧可填（等深时按规则 5 填在左侧构件的右侧）：右深 / 等深读
+    左构件的 ``center_distance_right``，左深读右构件的 ``center_distance_left``；
+    另一侧即使有残留值也不生效。返回的填写侧 ``"left"`` 表示填在左构件右侧，
+    ``"right"`` 表示填在右构件左侧。
+    """
+    if right.depth.v >= left.depth.v - 1e-9:
+        return _center_distance_dim(left.element, "right"), "left"
+    return _center_distance_dim(right.element, "left"), "right"
+
+
+def _pair_deep_geometry(session, left: "_Member", right: "_Member"):
+    """相邻面的深侧构件 / 做法 / 放坡水平投影。
+
+    返回 ``(深侧构件, 做法, run, 是否等深, 左是否更深, 错误说明)``；等深时
+    深侧构件与做法为 None、run 为 0。
+    """
+    h_left, h_right = left.depth.v, right.depth.v
+    equal = abs(h_right - h_left) <= 1e-9
+    left_deep = h_left > h_right + 1e-9
+    if equal:
+        return None, None, dim(0.0), True, False, None
+    if left_deep:
+        deep, shallow = left, right
+        deep_pe = _resolve_by_name(
+            session, PcpEnclosure, _side_name(deep.element, "right")
+        ) or _first_of(session, PcpEnclosure)
+    else:
+        deep, shallow = right, left
+        deep_pe = _resolve_by_name(
+            session, PcpEnclosure, _side_name(deep.element, "left")
+        ) or _first_of(session, PcpEnclosure)
+    delta = abs(h_right - h_left)
+    work = choice_work(deep_pe, delta) if deep_pe is not None else None
+    if work is None:
+        return deep, None, dim(0.0), False, left_deep, "深侧围护原则没有任何围护分级。"
+    run = _internal_run(work, deep.depth, shallow.depth)
+    return deep, work, run, False, left_deep, None
+
+
+def group_distance_plan(group: TrenchGroup) -> dict[int, tuple[bool, bool]]:
+    """组内每条构件的 (与左侧构件中心距离可编辑, 与右侧构件中心距离可编辑)。
+
+    * 首构件左侧 / 末构件右侧是合槽外边缘，没有相邻构件，恒不可编辑；
+    * 共享面只有**更浅一侧**可填（等深时按规则 5 填在左侧构件的右侧）；
+      更深 / 等深一侧不可填，由面宽原则匹配的工作面宽控制。
+    """
+    members = sorted(group.members, key=lambda item: (item.order_no, item.id))
+    depths = member_depths(group)
+    n = len(members)
+    plan: dict[int, tuple[bool, bool]] = {}
+    for index, element in enumerate(members):
+        depth = depths.get(element.id)
+        left_active = False
+        right_active = False
+        if depth is not None:
+            if index > 0:
+                neighbor = depths.get(members[index - 1].id)
+                left_active = neighbor is not None and depth < neighbor - 1e-9
+            if index < n - 1:
+                neighbor = depths.get(members[index + 1].id)
+                # 等深时距离填在左侧构件（规则 5），因此 <=
+                right_active = neighbor is not None and depth <= neighbor + 1e-9
+        plan[element.id] = (left_active, right_active)
+    return plan
+
+
+def group_distance_limits(
+    group: TrenchGroup, element_id: int, side: str
+) -> tuple[float, str] | None:
+    """某构件某侧的中心距离限制（mm）。
+
+    返回 ``(两构件外边线半径之和, 相邻构件显示名)``；相邻构件显示名 = 名称 +
+    主表格上的规格（没有名称时只显示规格）。不在组内 / 该侧没有相邻构件 /
+    该侧不是可填侧 / 几何无法解析时返回 None。
+
+    只校验**外边线半径之和**：浅构件允许侵入深构件的放坡范围之上，不再要求
+    距离容纳对侧工作面 / 放坡。
+    """
+    session = orm.session()
+    members = sorted(group.members, key=lambda item: (item.order_no, item.id))
+    index = next((i for i, item in enumerate(members) if item.id == element_id), None)
+    if index is None:
+        return None
+    if side == "left":
+        if index == 0:
+            return None
+        left_element, right_element = members[index - 1], members[index]
+    elif side == "right":
+        if index == len(members) - 1:
+            return None
+        left_element, right_element = members[index], members[index + 1]
+    else:
+        return None
+    left, _left_error = _resolve_member(session, left_element, require_amount=False)
+    right, _right_error = _resolve_member(session, right_element, require_amount=False)
+    if left is None or right is None:
+        return None
+    # 校验的侧必须是该相邻面的可填侧：左构件的右侧（等深 / 右深）或右构件的左侧（左深）
+    filled_on_left = right.depth.v >= left.depth.v - 1e-9
+    if side == "right":
+        if left_element.id != element_id or not filled_on_left:
+            return None
+    else:
+        if right_element.id != element_id or filled_on_left:
+            return None
+    radius_sum = (member_outer_radius(left).v + member_outer_radius(right).v) * 1000.0
+    neighbor = right if side == "right" else left
+    return radius_sum, _member_label(neighbor)
+
+
 def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]:
     """计算一个合槽组：返回 (构件 id → 工程量, 构件 id → 错误说明)。
 
     组员按 order_no 从左到右；父节点不参与（零工程量、无围护 / 面宽原则）。
     原则缺失 / 无做法时整组带错误说明，错误字符串挂在行上展示。
     """
-    from app.core.models.models import PcpEnclosure
-
     session = orm.session()
     members = sorted(group.members, key=lambda item: (item.order_no, item.id))
     results: dict[int, QDict] = {}
@@ -651,106 +900,132 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
             errors[member.element.id] = "边缘围护原则没有任何围护分级。"
         return results, errors
 
-    # 相邻区（规则 4 / 5）：等深 → 两侧均为 "-"；异深 → 深侧选原则放坡
+    # 相邻区（规则 4 / 5）：等深 → 两侧均为 "-"；异深 → 深侧选原则放坡。
+    # 填了「与相邻构件中心距离」的共享面：浅侧匹配的工作面宽失效，按距离摆放
+    # 构件位置（间距 = 距离 − 两侧基础半宽；未填侧仍按工作面 / 放坡）。
     pairs: list[_Pair] = []
     for i in range(n - 1):
         left, right = snapshots[i], snapshots[i + 1]
-        h_left, h_right = left.depth.v, right.depth.v
-        if abs(h_right - h_left) <= 1e-9:
-            pairs.append(
-                _Pair(
-                    deep=None,
-                    run=dim(0.0),
-                    work=None,
-                    left_width=left.work_width,
-                    right_width=right.work_width,
-                )
-            )
-            continue
-        if h_right > h_left:  # 右深：用右构件的左侧原则
-            deep, shallow = right, left
-            deep_pe = _resolve_by_name(
-                session, PcpEnclosure, _side_name(deep.element, "left")
-            ) or _first_of(session, PcpEnclosure)
-        else:  # 左深：用左构件的右侧原则
-            deep, shallow = left, right
-            deep_pe = _resolve_by_name(
-                session, PcpEnclosure, _side_name(deep.element, "right")
-            ) or _first_of(session, PcpEnclosure)
-        delta = abs(h_right - h_left)
-        work = choice_work(deep_pe, delta) if deep_pe is not None else None
-        if work is None:
+        deep, work, run, equal, left_deep, pair_error = _pair_deep_geometry(
+            session, left, right
+        )
+        if pair_error is not None:
             for member in snapshots:
-                errors[member.element.id] = "深侧围护原则没有任何围护分级。"
+                errors[member.element.id] = pair_error
             return results, errors
-        run = _internal_run(work, deep.depth, shallow.depth)
-        if h_right > h_left:
-            pairs.append(
-                _Pair(
-                    deep=deep,
-                    run=run,
-                    work=work,
-                    left_width=left.work_width,
-                    right_width=deep.work_width + run,
+        distance, filled_side = _pair_distance(left, right)
+        left_width, right_width = resolve_shared_widths(
+            left_base=left.base_width,
+            right_base=right.base_width,
+            left_work=left.work_width,
+            right_work=right.work_width,
+            run=run,
+            left_deep=left_deep,
+            equal=equal,
+            distance=distance,
+        )
+        if distance is not None:
+            # 唯一的下限：两构件外边线半径之和。浅构件允许侵入深侧放坡范围
+            # 之上，浅侧剩余宽度为负时剖面按 0 处理，构件位置仍按中心距离。
+            radius_sum = (
+                member_outer_radius(left).v + member_outer_radius(right).v
+            ) * 1000.0
+            if distance.v * 1000.0 < radius_sum - 1e-6:
+                message = (
+                    f"构件「{_member_label(left)}」与「{_member_label(right)}」的"
+                    f"中心距离小于两构件外边线半径之和（{radius_sum:g} mm）。"
                 )
+                for member in snapshots:
+                    errors[member.element.id] = message
+                return results, errors
+            # 填了距离的一侧：匹配的工作面宽失效。剩余宽度为负 = 浅构件侵入
+            # 深侧放坡：浅侧该面边界收到「构件外边线半径」（砼基础边线 / 管外皮
+            # 切线），工作面宽按 0；深侧共享侧宽度 = 距离 − 浅侧半径 − 深侧基础半宽
+            if filled_side == "left":
+                if left_width.v < -1e-9:
+                    left.half_right = member_outer_radius(left)
+                    left_width = dim(0.0)
+                    right_width = distance - left.half_right - right.half_left
+                    left.work_width_right = dim(0.0)
+                else:
+                    left.work_width_right = left_width
+            else:
+                if right_width.v < -1e-9:
+                    right.half_left = member_outer_radius(right)
+                    right_width = dim(0.0)
+                    left_width = distance - right.half_left - left.half_right
+                    right.work_width_left = dim(0.0)
+                else:
+                    right.work_width_left = right_width
+        pairs.append(
+            _Pair(
+                deep=deep,
+                run=run,
+                work=work,
+                left_width=left_width,
+                right_width=right_width,
+                distance=distance,
             )
-        else:
-            pairs.append(
-                _Pair(
-                    deep=deep,
-                    run=run,
-                    work=work,
-                    left_width=deep.work_width + run,
-                    right_width=right.work_width,
-                )
-            )
+        )
 
     # 逐构件的宽度剖面 + 平面归属带宽（规则 6：工作面宽用自己的 PW）
     for i, member in enumerate(snapshots):
         member.profiles = []
         member.profiles_left = []
         member.profiles_right = []
-        base = _rect_segments(member.base_width, member.depth)
+        base = _rect_segments(member.half_left + member.half_right, member.depth)
         if base:
             member.profiles.append(base)
         if i == 0:
-            left = _outer_side_profiles(work_left, member.depth, member.work_width)
+            left = _outer_side_profiles(work_left, member.depth, member.work_width_left)
             member.profiles += left
             member.profiles_left += left
         else:
             pair = pairs[i - 1]
             if pair.deep is member:  # 自身更深：左侧内侧放坡
+                # 浅槽底以上先按虚拟墙（侵入时墙在坡顶以内）截断成「并集」，
+                # 管中心 / 间距平分分隔再由 _boundary_splits 把线移到分界处
                 left = _internal_side_profiles(
-                    pair.work, member.depth, snapshots[i - 1].depth, member.work_width
+                    pair.work,
+                    member.depth,
+                    snapshots[i - 1].depth,
+                    member.work_width_left,
+                    pair.right_width,
                 )
             else:  # 自身更浅 / 等深：左侧虚拟竖直围护
-                left = _wall_profiles(member.work_width, member.depth)
+                left = _wall_profiles(member.work_width_left, member.depth)
             member.profiles += left
             member.profiles_left += left
         if i == n - 1:
-            right = _outer_side_profiles(work_right, member.depth, member.work_width)
+            right = _outer_side_profiles(work_right, member.depth, member.work_width_right)
             member.profiles += right
             member.profiles_right += right
         else:
             pair = pairs[i]
             if pair.deep is member:  # 自身更深：右侧内侧放坡
                 right = _internal_side_profiles(
-                    pair.work, member.depth, snapshots[i + 1].depth, member.work_width
+                    pair.work,
+                    member.depth,
+                    snapshots[i + 1].depth,
+                    member.work_width_right,
+                    pair.left_width,
                 )
             else:  # 自身更浅 / 等深：右侧虚拟竖直围护
-                right = _wall_profiles(member.work_width, member.depth)
+                right = _wall_profiles(member.work_width_right, member.depth)
             member.profiles += right
             member.profiles_right += right
-        flat = member.base_width
+        flat = member.half_left + member.half_right
         if i == 0:
-            flat = flat + member.work_width
+            flat = flat + member.work_width_left
         else:
             flat = flat + pairs[i - 1].right_width
         if i == n - 1:
-            flat = flat + member.work_width
+            flat = flat + member.work_width_right
         else:
             flat = flat + pairs[i].left_width
-        member.flat_width = flat
+        # 浅构件侵入深侧放坡时共享侧剩余宽度可能为负：归属带宽按 0 兜底，
+        # 避免降水 / 特殊地基出现负宽度
+        member.flat_width = flat if flat.v > 0 else dim(0.0)
 
     # 虚拟竖线分界（管中心分隔 / 间距平分分隔）：分界移到锚点中点。让出条带
     # 的一方在剖面里扣减（挖填随分层积分同步减少），获方把条带作为恒宽段
@@ -1023,18 +1298,23 @@ def _unified_member_bands(
     return bands
 
 
-def _side_extension(pieces: list[list[_SlopeSegment]], height: Dim) -> float:
-    """该侧各剖面段在自槽底高度 ``height`` 处的外扩宽合计（不覆盖该高度的段不计）。
+def _side_extension_interval(
+    pieces: list[list[_SlopeSegment]], lo: Dim, hi: Dim
+) -> tuple[float, float]:
+    """该侧各剖面段在区间 [lo, hi] 内的外扩宽（在 lo / hi 处取值）。
 
-    ``height`` 传 mm 记法 Dim（与剖面段同空间）。
+    必须按**区间**找覆盖段，不能按端点找：侵入时浅槽底处「工作面 + 放坡」
+    段与「浅槽底以上竖直条带」段在端点相接，按端点会同时命中两段、把两段
+    宽度相加；按区间只会命中真正覆盖该分层的那一段。
     """
-    probe = height
-    total = 0.0
+    lo_total = 0.0
+    hi_total = 0.0
     for profile in pieces:
-        segment = _segment_for_interval(profile, probe, probe)
+        segment = _segment_for_interval(profile, lo, hi)
         if segment is not None:
-            total += segment.width_at(probe).v
-    return total
+            lo_total += segment.width_at(lo).v
+            hi_total += segment.width_at(hi).v
+    return lo_total, hi_total
 
 
 def _member_geometry(
@@ -1044,14 +1324,15 @@ def _member_geometry(
 
     左右缘相对本体中心（m，左负右正）；不对称坡区（深浅相邻）也精确。
     """
-    base_half = member.base_width.v / 2.0
+    left_lo, left_hi = _side_extension_interval(member.profiles_left, lo, hi)
+    right_lo, right_hi = _side_extension_interval(member.profiles_right, lo, hi)
     return (
         lo.v,
         hi.v,
-        -(base_half + _side_extension(member.profiles_left, lo)),
-        base_half + _side_extension(member.profiles_right, lo),
-        -(base_half + _side_extension(member.profiles_left, hi)),
-        base_half + _side_extension(member.profiles_right, hi),
+        -(member.half_left.v + left_lo),
+        member.half_right.v + right_lo,
+        -(member.half_left.v + left_hi),
+        member.half_right.v + right_hi,
     )
 
 
@@ -1158,17 +1439,30 @@ def _member_dig_fill(
             member.profiles, lo, hi, height
         )
         if slope_terms.v == 0:
-            # 恒宽层：梯形公式的等底情形，直接 B*H
-            area = low * height
+            # 恒宽层：矩形面积 = 宽 × 高
+            rect = low * height
+            area = Dim(
+                rect.v,
+                rect.e,
+                rect.tags,
+                rect.s,
+                AreaParts("rectangle", low, None, height),
+            )
         else:
             # (2*W_下 + Σ(H*s))*H/2：下底只出现一次，与非合槽构件同形
-            doubled = Dim(2 * low.v, f"2*{wrap(low.e)}", (), low.s)
+            doubled = Dim(2 * low.v, f"2*{wrap(low.e)}", low.tags, low.s)
             inner = doubled + slope_terms
+            parts = (
+                AreaParts("triangle", None, low + slope_terms, height)
+                if low.v == 0
+                else AreaParts("trapezoid", low, low + slope_terms, height)
+            )
             area = Dim(
                 inner.v * height.v / 2.0,
                 f"({inner.e})*{wrap(height.e)}/2",
-                (),
+                inner.tags + height.tags,
                 inner.s + height.s,
+                parts,
             )
         if area.v == 0:
             continue

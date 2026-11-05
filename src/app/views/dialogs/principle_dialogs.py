@@ -583,8 +583,7 @@ class ComponentEditDialog(PrincipleSubDialog):
     _FORMULA_NAMES = frozenset(
         {
             "HEIGHT", "WIDTH", "COUNT", "SIDES",
-            "ABS", "ROUND", "ROUNDUP", "SQRT", "POWER",
-            "CEIL", "CEILING", "SIN", "COS", "PI",
+            "ABS", "ROUND", "ROUNDUP", "SQRT", "CEIL", "CEILING", "SIN", "COS", "PI",
         }
     )
     #: 参数键形态：1~2 个大写字母（A~Z / FA~FZ）

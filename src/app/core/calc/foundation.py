@@ -65,8 +65,11 @@ def _circle_area_below(h: Dim, r: Dim) -> Dim:
     ``R²·ACOS((R−h)/R) − (R−h)·√(h·(2R−h))``。h 须在 [0, 2R] 内（调用方截断）。
     """
     h_e, r_e = wrap(h.e), wrap(r.e)
+    # 乘方统一写 Excel 的 ^（不再用 POWER 函数）；底数可能是复合式，按乘方
+    # 底数位置用 tight 括号保护，避免 (600/2)^2 写成 600/2^2。
+    r_sq = wrap(r.e, tight=True)
     expr = (
-        f"POWER({r_e},2)*ACOS(({r_e}-{h_e})/({r_e}))"
+        f"{r_sq}^2*ACOS(({r_e}-{h_e})/({r_e}))"
         f"-({r_e}-{h_e})*SQRT({h_e}*(2*({r_e})-{h_e}))"
     )
     ratio = max(-1.0, min(1.0, (r.v - h.v) / r.v))
@@ -245,8 +248,9 @@ def _found_pipe(info, pf, pp, ad: AtlasDims, out: QDict, bands=None) -> None:
         deducted = dim_min(remain, ad.c2) if ad.c2.v > 0 else mm(0.0)
         remain = remain - deducted
         # 弓形占位 = 管底弓形（管底自垫层顶起），高亮用外接矩形近似
+        bow = _bow_dim(outside, angle)
         bow_rect = _rect_geometry(ad.c1.v, ad.c1.v + outside.v / 2.0, outside.v / 2.0)
-        add_dim(out, f"垫层|{cushion_name}|m3", -_bow_dim(outside, angle), "垫层扣弓形",
+        add_dim(out, f"垫层|{cushion_name}|m3", -bow, "垫层扣弓形",
                 geometry=bow_rect)
 
     chord_height = outside.v / 2 - outside.v / 2 * math.cos(angle / 2 / 180 * math.pi)
@@ -401,6 +405,9 @@ def encased_pipe_deduction(info, out: QDict, z_bottom: float | None = None) -> N
     每根管带自己的管材类别与壁厚（构件库快照 / 详情面板用户值），壁厚为空时
     才临时按直埋管道图集查（同旧版构造临时 mcE1）。``z_bottom`` 为垫层顶标高
     （自槽底，m）：传入时给扣管位分项记录外接矩形几何（高亮用）。
+
+    包封类别没有“管道壁厚”构件参数行（见 ``param_naming``），壁厚取管材行，
+    因此这里按各管自己的图集值记录，不挂 ``t`` 符号。
     """
     from app.services.atlas import PipeSpec, resolve_atlas
     from app.core.calc.engine import build_atlas_query
@@ -412,7 +419,11 @@ def encased_pipe_deduction(info, out: QDict, z_bottom: float | None = None) -> N
         query.category = 1  # 直埋管道图集
         query.pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn, t=pipe.t, cat=pipe.cat)]
         at = resolve_atlas(query)
-        radius = mm(pipe.dn) / 2 + mm(at.t)
+        dn_dim = mm(pipe.dn)
+        if len(info.pipes) == 1:
+            # 单管：内径与构件参数 D 同源；多管直径可能不同，保留各自数值
+            dn_dim = dn_dim.as_param("D", "管道内径", "构件管材·管径")
+        radius = dn_dim / 2 + mm(at.t)
         geometry = (
             _rect_geometry(z_bottom, z_bottom + radius.v * 2.0, radius.v)
             if z_bottom is not None
@@ -422,7 +433,7 @@ def encased_pipe_deduction(info, out: QDict, z_bottom: float | None = None) -> N
             -math.pi * radius.v * radius.v * content.v,
             # 底数带除号，^2 前必须括起来（tight），否则 (…)/1000^2 会算错
             f"PI()*{wrap(radius.e, tight=True)}^2*{wrap(content.e)}",
-            (),
+            radius.tags + content.tags,
             radius.s * 2,
         )
         out.add(
@@ -430,5 +441,6 @@ def encased_pipe_deduction(info, out: QDict, z_bottom: float | None = None) -> N
             area.v,
             area,
             f"扣 Dn{fmt(pipe.dn)} 管位",
+            tags=area.tags,
             geometry=geometry,
         )
