@@ -156,16 +156,26 @@ class _SectionCanvas(section_view.SectionCanvasBase):
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         horizontal = abs(y1 - y2) <= abs(x1 - x2)
+        scene = self._scene
+        # 断面图整体外缘（标注放在外缘之外，避让边坡线）
+        right_m = left_m = 0.0
+        if scene is not None:
+            if scene.outline is not None:
+                xs = [x for x, _y in scene.outline]
+                right_m, left_m = max(xs), -min(xs)
+            else:
+                right_m = (
+                    scene.top_width_r / 2.0
+                    if scene.top_width_r
+                    else scene.top_width / 2.0
+                )
+                left_m = scene.top_width / 2.0
         if horizontal:
-            offset = 32.0
-            dim_y = max(y1, y2) + offset
-            if dim_y > self.height() - 8:
-                dim_y = min(y1, y2) - offset
-            down = dim_y > y1
-            # 引出线从原边端点偏移 4px 起画，不贴着断面线
-            start1 = y1 + (4 if down else -4)
-            start2 = y2 + (4 if down else -4)
-            end = dim_y + (4 if down else -4)
+            # 横向尺寸线固定放在断面图下方（文字在边坡线外侧）
+            dim_y = origin_y + 24.0
+            start1 = y1 + 8
+            start2 = y2 + 8
+            end = dim_y + 4
             painter.drawLine(QPointF(x1, start1), QPointF(x1, end))
             painter.drawLine(QPointF(x2, start2), QPointF(x2, end))
             self._dimension_tick(painter, x1, dim_y, horizontal=True)
@@ -182,13 +192,15 @@ class _SectionCanvas(section_view.SectionCanvasBase):
                 text,
             )
         else:
-            offset = 48.0
-            dim_x = max(x1, x2) + offset
+            # 竖向尺寸线放在断面图整体右缘之外，右侧留足引出距离
+            offset = 60.0
+            dim_x = center_x + right_m * 1000.0 * zoom + offset
+            right = True
             if dim_x > self.width() - 8:
-                dim_x = min(x1, x2) - offset
-            right = dim_x > x1
-            start1 = x1 + (4 if right else -4)
-            start2 = x2 + (4 if right else -4)
+                dim_x = center_x - left_m * 1000.0 * zoom - offset
+                right = False
+            start1 = x1 + (8 if right else -8)
+            start2 = x2 + (8 if right else -8)
             end = dim_x + (4 if right else -4)
             painter.drawLine(QPointF(start1, y1), QPointF(end, y1))
             painter.drawLine(QPointF(start2, y2), QPointF(end, y2))
@@ -199,7 +211,7 @@ class _SectionCanvas(section_view.SectionCanvasBase):
             text = dim.text
             metrics = painter.fontMetrics()
             text_width = metrics.horizontalAdvance(text)
-            if dim_x + 6 + text_width < self.width() - 2:
+            if right:
                 painter.drawText(
                     QPointF(
                         dim_x + 6,
