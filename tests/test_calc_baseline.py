@@ -404,7 +404,10 @@ def test_inter_table_hover_highlights_layer_edges(project, qapp) -> None:
             table.item(row, 0).text(): row for row in range(table.rowCount())
         }
         dialog._on_inter_entered(table, rows[symbol], 0)
-        return dialog._canvas._line_highlight
+        dimension = dialog._canvas._dimension
+        assert dimension is not None, f"{symbol} 没有尺寸标注"
+        assert dimension.text.startswith(symbol)
+        return dimension.points
 
     s1_table = dialog._inter_tabs.widget(1)
     # u1 / B1 是横线：两端 y 相同

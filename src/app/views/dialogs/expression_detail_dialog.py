@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer
 from PySide6.QtGui import (
@@ -60,8 +60,16 @@ _CONTEXT_GROUP = "group"
 _CONTEXT_MULTI = "multi"
 
 
-class _SectionCanvas(QWidget):
-    """断面示意图画布：复用 section_view 的场景绘制，叠加半透明高亮梯形。"""
+@dataclass(frozen=True)
+class _Dimension:
+    """中间参数行悬停时画在断面图旁的尺寸标注（场景坐标，m）。"""
+
+    points: tuple[tuple[float, float], ...]
+    text: str
+
+
+class _SectionCanvas(section_view.SectionCanvasBase):
+    """断面示意图画布：复用 section_view 的场景绘制，叠加高亮 / 尺寸标注。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -69,22 +77,27 @@ class _SectionCanvas(QWidget):
         self._hint = ""
         #: 高亮多边形（场景坐标，m）：单构件为 4 点梯形，合槽已按成员平移
         self._highlight: list[tuple[float, float]] | None = None
-        #: 中间参数行悬停时的描边线（场景坐标，m）：横线 / 竖线
-        self._line_highlight: list[tuple[float, float]] | None = None
+        #: 中间参数行悬停时的尺寸标注（场景坐标，m）
+        self._dimension: _Dimension | None = None
 
     def set_scene(self, scene, hint: str = "") -> None:
         self._scene = scene
         self._hint = hint
-        self.update()
+        self.reset_view()
 
     def set_highlight(self, polygon_m: list[tuple[float, float]] | None) -> None:
         self._highlight = polygon_m
         self.update()
 
-    def set_line_highlight(self, line_m: list[tuple[float, float]] | None) -> None:
-        self._line_highlight = line_m
+    def set_dimension(
+        self, points_m: list[tuple[float, float]] | tuple[tuple[float, float], ...] | None, text: str = ""
+    ) -> None:
+        self._dimension = (
+            _Dimension(tuple(points_m), text) if points_m and len(points_m) >= 2 else None
+        )
         self.update()
 
+    # ------------------------------------------------------------------ 绘制
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         painter = QPainter(self)
         painter.fillRect(self.rect(), section_view._COLOR_BG)
@@ -92,10 +105,16 @@ class _SectionCanvas(QWidget):
             painter.setPen(QPen(QColor("gray")))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._hint)
             return
-        center_x = self.width() / 2.0
-        origin_y = self.height() - section_view._BOTTOM_GAP
-        section_view.draw_scene(painter, self._scene, center_x, origin_y, self.width())
-        zoom = self._scene.zoom
+        base_zoom = self._scene.zoom
+        self._scene.zoom = base_zoom * self._view_zoom
+        center_x, origin_y = self.view_origin()
+        try:
+            section_view.draw_scene(
+                painter, self._scene, center_x, origin_y, self.width()
+            )
+        finally:
+            self._scene.zoom = base_zoom
+        zoom = self._scene.zoom * self._view_zoom
         if self._highlight:
             # 半透明色块盖在分项对应的梯形上（黄描边 + 低透明度黄填充，黑底可见）
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -109,19 +128,126 @@ class _SectionCanvas(QWidget):
             )
             painter.drawPolygon(polygon)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-        if self._line_highlight:
-            # 中间参数行：用 CAD 标注亮绿描出对应的横线 / 竖线
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-            painter.setPen(QPen(_LINE_HIGHLIGHT, 3))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            line = QPolygonF(
-                [
-                    QPointF(center_x + x * 1000.0 * zoom, origin_y - y * 1000.0 * zoom)
-                    for x, y in self._line_highlight
-                ]
+        if self._dimension:
+            self._paint_dimension(painter, zoom, center_x, origin_y)
+
+    # ------------------------------------------------------------------ 标注
+    def _paint_dimension(
+        self, painter: QPainter, zoom: float, center_x: float, origin_y: float
+    ) -> None:
+        """CAD 风格尺寸标注：引出线 + 尺寸线 + 截断线 + 文字，画在原图外侧。"""
+        dim = self._dimension
+        if dim is None or len(dim.points) < 2:
+            return
+        pts = [
+            (
+                center_x + x * 1000.0 * zoom,
+                origin_y - y * 1000.0 * zoom,
             )
-            painter.drawPolyline(line)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            for x, y in dim.points
+        ]
+        (x1, y1), (x2, y2) = pts[0], pts[-1]
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        font = painter.font()
+        font.setPointSize(9)
+        painter.setFont(font)
+        pen = QPen(_LINE_HIGHLIGHT, 2.0)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        horizontal = abs(y1 - y2) <= abs(x1 - x2)
+        if horizontal:
+            offset = 26.0
+            dim_y = max(y1, y2) + offset
+            if dim_y > self.height() - 8:
+                dim_y = min(y1, y2) - offset
+            # 引出线（从原边端点伸到尺寸线，并稍微出头）
+            painter.drawLine(QPointF(x1, y1), QPointF(x1, dim_y + (4 if dim_y > y1 else -4)))
+            painter.drawLine(QPointF(x2, y2), QPointF(x2, dim_y + (4 if dim_y > y2 else -4)))
+            self._dimension_tick(painter, x1, dim_y, horizontal=True)
+            self._dimension_tick(painter, x2, dim_y, horizontal=True)
+            text = dim.text
+            metrics = painter.fontMetrics()
+            half = metrics.horizontalAdvance(text) / 2.0 + 8.0
+            left, right = sorted((x1, x2))
+            cx = (left + right) / 2.0
+            gap_l = max(left, cx - half)
+            gap_r = min(right, cx + half)
+            painter.drawLine(QPointF(left, dim_y), QPointF(gap_l, dim_y))
+            painter.drawLine(QPointF(gap_r, dim_y), QPointF(right, dim_y))
+            self._dimension_zigzag(painter, gap_l, gap_r, dim_y, horizontal=True)
+            painter.drawText(
+                QPointF(cx - metrics.horizontalAdvance(text) / 2.0, dim_y - 6),
+                text,
+            )
+        else:
+            offset = 28.0
+            dim_x = max(x1, x2) + offset
+            if dim_x > self.width() - 8:
+                dim_x = min(x1, x2) - offset
+            painter.drawLine(QPointF(x1, y1), QPointF(dim_x + (4 if dim_x > x1 else -4), y1))
+            painter.drawLine(QPointF(x2, y2), QPointF(dim_x + (4 if dim_x > x2 else -4), y2))
+            self._dimension_tick(painter, dim_x, y1, horizontal=False)
+            self._dimension_tick(painter, dim_x, y2, horizontal=False)
+            text = dim.text
+            metrics = painter.fontMetrics()
+            half = metrics.height() / 2.0 + 8.0
+            top, bottom = sorted((y1, y2))
+            cy = (top + bottom) / 2.0
+            gap_t = max(top, cy - half)
+            gap_b = min(bottom, cy + half)
+            painter.drawLine(QPointF(dim_x, top), QPointF(dim_x, gap_t))
+            painter.drawLine(QPointF(dim_x, gap_b), QPointF(dim_x, bottom))
+            self._dimension_zigzag(painter, dim_x, dim_x, gap_t, horizontal=False, y2=gap_b)
+            text_width = metrics.horizontalAdvance(text)
+            if dim_x + 6 + text_width < self.width() - 2:
+                painter.drawText(QPointF(dim_x + 6, cy + metrics.ascent() / 2.0), text)
+            else:
+                painter.drawText(
+                    QPointF(dim_x - 6 - text_width, cy + metrics.ascent() / 2.0),
+                    text,
+                )
+        painter.restore()
+
+    @staticmethod
+    def _dimension_tick(
+        painter: QPainter, x: float, y: float, horizontal: bool
+    ) -> None:
+        """尺寸线端点的 45° 短斜线（建筑工程常用）。"""
+        painter.drawLine(QPointF(x - 3, y + 3), QPointF(x + 3, y - 3))
+
+    @staticmethod
+    def _dimension_zigzag(
+        painter: QPainter,
+        x1: float,
+        x2: float,
+        y1: float,
+        horizontal: bool,
+        y2: float | None = None,
+    ) -> None:
+        """尺寸线中部的截断线（折线），文字放在旁边。"""
+        if horizontal:
+            if abs(x2 - x1) < 2:
+                return
+            points = []
+            steps = 4
+            for index in range(steps + 1):
+                t = index / steps
+                x = x1 + (x2 - x1) * t
+                offset = 0.0 if index in (0, steps) else (3.0 if index % 2 else -3.0)
+                points.append(QPointF(x, y1 + offset))
+            painter.drawPolyline(QPolygonF(points))
+            return
+        if y2 is None or abs(y2 - y1) < 2:
+            return
+        points = []
+        steps = 4
+        for index in range(steps + 1):
+            t = index / steps
+            y = y1 + (y2 - y1) * t
+            offset = 0.0 if index in (0, steps) else (3.0 if index % 2 else -3.0)
+            points.append(QPointF(x1 + offset, y))
+        painter.drawPolyline(QPolygonF(points))
 
 
 class ExpressionDetailDialog(FramelessDialog):
@@ -586,7 +712,7 @@ class ExpressionDetailDialog(FramelessDialog):
             if obj is self._term_table:
                 self._canvas.set_highlight(None)
             elif any(obj is table.viewport() for table in self._inter_tables):
-                self._canvas.set_line_highlight(None)
+                self._canvas.set_dimension(None)
         return super().eventFilter(obj, event)
 
     def _on_term_entered(self, row: int, _column: int) -> None:
@@ -602,17 +728,20 @@ class ExpressionDetailDialog(FramelessDialog):
     ) -> None:
         item = table.item(row, 0)
         if item is None:
-            self._canvas.set_line_highlight(None)
+            self._canvas.set_dimension(None)
             return
         geometry, member_id = item.data(Qt.ItemDataRole.UserRole) or (None, None)
         if geometry is None:
             geometry = self._scene_line_for(item.text())
-        self._canvas.set_line_highlight(
-            self._highlight_polygon(geometry, member_id)
+        line = self._highlight_polygon(geometry, member_id)
+        value_item = table.item(row, 3)
+        value_text = value_item.text() if value_item is not None else ""
+        self._canvas.set_dimension(
+            line, f"{item.text()}={value_text}" if line else ""
         )
 
     def _on_inter_tab_changed(self, _index: int) -> None:
-        self._canvas.set_line_highlight(None)
+        self._canvas.set_dimension(None)
 
     # ------------------------------------------------------------------ 尺寸
     def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名

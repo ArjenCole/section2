@@ -40,6 +40,74 @@ def _make_view(qapp, element_id):
     return view
 
 
+def test_section_view_wheel_zoom_and_middle_drag(qapp, project_with_element) -> None:
+    """断面图：滚轮缩放、中键拖动、手形 / 握拳 / 默认光标切换。"""
+    from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent, QWheelEvent
+
+    view = _make_view(qapp, project_with_element)
+    view.show()
+    qapp.processEvents()
+
+    qapp.sendEvent(view, QEvent(QEvent.Type.Enter))
+    assert view.cursor().shape() == Qt.CursorShape.OpenHandCursor
+
+    before = view._view_zoom
+    wheel = QWheelEvent(
+        QPointF(160, 200),
+        QPointF(160, 200),
+        QPoint(0, 0),
+        QPoint(0, 120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
+    )
+    qapp.sendEvent(view, wheel)
+    assert view._view_zoom > before
+
+    start = QPointF(160, 200)
+    pan_before = QPointF(view._pan)
+    press = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        start,
+        start,
+        Qt.MouseButton.MiddleButton,
+        Qt.MouseButton.MiddleButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    qapp.sendEvent(view, press)
+    assert view.cursor().shape() == Qt.CursorShape.ClosedHandCursor
+
+    moved = QPointF(190, 220)
+    move = QMouseEvent(
+        QEvent.Type.MouseMove,
+        moved,
+        moved,
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.MiddleButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    qapp.sendEvent(view, move)
+    assert view._pan.x() == pytest.approx(pan_before.x() + 30)
+    assert view._pan.y() == pytest.approx(pan_before.y() + 20)
+
+    release = QMouseEvent(
+        QEvent.Type.MouseButtonRelease,
+        moved,
+        moved,
+        Qt.MouseButton.MiddleButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    qapp.sendEvent(view, release)
+    assert view.cursor().shape() == Qt.CursorShape.OpenHandCursor
+
+    qapp.sendEvent(view, QEvent(QEvent.Type.Leave))
+    assert view.cursor().shape() == Qt.CursorShape.ArrowCursor
+    view.close()
+
+
 def test_trench_scene_geometry(qapp, project_with_element) -> None:
     """沟槽场景：分层回填段、总深与槽顶宽都来自计算引擎的同一套函数。"""
     from app.core.calc.engine import build_atlas_query, build_element_input, resolve_atlas

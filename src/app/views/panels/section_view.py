@@ -7,7 +7,8 @@ level_slope / groove_width），保证图上的沟槽形状与工程量公式完
 - 黑底、青色线条；管体断面黄描边（圆）、洋红描边（矩形），内部黑填充用于挖空；
 - 坐标原点在画布底边中点，Y 轴向上；左侧用构件的围护原则、右侧镜像
   （旧版 PaintBackFilled(LmPE,1)/(RmPE,-1)；多围护原则已取消，两侧同原则）；
-- 自适应缩放 zoom（mm→px，只缩小不放大，上限 1）；
+- 自适应缩放 zoom（mm→px，只缩小不放大，上限 1）；用户可用滚轮在此基础上
+  继续放大 / 缩小（0.25~8 倍），中键按下拖动平移，手形 / 握拳光标；
 - 左下角输出图集参数 ``t= a= C1= C2=``。
 
 `SectionPanel` = 断面画布容器（旧版多原则时的 PNLpicCtrler 选择行已随功能取消）。
@@ -22,7 +23,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 from sqlalchemy import select
@@ -67,7 +68,7 @@ from app.services import project_io
 from app.services.atlas import resolve_atlas
 
 _MARGIN = 10  # 画布左右留白 px（旧版 10*2）
-_BOTTOM_GAP = 10  # 底边留白 px
+_BOTTOM_GAP = 34  # 底边留白 px（下方给尺寸标注引出线留空间）
 _TOP_GAP = 50  # 顶部留白 px（旧版 Height-10-50）
 
 _COLOR_BG = QColor("black")
@@ -264,7 +265,109 @@ def draw_scene(
     painter.drawText(4, 14, scene.atlas_text)
 
 
-class SectionView(QWidget):
+class SectionCanvasBase(QWidget):
+    """断面画布基类：滚轮缩放、中键拖动平移、手形光标。
+
+    ``scene.zoom`` 是自适应基础缩放；用户缩放叠加为 ``view_zoom``，平移用
+    ``_pan``（px）。绘制时临时把 ``scene.zoom`` 乘上用户缩放，画完恢复。
+    """
+
+    _ZOOM_MIN = 0.25
+    _ZOOM_MAX = 8.0
+    _ZOOM_STEP = 1.15
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._view_zoom = 1.0
+        self._pan = QPointF(0.0, 0.0)
+        self._panning = False
+        self._pan_start = QPointF()
+        self._pan_origin = QPointF()
+        self.setMouseTracking(True)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+
+    # ------------------------------------------------------------------ 视图
+    def reset_view(self) -> None:
+        """恢复自适应缩放与居中位置。"""
+        self._view_zoom = 1.0
+        self._pan = QPointF(0.0, 0.0)
+        self.update()
+
+    def effective_zoom(self, scene: "_Scene") -> float:
+        return scene.zoom * self._view_zoom
+
+    def view_origin(self) -> tuple[float, float]:
+        """当前视图的原点（槽底中点）屏幕坐标。"""
+        return (
+            self.width() / 2.0 + self._pan.x(),
+            self.height() - _BOTTOM_GAP + self._pan.y(),
+        )
+
+    # ------------------------------------------------------------------ 交互
+    def enterEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if not self._panning:
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if not self._panning:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self._panning = True
+            self._pan_start = event.position()
+            self._pan_origin = QPointF(self._pan)
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if self._panning:
+            self._pan = self._pan_origin + (event.position() - self._pan_start)
+            self.update()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if event.button() == Qt.MouseButton.MiddleButton and self._panning:
+            self._panning = False
+            inside = self.rect().contains(event.position().toPoint())
+            self.setCursor(
+                Qt.CursorShape.OpenHandCursor
+                if inside
+                else Qt.CursorShape.ArrowCursor
+            )
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        delta = event.angleDelta().y()
+        if delta == 0:
+            return
+        factor = self._ZOOM_STEP if delta > 0 else 1.0 / self._ZOOM_STEP
+        new_zoom = min(
+            self._ZOOM_MAX, max(self._ZOOM_MIN, self._view_zoom * factor)
+        )
+        if new_zoom == self._view_zoom:
+            event.accept()
+            return
+        # 以鼠标位置为中心缩放：保持光标下的断面点不动
+        cursor = event.position()
+        center = QPointF(self.width() / 2.0, self.height() - _BOTTOM_GAP)
+        rel = cursor - center
+        ratio = new_zoom / self._view_zoom
+        self._pan = rel - (rel - self._pan) * ratio
+        self._view_zoom = new_zoom
+        self.update()
+        event.accept()
+
+
+class SectionView(SectionCanvasBase):
     """当前选中构件条目的沟槽断面示意图（旧版 mcPictureBox）。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -294,7 +397,7 @@ class SectionView(QWidget):
         self._group_id = None
         self._scene = None
         self._hint = "*多种断面"
-        self.update()
+        self.reset_view()
 
     def refresh(self) -> None:
         """构件数据变化后重算重绘。"""
@@ -305,7 +408,7 @@ class SectionView(QWidget):
             self._scene, self._hint = _build_group_scene(self._group_id, self.width(), self.height())
         else:
             self._scene, self._hint = _build_scene(self._element_id, self.width(), self.height())
-        self.update()
+        self.reset_view()
 
     # ------------------------------------------------------------------ 绘制
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt 命名
@@ -315,13 +418,19 @@ class SectionView(QWidget):
             painter.setPen(QPen(QColor("gray")))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._hint)
             return
-        draw_scene(
-            painter,
-            self._scene,
-            self.width() / 2.0,
-            self.height() - _BOTTOM_GAP,
-            self.width(),
-        )
+        base_zoom = self._scene.zoom
+        self._scene.zoom = base_zoom * self._view_zoom
+        center_x, origin_y = self.view_origin()
+        try:
+            draw_scene(
+                painter,
+                self._scene,
+                center_x,
+                origin_y,
+                self.width(),
+            )
+        finally:
+            self._scene.zoom = base_zoom
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         super().resizeEvent(event)
