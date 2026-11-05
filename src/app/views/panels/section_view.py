@@ -68,7 +68,7 @@ from app.services import project_io
 from app.services.atlas import resolve_atlas
 
 _MARGIN = 10  # 画布左右留白 px（旧版 10*2）
-_BOTTOM_GAP = 34  # 底边留白 px（下方给尺寸标注引出线留空间）
+_BOTTOM_GAP = 40  # 底边留白 px（下方给尺寸标注引出线留空间）
 _TOP_GAP = 50  # 顶部留白 px（旧版 Height-10-50）
 
 _COLOR_BG = QColor("black")
@@ -281,6 +281,7 @@ class SectionCanvasBase(QWidget):
         self._view_zoom = 1.0
         self._pan = QPointF(0.0, 0.0)
         self._panning = False
+        self._pan_button = Qt.MouseButton.NoButton
         self._pan_start = QPointF()
         self._pan_origin = QPointF()
         self.setMouseTracking(True)
@@ -315,8 +316,9 @@ class SectionCanvasBase(QWidget):
         super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
-        if event.button() == Qt.MouseButton.MiddleButton:
+        if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.MiddleButton):
             self._panning = True
+            self._pan_button = event.button()
             self._pan_start = event.position()
             self._pan_origin = QPointF(self._pan)
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
@@ -333,8 +335,9 @@ class SectionCanvasBase(QWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt 命名
-        if event.button() == Qt.MouseButton.MiddleButton and self._panning:
+        if self._panning and event.button() == self._pan_button:
             self._panning = False
+            self._pan_button = Qt.MouseButton.NoButton
             inside = self.rect().contains(event.position().toPoint())
             self.setCursor(
                 Qt.CursorShape.OpenHandCursor
@@ -344,6 +347,17 @@ class SectionCanvasBase(QWidget):
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        """双击中键 / 右键恢复默认视图（自适应缩放 + 居中）。"""
+        if event.button() in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
+            self._panning = False
+            self._pan_button = Qt.MouseButton.NoButton
+            self.reset_view()
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def wheelEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         delta = event.angleDelta().y()

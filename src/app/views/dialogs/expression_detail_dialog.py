@@ -157,54 +157,62 @@ class _SectionCanvas(section_view.SectionCanvasBase):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         horizontal = abs(y1 - y2) <= abs(x1 - x2)
         if horizontal:
-            offset = 26.0
+            offset = 32.0
             dim_y = max(y1, y2) + offset
             if dim_y > self.height() - 8:
                 dim_y = min(y1, y2) - offset
-            # 引出线（从原边端点伸到尺寸线，并稍微出头）
-            painter.drawLine(QPointF(x1, y1), QPointF(x1, dim_y + (4 if dim_y > y1 else -4)))
-            painter.drawLine(QPointF(x2, y2), QPointF(x2, dim_y + (4 if dim_y > y2 else -4)))
+            down = dim_y > y1
+            # 引出线从原边端点偏移 4px 起画，不贴着断面线
+            start1 = y1 + (4 if down else -4)
+            start2 = y2 + (4 if down else -4)
+            end = dim_y + (4 if down else -4)
+            painter.drawLine(QPointF(x1, start1), QPointF(x1, end))
+            painter.drawLine(QPointF(x2, start2), QPointF(x2, end))
             self._dimension_tick(painter, x1, dim_y, horizontal=True)
             self._dimension_tick(painter, x2, dim_y, horizontal=True)
+            # 尺寸线为直线（中部不再画波浪折线），文字放在线外侧
+            painter.drawLine(QPointF(x1, dim_y), QPointF(x2, dim_y))
             text = dim.text
             metrics = painter.fontMetrics()
-            half = metrics.horizontalAdvance(text) / 2.0 + 8.0
-            left, right = sorted((x1, x2))
-            cx = (left + right) / 2.0
-            gap_l = max(left, cx - half)
-            gap_r = min(right, cx + half)
-            painter.drawLine(QPointF(left, dim_y), QPointF(gap_l, dim_y))
-            painter.drawLine(QPointF(gap_r, dim_y), QPointF(right, dim_y))
-            self._dimension_zigzag(painter, gap_l, gap_r, dim_y, horizontal=True)
             painter.drawText(
-                QPointF(cx - metrics.horizontalAdvance(text) / 2.0, dim_y - 6),
+                QPointF(
+                    (x1 + x2) / 2.0 - metrics.horizontalAdvance(text) / 2.0,
+                    dim_y - 6,
+                ),
                 text,
             )
         else:
-            offset = 28.0
+            offset = 48.0
             dim_x = max(x1, x2) + offset
             if dim_x > self.width() - 8:
                 dim_x = min(x1, x2) - offset
-            painter.drawLine(QPointF(x1, y1), QPointF(dim_x + (4 if dim_x > x1 else -4), y1))
-            painter.drawLine(QPointF(x2, y2), QPointF(dim_x + (4 if dim_x > x2 else -4), y2))
+            right = dim_x > x1
+            start1 = x1 + (4 if right else -4)
+            start2 = x2 + (4 if right else -4)
+            end = dim_x + (4 if right else -4)
+            painter.drawLine(QPointF(start1, y1), QPointF(end, y1))
+            painter.drawLine(QPointF(start2, y2), QPointF(end, y2))
             self._dimension_tick(painter, dim_x, y1, horizontal=False)
             self._dimension_tick(painter, dim_x, y2, horizontal=False)
+            # 尺寸线为直线（中部不再画波浪折线），文字放在线外侧
+            painter.drawLine(QPointF(dim_x, y1), QPointF(dim_x, y2))
             text = dim.text
             metrics = painter.fontMetrics()
-            half = metrics.height() / 2.0 + 8.0
-            top, bottom = sorted((y1, y2))
-            cy = (top + bottom) / 2.0
-            gap_t = max(top, cy - half)
-            gap_b = min(bottom, cy + half)
-            painter.drawLine(QPointF(dim_x, top), QPointF(dim_x, gap_t))
-            painter.drawLine(QPointF(dim_x, gap_b), QPointF(dim_x, bottom))
-            self._dimension_zigzag(painter, dim_x, dim_x, gap_t, horizontal=False, y2=gap_b)
             text_width = metrics.horizontalAdvance(text)
             if dim_x + 6 + text_width < self.width() - 2:
-                painter.drawText(QPointF(dim_x + 6, cy + metrics.ascent() / 2.0), text)
+                painter.drawText(
+                    QPointF(
+                        dim_x + 6,
+                        (y1 + y2) / 2.0 + metrics.ascent() / 2.0,
+                    ),
+                    text,
+                )
             else:
                 painter.drawText(
-                    QPointF(dim_x - 6 - text_width, cy + metrics.ascent() / 2.0),
+                    QPointF(
+                        dim_x - 6 - text_width,
+                        (y1 + y2) / 2.0 + metrics.ascent() / 2.0,
+                    ),
                     text,
                 )
         painter.restore()
@@ -215,39 +223,6 @@ class _SectionCanvas(section_view.SectionCanvasBase):
     ) -> None:
         """尺寸线端点的 45° 短斜线（建筑工程常用）。"""
         painter.drawLine(QPointF(x - 3, y + 3), QPointF(x + 3, y - 3))
-
-    @staticmethod
-    def _dimension_zigzag(
-        painter: QPainter,
-        x1: float,
-        x2: float,
-        y1: float,
-        horizontal: bool,
-        y2: float | None = None,
-    ) -> None:
-        """尺寸线中部的截断线（折线），文字放在旁边。"""
-        if horizontal:
-            if abs(x2 - x1) < 2:
-                return
-            points = []
-            steps = 4
-            for index in range(steps + 1):
-                t = index / steps
-                x = x1 + (x2 - x1) * t
-                offset = 0.0 if index in (0, steps) else (3.0 if index % 2 else -3.0)
-                points.append(QPointF(x, y1 + offset))
-            painter.drawPolyline(QPolygonF(points))
-            return
-        if y2 is None or abs(y2 - y1) < 2:
-            return
-        points = []
-        steps = 4
-        for index in range(steps + 1):
-            t = index / steps
-            y = y1 + (y2 - y1) * t
-            offset = 0.0 if index in (0, steps) else (3.0 if index % 2 else -3.0)
-            points.append(QPointF(x1 + offset, y))
-        painter.drawPolyline(QPolygonF(points))
 
 
 class ExpressionDetailDialog(FramelessDialog):

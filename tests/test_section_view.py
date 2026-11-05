@@ -40,7 +40,7 @@ def _make_view(qapp, element_id):
     return view
 
 
-def test_section_view_wheel_zoom_and_middle_drag(qapp, project_with_element) -> None:
+def test_section_view_wheel_zoom_and_drag(qapp, project_with_element) -> None:
     """断面图：滚轮缩放、中键拖动、手形 / 握拳 / 默认光标切换。"""
     from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
     from PySide6.QtGui import QMouseEvent, QWheelEvent
@@ -102,6 +102,56 @@ def test_section_view_wheel_zoom_and_middle_drag(qapp, project_with_element) -> 
     )
     qapp.sendEvent(view, release)
     assert view.cursor().shape() == Qt.CursorShape.OpenHandCursor
+
+    # 左键拖拽与中键等效
+    pan_before = QPointF(view._pan)
+    left_press = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        start,
+        start,
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    qapp.sendEvent(view, left_press)
+    assert view.cursor().shape() == Qt.CursorShape.ClosedHandCursor
+    left_moved = QPointF(200, 230)
+    left_move = QMouseEvent(
+        QEvent.Type.MouseMove,
+        left_moved,
+        left_moved,
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    qapp.sendEvent(view, left_move)
+    assert view._pan.x() == pytest.approx(pan_before.x() + 40)
+    assert view._pan.y() == pytest.approx(pan_before.y() + 30)
+    left_release = QMouseEvent(
+        QEvent.Type.MouseButtonRelease,
+        left_moved,
+        left_moved,
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    qapp.sendEvent(view, left_release)
+    assert view.cursor().shape() == Qt.CursorShape.OpenHandCursor
+
+    # 双击中键 / 右键恢复默认视图
+    for button in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton):
+        double_click = QMouseEvent(
+            QEvent.Type.MouseButtonDblClick,
+            start,
+            start,
+            button,
+            button,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        qapp.sendEvent(view, double_click)
+        assert view._view_zoom == pytest.approx(1.0)
+        assert view._pan.x() == pytest.approx(0.0)
+        assert view._pan.y() == pytest.approx(0.0)
 
     qapp.sendEvent(view, QEvent(QEvent.Type.Leave))
     assert view.cursor().shape() == Qt.CursorShape.ArrowCursor
