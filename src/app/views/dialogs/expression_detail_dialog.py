@@ -557,12 +557,14 @@ class ExpressionDetailDialog(FramelessDialog):
 
     @staticmethod
     def _check_icon() -> QIcon:
-        """复制成功后的绿色勾图标（显示 1 秒）。"""
+        """复制成功后的勾图标（主题文字色纯色描边，与工具栏图标同风格，显示 1 秒）。"""
+        from app.resources.qss.theme import ThemeManager
+
         pixmap = QPixmap(32, 32)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        pen = QPen(QColor("#22C55E"), 3)
+        pen = QPen(QColor(ThemeManager.instance().current().text_primary), 3)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
