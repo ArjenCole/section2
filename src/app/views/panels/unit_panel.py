@@ -70,6 +70,7 @@ from app.viewmodels.unit_vm import (
     group_side_plan,
     update_group,
 )
+from app.views.widgets.cell_fill_table import CellFillTable
 from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.views.widgets.panel_splitter import SPLITTER_HANDLE_WIDTH, LineSplitter
 from app.views.widgets.row_button_column import RowButtonColumn
@@ -680,7 +681,12 @@ class UnitPanel(QWidget):
         distance_layout = QVBoxLayout(distance_page)
         distance_layout.setContentsMargins(6, 6, 6, 6)
         distance_layout.setSpacing(4)
-        self._distance_table = QTableWidget(0, 1)
+        # 用 CellFillTable 而不是 QTableWidget：QSS 给 QTableWidget::item 的
+        # padding（5px 8px）会把 setCellWidget 放进去的控件按「单元格内容区」
+        # 缩一圈（32px 行里只剩 21px 高），本页的中心距离文本框因此没撑满
+        # 单元格，再叠加 QLineEdit 自身的纵向内边距后文字只剩 7px 高被裁掉。
+        # CellFillTable 每次布局后把单元格控件铺回整个单元格。
+        self._distance_table = CellFillTable(0, 1)
         self._distance_table.setVerticalHeaderLabels([])
         self._distance_table.setHorizontalHeaderLabels(["取值"])
         self._distance_table.setProperty("cardHeader", True)
@@ -2789,8 +2795,8 @@ class UnitPanel(QWidget):
 
         前两行只读展示面宽原则匹配到的单侧工作面宽；后两行是可填的中心距离
         （mm，可写算式）。只有共享面的更浅一侧可填（等深时按规则填在左侧
-        构件的右侧），外边缘 / 更深侧显示 "-" 并禁用。填了距离的一侧，其
-        工作面宽行标注「已失效」。
+        构件的右侧），外边缘 / 更深侧显示成只含 "-" 的禁用下拉框。填了距离的
+        一侧，其工作面宽行标注「已失效」。
         """
         from app.viewmodels.unit_vm import (
             element_work_width,
@@ -2834,34 +2840,39 @@ class UnitPanel(QWidget):
 
         def _distance_editor(
             side: str, active: bool, current: str, neighbor: str, outer: bool
-        ) -> QLineEdit:
-            editor = QLineEdit(current)
-            editor.setFrame(False)
-            if active:
-                editor.setPlaceholderText("留空 = 按面宽原则")
-                editor.setToolTip(
-                    f"与{'左' if side == 'left' else '右'}侧构件「{neighbor}」的中心距离"
-                    "（mm，可写算式）。填写后本侧按中心距离摆放，面宽原则匹配的"
-                    "工作面宽失效；留空 = 仍按面宽原则。"
-                )
-                editor.editingFinished.connect(
-                    lambda eid=element.id, s=side, w=editor: self._on_distance_edited(
-                        eid, s, w
-                    )
-                )
-            else:
-                editor.setText("-")
-                editor.setReadOnly(True)
-                editor.setEnabled(False)
+        ) -> QLineEdit | QComboBox:
+            """可填侧 = 中心距离文本框；不可填侧 = 只含 "-" 的禁用下拉框。
+
+            不可填（合槽外边缘 / 不是更浅侧）统一显示成禁用的下拉框，与
+            「围护原则」页强制 "-" 的一侧观感一致；原因写在 tooltip 里。
+            """
+            if not active:
+                forced = QComboBox()
+                forced.addItem("-")
+                forced.setEnabled(False)
                 if outer:
-                    editor.setToolTip(
+                    forced.setToolTip(
                         "合槽外边缘没有相邻构件，按面宽原则匹配的工作面宽控制。"
                     )
                 else:
-                    editor.setToolTip(
+                    forced.setToolTip(
                         "该侧不是更浅侧：中心距离填在更浅一侧的构件（等深时填在"
                         "左侧构件的「工作面宽」页）。"
                     )
+                return forced
+            editor = QLineEdit(current)
+            editor.setFrame(False)
+            editor.setPlaceholderText("留空 = 按面宽原则")
+            editor.setToolTip(
+                f"与{'左' if side == 'left' else '右'}侧构件「{neighbor}」的中心距离"
+                "（mm，可写算式）。填写后本侧按中心距离摆放，面宽原则匹配的"
+                "工作面宽失效；留空 = 仍按面宽原则。"
+            )
+            editor.editingFinished.connect(
+                lambda eid=element.id, s=side, w=editor: self._on_distance_edited(
+                    eid, s, w
+                )
+            )
             return editor
 
         self._distance_table.setRowCount(len(_DISTANCE_ROWS))
@@ -2886,6 +2897,9 @@ class UnitPanel(QWidget):
                 "right", right_active, right_distance, right_name, not right_name
             ),
         )
+        # setRowCount 之后行列位置可能还是旧的：setCellWidget 会把控件按旧位置
+        # （常常是第 0 行）摆放，这里显式铺回各自单元格（下一轮事件循环再补一次）
+        self._distance_table.fit_cell_widgets()
 
     def _on_distance_edited(
         self, element_id: int, side: str, editor: QLineEdit
@@ -3032,8 +3046,13 @@ class UnitPanel(QWidget):
 # 辅助
 # --------------------------------------------------------------------------- #
 def _clear_cell_widgets(table: QTableWidget) -> None:
-    """显式销毁表格里的旧单元格控件：QTableWidget.setCellWidget 在 PySide6 下
-    只隐藏被替换的控件并不删除，残留的旧内嵌下拉框会与新控件叠加渲染。"""
+    """显式销毁表格里的旧单元格控件。
+
+    QTableWidget.setCellWidget 在 PySide6 下只隐藏被替换的控件并不删除；模型重置
+    （setRowCount(0)）还会把控件从 persistent 表里摘掉、留在视口里，之后
+    ``cellWidget()`` 已经找不到它们——旧控件继续显示并叠在第 0 行上。所以除了
+    按行列清理，还要清掉视口里所有不属于当前单元格的残留控件。
+    """
     for row in range(table.rowCount()):
         for column in range(table.columnCount()):
             old = table.cellWidget(row, column)
@@ -3043,6 +3062,13 @@ def _clear_cell_widgets(table: QTableWidget) -> None:
                 old.blockSignals(True)
                 table.removeCellWidget(row, column)
                 old.deleteLater()
+    # 此时按行列已找不到的单元格控件都是残留（含被模型重置摘掉的旧控件）
+    for child in table.viewport().children():
+        if not isinstance(child, (QComboBox, QLineEdit, QCheckBox)):
+            continue
+        child.blockSignals(True)
+        child.hide()
+        child.deleteLater()
 
 
 def _category_abbr(category: int) -> str:

@@ -490,10 +490,15 @@ QTableCornerButton::section { background-color: $bg_window; border: none; }
    页签页面同色（各页 role="panel" 底为 bg_card），避免白底页面配灰底表头 */
 QTableWidget[cardHeader="true"] QHeaderView::section { background-color: $bg_card; }
 QTableWidget[cardHeader="true"] QTableCornerButton::section { background-color: $bg_card; border: none; }
-/* 表格单元格内嵌的下拉框：纵向内边距压小，行高才能收回到 32px 且文字完整 */
+/* 表格单元格内嵌的下拉框 / 文本框：纵向内边距压小，行高才能收回到 32px 且文字完整 */
 QTableWidget QComboBox, QTableView QComboBox {
     padding-top: 2px;
     padding-bottom: 2px;
+}
+/* 单元格内嵌的文本框（如详情面板「工作面宽」页的中心距离输入）：默认 6px 纵向
+   内边距 + 1px 边框在 32px 行里会把文字上下裁掉；横向对齐单元格文字的 8px 内边距 */
+QTableWidget QLineEdit, QTableView QLineEdit {
+    padding: 2px 8px;
 }
 
 /* ===================== 列表 ===================== */

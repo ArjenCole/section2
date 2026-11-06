@@ -986,10 +986,14 @@ def test_distance_tab_ui_and_validation(project, qapp, monkeypatch) -> None:
         "与右侧构件中心距离(mm)",
     ]
     # 等深：左构件左侧是外边缘（不可填），右侧共享面可填
+    from PySide6.QtWidgets import QComboBox
+
     left_editor = panel._distance_table.cellWidget(2, 0)
     right_editor = panel._distance_table.cellWidget(3, 0)
-    assert not left_editor.isEnabled() and left_editor.text() == "-"
-    assert right_editor.isEnabled()
+    # 不可填的一侧统一显示成只含 "-" 的禁用下拉框
+    assert isinstance(left_editor, QComboBox)
+    assert not left_editor.isEnabled() and left_editor.currentText() == "-"
+    assert right_editor.isEnabled() and not isinstance(right_editor, QComboBox)
     assert panel._distance_table.item(0, 0).text() not in ("", "-")
 
     # 合法距离：写库
@@ -1051,3 +1055,178 @@ def test_distance_tab_ui_and_validation(project, qapp, monkeypatch) -> None:
     assert panel._distance_table.rowCount() == 0
     assert panel._distance_table.isHidden()
     assert not panel._distance_placeholder.isHidden()
+
+
+def test_distance_tab_cell_widgets_follow_rows(project, qapp) -> None:
+    """合槽编组后反复重填：单元格控件必须留在各自行，不能残留叠在第 0 行。
+
+    实测（插构件 → 选中两行编组合槽 → 选子构件）：模型重置会把 setCellWidget
+    的控件从 persistent 表里摘掉，旧控件留在视口里继续显示；重填的控件又可能
+    按重置前的旧行位置摆放——表现为「与左侧构件中心距离」的禁用下拉框画到了
+    「左侧工作面宽」那一行。
+    """
+    from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit
+    from sqlalchemy import select
+
+    from app.core.models import base as orm
+    from app.core.models.models import Unit
+    from app.services.element_library import element_library
+    from app.viewmodels.project_vm import TreeNode
+    from app.views.panels.unit_panel import UnitPanel, _select_row
+
+    panel = UnitPanel()
+    panel.resize(1400, 800)
+    unit = orm.session().scalar(select(Unit))
+    panel._on_node_selected(TreeNode(kind="unit", id=unit.id, name=unit.name))
+    panel.refresh()
+    panel.show()
+    try:
+        template = element_library().units_of("直埋混凝土管")[0].elements[0]
+        panel.insert_template(template)
+        panel.insert_template(template)
+        for _ in range(3):
+            qapp.processEvents()
+
+        table = panel._element_table
+        _select_row(table, 0, 0)
+        table.selectionModel().select(
+            table.model().index(1, 0),
+            table.selectionModel().SelectionFlag.Select
+            | table.selectionModel().SelectionFlag.Rows,
+        )
+        panel.create_group_from_selection()
+        for _ in range(3):
+            qapp.processEvents()
+        panel._detail_tabs.setCurrentIndex(4)
+        for _ in range(3):
+            qapp.processEvents()
+
+        distance_table = panel._distance_table
+        member_rows = [
+            row
+            for row in range(table.rowCount())
+            if panel._element_id_at(row) is not None
+        ]
+        assert member_rows, "编组后应有合槽子构件行"
+        for member_row in member_rows:
+            _select_row(table, member_row, 0)
+            panel._sync_detail_to_selection()
+            for _ in range(3):
+                qapp.processEvents()
+            for row in range(distance_table.rowCount()):
+                widget = distance_table.cellWidget(row, 0)
+                if widget is None:
+                    continue
+                cell = distance_table.visualRect(distance_table.model().index(row, 0))
+                assert widget.geometry() == cell, f"第 {row} 行控件没在单元格里"
+            # 视口里不能有可见的残留控件（旧控件会叠在第 0 行上）
+            cells = {
+                distance_table.cellWidget(row, 0)
+                for row in range(distance_table.rowCount())
+            }
+            stray = [
+                child
+                for child in distance_table.viewport().children()
+                if isinstance(child, (QComboBox, QLineEdit, QCheckBox))
+                and child not in cells
+                and child.isVisible()
+            ]
+            assert not stray, f"单元格里有 {len(stray)} 个残留控件"
+    finally:
+        panel.close()
+
+
+def test_fit_cell_widgets_repairs_misplaced_widget(project, qapp) -> None:
+    """``fit_cell_widgets()`` 能把按旧行位置摆放的单元格控件铺回自己的单元格。
+
+    实测 ``setRowCount`` 之后行列位置还是旧的，``setCellWidget`` 会把控件放在
+    第 0 行（32px 行里控件跑到别的行）；重填后调用一次就能纠正。
+    """
+    from sqlalchemy import select
+
+    from app.core.models import base as orm
+    from app.core.models.models import Unit
+    from app.viewmodels.project_vm import TreeNode
+    from app.views.panels.unit_panel import UnitPanel, _select_row
+
+    _, (e1, _e2) = _group(["3", "3"])
+    panel = UnitPanel()
+    panel.resize(1400, 800)
+    unit = orm.session().scalar(select(Unit))
+    panel._on_node_selected(TreeNode(kind="unit", id=unit.id, name=unit.name))
+    panel.refresh()
+    table = panel._element_table
+    row = next(row for row in range(table.rowCount()) if panel._element_id_at(row) == e1)
+    _select_row(table, row, 0)
+    panel._sync_detail_to_selection()
+    panel.show()
+    try:
+        for _ in range(3):
+            qapp.processEvents()
+        distance_table = panel._distance_table
+        editor = distance_table.cellWidget(2, 0)
+        assert editor is not None
+        # 模拟 setCellWidget 按重置前的旧行位置摆放（落在第 0 行）
+        editor.setGeometry(0, 0, 199, 31)
+        distance_table.fit_cell_widgets()
+        cell = distance_table.visualRect(distance_table.model().index(2, 0))
+        assert editor.geometry() == cell
+    finally:
+        panel.close()
+
+
+def test_distance_editor_fills_cell(project, qapp) -> None:
+    """「工作面宽」页的中心距离控件必须铺满单元格，文字才不会被裁。
+
+    QSS 给 ``QTableWidget::item`` 的 padding（5px 8px）会让 setCellWidget 放进去
+    的控件只占「单元格内容区」：32px 的行里只剩 21px 高；再叠加 QLineEdit 自身
+    的 6px 纵向内边距 + 1px 边框，文字区只剩 7px（字体需要 17px）——表现为文本框
+    没撑满单元格、输入的文字上下被裁掉。不可填的一侧是只含 "-" 的禁用下拉框。
+    """
+    from PySide6.QtWidgets import QComboBox, QStyle, QStyleOptionFrame
+    from sqlalchemy import select
+
+    from app.core.models import base as orm
+    from app.core.models.models import Unit
+    from app.resources.qss.theme import ThemeManager, build_stylesheet
+    from app.viewmodels.project_vm import TreeNode
+    from app.views.panels.unit_panel import UnitPanel, _select_row
+
+    _, (e1, _e2) = _group(["3", "3"])
+    panel = UnitPanel()
+    panel.resize(1400, 800)
+    unit = orm.session().scalar(select(Unit))
+    panel._on_node_selected(TreeNode(kind="unit", id=unit.id, name=unit.name))
+    panel.refresh()
+    table = panel._element_table
+    row = next(row for row in range(table.rowCount()) if panel._element_id_at(row) == e1)
+    _select_row(table, row, 0)
+    panel._sync_detail_to_selection()
+    panel._detail_tabs.setCurrentIndex(4)
+
+    # 测试环境没有全局主题：把真实主题 QSS 套到本页表格上，复现单元格内边距
+    distance_table = panel._distance_table
+    distance_table.setStyleSheet(build_stylesheet(ThemeManager.instance().current()))
+    panel.show()
+    try:
+        for _ in range(3):
+            qapp.processEvents()
+        for row_index in (2, 3):
+            editor = distance_table.cellWidget(row_index, 0)
+            assert editor is not None
+            cell = distance_table.visualRect(distance_table.model().index(row_index, 0))
+            assert editor.geometry() == cell, "单元格控件没有铺满单元格"
+            if isinstance(editor, QComboBox):
+                # 不可填侧：只含 "-" 的禁用下拉框
+                assert not editor.isEnabled() and editor.currentText() == "-"
+                continue
+            option = QStyleOptionFrame()
+            editor.initStyleOption(option)
+            band = editor.style().subElementRect(
+                QStyle.SubElement.SE_LineEditContents, option, editor
+            )
+            assert band.height() >= editor.fontMetrics().height(), (
+                f"文字区只有 {band.height()}px，字体需要 {editor.fontMetrics().height()}px"
+            )
+    finally:
+        panel.close()
