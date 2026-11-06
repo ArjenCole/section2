@@ -127,11 +127,14 @@ def ensure_atlas_candidates(element: Element) -> bool:
             query.con_found = con_found
             query.found_angle = int(angle)
             at = resolve_atlas(query)
+            thickness = at.t
+            if at.od > 0 and at.id > 0:
+                thickness = max((at.od - at.id) / 2.0, 0.0)
             element.atlas_candidates.append(
                 ElementAtlasCandidate(
                     con_found=con_found,
                     angle=angle,
-                    t=at.t if at.t else None,
+                    t=thickness if thickness else None,
                     a=at.a if at.a else None,
                     c1=at.c1 if at.c1 else None,
                     c2=at.c2 if at.c2 else None,
@@ -197,16 +200,17 @@ def match_atlas_candidates(element: Element, *, commit: bool = True) -> bool:
 
 
 def _sync_pipe_thickness(element: Element, value: float | None) -> bool:
-    """把参数行的管道壁厚写回首根管；无管或值未变返回 False。"""
+    """把参数行的管道壁厚写回首根管，并默认联动外径（iD 不动）。
+
+    无管 / 值为空 / 未变化返回 False。壁厚是几何量，写回时保持
+    ``oD = iD + 2t``（见 core.pipe_dimensions.sync_pipe_wall）。
+    """
+    from app.core.pipe_dimensions import sync_pipe_wall
+
     pipes = list(element.pipes)
-    if not pipes:
+    if not pipes or value is None:
         return False
-    head = pipes[0]
-    target = float(value) if value is not None else None
-    if head.t == target:
-        return False
-    head.t = target
-    return True
+    return sync_pipe_wall(pipes[0], float(value))
 
 
 def selected_combo(element: Element) -> tuple[str | None, str | None]:

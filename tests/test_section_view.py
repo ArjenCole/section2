@@ -177,7 +177,7 @@ def test_trench_scene_geometry(qapp, project_with_element) -> None:
     assert scene.top_width > 0
     assert 0 < scene.zoom <= 1.0
     # 图集参数文本与本体形状（外皮圆 + 内壁圆）
-    assert scene.atlas_text.startswith("t=")
+    assert scene.atlas_text.startswith("oD=")
     kinds = [shape.kind for shape in scene.shapes]
     assert kinds.count("Ellipse") == 2
 
@@ -563,7 +563,7 @@ def test_expression_dialog_member_hover_hits_own_span(qapp, tmp_path) -> None:
 def test_expression_dialog_pipe_chords_horizontal(qapp, project_with_element) -> None:
     """管径 / 壁厚标注：测量切面取管中心标高处的水平切线（向下引出）。
 
-    回归（2026-11-06）：t/D/Do 此前从管体椭圆取竖向尺寸、往右侧引出标注；
+    回归（2026-11-06）：t/iD/oD 此前从管体椭圆取竖向尺寸、往右侧引出标注；
     改为水平切线与内外圆的交点作为引出线起点，与工作面宽度 a 同款画法。
     """
     from app.core.calc.tracer import sorted_items
@@ -588,7 +588,7 @@ def test_expression_dialog_pipe_chords_horizontal(qapp, project_with_element) ->
     cy = (outer.y + outer.h / 2.0 + scene.shift) / 1000.0
     cx = (outer.x + outer.w / 2.0) / 1000.0
 
-    d_line = dialog._scene_line_for("D")
+    d_line = dialog._scene_line_for("iD")
     assert d_line is not None
     (x1, y1), (x2, y2) = d_line
     assert y1 == pytest.approx(cy)
@@ -596,13 +596,13 @@ def test_expression_dialog_pipe_chords_horizontal(qapp, project_with_element) ->
     assert x2 - x1 == pytest.approx(inner.w / 1000.0)  # 弦长 = 内径
     assert (x1 + x2) / 2.0 == pytest.approx(cx)
 
-    do_line = dialog._scene_line_for("Do")
+    do_line = dialog._scene_line_for("oD")
     assert do_line is not None
     assert do_line[1][0] - do_line[0][0] == pytest.approx(outer.w / 1000.0)
 
     t_line = dialog._scene_line_for("t")
     assert t_line is not None
-    # 管右侧壁厚：内圆交点 → 外圆交点，弦长 = (Do - D) / 2
+    # 管右侧壁厚：内圆交点 → 外圆交点，弦长 = (oD - iD) / 2
     assert t_line[1][0] - t_line[0][0] == pytest.approx(
         (outer.w - inner.w) / 2000.0
     )
@@ -610,7 +610,7 @@ def test_expression_dialog_pipe_chords_horizontal(qapp, project_with_element) ->
 
 
 def test_expression_dialog_group_member_chord_and_placement(qapp, tmp_path) -> None:
-    """合槽成员：t/D/Do 按成员取自己的管体弦线；竖向标注贴成员布置。
+    """合槽成员：t/iD/oD 按成员取自己的管体弦线；竖向标注贴成员布置。
 
     最左构件的竖向标注放到构件左侧（引出线自断面左缘起画，不横穿构件断面），
     中间构件放到就近虚拟分割线外侧，最右构件放到构件右侧（与最左镜像）。
@@ -653,10 +653,10 @@ def test_expression_dialog_group_member_chord_and_placement(qapp, tmp_path) -> N
     zoom = scene.zoom
     center_x = canvas.view_origin()[0]
 
-    # 悬停基本参数页的 D 行：弦心 = 本成员管中心（不再因合槽场景返回 None）
+    # 悬停基本参数页的 iD 行：弦心 = 本成员管中心（不再因合槽场景返回 None）
     table = dialog._inter_tables[0]
     row = next(
-        index for index in range(table.rowCount()) if table.item(index, 0).text() == "D"
+        index for index in range(table.rowCount()) if table.item(index, 0).text() == "iD"
     )
     dialog._on_inter_entered(table, row, 0)
     dimension = canvas._dimension

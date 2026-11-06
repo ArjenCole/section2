@@ -247,12 +247,12 @@ def test_distance_validation_only_radius_sum(project) -> None:
     assert limits is not None
     r_sum, neighbor = limits
     assert r_sum == pytest.approx(radius_sum, abs=1e-6)
-    assert neighbor == "构件2 Ⅱ级混凝土管 Dn600"
+    assert neighbor == "构件2 Ⅱ级混凝土管 DN600"
 
     assert unit_vm.distance_validation_error(e1, "right", "") is None
     error = unit_vm.distance_validation_error(e1, "right", str(r_sum - 1))
     assert error is not None and "半径之和" in error
-    assert "构件2 Ⅱ级混凝土管 Dn600" in error
+    assert "构件2 Ⅱ级混凝土管 DN600" in error
     # 只校验半径和：略大于半径和即通过（不再要求容纳对侧工作面 / 放坡）
     assert unit_vm.distance_validation_error(e1, "right", str(r_sum + 1)) is None
     # 非可填侧（等深时右构件的左侧）拒绝
@@ -264,7 +264,7 @@ def test_distance_validation_only_radius_sum(project) -> None:
     # 没有构件名称时，括号里只显示规格
     unit_vm.update_element(e2, name="")
     _r_sum, label = group_distance_limits(group, e1, "right")
-    assert label == "Ⅱ级混凝土管 Dn600"
+    assert label == "Ⅱ级混凝土管 DN600"
 
 
 def test_distance_below_radius_sum_blocks_group_calc(project) -> None:

@@ -100,19 +100,23 @@ def test_reopen_keeps_everything(tmp_path: Path) -> None:
     pipes = unit_vm.pipe_rows(element.id)
     assert [(pipe.mat, pipe.dn, pipe.content) for pipe in pipes] == [("HDPE", 600, "1")]
     params = unit_vm.param_rows(element.id)
-    # 直埋构件带四行图集参数（管道壁厚在最前）；有管材后参数值由候选自动匹配
+    # 直埋构件带外径 / 内径 + 四行图集参数；有管材后参数值由候选自动匹配
     # 写入（HDPE 图集表没有 a / C1 列 → 两行为空 = 引擎回退自动），重开后保持一致
     assert [(param.key, param.unit) for param in params] == [
+        ("管道外径", "mm"),
+        ("管道内径", "mm"),
         ("管道壁厚", "mm"),
         ("工作面加宽", "mm"),
         ("垫层厚", "mm"),
         ("基础厚", "mm"),
         ("含钢量", ""),
     ]
-    assert params[0].value == "10"  # HDPE Dn600 120° 图集壁厚
-    assert params[1].value == "" and params[2].value == ""
-    assert params[3].value == "155"
-    assert params[4].value == "35"
+    assert params[0].value == "620"  # HDPE DN600：iD 600 + 2×10
+    assert params[1].value == "600"
+    assert params[2].value == "10"  # HDPE DN600 120° 图集壁厚
+    assert params[3].value == "" and params[4].value == ""
+    assert params[5].value == "155"
+    assert params[6].value == "35"
 
 
 def test_commit_is_autosave(tmp_path: Path) -> None:

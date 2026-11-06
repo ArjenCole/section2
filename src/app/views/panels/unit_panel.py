@@ -129,21 +129,21 @@ _EXPR_DETAIL_ROLE = Qt.ItemDataRole.UserRole + 13
 _QUANTITY_WIDTHS = [77, 66, 193, 48, 135, 434]
 
 _PIPE_ROLE = Qt.ItemDataRole.UserRole + 1
-#: 管材表 6 列：管材（材质文字）/ 管径 / 壁厚 / 含量 / 类别 / 行尾「-」删行按钮。
-#: 直埋管道的壁厚只读——由构件参数行「管道壁厚」自动带出（候选值驱动）；
-#: 其他类别壁厚空 = 自动按图集（灰字显示图集值），可手填。"类别"是计算唯一
-#: 依据（面宽表行、图集分流、断面图砼判断都读它），默认由构件库快照写入；
-#: "管材"是材质描述文字（规格与设备材料表用），不参与计算。
+#: 管材表 5 列：管材（材质文字）/ 公称直径 DN / 含量 / 类别 / 行尾「-」删行按钮。
+#: 壁厚不再在管材行列示：外径 / 内径 / 壁厚统一在「构件参数」页编辑（oD/iD/t）。
+#: "类别"是计算唯一依据（面宽表行、图集分流、断面图砼判断都读它），默认由
+#: 构件库快照写入；"管材"是材质描述文字（规格与设备材料表用），不参与计算。
 #: 删行按钮列只在包封 / 箱涵 / 管廊显示（直埋 / 非开挖恒一条管材、构筑物
 #: 不带管材，增删入口整列隐藏，见 _pipe_panel_editable）。
-_PIPE_HEADERS = ["管材", "管径mm", "壁厚mm", "含量", "类别", ""]
+_PIPE_HEADERS = ["管材", "DN", "含量", "类别", ""]
 _PIPE_COL_MAT = 0
 _PIPE_COL_DN = 1
-_PIPE_COL_T = 2
-_PIPE_COL_CONTENT = 3
-_PIPE_COL_CAT = 4
-_PIPE_COL_DEL = 5
+_PIPE_COL_CONTENT = 2
+_PIPE_COL_CAT = 3
+_PIPE_COL_DEL = 4
 _PARAM_ROLE = Qt.ItemDataRole.UserRole + 1
+#: 合成直径行（管道外径 / 内径）的值格携带 (pipe_id, "od" / "inner_d")
+_PIPE_DIAMETER_ROLE = Qt.ItemDataRole.UserRole + 5
 #: 候选参数格携带 (候选行 id, 字段名 a/c1/c2)
 _CANDIDATE_ROLE = Qt.ItemDataRole.UserRole + 2
 #: 该组合还没有候选行（图集没这组数据）时空格携带 (构件 id, 列键, 字段名)；
@@ -562,10 +562,8 @@ class UnitPanel(QWidget):
         # + 每行行尾「-」，见 RowButtonColumn），类别列固定宽
         self._pipe_table.setColumnWidth(_PIPE_COL_MAT, 120)
         self._pipe_table.setColumnWidth(
-            _PIPE_COL_DN, header_fit_width(self._pipe_table, _PIPE_HEADERS[_PIPE_COL_DN])
-        )
-        self._pipe_table.setColumnWidth(
-            _PIPE_COL_T, header_fit_width(self._pipe_table, _PIPE_HEADERS[_PIPE_COL_T])
+            _PIPE_COL_DN,
+            max(header_fit_width(self._pipe_table, _PIPE_HEADERS[_PIPE_COL_DN]), 52),
         )
         self._pipe_table.setColumnWidth(_PIPE_COL_CONTENT, 66)
         self._pipe_table.setColumnWidth(_PIPE_COL_CAT, 100)
@@ -2477,7 +2475,6 @@ class UnitPanel(QWidget):
         from app.viewmodels.unit_vm import (
             _element,
             auto_atlas_params,
-            auto_pipe_thicknesses,
             selected_candidate_combo,
         )
 
@@ -2486,55 +2483,22 @@ class UnitPanel(QWidget):
             element = _element(element_id)
             # 管材增删入口随类别显隐（直埋/非开挖一条、构筑物无管材时不显示）
             pipe_editable = self._update_pipe_buttons(element)
-            # 管材表：管道壁厚列空 = 自动按图集（灰字显示图集值）
+            # 管材表：只显示 DN；外径 / 内径 / 壁厚在构件参数页（合成 oD/iD 行）
             self._pipe_buttons.clear_row_buttons()  # 旧的行尾「-」按钮显式销毁
             self._pipe_table.clearSpans()
             self._pipe_table.setRowCount(len(pipes))
-            auto_ts = auto_pipe_thicknesses(element) if (element is not None and pipes) else {}
             for index, pipe in enumerate(pipes):
                 mat_item = QTableWidgetItem(pipe.mat)
                 mat_item.setData(_PIPE_ROLE, pipe.id)
                 mat_item.setToolTip("管材（材质文字）：只用于规格与设备材料表，不参与计算。")
                 self._pipe_table.setItem(index, _PIPE_COL_MAT, mat_item)
-                # 管径/壁厚/含量三列内容居中（列头不变）
+                # 管材表只显示公称直径 DN；外径 / 内径 / 壁厚在「构件参数」页编辑
                 dn_item = QTableWidgetItem(str(pipe.dn))
                 dn_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self._pipe_table.setItem(index, _PIPE_COL_DN, dn_item)
-                auto_t = auto_ts.get(pipe.id)
-                # 直埋管道的壁厚由构件参数行「管道壁厚」自动带出（候选值驱动），
-                # 管材行不再手填；多管构件只有首根管跟参数行走，其余仍可手填
-                from_param = (
-                    element is not None
-                    and element.category == CATEGORY_BURIED
-                    and index == 0
+                dn_item.setToolTip(
+                    "公称直径 DN：名义规格，只用于显示与图集查找，不参与几何计算。"
                 )
-                if from_param:
-                    param_value = next(
-                        (row.value for row in params if row.key == PARAM_T_NAME), ""
-                    ).strip()
-                    text = param_value or ("" if not auto_t else format_number(auto_t))
-                    t_item = QTableWidgetItem(text)
-                    t_item.setFlags(t_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    if param_value:
-                        t_item.setToolTip(
-                            "壁厚由构件参数「管道壁厚」自动带出（改候选值即可）。"
-                        )
-                    else:
-                        t_item.setForeground(QBrush(_secondary_color()))
-                        t_item.setToolTip("壁厚：暂无匹配的候选值，按图集自动。")
-                elif pipe.t is None:
-                    t_item = QTableWidgetItem("" if auto_t is None else format_number(auto_t))
-                    t_item.setForeground(QBrush(_secondary_color()))
-                    t_item.setToolTip(
-                        "管道壁厚：空 = 自动按图集。"
-                        if auto_t is None
-                        else f"管道壁厚：空 = 自动按图集（图集值 {format_number(auto_t)}mm）。"
-                    )
-                else:
-                    t_item = QTableWidgetItem(format_number(pipe.t))
-                    t_item.setToolTip(f"管道壁厚（手填覆盖）：{format_number(pipe.t)}mm。")
-                t_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self._pipe_table.setItem(index, _PIPE_COL_T, t_item)
+                self._pipe_table.setItem(index, _PIPE_COL_DN, dn_item)
                 content_item = QTableWidgetItem(pipe.content)
                 content_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._pipe_table.setItem(index, _PIPE_COL_CONTENT, content_item)
@@ -2597,7 +2561,16 @@ class UnitPanel(QWidget):
                     unit_item = QTableWidgetItem(param.unit)
                 unit_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 value_item = QTableWidgetItem(param.value)
-                if (
+                if param.pipe_field:
+                    # 合成直径行：参数值可编辑，直接写首根管的 oD / iD
+                    value_item.setData(
+                        _PIPE_DIAMETER_ROLE, (param.pipe_id, param.pipe_field)
+                    )
+                    value_item.setToolTip(
+                        "管道外径 oD / 内径 iD（mm）：改任意一个，另一个按当前壁厚联动；"
+                        "壁厚在下一行「管道壁厚」修改，默认联动外径。"
+                    )
+                elif (
                     param.lock_name
                     and not param.value.strip()
                     and param.unit == "mm"
@@ -2609,8 +2582,12 @@ class UnitPanel(QWidget):
                     value_item.setToolTip(
                         f"参数值：空 = 自动按图集（图集值 {format_number(auto_value)}）。"
                     )
-                value_locked = bool(show_candidates) and param.key in _CANDIDATE_FIELD_BY_PARAM
-                if param.lock_name:
+                value_locked = (
+                    bool(show_candidates)
+                    and param.key in _CANDIDATE_FIELD_BY_PARAM
+                    and not param.pipe_field
+                )
+                if param.lock_name or param.pipe_field:
                     key_item.setFlags(key_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     unit_item.setFlags(unit_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 if value_locked:
@@ -2638,7 +2615,15 @@ class UnitPanel(QWidget):
                     candidate_field = _CANDIDATE_FIELD_BY_PARAM.get(param.key)
                     for offset, column in enumerate(self._candidate_columns):
                         entry = param.candidates.get(column.key)
-                        if candidate_field is None:
+                        if param.pipe_field:
+                            # 外径 / 内径不是按基础角度变化的量：候选列一律 “-” 且锁定
+                            cell = QTableWidgetItem("-")
+                            cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                            cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                            cell.setToolTip(
+                                "管道外径 / 内径与基础角度无关，不参与候选参数。"
+                            )
+                        elif candidate_field is None:
                             cell = QTableWidgetItem("")
                             cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
                         elif entry is None:
@@ -2931,35 +2916,16 @@ class UnitPanel(QWidget):
         field = {
             _PIPE_COL_MAT: "mat",
             _PIPE_COL_DN: "dn",
-            _PIPE_COL_T: "t",
             _PIPE_COL_CONTENT: "content",
             _PIPE_COL_CAT: "cat",
         }.get(item.column())
         if field is None:
             return
-        if field == "t":
-            text = item.text().strip()
-            if not text:  # 清空 = 回到自动按图集
-                self._vm.set_pipe_field(pipe_id, field, "")
-                return
-            try:
-                value = float(text)
-            except ValueError:
-                bus().status_message.emit("管道壁厚需为数字（mm），留空自动按图集。", 5000)
-                value_item = QTableWidgetItem("")
-                self._loading = True
-                try:
-                    self._pipe_table.setItem(item.row(), item.column(), value_item)
-                finally:
-                    self._loading = False
-                return
-            self._vm.set_pipe_field(pipe_id, field, value)
-            return
         if field == "dn":
             try:
                 value = int(float(item.text().strip() or 0))
             except ValueError:
-                bus().status_message.emit("管径需为数字（mm）。", 5000)
+                bus().status_message.emit("公称直径 DN 需为数字（mm）。", 5000)
                 return
             self._vm.set_pipe_field(pipe_id, field, value)
             return
@@ -2968,9 +2934,47 @@ class UnitPanel(QWidget):
     def _on_param_item_changed(self, item: QTableWidgetItem) -> None:
         if self._loading:
             return
-        param_id = self._param_id_at(item.row())
-        if param_id is None:
+        diameter = item.data(_PIPE_DIAMETER_ROLE)
+        if diameter is not None and item.column() == 2:
+            pipe_id, field = diameter
+            text = item.text().strip()
+            try:
+                value = float(text)
+            except ValueError:
+                bus().status_message.emit("管道外径 / 内径需为数字（mm）。", 5000)
+                from app.viewmodels.unit_vm import _pipe
+
+                pipe = _pipe(pipe_id)
+                current = ""
+                if pipe is not None:
+                    current = format_number(pipe.oD if field == "od" else pipe.iD)
+                self._loading = True
+                try:
+                    self._param_table.setItem(
+                        item.row(), item.column(), QTableWidgetItem(current)
+                    )
+                finally:
+                    self._loading = False
+                return
+            if value <= 0:
+                bus().status_message.emit("管道外径 / 内径需大于 0（mm）。", 5000)
+                from app.viewmodels.unit_vm import _pipe
+
+                pipe = _pipe(pipe_id)
+                current = format_number(pipe.oD if field == "od" else pipe.iD) if pipe else ""
+                self._loading = True
+                try:
+                    self._param_table.setItem(
+                        item.row(), item.column(), QTableWidgetItem(current)
+                    )
+                finally:
+                    self._loading = False
+                return
+            self._vm.set_pipe_diameter(pipe_id, field, value)
             return
+        param_id = self._param_id_at(item.row())
+        if param_id is None or param_id == 0:
+            return  # 0 = 外径 / 内径合成行，已在上面处理
         field = {0: "key", 1: "unit", 2: "value"}.get(item.column())
         if field is not None:
             self._vm.set_param_field(param_id, field, item.text())

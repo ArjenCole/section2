@@ -5,12 +5,12 @@
 构建与绘制），其下是主算式；**鼠标悬停分项表的某一行，断面图上用半透明
 色块高亮该分项计算的断面范围**（梯形 / 矩形 / 弓形 / 半圆等，几何来自引擎
 随分项记录的 ``Term.geometry``，自槽底向上的深度区间 + 左右缘或弧线点列，m）。
-中间符号表按分项行分页：第一页“基本参数”（t/a/C1/C2/D/Do/b/b1/B），后面
+中间符号表按分项行分页：第一页“基本参数”（t/a/C1/C2/iD/oD/b/b1/B），后面
 每个面积行（S1、S2…）一页，只列该行用到的中间符号；梯形 / 三角形面积行在
 上方算式列统一显示成 ``(u+v)*h/2`` / ``v*h/2``。底部保留完整数值算式。
 
-悬停中间符号行时的尺寸标注画法：横向测量（b/b1/a、管径 D/Do、壁厚 t——
-t/D/Do 的测量切面取管中心标高处的水平切线，与内外圆的交点为引出线起点）
+悬停中间符号行时的尺寸标注画法：横向测量（b/b1/a、管径 iD/oD、壁厚 t——
+t/iD/oD 的测量切面取管中心标高处的水平切线，与内外圆的交点为引出线起点）
 统一向下引出，尺寸线放断面图下方；竖向测量（C1/C2、层高 Hx）横向引出，
 非合槽构件统一放断面图右侧（绘图区按 ``_DIM_RIGHT_RESERVE`` 预留右侧
 空间，不因空间不足翻到左侧），合槽成员贴成员布置——最左构件放构件左侧
@@ -464,7 +464,7 @@ class ExpressionDetailDialog(FramelessDialog):
     def _fill_single(self, view) -> None:
         """单条工程量：主算式 + 分项（合并形态为断面面积）+ 中间符号页。
 
-        中间符号表按面积行分页：第一页是基本参数（t/a/C1/C2/D/Do），后面
+        中间符号表按面积行分页：第一页是基本参数（t/a/C1/C2/iD/oD），后面
         每个分项（S1、S2…）一页，只列该面积行用到的中间符号。
         """
         self._formula_label.setText(
@@ -491,7 +491,7 @@ class ExpressionDetailDialog(FramelessDialog):
     def _fill_merged(self) -> None:
         """多选 / 合槽合并行：分项与中间量逐成员堆叠，说明带 [构件N] 前缀。
 
-        基本参数页汇总各成员的 t/a/C1/C2/D/Do；每个成员的分项各占一页。
+        基本参数页汇总各成员的 t/a/C1/C2/iD/oD；每个成员的分项各占一页。
         """
         self._formula_label.setText(
             f"主算式：{self._quantity.display_expression} ＝ {format_number(self._quantity.value)}"
@@ -814,9 +814,9 @@ class ExpressionDetailDialog(FramelessDialog):
             if symbol == "t":
                 # 管右侧的壁厚：内圆交点 → 外圆交点
                 return [(cx + r_inner, cy), (cx + r_outer, cy)]
-            if symbol == "D":
+            if symbol == "iD":
                 return [(cx - r_inner, cy), (cx + r_inner, cy)]
-            if symbol == "Do":
+            if symbol == "oD":
                 return [(cx - r_outer, cy), (cx + r_outer, cy)]
         if group:
             return None
@@ -875,7 +875,7 @@ class ExpressionDetailDialog(FramelessDialog):
             return
         geometry, member_id = item.data(Qt.ItemDataRole.UserRole) or (None, None)
         if geometry is None:
-            # 兜底线（t/D/Do 切线、B/H 分段线）已是场景最终坐标（合槽已按
+            # 兜底线（t/iD/oD 切线、B/H 分段线）已是场景最终坐标（合槽已按
             # 成员定位），不再走按成员平移的 _highlight_polygon
             line = self._scene_line_for(item.text(), member_id)
         else:

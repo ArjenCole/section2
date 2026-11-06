@@ -543,29 +543,35 @@ def test_pipe_thickness_is_first_param_and_drives_pipe(project) -> None:
     assert element is not None
 
     rows = unit_vm.param_rows(element.id)
-    assert [(row.key, row.unit) for row in rows][:4] == [
+    assert [(row.key, row.unit) for row in rows][:6] == [
+        ("管道外径", "mm"),
+        ("管道内径", "mm"),
         ("管道壁厚", "mm"),
         ("工作面加宽", "mm"),
         ("垫层厚", "mm"),
         ("基础厚", "mm"),
     ]
-    assert rows[0].value == "65"  # 图集页21/22 Ⅱ级 Dn600
-    assert rows[0].lock_name is True
-    assert len(rows[0].candidates) == 7  # 8 组里 150° 图集没有
+    assert rows[2].value == "65"  # 图集页21/22 Ⅱ级 Dn600
+    assert rows[2].lock_name is True
+    assert len(rows[2].candidates) == 7  # 8 组里 150° 图集没有
     assert unit_vm._element(element.id).pipes[0].t == 65.0
 
-    # 候选格可改 → 参数值 + 管材行一起变
-    candidate_id = rows[0].candidates["con120"][0]
+    # 候选格可改 → 参数值 + 管材行一起变；改壁厚默认联动外径
+    candidate_id = rows[2].candidates["con120"][0]
     assert unit_vm.update_atlas_candidate(candidate_id, "t", "70")
-    assert unit_vm.param_rows(element.id)[0].value == "70"
-    assert unit_vm._element(element.id).pipes[0].t == 70.0
+    assert unit_vm.param_rows(element.id)[2].value == "70"
+    pipe = unit_vm._element(element.id).pipes[0]
+    assert pipe.t == 70.0
+    assert pipe.od == 740.0  # iD 600 + 2×70
 
     # 换角度 → 参数值跟着候选组走（con180 仍是图集值 65）
     pf = _main_pf(element)
     assert pf is not None
     apply_foundation(pf.id, fields={"found_angle": 180})
-    assert unit_vm.param_rows(element.id)[0].value == "65"
-    assert unit_vm._element(element.id).pipes[0].t == 65.0
+    assert unit_vm.param_rows(element.id)[2].value == "65"
+    pipe = unit_vm._element(element.id).pipes[0]
+    assert pipe.t == 65.0
+    assert pipe.od == 730.0
 
 
 def test_editing_pipe_category_is_normalized(project) -> None:

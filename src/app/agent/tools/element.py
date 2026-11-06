@@ -18,7 +18,7 @@ def _pipes(arguments: dict):
     result = []
     for pipe in pipes or []:
         if not isinstance(pipe, dict):
-            raise ToolError("pipes 每一项必须是对象 {mat, cat, dn, content, t}。")
+            raise ToolError("pipes 每一项必须是对象 {mat, cat, dn, content, t, od, iD}。")
         mat = str(pipe.get("mat") or "Ⅱ级混凝土管")
         cat = str(pipe.get("cat") or "")
         try:
@@ -33,7 +33,19 @@ def _pipes(arguments: dict):
                 t = float(t_value)
             except (TypeError, ValueError) as error:
                 raise ToolError("管道壁厚 t 需为数字（mm），留空=自动按图集。") from error
-        result.append((mat, cat, dn, content, t))
+        od = pipe.get("od")
+        inner_d = pipe.get("iD", pipe.get("inner_d"))
+        result.append(
+            (
+                mat,
+                cat,
+                dn,
+                content,
+                t,
+                float(od) if od not in (None, "") else None,
+                float(inner_d) if inner_d not in (None, "") else None,
+            )
+        )
     return result or None
 
 

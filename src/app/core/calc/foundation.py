@@ -182,8 +182,8 @@ def _bow_dim(diameter: Dim, angle: float) -> Dim:
 
 
 def _outside_dn(info, ad: AtlasDims) -> Dim:
-    """管道外径（mm 记法）：图集有 oD 用 oD（表值），否则 内径+2×壁厚（旧版 mcE1.cal_found）。"""
-    return tag_dim(ad.od, "管道外径（mm）", "图集外径")
+    """管道外径 oD（mm 记法）：构件库 / 详情面板的 oD，旧数据按 iD+2t 兜底。"""
+    return tag_dim(ad.od, "管道外径（mm）", "管道外径 oD")
 
 
 def cal_found(info, pf, pp, ad: AtlasDims, out: QDict, bands=None) -> None:
@@ -429,7 +429,7 @@ def cal_pipes(info, out: QDict, cat: str = "管材") -> None:
         if content.v == 0:
             continue
         out.add(
-            f"{cat}|{pipe.mat} Dn{fmt(pipe.dn)}|m",
+            f"{cat}|{pipe.mat} DN{fmt(pipe.dn)}|m",
             content.v,
             content.e,
             tags=content.tags,
@@ -454,13 +454,26 @@ def encased_pipe_deduction(info, out: QDict, z_bottom: float | None = None) -> N
             continue
         query = build_atlas_query(info, info.pf, info.pw)
         query.category = 1  # 直埋管道图集
-        query.pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn, t=pipe.t, cat=pipe.cat)]
+        query.pipes = [
+            PipeSpec(
+                mat=pipe.mat,
+                dn=pipe.dn,
+                t=pipe.t,
+                cat=pipe.cat,
+                od=pipe.od,
+                inner_d=pipe.inner_d,
+            )
+        ]
         at = resolve_atlas(query)
-        dn_dim = mm(pipe.dn)
+        od_value = pipe.od
+        if od_value is None:
+            t_value = pipe.t if pipe.t is not None else at.t
+            od_value = float(pipe.dn) + 2.0 * float(t_value or 0.0)
+        od_dim = mm(od_value)
         if len(info.pipes) == 1:
-            # 单管：内径与构件参数 D 同源；多管直径可能不同，保留各自数值
-            dn_dim = dn_dim.as_param("D", "管道内径", "构件管材·管径")
-        radius = dn_dim / 2 + mm(at.t)
+            # 单管：外径挂 oD 符号；多管直径可能不同，保留各自数值
+            od_dim = od_dim.as_param("oD", "管道外径", "构件管材·外径")
+        radius = od_dim / 2
         geometry = (
             _rect_geometry(z_bottom, z_bottom + radius.v * 2.0, radius.v)
             if z_bottom is not None
@@ -477,7 +490,7 @@ def encased_pipe_deduction(info, out: QDict, z_bottom: float | None = None) -> N
             "包封|混凝土|m3",
             area.v,
             area,
-            f"扣 Dn{fmt(pipe.dn)} 管位",
+            f"扣 DN{fmt(pipe.dn)} 管位",
             tags=area.tags,
             geometry=geometry,
         )

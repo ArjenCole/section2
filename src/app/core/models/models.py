@@ -479,12 +479,15 @@ class Pipe(Base):
     cat: Mapped[str] = mapped_column(String(50), default="")
     #: 材质文字（如“球墨铸铁管 K9”）：只用于构件规格与设备材料表，不参与计算
     mat: Mapped[str] = mapped_column(String(100), default="Ⅱ级混凝土管")
-    #: 管径 mm（旧版为 double，图集查表按 mm 整数）
+    #: 公称直径 DN mm（旧版为 double，图集查表按 mm 整数；只作名义规格）
     dn: Mapped[int] = mapped_column(Integer, default=600)
     #: 含量，字符串原文（可写算式）
     content: Mapped[str] = mapped_column(String(100), default="1")
-    #: 管道壁厚 mm（用户覆盖值；空 = 按图集自动，并参与计算自动回退，
-    #: 见 resolve_atlas 的覆盖处理。v5 起在详情面板“管道壁厚”列直接编辑）
+    #: 管道外径 oD mm（构件库从图集一次性提取；空 = 旧工程，按 DN+t 兜底）
+    od: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: 管道内径 iD mm（构件库从图集一次性提取；空 = 旧工程，按 DN 兜底）
+    inner_d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: 管道壁厚 t mm（有效壁厚；空 = 按 oD/iD 反算，见 core.pipe_dimensions）
     t: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     element: Mapped[Element] = relationship(back_populates="pipes")
@@ -495,6 +498,28 @@ class Pipe(Base):
         from app.core.pipe_category import normalize_category
 
         return normalize_category(self.cat, mat=self.mat)
+
+    @property
+    def iD(self) -> float:
+        """内径 iD mm；旧数据按 DN 兜底。"""
+        from app.core.pipe_dimensions import normalize
+
+        _od, inner, _t = normalize(self.dn, self.od, self.inner_d, self.t)
+        return inner
+
+    @property
+    def oD(self) -> float:
+        """外径 oD mm；旧数据按 DN+2t 兜底。"""
+        from app.core.pipe_dimensions import normalize
+
+        outer, _inner, _t = normalize(self.dn, self.od, self.inner_d, self.t)
+        return outer
+
+    def diameters(self) -> tuple[float, float, float]:
+        """返回 ``(oD, iD, t)``；旧数据按 DN/t 兜底。"""
+        from app.core.pipe_dimensions import normalize
+
+        return normalize(self.dn, self.od, self.inner_d, self.t)
 
 
 class ElementAtlasCandidate(Base):

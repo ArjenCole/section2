@@ -119,7 +119,7 @@ def test_sloped_vs_vertical_dig_and_enclosure_quantities(project) -> None:
     assert support.value == pytest.approx(per_meter * amount, rel=1e-9)
     # 算式里也能看到槽底宽的完整来源（用户公式按 m 口径代入，mm 记法的
     # 槽底宽经 to_m 派生成 (…)/1000；旧版这里断面宽会被抹掉）
-    assert "(600+60*2+120*2+500*2)/1000" in support.expression
+    assert "(600+(720-600)/2*2+120*2+500*2)/1000" in support.expression
     assert evaluate(support.expression) == pytest.approx(support.value, rel=1e-9)
 
     assert any(key.startswith("围护|") for key in result.keys())

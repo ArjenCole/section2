@@ -218,7 +218,7 @@ def test_main_window_replica_layout(qapp, project):
         node = window._tree_panel.current_node
         row = element_rows(node.id)[0]
         assert row.pe_name and row.pf_name
-        assert row.spec == "Ⅰ级混凝土管 Dn150"
+        assert row.spec == "Ⅰ级混凝土管 DN150"
     finally:
         window.close()
 
@@ -296,22 +296,19 @@ def test_category_abbreviations():
     assert _category_abbr(CATEGORY_NONE) == ""
 
 
-def test_pipe_table_headers_and_readonly_thickness(qapp, project):
-    """管材表：表头改为"管径mm / 壁厚mm"（全部构件）；直埋的壁厚格只读，引用参数行。"""
+def test_pipe_table_headers_and_dn_only(qapp, project):
+    """管材表：只显示 DN；壁厚列已取消，外径/内径在构件参数页。"""
     from PySide6.QtCore import Qt
 
-    from app.core.models.models import CATEGORY_ENCASED
     from app.services import project_io
     from app.viewmodels import unit_vm
     from app.views.panels.unit_panel import _PIPE_HEADERS, UnitPanel
 
-    assert _PIPE_HEADERS == ["管材", "管径mm", "壁厚mm", "含量", "类别", ""]
+    assert _PIPE_HEADERS == ["管材", "DN", "含量", "类别", ""]
 
     unit = project_io.units(project_io.segments()[0].id)[0]
     buried = unit_vm.create_element(unit.id, category=1, name="直埋")
     unit_vm.create_pipe(buried.id, mat="Ⅱ级混凝土管", dn=600, content="1")
-    encased = unit_vm.create_element(unit.id, category=CATEGORY_ENCASED, name="包封")
-    unit_vm.create_pipe(encased.id, mat="Ⅱ级混凝土管", dn=600, content="1")
 
     panel = UnitPanel()
     try:
@@ -322,18 +319,13 @@ def test_pipe_table_headers_and_readonly_thickness(qapp, project):
             _PIPE_HEADERS
         )
 
-        # 直埋：壁厚格只读，值来自参数行「管道壁厚」
         panel._element_table.setCurrentCell(0, 0)
         qapp.processEvents()
-        cell = table.item(0, 2)
-        assert cell.text() == "65"
-        assert not cell.flags() & Qt.ItemFlag.ItemIsEditable
-
-        # 包封：没有候选列，壁厚仍可手填
-        panel._element_table.setCurrentCell(1, 0)
-        qapp.processEvents()
-        cell = table.item(0, 2)
+        cell = table.item(0, 1)
+        assert cell.text() == "600"
         assert cell.flags() & Qt.ItemFlag.ItemIsEditable
+        # 5 列，没有壁厚列
+        assert table.columnCount() == 5
     finally:
         panel.close()
 
@@ -384,18 +376,22 @@ def test_param_table_columns_and_no_unit_placeholder(qapp, project):
             ("单位", ""),
         ]
 
-        # 排管（直埋）：四行图集参数（管道壁厚在最前），单位列居中；
-        # 有候选后参数值由候选自动匹配
+        # 排管（直埋）：外径 / 内径 / 壁厚 / 工作面加宽 / 垫层厚 / 基础厚，
+        # 单位列居中；OD/ID 参数值可编辑，其余图集参数值由候选自动匹配
         panel._element_table.setCurrentCell(1, 0)
         qapp.processEvents()
         assert [table.item(row, 0).text() for row in range(table.rowCount())] == [
+            "管道外径",
+            "管道内径",
             "管道壁厚",
             "工作面加宽",
             "垫层厚",
             "基础厚",
         ]
-        # Dn600 Ⅱ级混凝土管 120° 砼基础：t=65、a=130、C1=130、C2=182（候选自动匹配写入）
+        # DN600 Ⅱ级混凝土管 120° 砼基础：oD=730、iD=600、t=65、a=130、C1=130、C2=182
         assert [table.item(row, 2).text() for row in range(table.rowCount())] == [
+            "730",
+            "600",
             "65",
             "130",
             "130",
@@ -404,9 +400,14 @@ def test_param_table_columns_and_no_unit_placeholder(qapp, project):
         for row in range(table.rowCount()):
             assert table.item(row, 1).text() == "mm"
             assert table.item(row, 1).textAlignment() == Qt.AlignmentFlag.AlignCenter
-            # 参数名 / 单位锁定；有候选 → 参数值也锁定（改候选列才有效）
             assert not table.item(row, 0).flags() & Qt.ItemFlag.ItemIsEditable
-            assert not table.item(row, 2).flags() & Qt.ItemFlag.ItemIsEditable
+            # OD/ID 值可编辑；图集参数值有候选时锁定
+            if row < 2:
+                assert table.item(row, 2).flags() & Qt.ItemFlag.ItemIsEditable
+                assert table.item(row, 3).text() == "-"
+                assert not table.item(row, 3).flags() & Qt.ItemFlag.ItemIsEditable
+            else:
+                assert not table.item(row, 2).flags() & Qt.ItemFlag.ItemIsEditable
         # 直埋 + 有候选 → 参数值右侧追加候选参数列
         assert table.columnCount() > 3
     finally:
@@ -443,11 +444,12 @@ def test_candidate_column_highlight_follows_match(qapp, project):
         table = panel._param_table
 
         def highlighted() -> list[int]:
+            # 第 2 行 = 管道壁厚（第 0/1 行是外径 / 内径，候选列固定 "-"）
             return [
                 column
                 for column in range(3, table.columnCount())
-                if table.item(0, column) is not None
-                and table.item(0, column).data(_MATCH_BG_ROLE)
+                if table.item(2, column) is not None
+                and table.item(2, column).data(_MATCH_BG_ROLE)
             ]
 
         keys = [column.key for column in panel._candidate_columns]
@@ -456,7 +458,7 @@ def test_candidate_column_highlight_follows_match(qapp, project):
 
         selected = 3 + keys.index(key)
         assert highlighted() == [selected], "只有当前匹配的那一列被标底色"
-        for row in range(3):
+        for row in (2, 3, 4, 5):
             cell = table.item(row, selected)
             assert cell is not None
             assert cell.data(_MATCH_BG_ROLE) == _MATCH_BG_SAME
@@ -507,7 +509,7 @@ def test_blank_candidate_cell_can_be_filled_by_hand(qapp, project):
         assert "con150" in keys
 
         column = 3 + keys.index("con150")
-        cell = table.item(3, column)  # 第四行 = 基础厚（第一行是管道壁厚）
+        cell = table.item(5, column)  # 第六行 = 基础厚（前两行是外径/内径，第三行壁厚）
         assert cell is not None and cell.text() == ""
         assert cell.flags() & Qt.ItemFlag.ItemIsEditable
         assert cell.data(_CANDIDATE_NEW_ROLE) == (element.id, "con150", "c2")

@@ -42,6 +42,8 @@ from app.core.param_naming import (
     PARAM_A_NAME,
     PARAM_C1_NAME,
     PARAM_C2_NAME,
+    PARAM_ID_NAME,
+    PARAM_OD_NAME,
     PARAM_T_NAME,
     STRUCTURE_NAME_PARAM,
     STRUCTURE_UNIT_PARAM,
@@ -70,15 +72,15 @@ _ELEMENT_FIELDS = {
     "center_distance_left",
     "center_distance_right",
 }
-_PIPE_FIELDS = {"mat", "cat", "dn", "content", "t"}
+_PIPE_FIELDS = {"mat", "cat", "dn", "content", "t", "od", "inner_d"}
 _PARAM_FIELDS = {"key", "unit", "value"}
 _QUANTITY_FIELDS = {"category", "item", "unit", "value"}
 
 #: 不显示图集参数行的类别上新增 / 改名成图集参数时的提示（见 param_naming）
 _ATLAS_PARAM_LOCKED_HINT = (
-    "该类别构件不显示该图集参数行（直埋显示工作面加宽 / 垫层厚 / 基础厚；"
+    "该类别构件不显示该图集参数行（直埋显示管道壁厚 / 工作面加宽 / 垫层厚 / 基础厚；"
     "包封 / 箱涵 / 管廊的基础厚恒为 0，只显示工作面加宽 / 垫层厚；"
-    "顶管 / 牵引管只算管材，三行都不显示）。"
+    "顶管 / 牵引管只算管材，图集参数行都不显示）。"
 )
 
 
@@ -166,7 +168,10 @@ class PipeRow:
     mat: str
     dn: int
     content: str
-    #: 管道壁厚 mm 用户值；None = 自动按图集（界面灰色显示默认值）
+    #: 管道外径 / 内径 mm（构件库快照或详情面板编辑值）
+    od: float | None = None
+    inner_d: float | None = None
+    #: 有效壁厚 mm；None = 按 oD/iD 反算（界面灰色显示默认值）
     t: float | None = None
     #: 管材类别（宽度表行名，见 core.pipe_category）：计算唯一依据
     cat: str = ""
@@ -183,6 +188,9 @@ class ParamRow:
     #: 候选参数列（v9，直埋构件）：{combo_key: (候选行 id, 该参数对应的值)}；
     #: 空字典 = 该构件不显示候选列
     candidates: dict[str, tuple[int, float | None]] = field(default_factory=dict)
+    #: 合成行：直接编辑首根管的 od / inner_d（不落 element_param）
+    pipe_field: str = ""
+    pipe_id: int | None = None
 
 
 @dataclass
@@ -310,6 +318,8 @@ def pipe_rows(element_id: int) -> list[PipeRow]:
             cat=pipe.pipe_category,
             dn=pipe.dn,
             content=pipe.content,
+            od=pipe.od,
+            inner_d=pipe.inner_d,
             t=pipe.t,
         )
         for pipe in element.pipes
@@ -329,7 +339,33 @@ def param_rows(element_id: int) -> list[ParamRow]:
         PARAM_C1_NAME: "c1",
         PARAM_C2_NAME: "c2",
     }
-    rows = []
+    rows: list[ParamRow] = []
+    # 第一、二行：管道外径 oD / 内径 iD（合成行，直接读写首根管）。
+    # 这两行不落 element_param：直径是管道属性，不能和管材行各存一份。
+    if element.pipes:
+        pipe = element.pipes[0]
+        rows.append(
+            ParamRow(
+                id=0,
+                key=PARAM_OD_NAME,
+                unit="mm",
+                value=format_number(pipe.oD),
+                lock_name=True,
+                pipe_field="od",
+                pipe_id=pipe.id,
+            )
+        )
+        rows.append(
+            ParamRow(
+                id=0,
+                key=PARAM_ID_NAME,
+                unit="mm",
+                value=format_number(pipe.iD),
+                lock_name=True,
+                pipe_field="inner_d",
+                pipe_id=pipe.id,
+            )
+        )
     for param in element.params:
         if element.category == CATEGORY_STRUCTURE:
             lock_name = (param.key, param.unit) == (STRUCTURE_NAME_PARAM, "") or (
@@ -365,7 +401,13 @@ def param_rows(element_id: int) -> list[ParamRow]:
         from app.core.param_naming import ATLAS_PARAM_NAMES
 
         order = {name: index for index, (name, _unit) in enumerate(ATLAS_PARAM_NAMES)}
-        rows.sort(key=lambda row: (0, order[row.key]) if row.key in order else (1, 0))
+        rows.sort(
+            key=lambda row: (
+                (0, 0 if row.pipe_field == "od" else 1)
+                if row.pipe_field
+                else ((1, order[row.key]) if row.key in order else (2, 0))
+            )
+        )
     return rows
 
 
@@ -612,9 +654,13 @@ def auto_atlas_params(element: Element) -> dict[str, float]:
         PARAM_C1_NAME: at.c1 if at.c1 != 0 else cushion_thickness(pf),
         PARAM_C2_NAME: at.c2,
     }
-    # 管道壁厚只在图集查得到时给灰字（0 = 该组合无数据，不显示"0"）
-    if at.t:
-        values[PARAM_T_NAME] = at.t
+    # 管道壁厚只在图集查得到时给灰字（0 = 该组合无数据，不显示"0"）；
+    # 有 oD/iD 时用几何有效壁厚 (oD-iD)/2（加筋管的图集 t 不含肋高）
+    thickness = at.t
+    if at.od > 0 and at.id > 0:
+        thickness = max((at.od - at.id) / 2.0, 0.0)
+    if thickness:
+        values[PARAM_T_NAME] = thickness
     allowed = {name for name, _unit in atlas_param_rows(element.category)}
     return {name: value for name, value in values.items() if name in allowed}
 
@@ -642,12 +688,19 @@ def auto_pipe_thicknesses(element: Element) -> dict[int, float]:
         probe.pipes = [PipeSpec(mat=pipe.mat, dn=pipe.dn, cat=pipe.pipe_category)]
         if element.category == CATEGORY_ENCASED:
             probe.category = CATEGORY_BURIED  # 同引擎包封扣管位的临时直埋查询
-        thickness = resolve_atlas(probe).t
+        at = resolve_atlas(probe)
+        thickness = at.t
+        if at.od > 0 and at.id > 0:
+            # 几何有效壁厚：加筋管的图集 t 不含肋高，必须用 (oD-iD)/2
+            thickness = max((at.od - at.id) / 2.0, 0.0)
         if not thickness and pipe.pipe_category in CONCRETE_PIPE_CATEGORIES:
             # 砂基础表没有小管径行（页8~14 从 D=400/600 起）→ 退回砼基础表
             # 同角度的壁厚：壁厚是管子属性，不该因为选了砂基础就变 0
             probe.con_found = True
-            thickness = resolve_atlas(probe).t
+            at = resolve_atlas(probe)
+            thickness = at.t
+            if at.od > 0 and at.id > 0:
+                thickness = max((at.od - at.id) / 2.0, 0.0)
         result[pipe.id] = thickness
     return result
 
@@ -673,24 +726,44 @@ def _seed_atlas_defaults(element: Element) -> None:
             element.params.append(
                 ElementParam(key=name, unit="mm", value=format_number(float(value)))
             )
+    from app.core.pipe_dimensions import sync_pipe_wall
+
     for pipe_id, t in auto_pipe_thicknesses(element).items():
         target = next((row for row in element.pipes if row.id == pipe_id), None)
-        # t 为 0 = 图集没有这一行（如砂基础的小管径），不能当成真实壁厚写进管材行
-        if target is not None and target.t is None and t:
-            target.t = t
+        if target is None or target.t is not None:
+            continue
+        # t 为 0 = 图集没有这一行（如砂基础的小管径 / 顶管无该规格）：
+        # 不写 0 壁厚，但仍按 iD=DN、oD=iD+2t（t=0）把直径补齐。
+        if t:
+            sync_pipe_wall(target, t)
+        else:
+            from app.core.pipe_dimensions import normalize
+
+            od, inner, _t = normalize(target.dn, t=0.0)
+            target.od, target.inner_d = od, inner
 
 
-def _pipe_fields(data) -> tuple[str, str, int, str, float | None]:
-    """管道输入归一化 → (材质, 管材类别, 管径, 含量, 壁厚)。
+def _pipe_fields(data) -> tuple[str, str, int, str, float | None, float | None, float | None]:
+    """管道输入归一化 → (材质, 管材类别, DN, 含量, t, oD, iD)。
 
-    接受三种写法，兼容旧调用与 AI 工具：
+    接受以下写法，兼容旧调用与 AI 工具：
+    ``(mat, cat, dn, content, t, od, inner_d)`` /
+    ``(mat, cat, dn, content, od, inner_d)`` /
     ``(mat, cat, dn, content, t)`` / ``(mat, dn, content, t)`` / ``(mat, dn, content)``；
     没有类别时按材质折算（``core.pipe_category``），没有壁厚记 None（= 按图集）。
+    没有 oD/iD 时由 :func:`app.core.pipe_dimensions.normalize` 按 DN/t 兜底。
     """
     from app.core.pipe_category import normalize_category
+    from app.core.pipe_dimensions import as_float, normalize
 
-    if len(data) >= 5:
-        mat, cat, dn, content, t = data[0], data[1], data[2], data[3], data[4]
+    od = inner_d = None
+    if len(data) >= 7:
+        mat, cat, dn, content, t, od, inner_d = data[:7]
+    elif len(data) == 6:
+        mat, cat, dn, content, od, inner_d = data
+        t = None
+    elif len(data) == 5:
+        mat, cat, dn, content, t = data
     elif len(data) == 4:
         mat, dn, content, t = data
         cat = ""
@@ -698,12 +771,27 @@ def _pipe_fields(data) -> tuple[str, str, int, str, float | None]:
         mat, dn, content = data
         cat, t = "", None
     text = "" if t is None else str(t).strip()
+    t_value = float(text) if text else None
+    od_value = as_float(od)
+    inner_value = as_float(inner_d)
+    if od_value is None and inner_value is None and t_value is None:
+        pass  # 三者都空：交给图集匹配 / 属性兜底，不在这里写死 0
+    elif od_value is None and inner_value is None:
+        od_value, inner_value, t_value = normalize(int(dn), t=t_value)
+    elif od_value is not None and inner_value is not None:
+        od_value, inner_value, t_value = normalize(int(dn), od_value, inner_value, t_value)
+    elif inner_value is not None:
+        od_value, inner_value, t_value = normalize(int(dn), inner_d=inner_value, t=t_value)
+    else:
+        od_value, inner_value, t_value = normalize(int(dn), od=od_value, t=t_value)
     return (
         str(mat),
         normalize_category(str(cat or ""), mat=str(mat)),
         int(dn),
         str(content),
-        float(text) if text else None,
+        t_value,
+        od_value,
+        inner_value,
     )
 
 
@@ -803,9 +891,17 @@ def create_element(
             # 直埋 / 非开挖只允许一条管材：多根输入取首根（面宽 / 候选也只认首根）
             pipes = pipes[:1]
         for pipe_data in pipes:
-            mat, cat, dn, content, t = _pipe_fields(pipe_data)
+            mat, cat, dn, content, t, od, inner_d = _pipe_fields(pipe_data)
             element.pipes.append(
-                Pipe(mat=mat, cat=cat, dn=int(dn), content=str(content), t=t)
+                Pipe(
+                    mat=mat,
+                    cat=cat,
+                    dn=int(dn),
+                    content=str(content),
+                    t=t,
+                    od=od,
+                    inner_d=inner_d,
+                )
             )
     if params:
         for key, unit, value in params:
@@ -887,7 +983,15 @@ def element_snapshot(element_id: int) -> dict | None:
         "center_distance_left": element.center_distance_left or "",
         "center_distance_right": element.center_distance_right or "",
         "pipes": [
-            (pipe.mat, pipe.pipe_category, pipe.dn, pipe.content, pipe.t)
+            (
+                pipe.mat,
+                pipe.pipe_category,
+                pipe.dn,
+                pipe.content,
+                pipe.t,
+                pipe.od,
+                pipe.inner_d,
+            )
             for pipe in element.pipes
         ],
         "params": [(param.key, param.unit, param.value) for param in element.params],
@@ -1111,7 +1215,15 @@ def insert_element_template(unit_id: int, template, before_element_id: int | Non
     legacy_quantities = quantities if template.category == CATEGORY_STRUCTURE else []
     con_found, angle = _first_foundation_pair()
     pipes = [
-        [pipe.mat, pipe.cat, pipe.dn, pipe.content, pipe.thickness_at(con_found, angle)]
+        [
+            pipe.mat,
+            pipe.cat,
+            pipe.dn,
+            pipe.content,
+            pipe.thickness_at(con_found, angle),
+            pipe.od,
+            pipe.inner_d,
+        ]
         for pipe in template.pipes
     ]
     # 管道壁厚也进候选：取首根管的 8 组壁厚快照（图集里同一管径各角度壁厚相同，
@@ -1753,8 +1865,11 @@ def create_pipe(
     content: str = "1",
     t: float | None = None,
     cat: str = "",
+    od: float | None = None,
+    inner_d: float | None = None,
 ) -> Pipe | None:
     from app.core.pipe_category import normalize_category
+    from app.core.pipe_dimensions import normalize
 
     element = _element(element_id)
     if element is None:
@@ -1762,13 +1877,19 @@ def create_pipe(
     if pipe_add_error(element) is not None:
         return None
     was_empty = not element.pipes
+    if od is None and inner_d is None and t is None:
+        od_value = inner_value = t_value = None
+    else:
+        od_value, inner_value, t_value = normalize(int(dn), od, inner_d, t)
     pipe = Pipe(
         element_id=element_id,
         mat=mat,
         cat=normalize_category(cat, mat=mat),
         dn=int(dn),
         content=str(content),
-        t=t,
+        t=t_value,
+        od=od_value,
+        inner_d=inner_value,
     )
     orm.session().add(pipe)
     orm.session().flush()  # 让 element.pipes 看到新管（match 按首根管材质选组）
@@ -1778,6 +1899,13 @@ def create_pipe(
         from app.services.atlas_match import match_atlas_candidates
 
         match_atlas_candidates(element, commit=False)
+    elif element.category in (CATEGORY_ENCASED, CATEGORY_JACKING, CATEGORY_PULLING):
+        # 非直埋管也要从图集补 oD/iD/t（包封扣管位、顶管/牵引断面都要用）
+        try:
+            orm.session().expire(element, ["pipes"])
+        except Exception:
+            pass
+        _seed_atlas_defaults(element)
     project_io.commit()
     _expire_element(element)
     bus().unit_changed.emit(element.unit_id)
@@ -1786,19 +1914,47 @@ def create_pipe(
 
 def update_pipe(pipe_id: int, **fields) -> Pipe | None:
     from app.core.pipe_category import normalize_category
+    from app.core.pipe_dimensions import as_float, normalize
 
     pipe = _pipe(pipe_id)
     if pipe is None:
         return None
+
+    # 三直径联动：改 oD / iD / t 任意一个，都保持 oD = iD + 2t。
+    # 改壁厚默认联动外径（iD 不动，oD = iD + 2t）；改 oD 时 iD = oD - 2t；
+    # 改 iD 时 oD = iD + 2t。DN 只是名义规格，不参与联动。
+    touched_diameter = any(key in fields for key in ("od", "inner_d", "t"))
+    if touched_diameter:
+        od = pipe.od
+        inner = pipe.inner_d if pipe.inner_d is not None else float(pipe.dn)
+        t = pipe.t if pipe.t is not None else 0.0
+        if "t" in fields:
+            # 改壁厚默认联动外径：iD 不动，oD = iD + 2t
+            t = as_float(fields["t"])
+            t = max(t, 0.0) if t is not None else 0.0
+            od = inner + 2.0 * t
+        elif "od" in fields and "inner_d" in fields:
+            od = as_float(fields["od"])
+            inner = as_float(fields["inner_d"])
+            od, inner, t = normalize(pipe.dn, od, inner, None)
+        elif "od" in fields:
+            # 改外径：壁厚不动，iD = oD - 2t；oD 小于 2t 时把壁厚收敛到 oD/2
+            od = as_float(fields["od"])
+            if od is not None:
+                inner = max(od - 2.0 * t, 0.0)
+                t = max((od - inner) / 2.0, 0.0)
+        elif "inner_d" in fields:
+            # 改内径：壁厚不动，oD = iD + 2t
+            inner = as_float(fields["inner_d"])
+            if inner is not None:
+                od = inner + 2.0 * t
+        pipe.od, pipe.inner_d, pipe.t = od, inner, t
+
     for key, value in fields.items():
-        if key not in _PIPE_FIELDS:
+        if key not in _PIPE_FIELDS or key in ("od", "inner_d", "t"):
             continue
         if key == "dn":
             setattr(pipe, key, int(value))
-        elif key == "t":
-            # 壁厚空 = 自动按图集（None）；数字按用户值存
-            text = str(value).strip()
-            setattr(pipe, key, float(text) if text else None)
         elif key == "cat":
             # 管材类别收敛成合法枚举（非法 / 空值按材质折算）
             setattr(pipe, key, normalize_category(str(value), mat=pipe.mat))
@@ -1870,6 +2026,15 @@ def update_param(param_id: int, **fields) -> ElementParam | None:
     for name, value in fields.items():
         if name in _PARAM_FIELDS:
             setattr(param, name, str(value))
+    # 管道壁厚是几何量：改参数行时同步回首根管，并默认联动外径（iD 不动）
+    if param.key == PARAM_T_NAME and element.pipes:
+        from app.core.pipe_dimensions import sync_pipe_wall
+
+        try:
+            thickness = evaluate(param.value) if str(param.value).strip() else None
+        except EvalError:
+            thickness = None
+        sync_pipe_wall(element.pipes[0], thickness)
     project_io.commit()
     _expire_element(element)
     bus().unit_changed.emit(element.unit_id)
@@ -2157,6 +2322,12 @@ class UnitViewModel(QObject):
         create_pipe(self._element_id)
 
     def set_pipe_field(self, pipe_id: int, field: str, value) -> None:
+        update_pipe(pipe_id, **{field: value})
+
+    def set_pipe_diameter(self, pipe_id: int, field: str, value) -> None:
+        """改管道外径 / 内径：另一个按当前壁厚联动（见 update_pipe）。"""
+        if field not in ("od", "inner_d"):
+            return
         update_pipe(pipe_id, **{field: value})
 
     def remove_pipe(self, pipe_id: int) -> None:

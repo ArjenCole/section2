@@ -34,7 +34,11 @@ from app.core.models.models import (
     CATEGORY_GALLERY,
 )
 
-#: 管道壁厚（图集 t 列）：管子本身的属性，候选按 基础形式×角度 存，参数值自动选组
+#: 管道外径 oD（mm）：管子本身的几何属性，详情面板构件参数表第一行
+PARAM_OD_NAME = "管道外径"
+#: 管道内径 iD（mm）：管子本身的几何属性，详情面板构件参数表第二行
+PARAM_ID_NAME = "管道内径"
+#: 管道壁厚 t（mm）：有效壁厚 = (oD-iD)/2；改壁厚默认联动外径
 PARAM_T_NAME = "管道壁厚"
 #: 管道工作面加宽（图集工作面宽度表 a 列），单位 mm
 PARAM_A_NAME = "工作面加宽"
@@ -42,6 +46,13 @@ PARAM_A_NAME = "工作面加宽"
 PARAM_C1_NAME = "垫层厚"
 #: 管道（管）基厚（图集 C2 列：管底以上包裹管道的基础），单位 mm
 PARAM_C2_NAME = "基础厚"
+
+#: 管道三直径中由详情面板直接编辑的两行（合成行，不落 element_param）：
+#: 顺序即界面显示顺序，固定排在最前
+PIPE_DIAMETER_PARAM_NAMES: tuple[tuple[str, str], ...] = (
+    (PARAM_OD_NAME, "mm"),
+    (PARAM_ID_NAME, "mm"),
+)
 
 #: 图集约定参数 → 单位；这些参数行名称/单位固定（锁定），只允许改值。
 #: 顺序即界面显示顺序（管道壁厚在最前，直埋管道才有）
@@ -92,7 +103,7 @@ _UNIT_PATTERN = re.compile(r"([A-Za-z0-9/^%.]+)(.*)")
 
 
 def is_atlas_param(name: str, unit: str) -> bool:
-    """是否为三行图集参数（工作面加宽 / 垫层厚 / 基础厚）之一。"""
+    """是否为图集参数行（管道壁厚 / 工作面加宽 / 垫层厚 / 基础厚）之一。"""
     return any(
         name == param_name and unit == param_unit for param_name, param_unit in ATLAS_PARAM_NAMES
     )

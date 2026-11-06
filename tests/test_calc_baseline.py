@@ -59,7 +59,7 @@ def _results(unit) -> dict[int, QDict]:
 
 
 def test_closed_form_trapezoid(project) -> None:
-    """直埋混凝土管 Dn600、埋深 2.8、放坡 1:1：挖方 = 单个梯形断面 × 长度。"""
+    """直埋混凝土管 DN600、埋深 2.8、放坡 1:1：挖方 = 单个梯形断面 × 长度。"""
     unit = project
     elements = {element.name: element for element in _elements(unit)}
     dq = _results(unit)[elements["混凝土管"].id]
@@ -75,8 +75,8 @@ def test_closed_form_trapezoid(project) -> None:
     # 与沟槽深度（埋深原文 ×1000 + 壁厚+垫层厚）都把来源写全，不出现算好的数字；
     # 每延米断面式为纯 mm²，记录时统一 /10^6
     dig = dq.get("开挖|Ⅲ类土|m3")
-    assert "600+65*2+130*2+500*2" in dig.expression
-    assert "(2.5+0.3)*1000+65+130" in dig.expression
+    assert "600+(730-600)/2*2+130*2+500*2" in dig.expression
+    assert "(2.5+0.3)*1000+(730-600)/2+130" in dig.expression
     assert dig.expression.endswith("/2/10^6*100")  # 梯形 (2*B+2*H*m)*H/2，mm²→m³
 
     # 分层合计 = 挖方（无平台跳级时连续梯形闭合）
@@ -178,24 +178,25 @@ def test_presentation_symbolizes_component_parameters(project) -> None:
     view = dig.presentation()
     definitions = {item.symbol: item for item in view.definitions}
 
-    assert {"t", "a", "C1"} <= definitions.keys()
-    assert definitions["t"].expression == "65"
+    assert {"t", "a", "C1", "iD", "oD"} <= definitions.keys()
+    assert definitions["t"].expression == "(oD-iD)/2"
     assert definitions["a"].expression == "130"
     assert definitions["C1"].expression == "130"
-    assert definitions["D"].expression == "600"
+    assert definitions["iD"].expression == "600"
+    assert definitions["oD"].expression == "730"
     # a 与 C1 同为 130，但定义式各归各的：B 用 a、H 用 C1
-    assert definitions["B"].expression == "D+t*2+a*2+b1*2"
+    assert definitions["B"].expression == "iD+t*2+a*2+b1*2"
     assert definitions["H"].expression == "h0+t+C1"
     assert definitions["B"].label == "槽底宽"
     assert definitions["H"].label == "计算深度"
     # 梯形面积行统一成 (u1+v1)*h1/2
     assert view.terms[0].expression == "((u1+v1)*h1/2)/10^6*100"
     # u/v/h 只代入一个符号时直接写该符号的计算式
-    assert definitions["u1"].expression == "D+t*2+a*2+b1*2"
+    assert definitions["u1"].expression == "iD+t*2+a*2+b1*2"
     assert definitions["v1"].expression == "B+2*H*1"
     assert definitions["h1"].expression == "h0+t+C1"
     # 完整数值算式保持数字（复制 Excel / 复核用）
-    assert "65" in view.full and "t" not in view.full
+    assert "730" in view.full and "600" in view.full and "t" not in view.full
 
 
 def test_presentation_area_tabs_and_u_v_h(project) -> None:
@@ -214,7 +215,7 @@ def test_presentation_area_tabs_and_u_v_h(project) -> None:
     assert terms["S1"].parts[2].expression == "H2"
 
     basic = {item.symbol for item in view.basic_definitions}
-    assert {"t", "a", "C1", "C2", "D", "Do", "b1", "B"} <= basic
+    assert {"t", "a", "C1", "C2", "iD", "oD", "b1", "B"} <= basic
     # 基础宽度 b 只在用到它的数量（垫层 / 管道基础）里出现
     cushion = _results(unit)[elements["混凝土管"].id].get("垫层|中粗砂|m3")
     cushion_basic = {item.symbol for item in cushion.presentation().basic_definitions}
@@ -234,10 +235,10 @@ def test_presentation_area_tabs_and_u_v_h(project) -> None:
     h1 = next(item for item in view.definitions if item.symbol == "H1")
     assert h1.expression == "C1+C2"
     assert h1.label == "垫层厚度"
-    # 层高用到管道内径时必须引用 D，不能落成裸数字 600
+    # 层高用到管道内径时必须引用 iD，不能落成裸数字 600
     h3 = next(item for item in view.definitions if item.symbol == "H3")
-    assert h3.expression == "D/2+t"
-    assert "D" in h3.expression
+    assert h3.expression == "iD/2+t"
+    assert "iD" in h3.expression
     # 整个槽底宽叫 B，层底宽叫 B1/B2…；分层高 H1/H2…，总高 H
     assert next(item for item in view.definitions if item.symbol == "B").label == "槽底宽"
     assert next(item for item in view.definitions if item.symbol == "B1").label == "层底宽"
@@ -293,7 +294,7 @@ def test_terms_carry_trapezoid_geometry(project) -> None:
         pytest.approx(-2.1),
         pytest.approx(2.1),
     )
-    pipes = _results(unit)[elements["混凝土管"].id].get("管材|Ⅱ级混凝土管 Dn600|m")
+    pipes = _results(unit)[elements["混凝土管"].id].get("管材|Ⅱ级混凝土管 DN600|m")
     assert pipes.terms[0].geometry is None
 
 
@@ -324,7 +325,7 @@ def test_detail_dialog_hover_highlights_section(project, qapp) -> None:
         dialog._inter_table.item(row, 0).text()
         for row in range(dialog._inter_table.rowCount())
     ]
-    assert {"t", "a", "C1", "C2", "D", "Do", "b1", "B"} <= set(inter_symbols)
+    assert {"t", "a", "C1", "C2", "iD", "oD", "b1", "B"} <= set(inter_symbols)
     titles = [
         dialog._inter_tabs.tabText(index)
         for index in range(dialog._inter_tabs.count())
@@ -337,7 +338,7 @@ def test_detail_dialog_hover_highlights_section(project, qapp) -> None:
         s1_table.item(row, 0).text() for row in range(s1_table.rowCount())
     }
     assert not (
-        s1_symbols & {"t", "a", "C1", "C2", "D", "Do", "b", "b1", "B"}
+        s1_symbols & {"t", "a", "C1", "C2", "iD", "oD", "b", "b1", "B"}
     )
     viewport = table.viewport()
     pos = QPoint(
@@ -477,7 +478,7 @@ def test_inter_table_hover_highlights_layer_edges(project, qapp) -> None:
 
 
 def test_inter_table_hover_annotates_pipe_wall_and_diameter(project, qapp) -> None:
-    """基本参数页悬停 t / D / Do：管中心标高水平切线的交点向下引出标注。
+    """基本参数页悬停 t / iD / oD：管中心标高水平切线的交点向下引出标注。
 
     测量切面取管中心标高处的水平切线（与内外圆的交点为引出线起点），
     与工作面宽度 a 同款向下引出，不再是管顶竖向标注。
@@ -496,7 +497,7 @@ def test_inter_table_hover_annotates_pipe_wall_and_diameter(project, qapp) -> No
 
     basic = dialog._inter_tabs.widget(0)
     rows = {basic.item(row, 0).text(): row for row in range(basic.rowCount())}
-    for symbol, expected in (("t", 0.065), ("D", 0.6), ("Do", 0.73)):
+    for symbol, expected in (("t", 0.065), ("iD", 0.6), ("oD", 0.73)):
         dialog._on_inter_entered(basic, rows[symbol], 0)
         dimension = dialog._canvas._dimension
         assert dimension is not None, f"{symbol} 没有尺寸标注"
@@ -514,7 +515,7 @@ def test_user_expression_in_output(project) -> None:
     dig = _results(unit)[elements["混凝土管"].id].get("开挖|Ⅲ类土|m3")
     # 埋深 "2.5+0.3"：挖方层厚 = 埋深原文 + 垫层/板厚调整（调整量也不预运算，
     # (65+130)/1000 写全图集壁厚与垫层厚）；数量 100 纯数字照旧
-    assert "(2.5+0.3)*1000+65+130" in dig.expression
+    assert "(2.5+0.3)*1000+(730-600)/2+130" in dig.expression
     assert dig.expression.endswith("/10^6*100")
 
     # 数量写算式：*数量 按原文进每条算式（不带多余括号）
@@ -732,11 +733,11 @@ def test_trenchless_only_pipes(project) -> None:
     results = _results(unit)
     jacking_dq = results[jacking.id]
     pulling_dq = results[pulling.id]
-    assert list(jacking_dq.keys()) == ["顶管|钢筋混凝土钢承口管 顶管 Dn1000|m"]
-    assert list(pulling_dq.keys()) == ["拖拉管|PE给水管 Dn400|m"]
-    assert jacking_dq.get("顶管|钢筋混凝土钢承口管 顶管 Dn1000|m").value == pytest.approx(30.0)
+    assert list(jacking_dq.keys()) == ["顶管|钢筋混凝土钢承口管 顶管 DN1000|m"]
+    assert list(pulling_dq.keys()) == ["拖拉管|PE给水管 DN400|m"]
+    assert jacking_dq.get("顶管|钢筋混凝土钢承口管 顶管 DN1000|m").value == pytest.approx(30.0)
     # 数量写算式：*数量 按原文进算式（乘除左结合，不带多余括号）
-    assert pulling_dq.get("拖拉管|PE给水管 Dn400|m").expression == "1*20*2"
+    assert pulling_dq.get("拖拉管|PE给水管 DN400|m").expression == "1*20*2"
     # 沟槽 / 回填 / 降水 / 围护 / 基础一概没有
     for key in [*jacking_dq.keys(), *pulling_dq.keys()]:
         assert not key.startswith(("开挖|", "回填|", "垫层|", "围护|", "支撑|", "降水|", "管道基础|"))
@@ -759,12 +760,14 @@ def test_buried_atlas_param_rows_show_atlas_defaults_and_apply(project) -> None:
     element = {item.name: item for item in _elements(unit)}["混凝土管"]
     rows = [(param.key, param.unit, param.lock_name) for param in unit_vm.param_rows(element.id)]
     assert rows == [
+        ("管道外径", "mm", True),
+        ("管道内径", "mm", True),
         ("管道壁厚", "mm", True),
         ("工作面加宽", "mm", True),
         ("垫层厚", "mm", True),
         ("基础厚", "mm", True),
     ]
-    # 空值行 = 自动按图集：灰字显示的自动值就是图集行（Dn600 Ⅱ级 120°）
+    # 空值行 = 自动按图集：灰字显示的自动值就是图集行（DN600 Ⅱ级 120°）
     assert unit_vm.auto_atlas_params(element) == {
         "管道壁厚": 65.0,
         "工作面加宽": 130.0,
@@ -852,14 +855,14 @@ def test_atlas_param_rows_scope_by_category(project) -> None:
 
 
 def test_encased_keeps_editable_atlas_params_and_they_apply(project) -> None:
-    """包封埋管显示工作面加宽 / 垫层厚（默认按软件约定），改垫层厚对计算生效。"""
+    """包封埋管显示外径 / 内径 + 包封宽高 + 工作面加宽 / 垫层厚，改垫层厚生效。"""
     from app.core.models.models import CATEGORY_ENCASED, ElementParam
     from app.core.param_naming import PARAM_C1_NAME, PARAM_C2_NAME
 
     unit = project
     element = {item.name: item for item in _elements(unit)}["包封管"]
     keys = [param.key for param in unit_vm.param_rows(element.id)]
-    assert keys == ["包封宽", "包封高", "工作面加宽", "垫层厚"]
+    assert keys == ["管道外径", "管道内径", "包封宽", "包封高", "工作面加宽", "垫层厚"]
     # 基础厚不显示（恒为 0）——库里就算有旧行也看不到
     orm.session().add(ElementParam(element_id=element.id, key=PARAM_C2_NAME, unit="mm", value="500"))
     project_io.commit()
@@ -886,32 +889,54 @@ def test_category_switch_reconciles_atlas_rows(project) -> None:
     unit = project
     element = {item.name: item for item in _elements(unit)}["混凝土管"]
     assert [param.key for param in unit_vm.param_rows(element.id)] == [
+        "管道外径",
+        "管道内径",
         "管道壁厚",
         "工作面加宽",
         "垫层厚",
         "基础厚",
     ]
 
-    # 直埋 → 包封：基础厚行删掉（恒为 0）
+    # 直埋 → 包封：基础厚 / 壁厚行删掉（包封断面由自身参数决定）
     unit_vm.update_element(element.id, category=CATEGORY_ENCASED)
-    assert [param.key for param in unit_vm.param_rows(element.id)] == ["工作面加宽", "垫层厚"]
+    assert [param.key for param in unit_vm.param_rows(element.id)] == [
+        "管道外径",
+        "管道内径",
+        "工作面加宽",
+        "垫层厚",
+    ]
 
-    # 包封 → 箱涵：同样只留工作面加宽 / 垫层厚
+    # 包封 → 箱涵：同样只留工作面加宽 / 垫层厚（外加两行管道直径）
     unit_vm.update_element(element.id, category=CATEGORY_BOX_CULVERT)
-    assert [param.key for param in unit_vm.param_rows(element.id)] == ["工作面加宽", "垫层厚"]
+    assert [param.key for param in unit_vm.param_rows(element.id)] == [
+        "管道外径",
+        "管道内径",
+        "工作面加宽",
+        "垫层厚",
+    ]
 
-    # 箱涵 → 直埋：基础厚行补回，且按 v9 自动匹配写值（现场查图集补候选一次）
+    # 箱涵 → 直埋：壁厚 / 基础厚行补回，且按 v9 自动匹配写值
     unit_vm.update_element(element.id, category=1)
     rows = [(param.key, param.value) for param in unit_vm.param_rows(element.id)]
-    assert [key for key, _value in rows] == ["管道壁厚", "工作面加宽", "垫层厚", "基础厚"]
+    assert [key for key, _value in rows] == [
+        "管道外径",
+        "管道内径",
+        "管道壁厚",
+        "工作面加宽",
+        "垫层厚",
+        "基础厚",
+    ]
     refreshed = {
         param.key: param.value for param in unit_vm.param_rows(element.id)
     }
     assert refreshed["基础厚"] != ""  # 自动匹配已从候选里选了当前围护原则的组
 
-    # 直埋 → 顶管：三行全删（只算管材）
+    # 直埋 → 顶管：图集参数行全删，但外径 / 内径两行仍保留（只算管材）
     unit_vm.update_element(element.id, category=CATEGORY_JACKING)
-    assert unit_vm.param_rows(element.id) == []
+    assert [param.key for param in unit_vm.param_rows(element.id)] == [
+        "管道外径",
+        "管道内径",
+    ]
 
 
 def _input_of(element):

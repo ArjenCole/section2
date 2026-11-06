@@ -105,12 +105,12 @@ def wrap(expression: str, tight: bool = False) -> str:
 class ParamRef:
     """固定符号（构件参数 / 图集参数 / 工作面宽度）的符号定义（只用于展示层）。
 
-    ``symbol`` 是展示层用的符号（``t`` / ``a`` / ``C1`` / ``C2`` / ``D`` / ``Do`` /
+    ``symbol`` 是展示层用的符号（``t`` / ``a`` / ``C1`` / ``C2`` / ``iD`` / ``oD`` /
     ``b1``），``expr`` 是它的数值代入式（查表值或用户录入原文），``value`` 是
     代入式的值。参数在算式里仍以原始数值参与计算；展示层把对应数值替换成符号，
     并在中间量定义表里补一行 ``symbol = expr``，见 :meth:`Dim.as_param`。
 
-    ``basic`` 为 True 的符号（t/a/C1/C2/D/Do）统一放进计算表达式窗体的
+    ``basic`` 为 True 的符号（t/a/C1/C2/iD/oD）统一放进计算表达式窗体的
     “基本参数”页；``b1``（工作面宽度）等按面积行归入各自的页。
     """
 
@@ -120,7 +120,7 @@ class ParamRef:
     label: str
     source: str = ""
     basic: bool = True
-    #: 定义表里显示的代入式（默认同 ``expr``）；如 Do 显示成 ``D+t*2``
+    #: 定义表里显示的代入式（默认同 ``expr``）；如 oD 显示成 ``iD+2t``
     display: str = ""
 
 
@@ -270,13 +270,13 @@ class Dim:
         basic: bool = True,
         display: str = "",
     ) -> "Dim":
-        """把图集 / 构件参数挂上展示符号（t / a / C1 / C2 / D / Do / b1）。
+        """把图集 / 构件参数挂上展示符号（t / a / C1 / C2 / iD / oD / b1）。
 
         返回新 Dim，算式与数值不变；只是多一条带 :class:`ParamRef` 的标签，
         展示层据此在中间量定义表里补 ``symbol = expr``，并把算式里的数值替换
         成符号。``value`` 按算式记法换算（``v × 10^s``），与 ``expr`` 求值一致。
         ``basic=True`` 的符号进“基本参数”页，其余按面积行分页；``display``
-        用于定义表的代入式（如 Do 显示成 ``D+t*2``），``expr`` 仍是数值式。
+        用于定义表的代入式（如 oD 显示成 ``iD+2t``），``expr`` 仍是数值式。
         """
         ref = ParamRef(
             symbol, self.e, self.v * (10 ** self.s), label, source, basic, display
@@ -520,7 +520,7 @@ class ExpressionDefinition:
     ``expression`` 仍是一条包含原始数字的代入式；``value`` 只用于“计算结果”
     列展示，**不会代回**主算式或其它定义式。
 
-    ``basic`` 为 True 的定义（t/a/C1/C2/D/Do）统一放进计算表达式窗体的
+    ``basic`` 为 True 的定义（t/a/C1/C2/iD/oD）统一放进计算表达式窗体的
     “基本参数”页；``kind="area_part"`` 是面积行的 u/v/h 分解。
     """
 
@@ -560,7 +560,7 @@ class CompactTerm:
 class ExpressionGroup:
     """计算表达式窗体的一页：一个面积行（S1 / S2…）及其用到的中间符号。
 
-    ``definitions`` 不含基本参数（t/a/C1/C2/D/Do，统一在“基本参数”页）。
+    ``definitions`` 不含基本参数（t/a/C1/C2/iD/oD，统一在“基本参数”页）。
     """
 
     symbol: str
@@ -579,7 +579,7 @@ class ExpressionPresentation:
     definitions: tuple[ExpressionDefinition, ...]
     terms: tuple[CompactTerm, ...]
     full: str
-    #: 基本参数页（t/a/C1/C2/D/Do）
+    #: 基本参数页（t/a/C1/C2/iD/oD）
     basic_definitions: tuple[ExpressionDefinition, ...] = ()
     #: 每个面积行一页的中间符号
     groups: tuple[ExpressionGroup, ...] = ()
@@ -749,7 +749,7 @@ def _candidate_natures(
     优先判定——坡段 1*h 会把高度带进 u/v 算式）；只出现在“下底宽 / 上底宽”
     （u/v）算式里 → 宽度类；只出现在公式型分项（弓形面积等，无 u/v/h 分解）
     里的按值量级兜底：达到面积量级（mm²）视为面积类（tS），其余视为横向长度
-    归宽度类（如弓形半径 Do/2）。
+    归宽度类（如弓形半径 oD/2）。
     """
     width_keys: set[str] = set()
     height_keys: set[str] = set()
@@ -782,7 +782,7 @@ def _candidate_natures(
 def _assign_symbols(
     candidates: list[_Candidate], natures: dict[str, str] | None = None
 ) -> dict[str, str]:
-    """给候选片段分配短符号：语义量优先用 B/H/D 等，通用量按性质用 tB/tH/tS。
+    """给候选片段分配短符号：语义量优先用 B/H/iD 等，通用量按性质用 tB/tH/tS。
 
     带 ``role`` 的候选按固定规则编号：整个槽底宽 B、层底宽 B1/B2…（按加宽
     顺序）、总高 H、分层高 H1/H2…（按从下往上的层号）。通用量（无角色、
@@ -1128,7 +1128,7 @@ def _compact_terms(
 
     tag_map = _collect_tag_keys(tags)
     param_refs = _collect_param_refs(tags)
-    # 固定符号（t/a/C1/C2/D/Do/b1）自身的数值节点不提成中间量
+    # 固定符号（t/a/C1/C2/iD/oD/b1）自身的数值节点不提成中间量
     param_expr_keys: set[str] = set()
     for ref in param_refs:
         parsed_ref = _parse_expression(ref.expr)
@@ -1441,17 +1441,17 @@ def _compact_terms(
     basic_values = {
         item.symbol: item.value
         for item in definitions
-        if item.symbol in ("B", "b", "b1", "a", "C1", "C2", "D", "Do", "t")
+        if item.symbol in ("B", "b", "b1", "a", "C1", "C2", "iD", "oD", "t")
     }
     b_mm = basic_values.get("b")
     if not b_mm:
         b_mm = basic_values.get("B", 0.0) - 2 * basic_values.get("b1", 0.0)
-    do_mm = basic_values.get("Do") or (
-        basic_values.get("D", 0.0) + 2 * basic_values.get("t", 0.0)
+    do_mm = basic_values.get("oD") or (
+        basic_values.get("iD", 0.0) + 2 * basic_values.get("t", 0.0)
     )
     if b_mm <= 0 and do_mm > 0:
         # 合槽成员的挖填算式按左右两侧分别累计宽度，没有“槽底宽 B / 基础宽度 b”
-        # 符号：按基础宽度展开式 b = Do + 2×a 反推，a / C1 / C2 / b1 才能挂上
+        # 符号：按基础宽度展开式 b = oD + 2×a 反推，a / C1 / C2 / b1 才能挂上
         # 以构件本体中心定位的标注线（否则这些行悬停时断面图无标注）。
         b_mm = do_mm + 2 * basic_values.get("a", 0.0)
     b_half = b_mm / 2000.0
@@ -1518,7 +1518,7 @@ def _prune_definitions(
 ) -> list[ExpressionDefinition]:
     """只保留主算式或其它定义真正引用到的中间量（避免出现一堆没用上的 B4）。
 
-    “基本参数”（t/a/C1/C2/D/Do/b/b1/B）始终保留：它们单独占一页，即使
+    “基本参数”（t/a/C1/C2/iD/oD/b/b1/B）始终保留：它们单独占一页，即使
     u/v/h 展开后不再直接引用也要能查到。
     """
     by_symbol = {item.symbol: item for item in definitions}
@@ -1560,7 +1560,7 @@ def _group_definitions(
     """按面积行分组：基本参数一页，每个分项一页（不含基本参数）。
 
     每页包含该分项算式（含 u/v/h 分解）递归引用到的全部非基本符号；基本参数
-    （t/a/C1/C2/D/Do）只出现在“基本参数”页，不在各面积页重复。
+    （t/a/C1/C2/iD/oD）只出现在“基本参数”页，不在各面积页重复。
     """
     basic = tuple(item for item in definitions if item.basic)
     by_symbol = {item.symbol: item for item in definitions if not item.basic}

@@ -84,6 +84,8 @@ def element_detail_dict(element_id: int) -> dict:
             "mat": pipe.mat,
             "cat": pipe.pipe_category,
             "dn": pipe.dn,
+            "od": pipe.oD,
+            "iD": pipe.iD,
             "content": pipe.content,
             "t": pipe.t,
         }
@@ -407,6 +409,8 @@ def library_template_dict(category: str, unit: str, index: int, template) -> dic
                 "mat": pipe.mat,
                 "cat": pipe.cat,
                 "dn": pipe.dn,
+                "od": pipe.od,
+                "iD": pipe.inner_d,
                 "content": pipe.content,
                 "t": {str(angle): value for angle, value in pipe.thickness.items()},
             }

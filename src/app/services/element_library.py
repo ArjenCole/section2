@@ -4,7 +4,8 @@
 与工程 .stn 同为 XML，只有管材名称与旧参数。新版把它离线快照成 JSON 资产
 （见 ``scripts/build_element_inventory.py``）：每个模板带上
 
-* 每根管的 **管材类别**（``cat``）与 **图集壁厚**（90 / 120 / 180 三套）；
+* 每根管的 **管材类别**（``cat``）、**外径 oD / 内径 iD** 与 **图集壁厚**
+  （90 / 120 / 150 / 180 四套）；
 * 构件的 **工作面加宽 / 垫层厚 / 基础厚**（三套角度）。
 
 运行时不再查图集表：插入时按当前围护原则的基础角度取一套写进条目，
@@ -33,12 +34,15 @@ ATLAS_ANGLES: tuple[int, ...] = (90, 120, 150, 180)
 
 @dataclass(frozen=True)
 class PipeTemplate:
-    """模板里的一根管：管材类别 + 材质 + 管径 + 含量 + 八组图集壁厚。"""
+    """模板里的一根管：管材类别 + 材质 + DN + 含量 + oD/iD + 八组图集壁厚。"""
 
     mat: str
     cat: str
     dn: int
     content: str
+    #: 图集一次性提取的外径 oD / 内径 iD（mm）；None = 旧资产，插入时按 DN/t 兜底
+    od: float | None = None
+    inner_d: float | None = None
     #: {"con90": 19.0, "plain120": None, …} 八组（砼/非砼 × 4 角度）；
     #: 图集查不到的组合为 None
     thickness: dict[str, float | None] = field(default_factory=dict)
@@ -218,6 +222,16 @@ def _template_from_asset(element: dict) -> ElementTemplate:
             cat=normalize_category(str(pipe.get("cat") or ""), mat=str(pipe.get("mat") or "")),
             dn=int(pipe.get("dn") or 0),
             content=str(pipe.get("content") or "1"),
+            od=(
+                float(pipe["od"])
+                if pipe.get("od") is not None
+                else None
+            ),
+            inner_d=(
+                float(pipe.get("id", pipe.get("iD")))
+                if pipe.get("id", pipe.get("iD")) is not None
+                else None
+            ),
             thickness={
                 str(key): (float(value) if value is not None else None)
                 for key, value in (pipe.get("t") or {}).items()
@@ -242,7 +256,7 @@ def _template_from_asset(element: dict) -> ElementTemplate:
     label = name or _specification(category, [(p.mat, p.dn, p.content) for p in pipes], param_dict)
     if not label and pipes:
         # 个别旧版模板 Category 为空（如非开挖管道两例），按首根管材兜底显示
-        label = f"{pipes[0].mat} Dn{pipes[0].dn}"
+        label = f"{pipes[0].mat} DN{pipes[0].dn}"
     if not label:
         # 构件库个别构筑物模板 Name 为空（单篦/双篦雨水口等），按“-名称”参数兜底
         label = param_dict.get("-名称", "")
@@ -293,7 +307,7 @@ def _template(element) -> ElementTemplate:
     param_dict = dict(params)
     label = name or _specification(category, [(p.mat, p.dn, p.content) for p in pipes], param_dict)
     if not label and pipes:
-        label = f"{pipes[0].mat} Dn{pipes[0].dn}"
+        label = f"{pipes[0].mat} DN{pipes[0].dn}"
     if not label:
         label = param_dict.get("-名称", "")
     return ElementTemplate(
@@ -324,7 +338,7 @@ def _specification(
     if category == 1:
         if pipes:
             mat, dn, _ = pipes[0]
-            return f"{mat} Dn{dn}"
+            return f"{mat} DN{dn}"
         return ""
     if category in (2, 4, 5):
         parts = []
@@ -336,9 +350,9 @@ def _specification(
             if count == 0:
                 continue
             if count == 1:
-                parts.append(f"D{dn}{mat}")
+                parts.append(f"DN{dn}{mat}")
             else:
-                parts.append(f"{count:g}×D{dn}{mat}")
+                parts.append(f"{count:g}×DN{dn}{mat}")
         tail = {2: " 包封", 4: " 顶管", 5: " 牵引管"}.get(category, "")
         return "+".join(parts) + tail if parts else ""
     if category == 3:

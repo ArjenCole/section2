@@ -4,9 +4,11 @@
 （407 个模板，只有管材名称与旧参数，没有图集值）；输出是同名的 JSON 资产，
 每个模板额外带上：
 
-* 每根管的 **管材类别**（``cat``，由材质名称按 core.pipe_category 折算一次固化）
-  与 **图集壁厚**（``t``）——**8 组**：采用/不采用混凝土基础 × 90/120/150/180
-  （砼基础表的 t 随角度变化，例如 Dn600 Ⅱ级管砂基础 120° 是 55mm、90° 是 60mm）；
+* 每根管的 **管材类别**（``cat``，由材质名称按 core.pipe_category 折算一次固化）、
+  **外径 oD / 内径 iD**（从图集一次性提取；图集没有时按 ``iD=DN``、
+  ``oD=iD+2t`` 兜底）与 **图集壁厚**（``t``）——**8 组**：采用/不采用混凝土基础
+  × 90/120/150/180（砼基础表的 t 随角度变化，例如 DN600 Ⅱ级管砂基础 120° 是
+  55mm、90° 是 60mm）；
 * 构件的 **工作面加宽 / 垫层厚 / 基础厚**（``a / C1 / C2``）同样 8 组。
 
 这 8 组是详情面板"候选参数列"的数据源（一次性快照，允许用户改，不再自动变）；
@@ -111,17 +113,49 @@ def _query(category: int, pipes, params, enclosure, con_found: bool, angle: int)
     )
 
 
+def _pipe_diameters(pipe, category: int, params, enclosure) -> tuple[float, float]:
+    """从图集一次性提取 (oD, iD)；图集没有内外径时按 DN/t 兜底。
+
+    取默认地基组合（采用砼基础 + 120°）的图集行。混凝土管的 t 随角度略有
+    差异（同一 DN 不同角度 5~10mm），构件库只存一组 oD/iD，这里按默认组合
+    固化；用户仍可在详情面板按当前壁厚联动修改。
+    """
+    from app.core.pipe_dimensions import normalize
+
+    query = _query(category, [pipe], params, enclosure, True, 120)
+    query.a = query.c1 = query.c2 = None
+    at = resolve_atlas(query)
+    if at.od > 0 and at.id > 0:
+        return float(at.od), float(at.id)
+    _od, inner, _t = normalize(int(pipe.dn), t=float(at.t or 0.0))
+    return float(inner + 2.0 * float(at.t or 0.0)), float(inner)
+
+
 def _pipe_row(pipe, category: int, params, enclosure) -> dict:
-    """单个管道行：类别 + 八组图集壁厚（该组合查不到记 null）。"""
+    """单个管道行：类别 + oD/iD + 八组图集壁厚（该组合查不到记 null）。"""
     thickness: dict[str, float | None] = {}
     for con_found, angle in COMBOS:
         at = resolve_atlas(_query(category, [pipe], params, enclosure, con_found, angle))
-        thickness[combo_key(con_found, angle)] = at.t if at.t > 0 else None
+        if at.t <= 0:
+            thickness[combo_key(con_found, angle)] = None
+            continue
+        # 几何有效壁厚 = (oD-iD)/2。混凝土 / 双壁波纹等表里 oD=iD+2t，与图集 t
+        # 相同；加筋管的 t 是内壁厚、不含肋高，必须用差值反算，否则 oD/iD 联动
+        # 会把图集外径改小。
+        t_geo = at.t
+        if at.od > 0 and at.id > 0:
+            t_geo = max((at.od - at.id) / 2.0, 0.0)
+        thickness[combo_key(con_found, angle)] = (
+            round(t_geo, 3) if t_geo > 0 else None
+        )
+    od, inner = _pipe_diameters(pipe, category, params, enclosure)
     return {
         "mat": pipe.mat,
         "cat": category_of_mat(pipe.mat),
         "dn": int(pipe.dn),
         "content": str(pipe.content),
+        "od": round(od, 3),
+        "id": round(inner, 3),
         "t": thickness,
     }
 

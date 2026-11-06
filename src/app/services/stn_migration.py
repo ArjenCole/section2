@@ -798,6 +798,8 @@ def _write_legacy_element(session, unit_id: int, legacy_element: _LegacyElement,
                 mat=legacy_pipe.mat,
                 dn=int(legacy_pipe.dn),
                 content=legacy_pipe.content or "1",
+                od=float(legacy_pipe.dn),
+                inner_d=float(legacy_pipe.dn),
             )
         )
         report.pipes += 1

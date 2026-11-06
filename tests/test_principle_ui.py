@@ -50,7 +50,7 @@ def test_insert_template_attaches_first_principles(project) -> None:
     assert element.pe_name == project_io.enclosure_names()[0]
     assert element.pf_name == project_io.foundation_names()[0]
     assert element.pipes, "模板的管材应一并带入"
-    assert unit_vm.element_rows(unit.id)[0].spec == "Ⅰ级混凝土管 Dn150"
+    assert unit_vm.element_rows(unit.id)[0].spec == "Ⅰ级混凝土管 DN150"
 
 
 def test_insert_template_before_selected_row(project) -> None:

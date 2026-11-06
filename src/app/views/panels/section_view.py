@@ -549,7 +549,7 @@ def _build_scene(
     if info.category in (CATEGORY_JACKING, CATEGORY_PULLING):
         # 旧版 mcE4/mcE5：不画沟槽，只按管径 + 换填厚自适应缩放画管体
         c1_display = 0.0
-        extent = info.pipes[0].dn + at.t * 2 + foundation_thickness(pf)
+        extent = info.pipes[0].oD + foundation_thickness(pf)
         zoom = min(
             1.0,
             (width - _MARGIN * 2 - right_reserve) / max(extent, 1.0),
@@ -1401,22 +1401,25 @@ def _ontology_shapes(info: ElementInput, at, c1: float) -> list[_Shape]:
     category = info.category
     shapes: list[_Shape] = []
     if category in (CATEGORY_JACKING, CATEGORY_PULLING):
-        dn = info.pipes[0].dn
-        t = at.t
+        od = info.pipes[0].oD
+        inner = info.pipes[0].iD
+        t = max((od - inner) / 2.0, 0.0)
         if category == CATEGORY_PULLING:
             c1 = at.c1  # 牵引管保持图集值（旧版 mcE5.OntologyShape）
         else:
             c1 = 0.0  # 顶管不设垫层（旧版 mcE4.OntologyShape）
-        shapes.append(_Shape("Ellipse", -dn / 2.0 - t, c1, dn + 2 * t, dn + 2 * t))
-        shapes.append(_Shape("Ellipse", -dn / 2.0, t + c1, dn, dn))
+        shapes.append(_Shape("Ellipse", -od / 2.0, c1, od, od))
+        shapes.append(_Shape("Ellipse", -inner / 2.0, t + c1, inner, inner))
         return shapes
     if category == CATEGORY_BURIED:
-        dn = info.pipes[0].dn
+        od = info.pipes[0].oD
+        inner = info.pipes[0].iD
+        t = max((od - inner) / 2.0, 0.0)
         if pf_con_found(info) and is_concrete_pipe(info) and "预应力" not in info.pipes[0].mat:
-            width = info.size_b * 1000 + at.t * 2 + at.a * 2
+            width = od + at.a * 2
             shapes.append(_Shape("Rectangle", -width / 2.0, 0.0, width, at.c1 + at.c2))
-        shapes.append(_Shape("Ellipse", -dn / 2.0 - at.t, at.c1, dn + 2 * at.t, dn + 2 * at.t))
-        shapes.append(_Shape("Ellipse", -dn / 2.0, at.t + at.c1, dn, dn))
+        shapes.append(_Shape("Ellipse", -od / 2.0, at.c1, od, od))
+        shapes.append(_Shape("Ellipse", -inner / 2.0, t + at.c1, inner, inner))
         return shapes
     if category == CATEGORY_ENCASED:
         width = info.size_b * 1000
@@ -1451,4 +1454,6 @@ def pf_con_found(info: ElementInput) -> bool:
 
 
 def _atlas_text(at, c1_display: float) -> str:
-    return f"t={at.t:g} a={at.a:g} C1={c1_display:g} C2={at.c2:g}"
+    od = f"{at.od:g}" if at.od > 0 else "-"
+    inner = f"{at.id:g}" if at.id > 0 else "-"
+    return f"oD={od} iD={inner} t={at.t:g} a={at.a:g} C1={c1_display:g} C2={at.c2:g}"

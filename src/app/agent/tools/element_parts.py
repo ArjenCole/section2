@@ -29,6 +29,15 @@ def tool_add_pipe(arguments: dict) -> dict:
             t = float(t_value)
         except (TypeError, ValueError) as error:
             raise ToolError("壁厚 t 需为数字（mm），留空=自动按图集。") from error
+    def _number(key: str) -> float | None:
+        value = arguments.get(key)
+        if value in (None, ""):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError) as error:
+            raise ToolError(f"{key} 需为数字（mm）。") from error
+
     pipe = unit_vm.create_pipe(
         element_id,
         mat=str(arguments.get("mat") or "Ⅱ级混凝土管"),
@@ -36,6 +45,8 @@ def tool_add_pipe(arguments: dict) -> dict:
         content=str(arguments.get("content") if arguments.get("content") is not None else "1"),
         t=t,
         cat=str(arguments.get("cat") or ""),
+        od=_number("od"),
+        inner_d=_number("iD"),
     )
     if pipe is None:
         raise ToolError(f"找不到 id={element_id} 的构件。")
@@ -48,10 +59,14 @@ def tool_update_pipe(arguments: dict) -> dict:
     if pipe_id in (None, ""):
         raise ToolError("请提供 pipe_id（见 get_element_detail 的 pipes）。")
     fields = {
-        key: arguments[key] for key in ("mat", "cat", "dn", "content", "t") if arguments.get(key) is not None
+        key: arguments[key]
+        for key in ("mat", "cat", "dn", "content", "t", "od", "iD")
+        if arguments.get(key) is not None
     }
+    if "iD" in fields:
+        fields["inner_d"] = fields.pop("iD")
     if not fields:
-        raise ToolError("没有给出要修改的字段（mat/cat/dn/content/t）。")
+        raise ToolError("没有给出要修改的字段（mat/cat/dn/content/t/od/iD）。")
     pipe = unit_vm.update_pipe(int(pipe_id), **fields)
     if pipe is None:
         raise ToolError(f"找不到 pipe_id={pipe_id}。请先调 get_element_detail。")
@@ -181,19 +196,23 @@ def register(registry: ToolRegistry) -> None:
                 "element_id": element_id_schema, "mat": {"type": "string"},
                 "cat": cat_schema,
                 "dn": {"type": "integer"}, "content": {"type": "string"},
-                "t": {"type": "number", "description": "壁厚 mm；不传=自动按图集"}},
+                "od": {"type": "number", "description": "外径 oD mm；不传=按图集/ DN+t"},
+                "iD": {"type": "number", "description": "内径 iD mm；不传=按图集/ DN"},
+                "t": {"type": "number", "description": "有效壁厚 mm；不传=按图集"}},
              "required": ["element_id"]},
             tool_add_pipe,
         )
     )
     registry.register(
         Tool(
-            "update_pipe", "修改管材行（mat/cat/dn/content/t）。写操作。",
+            "update_pipe", "修改管材行（mat/cat/dn/content/od/id/t）。写操作。",
             {"type": "object", "properties": {
                 "pipe_id": {"type": "integer"}, "mat": {"type": "string"},
                 "cat": cat_schema,
                 "dn": {"type": "integer"}, "content": {"type": "string"},
-                "t": {"type": ["number", "null"]}},
+                "od": {"type": ["number", "null"], "description": "外径 oD mm"},
+                "iD": {"type": ["number", "null"], "description": "内径 iD mm"},
+                "t": {"type": ["number", "null"], "description": "有效壁厚 mm"}},
              "required": ["pipe_id"]},
             tool_update_pipe,
         )

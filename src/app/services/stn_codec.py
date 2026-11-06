@@ -37,7 +37,7 @@
 
 构件（element）字段：``category`` / ``name`` / ``depth`` / ``amount`` /
 ``pe_name`` / ``pf_name`` / ``pp_name`` / ``pw_name`` / ``source``，
-加 ``pipes``（``{"cat","mat","dn","content","t"}``）、
+加 ``pipes``（``{"cat","mat","dn","od","id","content","t"}``；旧文件可缺 ``od``/``id``）、
 ``params``（``[{"key","unit","value"}]``）、
 ``quantities``（``[{"category","item","unit","value"}]``）、
 ``atlas_candidates``（``[{"con_found","angle","t","a","c1","c2"}]``，值为 null
@@ -347,6 +347,8 @@ def _dump_element(element: Element, group_index: int | None = None) -> dict:
                 "mat": pipe.mat or "",
                 "dn": int(pipe.dn or 0),
                 "content": pipe.content or "",
+                "od": None if pipe.od is None else float(pipe.od),
+                "id": None if pipe.inner_d is None else float(pipe.inner_d),
                 "t": None if pipe.t is None else float(pipe.t),
             }
             for pipe in element.pipes
@@ -699,15 +701,30 @@ def _load_element(data: dict, *, order_no: int) -> Element:
         source=data.get("source") or "",
         order_no=order_no,
     )
+    from app.core.pipe_dimensions import normalize
+
     for pipe_data in data.get("pipes") or []:
         thickness = pipe_data.get("t")
+        od_raw = pipe_data.get("od")
+        id_raw = pipe_data.get("id", pipe_data.get("iD"))
+        if od_raw is None and id_raw is None and thickness is None:
+            od = inner = t_value = None  # 旧数据：保留“按图集自动”语义
+        else:
+            od, inner, t_value = normalize(
+                int(pipe_data.get("dn") or 0),
+                float(od_raw) if od_raw is not None else None,
+                float(id_raw) if id_raw is not None else None,
+                None if thickness is None else float(thickness),
+            )
         element.pipes.append(
             Pipe(
                 cat=pipe_data.get("cat") or "",
                 mat=pipe_data.get("mat") or "",
                 dn=int(pipe_data.get("dn") or 0),
                 content=pipe_data.get("content") or "1",
-                t=None if thickness is None else float(thickness),
+                od=od,
+                inner_d=inner,
+                t=t_value,
             )
         )
     for param in data.get("params") or []:

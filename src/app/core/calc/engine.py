@@ -169,9 +169,9 @@ class ElementInput:
         """
         if self.category in (CATEGORY_BURIED, CATEGORY_JACKING, CATEGORY_PULLING):
             return (
-                mm(self.pipes[0].dn)
-                .as_param("D", "管道内径", "构件管材·管径")
-                .named("断面宽", "管径")
+                mm(self.pipes[0].iD)
+                .as_param("iD", "管道内径", "构件管材·内径")
+                .named("断面宽", "管道内径")
                 if self.pipes
                 else mm(0.0)
             )
@@ -200,9 +200,9 @@ class ElementInput:
         """断面高的 mm 记法算式伴随（箱涵 = 净高 + 底板厚 + 顶板厚）。"""
         if self.category in (CATEGORY_BURIED, CATEGORY_JACKING, CATEGORY_PULLING):
             return (
-                mm(self.pipes[0].dn)
-                .as_param("D", "管道内径", "构件管材·管径")
-                .named("断面高", "管径")
+                mm(self.pipes[0].iD)
+                .as_param("iD", "管道内径", "构件管材·内径")
+                .named("断面高", "管道内径")
                 if self.pipes
                 else mm(0.0)
             )
@@ -233,16 +233,16 @@ class ElementInput:
             return self.named_params.get(("名称", ""), "")
         if self.category == 1:
             pipe = self.pipes[0] if self.pipes else None
-            return f"{pipe.mat} Dn{format_number(pipe.dn)}" if pipe else ""
+            return f"{pipe.mat} DN{format_number(pipe.dn)}" if pipe else ""
         if self.category in (2, 4, 5):
             parts: list[str] = []
             for pipe, content in zip(self.pipes, self.pipe_contents):
                 if content == 0:
                     continue
                 if content == 1:
-                    parts.append(f"D{format_number(pipe.dn)}{pipe.mat}")
+                    parts.append(f"DN{format_number(pipe.dn)}{pipe.mat}")
                 else:
-                    parts.append(f"{format_number(content)}×D{format_number(pipe.dn)}{pipe.mat}")
+                    parts.append(f"{format_number(content)}×DN{format_number(pipe.dn)}{pipe.mat}")
             tail = {2: " 包封", 4: " 顶管", 5: " 牵引管"}[self.category]
             return "+".join(parts) + tail if parts else ""
         if self.category == 3:
@@ -328,7 +328,14 @@ def build_element_input(
             params[key] = 0.0
         param_dims[key] = raw_dim(_usable_text(text), params[key])
     pipes = [
-        PipeSpec(mat=pipe.mat, dn=pipe.dn, t=pipe.t, cat=pipe.pipe_category)
+        PipeSpec(
+            mat=pipe.mat,
+            dn=pipe.dn,
+            t=pipe.t,
+            cat=pipe.pipe_category,
+            od=pipe.od,
+            inner_d=pipe.inner_d,
+        )
         for pipe in element.pipes
     ]
     contents = [evaluate_or_default(pipe.content) for pipe in element.pipes]
@@ -347,7 +354,7 @@ def build_element_input(
         pipe_contents=contents,
         pipe_content_dims=[
             raw_dim(_usable_text(pipe.content), content).named(
-                "管材含量", f"{pipe.mat} Dn{pipe.dn} 含量"
+                "管材含量", f"{pipe.mat} DN{pipe.dn} 含量"
             )
             for pipe, content in zip(element.pipes, contents)
         ],
@@ -486,13 +493,13 @@ def atlas_dims(info: ElementInput, at: AtlasParam) -> AtlasDims:
 
     覆盖判定与 :func:`app.services.atlas._apply_overrides` 一致：工作面加宽 /
     垫层厚 / 基础厚按详情面板参数行（:func:`build_element_input` 已按类别滤过，
-    键存在即覆盖），壁厚按管材行的用户值（包封 / 箱涵 / 管廊的断面宽由自身
-    参数决定，不认管道壁厚）。图集无 oD 列时外径按 ``管径+2×壁厚`` 推出，
-    算式里保留这个推导。所有 Dim 为 mm 记法（``v`` 已换算成 m）。
+    键存在即覆盖）。管道直径优先用构件库 / 详情面板的 oD / iD；旧数据没有
+    这两个值时按 ``iD=DN``、``oD=iD+2t`` 兜底。包封 / 箱涵 / 管廊的断面宽由
+    自身参数决定，不认管道直径。所有 Dim 为 mm 记法（``v`` 已换算成 m）。
 
-    t / a / C1 / C2 同时挂上展示符号（:meth:`Dim.as_param`）：计算仍用原始数值，
-    计算表达式窗体把它们提到中间符号表，算式里显示成 ``t`` / ``a`` / ``C1`` /
-    ``C2``（见 :mod:`app.core.calc.tracer` 展示层）。
+    iD / oD / t / a / C1 / C2 同时挂上展示符号（:meth:`Dim.as_param`）：计算仍用
+    原始数值，计算表达式窗体把它们提到中间符号表，算式里显示成 ``iD`` / ``oD`` /
+    ``t`` / ``a`` / ``C1`` / ``C2``（见 :mod:`app.core.calc.tracer` 展示层）。
     """
     def _override(name: str, symbol: str, label: str) -> Dim | None:
         found = info.param_dims.get(name) if name in info.params else None
@@ -512,29 +519,37 @@ def atlas_dims(info: ElementInput, at: AtlasParam) -> AtlasDims:
     c2 = _override(PARAM_C2_NAME, "C2", "基础厚") or mm(at.c2).as_param(
         "C2", "基础厚", "图集参数 C2"
     )
-    dn = (
-        mm(info.pipes[0].dn).as_param("D", "管道内径", "构件管材·管径")
-        if info.pipes
-        else mm(0.0)
-    )
-    wall = info.pipes[0].t if info.pipes else None
-    od_display = "D+t*2" if info.pipes else ""
-    if wall is not None and info.category not in C2_ZERO_CATEGORIES:
-        t = mm(wall).as_param("t", "管道壁厚", "管材参数·壁厚")
-        od = (dn + t * 2).as_param(
-            "Do", "管道外径（mm）", "管径 + 2×壁厚", display=od_display
-        )
-    else:
+    pipe = info.pipes[0] if info.pipes else None
+    if pipe is None or info.category in C2_ZERO_CATEGORIES:
+        # 包封 / 箱涵 / 管廊：断面由构件自身参数决定，管道直径不参与
+        inner = mm(0.0)
+        outer = mm(0.0)
         t = mm(at.t).as_param("t", "管道壁厚", "图集参数 t")
-        od = (
-            mm(at.od).as_param("Do", "管道外径（mm）", "图集参数 oD")
-            if at.od > 0
-            else (dn + t * 2).as_param(
-                "Do", "管道外径（mm）", "管径 + 2×壁厚", display=od_display
+    else:
+        # 新数据用构件库 / 详情面板的 oD、iD；旧数据按 DN + 壁厚兜底。
+        # 三者关系固定为 oD = iD + 2t，t 由差值反算，保证算式同源。
+        inner_value = (
+            float(pipe.inner_d)
+            if pipe.inner_d is not None
+            else (float(at.id) if at.id > 0 else float(pipe.dn))
+        )
+        outer_value = (
+            float(pipe.od)
+            if pipe.od is not None
+            else (
+                float(at.od)
+                if at.od > 0
+                else inner_value + 2.0 * float(pipe.t if pipe.t is not None else at.t)
             )
         )
+        inner = mm(inner_value).as_param("iD", "管道内径", "构件管材·内径")
+        outer = mm(outer_value).as_param("oD", "管道外径", "构件管材·外径")
+        t = ((outer - inner) / 2).as_param(
+            "t", "管道壁厚", "（oD-iD）/2", display="(oD-iD)/2"
+        )
     return AtlasDims(
-        od=od,
+        od=outer,
+        id=inner,
         t=t,
         a=a,
         c1=c1,

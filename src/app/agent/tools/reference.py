@@ -51,11 +51,15 @@ def tool_resolve_atlas(arguments: dict) -> dict:
         except (TypeError, ValueError) as error:
             raise ToolError("管径 dn 需为整数（mm）。") from error
         t = raw.get("t")
+        od = raw.get("od")
+        inner_d = raw.get("iD", raw.get("inner_d"))
         pipes.append(
             PipeSpec(
                 mat=str(raw.get("mat") or ""),
                 dn=dn,
                 t=float(t) if t not in (None, "") else None,
+                od=float(od) if od not in (None, "") else None,
+                inner_d=float(inner_d) if inner_d not in (None, "") else None,
             )
         )
     require_open()

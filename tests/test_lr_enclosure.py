@@ -1771,7 +1771,7 @@ def test_group_expression_symbolizes_component_parameters(project) -> None:
             if "t" not in definitions:
                 continue
             checked = True
-            assert definitions["t"].expression == "65"
+            assert definitions["t"].expression == "(oD-iD)/2"
             # 符号只出现在展示式里；完整数值算式保持数字
             assert "t" not in view.full
     assert checked, "合槽算例里应有使用图集壁厚 t 的工程量"
