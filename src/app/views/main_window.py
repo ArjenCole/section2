@@ -42,6 +42,7 @@ from app.mcp_server.controller import McpServerController
 from app.core.version import (
     APP_DISPLAY_NAME,
     APP_VERSION,
+    IS_PRERELEASE,
     PROJECT_FILE_FILTER,
 )
 from app.core.models.base import NotAProjectFileError, ProjectFileError, SchemaTooNewError
@@ -1288,13 +1289,22 @@ class MainWindow(QMainWindow):
         return approved
 
     def _about(self) -> None:
+        # 内测版额外标注渠道并提醒备份：同事拿到的包可能不是正式数据格式
+        channel = "内测版" if IS_PRERELEASE else "正式版"
+        notice = (
+            "<br><br><b>这是内测版本，请先备份工程数据后再试用。</b><br>"
+            "反馈问题时请附上上面的完整版本号。"
+            if IS_PRERELEASE
+            else ""
+        )
         FramelessMessageBox.about(
             self,
             "关于 Section",
-            f"{APP_DISPLAY_NAME}　版本 {APP_VERSION}<br><br>"
+            f"{APP_DISPLAY_NAME}　版本 {APP_VERSION}（{channel}）<br><br>"
             "线性工程（市政管道）工程量计算软件，Python + PySide6 重写版。<br>"
             "工程文件：.stn（1.0 兼容头 + JSON 数据体）<br><br>"
-            "参考初代 C# 版 section 1.2.2.171220_beta。",
+            "参考初代 C# 版 section 1.2.2.171220_beta。"
+            f"{notice}",
         )
 
     def _error(self, title: str, message: str) -> None:

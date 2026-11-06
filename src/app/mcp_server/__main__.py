@@ -24,6 +24,7 @@ from pathlib import Path
 
 from app.agent import context
 from app.agent import tool_registry
+from app.core.version import APP_VERSION
 from app.mcp_server.adapter import McpToolAdapter
 
 
@@ -88,7 +89,7 @@ async def _run_bridge(url: str, token: str | None) -> None:
 
                 server = Server(
                     "section2-mcp-bridge",
-                    version="2.0.0",
+                    version=APP_VERSION,
                     on_list_tools=on_list_tools,
                     on_call_tool=on_call_tool,
                 )

@@ -6,7 +6,7 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <Root>
   <Assembly>
-    <Version>2.0.0.0</Version>
+    <Version>2.0.0.1</Version>
   </Assembly>
   <mcBasicInfo>
     <ProjectName>…</ProjectName>
@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from app.core.version import APP_VERSION, STN_FILE_VERSION
+from app.core.version import STN_FILE_VERSION, STN_HEADER_VERSION
 from app.core.models.base import (
     NotAProjectFileError,
     SchemaTooNewError,
@@ -44,8 +44,8 @@ from app.core.models.base import (
 
 #: JSON 数据体的格式标识（load 时校验，防止拿错数据）
 FORMAT_NAME = "Section2"
-#: 头部 `<Assembly><Version>` 固定写当前程序版本，供 1.0 比较大小
-HEADER_VERSION = APP_VERSION
+#: 头部 `<Assembly><Version>`：固定写纯数字版本（1.0 用 System.Version 解析）
+HEADER_VERSION = STN_HEADER_VERSION
 #: JSON 数据体所在元素名
 _BODY_TAG = "Section2"
 

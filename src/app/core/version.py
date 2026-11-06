@@ -8,8 +8,43 @@ APP_DISPLAY_NAME = "Section 2.0"
 APP_ORG_NAME = "Section"
 APP_ORG_DOMAIN = "section.local"
 
-#: 程序版本号，与旧版 C# 程序集版本号衔接（旧版 1.2.2.x → 新版 2.0.0.0）
-APP_VERSION = "2.0.0.0"
+#: 程序版本号（语义化版本）。内测/公测阶段带预发布后缀，正式版去掉后缀：
+#: 2.0.0-alpha.1 → … → 2.0.0-alpha.6 → 2.0.0-beta.7 → … → 2.0.0-rc.9 → 2.0.0
+#: 显示在窗口标题、关于框、崩溃报告，并写入 .stn 数据体的 app_version。
+#: 后缀序号跨渠道连续累加（alpha 到 .6，首个 beta 就是 .7），每发一次包 +1，
+#: 这样四段数字版本号在整个内测周期里单调递增，方便同事报问题时对上构建。
+APP_VERSION = "2.0.0-alpha.1"
+
+#: 是否为预发布（内测）版本；界面据此标注“内测版”并提示备份数据。
+IS_PRERELEASE = "-" in APP_VERSION
+
+
+def numeric_version(version: str = APP_VERSION) -> str:
+    """把语义化版本压成旧版兼容的四段纯数字。
+
+    ``2.0.0-alpha.1`` → ``2.0.0.1``；``2.0.0-beta.7`` → ``2.0.0.7``；
+    ``2.0.0``（正式版）→ ``2.0.0.0``；已经是四段的原样返回。
+    第 4 段就是预发布序号本身，因此 alpha/beta/rc 之间天然连续累加。
+    """
+    release, _, pre = version.partition("-")
+    parts = release.split(".")
+    if len(parts) >= 4:
+        return ".".join(parts[:4])
+    if not all(part.isdigit() for part in parts):
+        raise ValueError(f"无法解析版本号：{version!r}")
+    number = 0
+    if pre:
+        _, _, tail = pre.partition(".")
+        if tail.isdigit():
+            number = int(tail)
+    return ".".join([*parts, str(number)])
+
+
+#: `.stn` 头部 `<Assembly><Version>` 写入的版本号（也用于 EXE 文件版本）。
+#: 必须保持 2~4 段纯数字，不能带 ``-alpha.1`` 这类后缀：1.0 的 C# 程序用
+#: ``System.Version`` 解析该节点，带后缀会抛 FormatException，本该弹“高版本
+#: 文件”提醒的地方会变成崩溃。真实的内测版本号另存在数据体 app_version 里。
+STN_HEADER_VERSION = numeric_version(APP_VERSION)
 
 #: 内部工作库（临时 SQLite）结构版本。业务数据以 .stn 文件的 JSON 体为准，
 #: 工作库每次打开都按当前代码结构重建，这里只作库内 meta 诊断记录。

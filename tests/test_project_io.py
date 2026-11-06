@@ -272,12 +272,13 @@ def test_stn_header_is_1_0_compatible(tmp_path: Path) -> None:
 
     import xml.etree.ElementTree as ET
 
-    from app.core.version import APP_VERSION, STN_FILE_VERSION
+    from app.core.version import STN_FILE_VERSION, STN_HEADER_VERSION
 
     root = ET.parse(path).getroot()
     assert root.tag == "Root"
-    # 1.0 的 mcDataCarrier 读 Assembly/Version 做字符串比较 → 必须是程序版本
-    assert root.find("Assembly/Version").text == APP_VERSION
+    # 1.0 的 mcDataCarrier 用 System.Version 解析 Assembly/Version → 必须纯数字
+    assert root.find("Assembly/Version").text == STN_HEADER_VERSION
+    assert STN_HEADER_VERSION.replace(".", "").isdigit()
     # 1.0 的 mcBasicInfo 构造函数对 ProjectName / ProjectIndex 不判空 → 必须存在
     info = root.find("mcBasicInfo")
     assert info is not None

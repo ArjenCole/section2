@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "section2"
-version = "2.0.0.0"
+version = "2.0.0-alpha.1"
 description = "线性工程（市政管道）工程量计算软件 2.0"
 readme = "README.md"
 requires-python = ">=3.12"
