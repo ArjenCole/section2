@@ -689,6 +689,95 @@ def test_expression_dialog_group_member_chord_and_placement(qapp, tmp_path) -> N
     dialog.close()
 
 
+def test_expression_dialog_group_member_basic_geometry(qapp, tmp_path) -> None:
+    """合槽成员覆土工程量：a / C1 / C2 / b1 悬停要有断面标注。
+
+    回归（2026-11-06）：合槽成员的挖填算式按左右两侧分别累计宽度，没有
+    “槽底宽 B / 基础宽度 b”符号，基本参数页的 a/C1/C2 拿不到断面几何，
+    悬停时断面图没有任何标注（现场：覆土工程量的 a、C1、C2 都不显示）。
+    """
+    from app.viewmodels.unit_vm import compute_elements
+    from app.views.dialogs.expression_detail_dialog import ExpressionDetailDialog
+
+    group, e1, _e2 = _group_pair_fixture(tmp_path, "合槽基本参数标注")
+    _summary, detail = compute_elements([e1.id])
+    cover = next(
+        quantity
+        for quantity in detail[0][1].items()
+        if any(term.note == "覆土" for term in quantity.terms)
+    )
+    dialog = ExpressionDetailDialog(None, cover, ("group", group.id, e1.id))
+    dialog.show()
+    qapp.processEvents()
+    assert dialog._scene is not None and dialog._scene.outline is not None
+    basic = dialog._inter_tables[0]
+    rows = {basic.item(row, 0).text(): row for row in range(basic.rowCount())}
+    for symbol in ("a", "C1", "C2", "b1"):
+        assert symbol in rows, f"覆土工程量的基本参数页缺少 {symbol}"
+        dialog._on_inter_entered(basic, rows[symbol], 0)
+        dimension = dialog._canvas._dimension
+        assert dimension is not None, f"{symbol} 没有尺寸标注"
+        assert dimension.text.startswith(symbol)
+        assert dimension.member_id == e1.id
+    dialog.close()
+
+
+def test_expression_dialog_single_annotation_stays_right(qapp, tmp_path) -> None:
+    """非合槽构件：竖向标注统一画在断面右侧，宽断面也不翻到左侧。
+
+    回归（2026-11-06）：右侧空间不足时旧实现把尺寸线翻到断面左侧；现在场景
+    构建为标注预留右侧空间（``right_reserve``），标注始终在右侧。
+    """
+    from PySide6.QtGui import QColor
+
+    from app.core.calc.tracer import sorted_items
+    from app.core.models.models import CATEGORY_BOX_CULVERT
+    from app.viewmodels import unit_vm
+    from app.views.dialogs.expression_detail_dialog import ExpressionDetailDialog
+
+    spec = NewProjectSpec(path=tmp_path / "宽断面标注.stn", unit_names=["雨水工程"])
+    project_io.new_project(spec)
+    unit_id = project_io.units(project_io.segments()[0].id)[0].id
+    element = unit_vm.create_element(
+        unit_id, category=CATEGORY_BOX_CULVERT, name="箱涵",
+        depth="2.5", amount="100", seed_atlas_defaults=True,
+    )
+    _summary, detail = unit_vm.compute_elements([element.id])
+    quantity = sorted_items(detail[0][1])[0]
+    dialog = ExpressionDetailDialog(None, quantity, ("element", element.id, None))
+    dialog.setFixedSize(1100, 860)
+    dialog.show()
+    qapp.processEvents()
+    dialog._load_scene()
+    qapp.processEvents()
+    canvas = dialog._canvas
+    scene = dialog._scene
+    assert scene is not None and scene.outline is None
+    assert scene.right_reserve > 0
+
+    basic = dialog._inter_tables[0]
+    row = next(i for i in range(basic.rowCount()) if basic.item(i, 0).text() == "C1")
+    dialog._on_inter_entered(basic, row, 0)
+    assert canvas._dimension is not None
+
+    image = canvas.grab().toImage()
+    center_x, _origin_y = canvas.view_origin()
+    half_px = (scene.top_width / 2.0) * 1000.0 * scene.zoom
+    left_edge, right_edge = center_x - half_px, center_x + half_px
+    green = QColor("#00FF00").rgb()
+    left_green = right_green = 0
+    for y in range(image.height()):
+        for x in range(image.width()):
+            if image.pixel(x, y) == green:
+                if x < left_edge - 2:
+                    left_green += 1
+                elif x > right_edge + 2:
+                    right_green += 1
+    assert left_green == 0, "竖向标注画到了断面左侧"
+    assert right_green > 0, "竖向标注没有画到断面右侧"
+    dialog.close()
+
+
 def test_group_unified_layer_lines_span_trench(tmp_path) -> None:
     """统一回填标高：每条统筹界面画一条贯通整槽的水平线。
 

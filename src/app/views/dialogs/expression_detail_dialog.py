@@ -12,9 +12,10 @@
 悬停中间符号行时的尺寸标注画法：横向测量（b/b1/a、管径 D/Do、壁厚 t——
 t/D/Do 的测量切面取管中心标高处的水平切线，与内外圆的交点为引出线起点）
 统一向下引出，尺寸线放断面图下方；竖向测量（C1/C2、层高 Hx）横向引出，
-单管放断面外缘之外，合槽成员贴成员布置——最左构件放构件左侧（引出线自
-边坡线左缘起画，不横穿构件断面），中间构件放就近虚拟分割线外侧（文字不必
-避让到整槽基坑外边线以外），最右构件放构件右侧（与最左构件镜像）。
+非合槽构件统一放断面图右侧（绘图区按 ``_DIM_RIGHT_RESERVE`` 预留右侧
+空间，不因空间不足翻到左侧），合槽成员贴成员布置——最左构件放构件左侧
+（引出线自边坡线左缘起画，不横穿构件断面），中间构件放就近虚拟分割线外侧
+（文字不必避让到整槽基坑外边线以外），最右构件放构件右侧（与最左构件镜像）。
 """
 
 from __future__ import annotations
@@ -60,6 +61,9 @@ _HIGHLIGHT_FILL = QColor(255, 255, 0, 90)
 _HIGHLIGHT_EDGE = QColor("yellow")
 #: 中间参数行悬停时的描边色（CAD 标注亮绿）
 _LINE_HIGHLIGHT = QColor("#00FF00")
+#: 断面图右侧为竖向尺寸标注预留的像素宽（引出线 + 尺寸线 + 文字）：
+#: 标注统一画在断面右侧，绘图区按此预留左移，保证不被画布右缘裁掉
+_DIM_RIGHT_RESERVE = 140.0
 
 #: 上下文种类：单构件 / 合槽（成员或父行）/ 多选（不画断面图）
 _CONTEXT_ELEMENT = "element"
@@ -172,18 +176,21 @@ class _SectionCanvas(section_view.SectionCanvasBase):
         horizontal = abs(y1 - y2) <= abs(x1 - x2)
         scene = self._scene
         # 断面图整体外缘（标注放在外缘之外，避让边坡线）
-        right_m = left_m = 0.0
+        right_m = 0.0
         if scene is not None:
             if scene.outline is not None:
-                xs = [x for x, _y in scene.outline]
-                right_m, left_m = max(xs), -min(xs)
+                right_m = max(x for x, _y in scene.outline)
             else:
                 right_m = (
                     scene.top_width_r / 2.0
                     if scene.top_width_r
                     else scene.top_width / 2.0
                 )
-                left_m = scene.top_width / 2.0
+                if right_m <= 0 and scene.shapes:
+                    # 顶管 / 牵引管不画沟槽（top_width=0）：按管体本体右缘取外缘
+                    right_m = max(
+                        (shape.x + shape.w for shape in scene.shapes), default=0.0
+                    ) / 1000.0
         if horizontal:
             # 横向尺寸线固定放在断面图下方（文字在边坡线外侧）
             dim_y = origin_y + 24.0
@@ -220,16 +227,18 @@ class _SectionCanvas(section_view.SectionCanvasBase):
                 painter.drawLine(QPointF(start1, y1), QPointF(end, y1))
                 painter.drawLine(QPointF(start2, y2), QPointF(end, y2))
             else:
-                # 竖向尺寸线放在断面图整体右缘之外，右侧留足引出距离
+                # 非合槽构件：竖向标注统一放断面图右侧（场景构建时已按
+                # ``right_reserve`` 在右侧留出标注空间），不再因右侧空间不足
+                # 翻到左侧；极窄画布下贴住右缘，保证标注始终可见。
                 offset = 60.0
-                dim_x = center_x + right_m * 1000.0 * zoom + offset
+                dim_x = min(
+                    center_x + right_m * 1000.0 * zoom + offset,
+                    self.width() - 8.0,
+                )
                 right = True
-                if dim_x > self.width() - 8:
-                    dim_x = center_x - left_m * 1000.0 * zoom - offset
-                    right = False
-                start1 = x1 + (8 if right else -8)
-                start2 = x2 + (8 if right else -8)
-                end = dim_x + (4 if right else -4)
+                start1 = x1 + 8
+                start2 = x2 + 8
+                end = dim_x + 4
                 painter.drawLine(QPointF(start1, y1), QPointF(end, y1))
                 painter.drawLine(QPointF(start2, y2), QPointF(end, y2))
             self._dimension_tick(painter, dim_x, y1, horizontal=False)
@@ -239,7 +248,16 @@ class _SectionCanvas(section_view.SectionCanvasBase):
             text = dim.text
             metrics = painter.fontMetrics()
             text_width = metrics.horizontalAdvance(text)
-            if right:
+            if right and dim_x + 6 + text_width > self.width() - 4:
+                # 右侧放不下文字（极窄画布）：改放尺寸线左侧，仍不越出画布
+                painter.drawText(
+                    QPointF(
+                        max(2.0, dim_x - 6 - text_width),
+                        (y1 + y2) / 2.0 + metrics.ascent() / 2.0,
+                    ),
+                    text,
+                )
+            elif right:
                 painter.drawText(
                     QPointF(
                         dim_x + 6,
@@ -718,9 +736,13 @@ class ExpressionDetailDialog(FramelessDialog):
         width = max(self._canvas.width(), 400)
         height = max(self._canvas.height(), 160)
         if kind == _CONTEXT_GROUP:
-            scene, hint = _build_group_scene(context_id, width, height)
+            scene, hint = _build_group_scene(
+                context_id, width, height, right_reserve=_DIM_RIGHT_RESERVE
+            )
         else:
-            scene, hint = _build_scene(context_id, width, height)
+            scene, hint = _build_scene(
+                context_id, width, height, right_reserve=_DIM_RIGHT_RESERVE
+            )
         self._scene = scene
         self._canvas.set_scene(scene, hint or "断面图不可用")
 

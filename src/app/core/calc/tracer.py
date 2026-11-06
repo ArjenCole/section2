@@ -1446,13 +1446,18 @@ def _compact_terms(
     b_mm = basic_values.get("b")
     if not b_mm:
         b_mm = basic_values.get("B", 0.0) - 2 * basic_values.get("b1", 0.0)
+    do_mm = basic_values.get("Do") or (
+        basic_values.get("D", 0.0) + 2 * basic_values.get("t", 0.0)
+    )
+    if b_mm <= 0 and do_mm > 0:
+        # 合槽成员的挖填算式按左右两侧分别累计宽度，没有“槽底宽 B / 基础宽度 b”
+        # 符号：按基础宽度展开式 b = Do + 2×a 反推，a / C1 / C2 / b1 才能挂上
+        # 以构件本体中心定位的标注线（否则这些行悬停时断面图无标注）。
+        b_mm = do_mm + 2 * basic_values.get("a", 0.0)
     b_half = b_mm / 2000.0
     b1 = basic_values.get("b1", 0.0) / 1000.0
     c1 = basic_values.get("C1", 0.0) / 1000.0
     c2 = basic_values.get("C2", 0.0) / 1000.0
-    do_mm = basic_values.get("Do") or (
-        basic_values.get("D", 0.0) + 2 * basic_values.get("t", 0.0)
-    )
     do_half = do_mm / 2000.0
     basic_geometry: dict[str, tuple[tuple[float, float], ...]] = {}
     if b_half > 0:

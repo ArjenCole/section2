@@ -153,6 +153,9 @@ class _Scene:
     #: 合槽各成员的水平区间：(element_id, 本体中心 x 相对槽中心 m, 槽底深 m)。
     #: 表达式详情弹窗把分项的断面范围按成员定位到整槽图上用
     member_spans: tuple[tuple[int, float, float], ...] = ()
+    #: 右侧为尺寸标注预留的像素宽（表达式详情弹窗用）：绘图区整体左移一半，
+    #: 保证竖向标注始终能画在断面右侧而不被画布裁掉
+    right_reserve: float = 0.0
 
 
 def _draw_side_line(
@@ -297,12 +300,23 @@ class SectionCanvasBase(QWidget):
     def effective_zoom(self, scene: "_Scene") -> float:
         return scene.zoom * self._view_zoom
 
+    def base_origin(self) -> tuple[float, float]:
+        """未平移时的视图原点（槽底中点）屏幕坐标。
+
+        ``scene.right_reserve`` 是为右侧尺寸标注预留的像素宽：绘图区整体左移
+        一半预留量，右侧才留得出画标注（引出线 + 尺寸线 + 文字）的空间。
+        """
+        scene = getattr(self, "_scene", None)
+        reserve = scene.right_reserve if scene is not None else 0.0
+        return (
+            (self.width() - reserve) / 2.0,
+            self.height() - _BOTTOM_GAP,
+        )
+
     def view_origin(self) -> tuple[float, float]:
         """当前视图的原点（槽底中点）屏幕坐标。"""
-        return (
-            self.width() / 2.0 + self._pan.x(),
-            self.height() - _BOTTOM_GAP + self._pan.y(),
-        )
+        base_x, base_y = self.base_origin()
+        return (base_x + self._pan.x(), base_y + self._pan.y())
 
     # ------------------------------------------------------------------ 交互
     def enterEvent(self, event) -> None:  # noqa: N802 - Qt 命名
@@ -372,7 +386,8 @@ class SectionCanvasBase(QWidget):
             return
         # 以鼠标位置为中心缩放：保持光标下的断面点不动
         cursor = event.position()
-        center = QPointF(self.width() / 2.0, self.height() - _BOTTOM_GAP)
+        base_x, base_y = self.base_origin()
+        center = QPointF(base_x, base_y)
         rel = cursor - center
         ratio = new_zoom / self._view_zoom
         self._pan = rel - (rel - self._pan) * ratio
@@ -493,6 +508,7 @@ def _build_scene(
     element_id: int | None,
     width: int,
     height: int,
+    right_reserve: float = 0.0,
 ) -> tuple[_Scene | None, str]:
     if element_id is None:
         return None, "请选择构件条目"
@@ -511,7 +527,9 @@ def _build_scene(
     pe = _enclosure_by_name(session, element.pe_name)
     pf = _foundation_by_name(session, element.pf_name)
     if pe is None and element.pe_name == LR_PE_TEXT:
-        return _build_trench_scene_lr(element, session, pf, width, height)
+        return _build_trench_scene_lr(
+            element, session, pf, width, height, right_reserve
+        )
     if pe is None or pf is None:
         return None, "该构件未指定围护/地基处理原则，无法绘制断面。"
     if not element.pipes and element.category in (CATEGORY_BURIED, CATEGORY_JACKING, CATEGORY_PULLING):
@@ -532,14 +550,20 @@ def _build_scene(
         extent = info.pipes[0].dn + at.t * 2 + foundation_thickness(pf)
         zoom = min(
             1.0,
-            (width - _MARGIN * 2) / max(extent, 1.0),
+            (width - _MARGIN * 2 - right_reserve) / max(extent, 1.0),
             (height - _BOTTOM_GAP - _TOP_GAP) / max(extent, 1.0),
         )
-        scene = _Scene(zoom=max(zoom, 0.0), shift=foundation_thickness(pf) + c1_display - c1_original)
+        scene = _Scene(
+            zoom=max(zoom, 0.0),
+            shift=foundation_thickness(pf) + c1_display - c1_original,
+            right_reserve=right_reserve,
+        )
         scene.shapes = _ontology_shapes(info, at, c1_original)
         scene.atlas_text = _atlas_text(at, c1_display)
         return scene, ""
-    return _build_trench_scene(info, pe, pf, at, c1_original, width, height)
+    return _build_trench_scene(
+        info, pe, pf, at, c1_original, width, height, right_reserve
+    )
 
 
 def _enclosure_by_name(session, name: str | None) -> PcpEnclosure | None:
@@ -574,7 +598,7 @@ def _precipitation_for(session, element) -> PcpPrecipitation | None:
 
 def _build_trench_scene(
     info: ElementInput, pe: PcpEnclosure, pf: PcpFoundation, at, c1_original: float,
-    width: int, height: int,
+    width: int, height: int, right_reserve: float = 0.0,
 ) -> tuple[_Scene | None, str]:
     """沟槽断面（直埋/包封/箱涵/管廊）：旧版 PaintBackFilled + PaintOntology。"""
     # 垫层 / 管道基础取地基原则 pf（v10 起）；回填材质取挖填降水原则 info.pp
@@ -602,7 +626,7 @@ def _build_trench_scene(
 
     zoom = min(
         1.0,
-        (width - _MARGIN * 2) / (top_width * 1000.0),
+        (width - _MARGIN * 2 - right_reserve) / (top_width * 1000.0),
         (height - _BOTTOM_GAP - _TOP_GAP) / (total_h * 1000.0),
     )
     scene = _Scene(
@@ -613,6 +637,7 @@ def _build_trench_scene(
         shapes=_ontology_shapes(info, at, c1_original),
         # 本体零点抬升：换填厚 + (显示垫层厚 - 图集垫层厚)，旧版 PaintOntology 的 Translate
         shift=foundation_thickness(pf) + c1_display - c1_original,
+        right_reserve=right_reserve,
     )
     scene.atlas_text = _atlas_text(at, c1_display)
     return scene, ""
@@ -755,7 +780,8 @@ def _walk_layers_sided(
 
 
 def _build_trench_scene_lr(
-    element: Element, session, pf: PcpFoundation | None, width: int, height: int
+    element: Element, session, pf: PcpFoundation | None, width: int, height: int,
+    right_reserve: float = 0.0,
 ) -> tuple[_Scene | None, str]:
     """左右分设构件的沟槽断面：两侧各自的围护做法，各画各的折线。"""
     pe_l, pe_r = _resolve_lr_enclosures(element)
@@ -802,7 +828,7 @@ def _build_trench_scene_lr(
     top_width_r = segments_r[-1].bottom + segments_r[-1].h_delta * segments_r[-1].slope * 2
     zoom = min(
         1.0,
-        (width - _MARGIN * 2) / (max(top_width, top_width_r) * 1000.0),
+        (width - _MARGIN * 2 - right_reserve) / (max(top_width, top_width_r) * 1000.0),
         (height - _BOTTOM_GAP - _TOP_GAP) / (total_h * 1000.0),
     )
     scene = _Scene(
@@ -814,6 +840,7 @@ def _build_trench_scene_lr(
         zoom=max(zoom, 0.0),
         shapes=_ontology_shapes(info, at, c1_original),
         shift=foundation_thickness(pf) + c1_display - c1_original,
+        right_reserve=right_reserve,
     )
     scene.atlas_text = _atlas_text(at, c1_display)
     return scene, ""
@@ -907,7 +934,9 @@ def _outline_span(outline: list[tuple[float, float]], y: float) -> tuple[float, 
     return min(xs), max(xs)
 
 
-def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene | None, str]:
+def _build_group_scene(
+    group_id: int, width: int, height: int, right_reserve: float = 0.0
+) -> tuple[_Scene | None, str]:
     """合槽整槽全景断面（与 :func:`app.core.calc.trench_group.compute_group` 同口径）。
 
     * 父节点不参与几何：左边坡 = 首构件左原则，右边坡 = 末构件右原则；
@@ -1340,7 +1369,7 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
     ) + max((run for _d, run in _slope_points(work_right, last["depth"])), default=0.0)
     zoom = min(
         1.0,
-        (width - _MARGIN * 2) / (total_w * 1000.0),
+        (width - _MARGIN * 2 - right_reserve) / (total_w * 1000.0),
         (height - _BOTTOM_GAP - _TOP_GAP) / (h_max * 1000.0),
     )
     scene = _Scene(
@@ -1359,6 +1388,7 @@ def _build_group_scene(group_id: int, width: int, height: int) -> tuple[_Scene |
             )
             for i, snap in enumerate(snapshots)
         ),
+        right_reserve=right_reserve,
     )
     scene.atlas_text = f"合槽断面：{n} 条构件（从左到右）"
     return scene, ""
