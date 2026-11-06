@@ -41,3 +41,6 @@ desktop.ini
 .vscode/
 *.swp
 /.workbuddy
+
+# ---- 发布归档（每个包 70MB+，不进仓库）----
+releases/
