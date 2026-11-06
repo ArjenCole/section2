@@ -9,7 +9,9 @@
 版本号唯一来源是 ``src/app/core/version.py`` 的 ``APP_VERSION``；``pyproject.toml``
 里的 version 必须与之等价（PEP 440 归一化后比较），否则脚本直接报错退出。
 
-产物：``dist\\Section2_<版本>_<日期>.zip``，解压后是 ``Section2\\`` 目录。
+产物：``dist\\Section2_<版本>_<日期>.zip``，解压后是**与压缩包同名**的
+``Section2_<版本>_<日期>\\`` 目录（不是笼统的 ``Section2``），同事解压到同一
+位置时不会互相覆盖，也一眼能看出是哪个版本。
 """
 
 from __future__ import annotations
@@ -119,10 +121,12 @@ def make_zip(version: str) -> Path:
         target.unlink()
 
     print(f"[打包] {target.name}")
+    # 压缩包内的第一层目录与压缩包同名，避免解压后只剩一个笼统的 Section2
+    root = target.stem
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(APP_DIR.rglob("*")):
             if path.is_file():
-                archive.write(path, Path("Section2") / path.relative_to(APP_DIR))
+                archive.write(path, Path(root) / path.relative_to(APP_DIR))
     return target
 
 
