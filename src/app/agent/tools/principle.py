@@ -68,7 +68,7 @@ def tool_get_principle_detail(arguments: dict) -> dict:
 
 #: 管道基础（v10 起归地基原则）与挖填类型（v10 起归挖填降水原则）的字段名
 _FOUNDATION_FIELDS = ("con_found", "found_angle")
-_EXCAVATION_FIELDS = ("excvt", "dock_l", "dock_h", "cover50", "cover")
+_EXCAVATION_FIELDS = ("excvt", "dock_l", "dock_h", "cover50", "cover", "cover_h")
 
 
 def tool_create_enclosure(arguments: dict) -> dict:
@@ -411,7 +411,9 @@ def register(registry: ToolRegistry) -> None:
                 "wells": _WELLS_SCHEMA,
                 "excvt": {"type": "string"}, "dock_l": {"type": "string"},
                 "dock_h": {"type": "string"}, "cover50": {"type": "string"},
-                "cover": {"type": "string"}},
+                "cover": {"type": "string"},
+                "cover_h": {"type": "number",
+                            "description": "管顶以上回填高度 cm（0 = 至管顶标高）"}},
              "required": ["name"]},
             tool_create_precipitation,
         )
@@ -460,11 +462,13 @@ def register(registry: ToolRegistry) -> None:
     )
     registry.register(
         Tool(
-            "set_precipitation_excavation", "修改挖填降水原则的挖填类型字段（土质/坞塝/覆土）。写操作。",
+            "set_precipitation_excavation", "修改挖填降水原则的挖填类型字段（土质/坞塝/覆土/管顶以上高度）。写操作。",
             {"type": "object", "properties": {
                 "name": {"type": "string"}, "excvt": {"type": "string"},
                 "dock_l": {"type": "string"}, "dock_h": {"type": "string"},
-                "cover50": {"type": "string"}, "cover": {"type": "string"}},
+                "cover50": {"type": "string"}, "cover": {"type": "string"},
+                "cover_h": {"type": "number",
+                            "description": "管顶以上回填高度 cm（0 = 至管顶标高）"}},
              "required": ["name"]},
             tool_set_precipitation_excavation,
         )

@@ -1,7 +1,8 @@
 """沟槽土方 / 回填计算（复刻旧版 mscGroove.cal_groove）。
 
 分层回填列表自底向上：换填（PF 换填层，倒序）→ 垫层 → 坞膀下半 → 坞膀上半 →
-管顶 50cm → 覆土；每层按当前围护级别的放坡系数算梯形断面
+管顶以上（高度取挖填降水原则的 cover_h，cm）→ 覆土；每层按当前围护级别的放坡
+系数算梯形断面
 ``Trapezoid(B,H,slope) = (2B+2Hs)H/2``，同一层挖方与回填取同一面积。
 多级围护按 splitHbyStep 的分级标高切换，切级时按平台宽度加宽底宽。
 
@@ -17,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.core.calc.measures import AtlasDims, foundation_thickness
+from app.core.models.models import DOCK_COVER_H_DEFAULT
 from app.core.calc.tracer import (
     AreaParts,
     Dim,
@@ -157,7 +159,8 @@ def backfill_layers(
     """分层回填列表（旧版 cal_groove 的 Backfill），返回 (定额键, 层厚, 说明)。
 
     换填层 / 垫层厚度取自 ``pf``（地基原则），坞膀与覆土的材质取自 ``pp``
-    （挖填降水原则，v10 起挖填类型不再随左右围护分侧）。
+    （挖填降水原则，v10 起挖填类型不再随左右围护分侧）。管顶以上那一层的
+    厚度取 ``pp.cover_h``（cm，用户自定义；0 = 正好至管顶标高），不再固定 50cm。
     """
     layers: list[tuple[str, Dim, str]] = []
     # 分层高度编号：从下往上 1、2、3…（H1、H2…）；整个槽的总高度是 H
@@ -197,17 +200,23 @@ def backfill_layers(
     )
     layers.append((f"回填|{pp.dock_h}|m3", height, "坞膀上半"))
     order += 1
-    height, remaining = min_h(mm(500), remaining)
+    # 管顶以上回填高度（cm → mm）：用户在「坞塝回填 = 至管顶」时填写
+    top_cm = cover_h_cm(pp)
+    top_height = mm(top_cm * 10.0)
+    height, remaining = min_h(top_height, remaining)
     height = height.named(
-        "管顶50cm层厚", "管顶 50cm 范围", role="layer_height", order=order
+        "管顶以上层厚",
+        f"管顶以上回填 {fmt(top_cm)}cm",
+        role="layer_height",
+        order=order,
     )
-    layers.append((f"回填|{pp.cover50}|m3", height, "管顶50cm"))
-    cover = total - size_h - (foundation_thickness(pf) + ad.t * 2 + ad.c1) - mm(500)
+    layers.append((f"回填|{pp.cover50}|m3", height, "管顶以上"))
+    cover = total - size_h - (foundation_thickness(pf) + ad.t * 2 + ad.c1) - top_height
     order += 1
     height, remaining = min_h(cover, remaining)
     height = height.named(
         "覆土层厚",
-        "计算深度−断面高−基础厚度−0.5",
+        "计算深度−断面高−基础厚度−管顶以上高度",
         role="layer_height",
         order=order,
     )
@@ -215,12 +224,21 @@ def backfill_layers(
     return layers
 
 
+def cover_h_cm(pp) -> float:
+    """挖填降水原则的管顶以上回填高度（cm）；缺失 / 非法值回退 50cm（旧版口径）。"""
+    try:
+        value = float(getattr(pp, "cover_h", None))
+    except (TypeError, ValueError):
+        return DOCK_COVER_H_DEFAULT
+    return max(value, 0.0)
+
+
 def layer_roles(layers: list[tuple[str, Dim, str]]) -> list[tuple[str, int]]:
     """分层条目的统筹角色 ``(角色名, 自底向上的同角色序号)``。
 
     合槽"统一回填标高"按角色统筹：换填各层同属角色 ``换填``（按自底向上
     的出现序号区分），其余层角色 = 分层说明（垫层 / 坞膀下半 / 坞膀上半 /
-    管顶50cm / 覆土）——同一角色在构件之间才被认作"同一层"参与取最浅标高，
+    管顶以上 / 覆土）——同一角色在构件之间才被认作"同一层"参与取最浅标高，
     回填材质（定额键）差异不影响统筹。
     """
     roles: list[tuple[str, int]] = []

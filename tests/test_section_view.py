@@ -182,6 +182,40 @@ def test_trench_scene_geometry(qapp, project_with_element) -> None:
     assert kinds.count("Ellipse") == 2
 
 
+def test_trench_scene_follows_dock_cover_h(qapp, project_with_element) -> None:
+    """坞塝回填「至管顶」的 cm 数直接决定断面图上的管顶以上层厚。"""
+    from app.views.panels.section_view import _build_scene
+
+    def scene_of():
+        scene, hint = _build_scene(project_with_element, 320, 420)
+        assert hint == "" and scene is not None
+        # 覆土层是最后一层：其层底标高 = 管顶 + cover_h
+        return scene, scene.segments[-1].h_current
+
+    scene, cover_bottom = scene_of()
+    assert scene.segments[-2].h_delta == pytest.approx(0.5)  # 默认 50cm
+
+    precipitation = project_io.precipitations()[0]
+    precipitation.cover_h = 30.0
+    project_io.commit()
+    orm.session().expire_all()
+    custom, custom_bottom = scene_of()
+    assert custom.segments[-2].h_delta == pytest.approx(0.3)
+    assert custom_bottom == pytest.approx(cover_bottom - 0.2)
+    # 断面总深 / 槽顶宽与回填高度无关（只移动材质分界）
+    assert custom.total_h == pytest.approx(scene.total_h)
+    assert custom.top_width == pytest.approx(scene.top_width)
+
+    # 0cm：管顶以上层消失，覆土直接从管顶起
+    precipitation = project_io.precipitations()[0]
+    precipitation.cover_h = 0.0
+    project_io.commit()
+    orm.session().expire_all()
+    zero, zero_bottom = scene_of()
+    assert zero_bottom == pytest.approx(cover_bottom - 0.5)
+    assert zero.total_h == pytest.approx(scene.total_h)
+
+
 def test_lr_walk_layers_keeps_each_side_aligned() -> None:
     """左右放坡系数不同：每侧折线连续，槽顶半宽按本侧坡度累加（不取两侧平均）。"""
     from types import SimpleNamespace as NS

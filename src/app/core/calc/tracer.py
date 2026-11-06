@@ -1184,7 +1184,7 @@ def _compact_terms(
             )
             part_symbols[id(part)] = symbol
             part_values[id(part)] = value
-            # 纯数字（如管顶 50cm 的 500）不进全局符号表，避免把同值的其它
+            # 纯数字（如管顶以上回填的 500）不进全局符号表，避免把同值的其它
             # 参数（工作面宽度 b1=500）也替换掉；面积行按对象身份直接引用。
             if not _NUMERIC.fullmatch(part.e.strip()):
                 symbols[key] = symbol

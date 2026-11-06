@@ -26,7 +26,7 @@
                        "replacements": [{"name": "…", "h": 200.0}], "component": {…}}],
     "precipitations": [{"name": "…", "wet_soil": "0|0|0", …,
                         "excvt": "Ⅲ类土", "dock_l": "…", "dock_h": "…",
-                        "cover50": "…", "cover": "…"}],
+                        "cover50": "…", "cover": "…", "cover_h": 50.0}],
     "widths":        [{"name": "…", "groove_width": "WorkWidth",
                        "tables": {"work": {"承插式": {"300": 1.06}}, "groove_b": {…}}}]
   },
@@ -65,6 +65,7 @@ from app.core.version import APP_VERSION, STN_FILE_VERSION
 from app.core.models import base as orm
 from app.core.models.models import (
     BACKFILL_INDEPENDENT,
+    DOCK_COVER_H_DEFAULT,
     LR_PE_TEXT,
     PRECIPITATION_COLUMNS,
     SPLIT_MODE_ALIASES,
@@ -90,6 +91,7 @@ from app.core.models.models import (
     TrenchGroup,
     Unit,
     WidthItem,
+    dock_cover_h_for,
 )
 
 #: 挖填类型字段（v10 起并入挖填降水原则）及其缺省值
@@ -257,6 +259,8 @@ def _dump_precipitation(item: PcpPrecipitation) -> dict:
         "dock_h": item.dock_h or "",
         "cover50": item.cover50 or "",
         "cover": item.cover or "",
+        # v11 新增：管顶以上回填高度 cm（「坞塝回填 = 至管顶」时用户填写）
+        "cover_h": float(item.cover_h if item.cover_h is not None else DOCK_COVER_H_DEFAULT),
     }
 
 
@@ -567,7 +571,11 @@ def _load_enclosure(session, data: dict, *, order_no: int) -> None:
 
 
 def _load_precipitation(session, data: dict, *, order_no: int, legacy_pe: dict | None) -> None:
-    """挖填降水原则：井型 + 挖填类型；旧文件缺挖填字段时按旧围护原则 payload 兜底。"""
+    """挖填降水原则：井型 + 挖填类型；旧文件缺挖填字段时按旧围护原则 payload 兜底。
+
+    旧文件没有 ``cover_h``（v11 新增的管顶以上回填高度）：按四个材质字段反推——
+    旧版「至管顶标高」为 0cm，「至管顶50cm」及其余方式为 50cm。
+    """
     legacy_pe = legacy_pe or {}
     precipitation = PcpPrecipitation(
         name=data.get("name") or "新挖填降水原则",
@@ -577,6 +585,16 @@ def _load_precipitation(session, data: dict, *, order_no: int, legacy_pe: dict |
     for key, default in _EXCAVATION_FIELDS:
         value = data.get(key) or legacy_pe.get(key)
         setattr(precipitation, key, str(value) if value else default)
+    cover_h = data.get("cover_h")
+    try:
+        precipitation.cover_h = (
+            float(cover_h) if cover_h not in (None, "") else dock_cover_h_for(
+                precipitation.dock_l, precipitation.dock_h,
+                precipitation.cover50, precipitation.cover,
+            )
+        )
+    except (TypeError, ValueError):
+        precipitation.cover_h = DOCK_COVER_H_DEFAULT
     session.add(precipitation)
 
 

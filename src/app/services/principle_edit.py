@@ -374,12 +374,21 @@ def apply_foundation(
 # 挖填降水 / 面宽
 # --------------------------------------------------------------------------- #
 def apply_precipitation_excavation(precipitation_id: int, fields: dict | None = None) -> PcpPrecipitation:
-    """修改挖填降水原则的「挖填类型」字段（开挖土质 / 回填材质）。"""
+    """修改挖填降水原则的「挖填类型」字段（开挖土质 / 回填材质 / 管顶以上高度）。"""
     precipitation = _precipitation(precipitation_id)
     for key in ("excvt", "dock_l", "dock_h", "cover50", "cover"):
         value = (fields or {}).get(key)
         if value is not None:
             setattr(precipitation, key, str(value))
+    cover_h = (fields or {}).get("cover_h")
+    if cover_h is not None:
+        try:
+            value = float(cover_h)
+        except (TypeError, ValueError) as error:
+            raise PrincipleEditError("管顶以上回填高度需为数字（cm）。") from error
+        if value < 0:
+            raise PrincipleEditError("管顶以上回填高度不能为负数（cm）。")
+        precipitation.cover_h = value
     project_io.commit()
     orm.session().expire(precipitation)
     return precipitation

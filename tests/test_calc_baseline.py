@@ -86,6 +86,56 @@ def test_closed_form_trapezoid(project) -> None:
     assert layers == pytest.approx(groove_depth, rel=1e-9)
 
 
+def test_dock_cover_height_customizes_pipe_top_layer(project) -> None:
+    """坞塝回填「至管顶」按用户填写的 cm 回填：管顶以上层厚随 cover_h 变化。
+
+    旧版把这一层写死 0.5m（「至管顶50cm」）；现在 0cm 即旧版「至管顶标高」，
+    N cm 即回填到管顶以上 N cm，覆土随之让位，总回填量守恒。
+    """
+    unit = project
+    element = {item.name: item for item in _elements(unit)}["混凝土管"]
+    assert project_io.precipitations()[0].cover_h == 50.0
+
+    def layers() -> tuple[float, dict]:
+        dq = _results(unit)[element.id]
+        terms: dict = {}
+        for key in ("回填|中粗砂|m3", "回填|素土|m3"):
+            quantity = dq.get(key)
+            for term in (quantity.terms if quantity else []):
+                terms[term.note] = term
+        total = sum(
+            (dq.get(key).value if dq.get(key) else 0.0)
+            for key in ("回填|中粗砂|m3", "回填|素土|m3")
+        )
+        return total, terms
+
+    total, terms = layers()
+    top = terms["管顶以上"]
+    assert top.geometry[1] - top.geometry[0] == pytest.approx(0.5)
+
+    # 30cm：管顶以上层薄 0.2m，覆土底标高随之下降，总回填不变
+    precipitation = project_io.precipitations()[0]
+    precipitation.cover_h = 30.0
+    project_io.commit()
+    orm.session().expire_all()
+    custom_total, custom = layers()
+    assert custom["管顶以上"].geometry[1] - custom["管顶以上"].geometry[0] == pytest.approx(0.3)
+    assert custom["覆土"].geometry[0] == pytest.approx(top.geometry[1] - 0.2)
+    assert custom_total == pytest.approx(total)
+
+    # 0cm（旧版「至管顶标高」）：没有管顶以上层，材质并入覆土
+    precipitation = project_io.precipitations()[0]
+    precipitation.cover_h = 0.0
+    precipitation.cover50 = precipitation.cover
+    project_io.commit()
+    orm.session().expire_all()
+    zero_total, zero = layers()
+    assert "管顶以上" not in zero
+    # 覆土直接从管顶开始（管顶以上层顶 = 管顶 = 该层原来的层底）
+    assert zero["覆土"].geometry[0] == pytest.approx(top.geometry[0])
+    assert zero_total == pytest.approx(total)
+
+
 def test_expression_matches_value(project) -> None:
     """每条工程量的算式重新求值必须等于数值（误差 < 0.5%）。"""
     unit = project

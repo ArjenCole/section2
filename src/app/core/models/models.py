@@ -131,6 +131,27 @@ PRECIPITATION_LABELS: dict[str, str] = {
     "deep_well": "深井",
 }
 
+# --------------------------------------------------------------------------- #
+# 坞塝回填方式（挖填降水原则窗体的「坞塝回填」下拉）
+#
+# 库内不存这个下拉值：它只是 dock_l / dock_h / cover50 / cover 四个材质字段的
+# 界面语义（旧版 CBOdock 同样按四字段反推）。v11 起「至管顶50cm」与「至管顶
+# 标高」合并为「至管顶」，管顶以上回填高度改由 ``PcpPrecipitation.cover_h``
+# （cm）自定义：0 = 正好回填至管顶标高，N = 回填至管顶以上 N cm。
+# --------------------------------------------------------------------------- #
+#: 坞塝回填至管顶以上 cover_h cm（0 即至管顶标高）
+DOCK_TOP = "至管顶"
+#: 坞塝回填至管中心标高（管顶以上为顶部回填材料）
+DOCK_CENTER = "至管中心标高"
+#: 全部采用坞塝材质回填至沟槽顶标高
+DOCK_TRENCH_TOP = "至沟槽顶标高"
+
+#: 「坞塝回填」下拉项（按序显示）
+DOCK_MODES: tuple[str, ...] = (DOCK_TOP, DOCK_CENTER, DOCK_TRENCH_TOP)
+
+#: 管顶以上回填高度的默认值（cm）：旧版固定 50cm 的管顶回填层
+DOCK_COVER_H_DEFAULT = 50.0
+
 #: 旧版 mcPcpEnclosure 构造函数里的默认值：(深度阈值 m, 井距 m, 侧数)
 PRECIPITATION_DEFAULTS: dict[str, tuple[float, float, float]] = {
     "wet_soil": (0.0, 0.0, 0.0),
@@ -562,11 +583,46 @@ class PcpPrecipitation(Base):
     #: 坞塝：管道下半 / 上半回填材料
     dock_l: Mapped[str] = mapped_column(String(50), default="中粗砂")
     dock_h: Mapped[str] = mapped_column(String(50), default="中粗砂")
-    #: 管顶 50cm 以内回填材料
+    #: 管顶以上回填材料（「至管顶」方式下即坞塝材质，厚度取 cover_h）
     cover50: Mapped[str] = mapped_column(String(50), default="中粗砂")
     #: 覆土材料
     cover: Mapped[str] = mapped_column(String(50), default="素土")
+    #: 管顶以上回填高度 cm（「坞塝回填」= 至管顶时用户填写；0 = 正好至管顶标高）。
+    #: 无论坞塝回填方式如何，这一层都是「管顶以上」层的厚度（材质按 cover50 取）
+    cover_h: Mapped[float] = mapped_column(Float, default=DOCK_COVER_H_DEFAULT)
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+def dock_mode_of(precipitation: "PcpPrecipitation") -> str:
+    """按四个回填材质字段反推「坞塝回填」下拉值（旧版 CBOdock 反向映射）。
+
+    * ``dock_h != dock_l``：坞塝只到管中心，上半与管顶以上都是顶部回填材料
+      → 至管中心标高；
+    * ``dock_h == dock_l`` 且 ``cover50`` / ``cover`` 也都是坞塝材质 → 至沟槽顶标高；
+    * 其余 → 至管顶（管顶以上高度看 ``cover_h``，0 即旧版「至管顶标高」）。
+    """
+    if precipitation.dock_h != precipitation.dock_l:
+        return DOCK_CENTER
+    if (
+        precipitation.cover50 == precipitation.dock_l
+        and precipitation.cover == precipitation.dock_l
+    ):
+        return DOCK_TRENCH_TOP
+    return DOCK_TOP
+
+
+def dock_cover_h_for(
+    dock_l: str, dock_h: str, cover50: str, cover: str
+) -> float:
+    """旧数据没有 ``cover_h`` 时按四字段反推管顶以上高度（cm）。
+
+    旧版「至管顶标高」= 坞塝到管顶为止（管顶以上是顶部回填材料，
+    ``cover50 == cover != dock_l``）→ 0cm；其余方式（含旧版「至管顶50cm」）
+    的管顶以上层都是固定 50cm → 50cm。
+    """
+    if dock_h == dock_l and cover50 != dock_l:
+        return 0.0
+    return DOCK_COVER_H_DEFAULT
 
 
 class PcpWidth(Base):

@@ -39,6 +39,7 @@ from app.core.version import (
 from app.core.main_thread import ensure_main_thread
 from app.core.models import base as orm
 from app.core.models.models import (
+    DOCK_COVER_H_DEFAULT,
     GROOVE_WIDTH_WORK,
     MULTI_LEVEL_TEXT,
     PRECIPITATION_DEFAULTS,
@@ -55,6 +56,7 @@ from app.core.models.models import (
     Segment,
     Unit,
     WidthItem,
+    dock_cover_h_for,
     format_precipitation,
 )
 
@@ -967,6 +969,8 @@ _EXCAVATION_XML_KEYS = (
     ("cover50", "Cover50", "中粗砂"),
     ("cover", "Cover", "素土"),
 )
+#: 管顶以上回填高度（cm，v11 新增）：单独一个数字标签，缺省按材质反推
+_COVER_H_XML_TAG = "CoverH"
 
 
 def export_enclosure_spcp(enclosure_id: int, path: str | Path) -> Path:
@@ -1029,6 +1033,7 @@ def export_precipitation_spcp(precipitation_id: int, path: str | Path) -> Path:
         SubElement(root, tag).text = getattr(precipitation, field)
     for field, tag, _default in _EXCAVATION_XML_KEYS:
         SubElement(root, tag).text = getattr(precipitation, field)
+    SubElement(root, _COVER_H_XML_TAG).text = _number_text(precipitation.cover_h)
     return _write_spcp(root, path)
 
 
@@ -1093,6 +1098,19 @@ def import_spcp(path: str | Path) -> tuple[str, str]:
             setattr(precipitation, field, _text_of(root, tag, "0|0|0"))
         for field, tag, default in _EXCAVATION_XML_KEYS:
             setattr(precipitation, field, _text_of(root, tag, default))
+        # 旧版 spcp 没有 CoverH：按四个材质字段反推管顶以上高度（cm）
+        cover_h = root.find(_COVER_H_XML_TAG)
+        try:
+            precipitation.cover_h = (
+                float((cover_h.text or "").strip())
+                if cover_h is not None and (cover_h.text or "").strip()
+                else dock_cover_h_for(
+                    precipitation.dock_l, precipitation.dock_h,
+                    precipitation.cover50, precipitation.cover,
+                )
+            )
+        except ValueError:
+            precipitation.cover_h = DOCK_COVER_H_DEFAULT
         session.add(precipitation)
         commit()
         return "precipitation", precipitation.name

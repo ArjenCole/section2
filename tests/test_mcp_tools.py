@@ -239,6 +239,14 @@ def test_foundation_precipitation_width(project) -> None:
     assert result["ok"], result
     detail = REG.execute("get_principle_detail", {"kind": "precipitation", "name": "测试降水"})["data"]
     assert detail["wells"]["轻型井点"]["elevation"] == 4
+    # 管顶以上回填高度（cm）可读写；坞塝回填方式由四个材质字段 + 该值派生
+    assert detail["cover_h"] == 50.0 and detail["dock_mode"] == "至管顶"
+    changed = REG.execute(
+        "set_precipitation_excavation",
+        {"name": "测试降水", "dock_l": "中粗砂", "dock_h": "中粗砂",
+         "cover50": "中粗砂", "cover": "素土", "cover_h": 30},
+    )["data"]
+    assert changed["cover_h"] == 30.0 and changed["dock_mode"] == "至管顶"
     assert REG.execute(
         "set_precipitation_wells",
         {"name": "测试降水", "wells": {"深井": {"enabled": True, "elevation": 12, "gap": 20, "sides": 1}}},

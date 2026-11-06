@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QDoubleValidator
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -43,9 +43,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.core.calc.groove import cover_h_cm
 from app.core.event_bus import bus
 from app.core.models import base as orm
 from app.core.models.models import (
+    DOCK_CENTER,
+    DOCK_COVER_H_DEFAULT,
+    DOCK_MODES,
+    DOCK_TOP,
+    DOCK_TRENCH_TOP,
     GROOVE_WIDTH_B,
     GROOVE_WIDTH_WORK,
     PRECIPITATION_COLUMNS,
@@ -61,6 +67,7 @@ from app.core.models.models import (
     WidthItem,
     WIDTH_KIND_WORK,
     WIDTH_KIND_GROOVE_B,
+    dock_mode_of,
     format_precipitation,
     parse_precipitation,
 )
@@ -74,7 +81,9 @@ _WIDTH_DNS = tuple(range(0, 3100, 100))
 
 #: 「挖填类型」面板选项（原属围护原则窗体，v10 起并入挖填降水原则）
 _EXCVT_CHOICES = ("Ⅰ、Ⅱ类土", "Ⅲ类土", "Ⅳ类土", "松石", "次坚石", "普坚石", "特坚石")
-_DOCK_CHOICES = ("至管顶50cm", "至管顶标高", "至管中心标高", "至沟槽顶标高")
+#: 「坞塝回填」下拉项（v11 起「至管顶50cm」与「至管顶标高」合并为「至管顶」，
+#: 管顶以上回填高度改由右侧输入框填写，见 PcpPrecipitation.cover_h）
+_DOCK_CHOICES = DOCK_MODES
 
 _WIDTH_CATEGORY_ORDER = (
     "混凝土管-刚性接口",
@@ -109,34 +118,36 @@ def precipitation_enabled(key: str, enclosure: PcpEnclosure) -> tuple[bool, floa
     return elevation >= 0, elevation, gap, sides
 
 
-def excavation_sentence(excvt: str, dock: str, cover: str, mode: str) -> str:
+def excavation_sentence(
+    excvt: str,
+    dock: str,
+    cover: str,
+    mode: str,
+    cover_h: float = DOCK_COVER_H_DEFAULT,
+) -> str:
     """按「坞塝回填」方式拼挖填方描述（编辑窗体实时预览与库内字段共用口径）。
 
-    至管顶 50cm：「坞塝采用 X 回填至管顶 50cm，顶部采用 Y 回填」；至管顶标高 /
-    管中心标高同理；至沟槽顶标高时全部同材质，合并成一句。
+    至管顶：「坞塝采用 X 回填至管顶以上 Ncm，顶部采用 Y 回填」（N = 0 时写作
+    「回填至管顶标高」）；至管中心标高同理；至沟槽顶标高时全部同材质，
+    合并成一句。
     """
-    if mode == "至沟槽顶标高":
+    if mode == DOCK_TRENCH_TOP:
         return f"基坑挖{excvt}，全部采用{dock}回填至沟槽顶标高"
-    if mode == "至管中心标高":
+    if mode == DOCK_CENTER:
         return f"基坑挖{excvt}，坞塝采用{dock}回填至管中心标高，上部采用{cover}回填"
-    target = "管顶50cm" if mode == "至管顶50cm" else "管顶标高"
+    target = "管顶标高" if cover_h <= 0 else f"管顶以上{cover_h:g}cm"
     return f"基坑挖{excvt}，坞塝采用{dock}回填至{target}，顶部采用{cover}回填"
 
 
 def excavation_text(precipitation: PcpPrecipitation) -> str:
     """挖填方描述：基坑开挖土质 + 坞塝 / 顶部回填（回填方式按库内字段反推）。"""
-    if (
-        precipitation.dock_h == precipitation.dock_l
-        and precipitation.cover50 == precipitation.dock_l
-        and precipitation.cover == precipitation.dock_l
-    ):
-        mode = "至沟槽顶标高"
-    elif precipitation.dock_h == precipitation.dock_l:
-        # cover50 == dock_l 且 cover 不同 = 至管顶 50cm；否则至管顶标高
-        mode = "至管顶50cm" if precipitation.cover50 == precipitation.dock_l else "至管顶标高"
-    else:
-        mode = "至管中心标高"
-    return excavation_sentence(precipitation.excvt, precipitation.dock_l, precipitation.cover, mode)
+    return excavation_sentence(
+        precipitation.excvt,
+        precipitation.dock_l,
+        precipitation.cover,
+        dock_mode_of(precipitation),
+        cover_h_cm(precipitation),
+    )
 
 
 def precipitation_text(precipitation: PcpPrecipitation, excavation: str | None = None) -> str:
@@ -1117,6 +1128,10 @@ class PrecipitationEditDialog(FramelessDialog):
     井型表编辑与挖填类型面板调整选项都即时刷新（_describe_change /
     _excavation_changed，挖填类型用面板当前值预览，确认才落库）；
     两面板高度以井型表内容为准（_fit_panel_heights），下缘对齐。
+
+    v11 起「坞塝回填」的「至管顶50cm」与「至管顶标高」合并为「至管顶」：
+    选中时下拉框变短、右侧出现管顶以上高度（cm）输入框，填多少 cm 就按多少
+    cm 回填（0 = 正好至管顶标高），工程量与断面图都按这个数计算。
     """
 
     _ROWS = PRECIPITATION_COLUMNS  # 湿土排水 → 深井，与旧版行序一致
@@ -1218,6 +1233,8 @@ class PrecipitationEditDialog(FramelessDialog):
 
         四个选项任一变化都即时刷新下方总结文字（_excavation_changed），
         不等「确认」落库——编辑期间只写会话，预览用面板当前值。
+        「坞塝回填 = 至管顶」时下拉框变短，右侧让出管顶以上高度（cm）输入框，
+        用户填多少 cm 就按多少 cm 回填（0 = 正好至管顶标高）。
         """
         box = QGroupBox("挖填类型")
         form = QFormLayout(box)
@@ -1226,14 +1243,34 @@ class PrecipitationEditDialog(FramelessDialog):
         self._dock_material = QLineEdit()
         self._dock_mode = QComboBox()
         self._dock_mode.addItems(_DOCK_CHOICES)
+
+        # 坞塝回填一行：下拉框 + （至管顶时）管顶以上高度 + cm
+        dock_row = QWidget()
+        dock_layout = QHBoxLayout(dock_row)
+        dock_layout.setContentsMargins(0, 0, 0, 0)
+        dock_layout.setSpacing(4)
+        dock_layout.addWidget(self._dock_mode, 1)
+        self._cover_h = QLineEdit()
+        self._cover_h.setFixedWidth(64)
+        self._cover_h.setPlaceholderText("0")
+        self._cover_h.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._cover_h.setToolTip("回填至管顶以上多少 cm（0 = 正好回填至管顶标高）")
+        self._cover_h.setValidator(QDoubleValidator(0.0, 10000.0, 2, self._cover_h))
+        self._cover_h_unit = QLabel("cm")
+        dock_layout.addWidget(self._cover_h)
+        dock_layout.addWidget(self._cover_h_unit)
+
         self._cover = QLineEdit()
         form.addRow("开挖类型", self._excvt)
         form.addRow("坞塝材质", self._dock_material)
-        form.addRow("坞塝回填", self._dock_mode)
+        form.addRow("坞塝回填", dock_row)
         form.addRow("顶部回填", self._cover)
         self._excvt.currentTextChanged.connect(self._excavation_changed)
         self._dock_material.textChanged.connect(self._excavation_changed)
         self._dock_mode.currentTextChanged.connect(self._excavation_changed)
+        self._cover_h.textChanged.connect(self._excavation_changed)
         self._cover.textChanged.connect(self._excavation_changed)
         return box
 
@@ -1241,15 +1278,33 @@ class PrecipitationEditDialog(FramelessDialog):
         """挖填类型面板选项变化：总结文字实时跟随（装填期间跳过）。"""
         if self._loading:
             return
+        self._update_cover_h_visible()
         self._update_describe()
 
+    def _update_cover_h_visible(self) -> None:
+        """「至管顶」才显示管顶以上高度输入框（其余方式的该层厚度沿用原值）。"""
+        visible = self._dock_mode.currentText() == DOCK_TOP
+        self._cover_h.setVisible(visible)
+        self._cover_h_unit.setVisible(visible)
+
+    def _cover_h_value(self) -> float:
+        """管顶以上回填高度（cm）：空按 0、非数字按 0（确认时另有校验）。"""
+        text = self._cover_h.text().strip()
+        if not text:
+            return 0.0
+        try:
+            return max(float(text), 0.0)
+        except ValueError:
+            return 0.0
+
     def _excavation_preview(self) -> str:
-        """按面板当前取值拼挖填方描述（回填方式直接取「坞塝回填」下拉）。"""
+        """按面板当前取值拼挖填方描述（回填方式与管顶以上高度取面板当前值）。"""
         return excavation_sentence(
             self._excvt.currentText(),
             self._dock_material.text().strip(),
             self._cover.text().strip(),
             self._dock_mode.currentText(),
+            self._cover_h_value(),
         )
 
     def _update_describe(self) -> None:
@@ -1274,17 +1329,11 @@ class PrecipitationEditDialog(FramelessDialog):
             self._excvt.setCurrentText(precipitation.excvt)
             self._dock_material.setText(precipitation.dock_l)
             self._cover.setText(precipitation.cover)
-            if precipitation.dock_h == precipitation.dock_l:
-                if precipitation.cover50 == precipitation.dock_l:
-                    if precipitation.cover == precipitation.dock_l:
-                        self._dock_mode.setCurrentText("至沟槽顶标高")
-                        self._cover.setText("素土")
-                    else:
-                        self._dock_mode.setCurrentText("至管顶50cm")
-                else:
-                    self._dock_mode.setCurrentText("至管顶标高")
-            else:
-                self._dock_mode.setCurrentText("至管中心标高")
+            mode = dock_mode_of(precipitation)
+            self._dock_mode.setCurrentText(mode)
+            self._cover_h.setText(f"{cover_h_cm(precipitation):g}")
+            if mode == DOCK_TRENCH_TOP:
+                self._cover.setText("素土")
             for row_index, key in enumerate(self._ROWS):
                 enabled, elevation, gap, sides = precipitation_enabled(key, precipitation)
                 name_item = QTableWidgetItem(PRECIPITATION_LABELS[key])
@@ -1313,6 +1362,7 @@ class PrecipitationEditDialog(FramelessDialog):
         self._table.resizeColumnsToContents()
         if self._table.columnWidth(self._COL_NAME) < 110:
             self._table.setColumnWidth(self._COL_NAME, 110)
+        self._update_cover_h_visible()  # 装填期间跳过信号，这里补一次可见性
         self._describe_change()
 
     def _refresh_range(self) -> None:
@@ -1393,25 +1443,36 @@ class PrecipitationEditDialog(FramelessDialog):
             dock_mode = self._dock_mode.currentText()
             dock = self._dock_material.text().strip()
             cover = self._cover.text().strip()
-            # GetDetailFormFm 原版映射
-            if dock_mode == "至管顶50cm":
-                dock_h, cover50, cover_value = dock, dock, cover
-            elif dock_mode == "至管顶标高":
-                dock_h, cover50, cover_value = dock, cover, cover
-            elif dock_mode == "至管中心标高":
-                dock_h, cover50, cover_value = cover, cover, cover
+            fields: dict = {
+                "excvt": self._excvt.currentText(),
+                "dock_l": dock,
+            }
+            # GetDetailFormFm 原版映射；v11 起「至管顶」按用户填写的 cm 回填
+            if dock_mode == DOCK_TOP:
+                text = self._cover_h.text().strip()
+                try:
+                    cover_h = max(float(text), 0.0) if text else 0.0
+                except ValueError:
+                    FramelessMessageBox.warning(
+                        self, "提示", "管顶以上回填高度需为数字（cm）。"
+                    )
+                    return
+                fields.update(
+                    {
+                        "cover_h": cover_h,
+                        "dock_h": dock,
+                        # 0cm：管顶以上没有回填层，材质随覆土（旧版「至管顶标高」口径）
+                        "cover50": dock if cover_h > 0 else cover,
+                        "cover": cover,
+                    }
+                )
+            elif dock_mode == DOCK_CENTER:
+                fields.update(
+                    {"dock_h": cover, "cover50": cover, "cover": cover}
+                )
             else:  # 至沟槽顶标高
-                dock_h, cover50, cover_value = dock, dock, dock
-            apply_precipitation_excavation(
-                precipitation.id,
-                {
-                    "excvt": self._excvt.currentText(),
-                    "dock_l": dock,
-                    "dock_h": dock_h,
-                    "cover50": cover50,
-                    "cover": cover_value,
-                },
-            )
+                fields.update({"dock_h": dock, "cover50": dock, "cover": dock})
+            apply_precipitation_excavation(precipitation.id, fields)
         project_io.commit()  # 本次编辑（各井型参数 + 挖填类型）在此统一落库
         bus().principle_changed.emit()
         self.accept()

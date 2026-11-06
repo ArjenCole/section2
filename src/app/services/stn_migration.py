@@ -157,6 +157,8 @@ class _LegacyEnclosure:
     dock_h: str = "中粗砂"
     cover50: str = "中粗砂"
     cover: str = "素土"
+    #: 管顶以上回填高度 cm（v11 新增标签 CoverH；旧文件没有 = None，按材质反推）
+    cover_h: float | None = None
     precipitation: dict[str, str] = field(default_factory=dict)
     groove_width: str = "WorkWidth"
     widths: dict[str, dict[int, float]] = field(default_factory=dict)
@@ -280,6 +282,17 @@ def _text(node, tag: str, default: str = "") -> str:
     return child.text.strip()
 
 
+def _optional_float(text: str) -> float | None:
+    """可缺省的数值标签：空 / 非数字一律 None（由调用方按旧口径反推）。"""
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
 def _parse_component(node) -> _LegacyComponent:
     component = _LegacyComponent()
     if node is None:
@@ -308,6 +321,7 @@ def _parse_enclosure(node, version: str) -> _LegacyEnclosure:
         dock_h=_text(node, "DockH", "中粗砂"),
         cover50=_text(node, "Cover50", "中粗砂"),
         cover=_text(node, "Cover", "素土"),
+        cover_h=_optional_float(_text(node, "CoverH", "")),
         groove_width=_text(node, "grooveWidth", "WorkWidth"),
     )
     cushion = node.find("Cush/msReplacement")
@@ -861,7 +875,7 @@ def write_legacy_enclosure(session, legacy_pe: _LegacyEnclosure, library, report
     管道基础与垫层则随 :func:`write_legacy_foundation` 落到地基原则（旧版
     地基原则本身不带这些字段，由调用方按旧 PE 值传入 ``pipe_base``）。
     """
-    from app.core.models.models import PRECIPITATION_COLUMNS
+    from app.core.models.models import PRECIPITATION_COLUMNS, dock_cover_h_for
 
     report = report or MigrationReport()
     enclosure = PcpEnclosure(name=legacy_pe.name, order_no=order_no)
@@ -875,6 +889,14 @@ def write_legacy_enclosure(session, legacy_pe: _LegacyEnclosure, library, report
         dock_h=legacy_pe.dock_h,
         cover50=legacy_pe.cover50,
         cover=legacy_pe.cover,
+        # 旧版没有 CoverH 标签：按四个材质字段反推（至管顶标高 = 0cm，其余 50cm）
+        cover_h=(
+            legacy_pe.cover_h
+            if legacy_pe.cover_h is not None
+            else dock_cover_h_for(
+                legacy_pe.dock_l, legacy_pe.dock_h, legacy_pe.cover50, legacy_pe.cover
+            )
+        ),
     )
     for key in PRECIPITATION_COLUMNS:
         setattr(precipitation, key, legacy_pe.precipitation.get(key, _PRECIP_DEFAULT_TEXT[key]))

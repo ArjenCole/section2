@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from app.core.models.models import CATEGORY_CHOICES, CATEGORY_NAMES
+from app.core.models.models import CATEGORY_CHOICES, CATEGORY_NAMES, DOCK_MODES
 from app.core.pipe_category import PIPE_CATEGORIES, WIDTH_PIPE_TYPES
 
 #: 构件类别枚举（不含空类别）
@@ -31,8 +31,8 @@ EXCVT_CHOICES: tuple[str, ...] = (
     "特坚石",
 )
 
-#: 坞塝回填枚举（围护原则 dock_h 的界面语义）
-DOCK_CHOICES: tuple[str, ...] = ("至管顶50cm", "至管顶标高", "至管中心标高", "至沟槽顶标高")
+#: 坞塝回填枚举（挖填降水原则的「坞塝回填」下拉；v11 起至管顶以上高度自定义）
+DOCK_CHOICES: tuple[str, ...] = DOCK_MODES
 
 #: 降水井型（五个列名）
 PRECIPITATION_WELLS: tuple[str, ...] = (
@@ -56,6 +56,9 @@ CONVENTIONS_TEXT = f"""\
   （多围护/多地基原则引用已取消：每个构件只引用一条围护、一条地基原则。）
 - 构件埋深(depth)/数量(amount)/参数值/管材含量都可写算式原文（如 "2.5+0.3"），
   工具按字符串原文接收，另返回 *_value 数值。
+- 挖填降水原则的「坞塝回填」（dock_mode，只读派生）= {' / '.join(DOCK_MODES)}；
+  存库仍是 dock_l / dock_h / cover50 / cover 四个材质字段 + cover_h（cm，
+  管顶以上回填高度：至管顶时用户自定义，0 = 正好至管顶标高，默认 50）。
 
 ## 管材与图集（v9）
 - 每根管材都有“类别” cat，取值只能是：{' / '.join(PIPE_CATEGORIES)}。

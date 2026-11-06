@@ -130,6 +130,8 @@ def test_spcp_roundtrip(project, tmp_path: Path) -> None:
     # 降水 / 面宽原则自身的导出导入回路
     out_pp = tmp_path / "pp.spcp"
     out_pw = tmp_path / "pw.spcp"
+    pp.cover_h = 25.0  # 管顶以上回填高度随 spcp 一起往返
+    project_io.commit()
     project_io.export_precipitation_spcp(pp.id, out_pp)
     project_io.export_width_spcp(pw.id, out_pw)
     kind, name = project_io.import_spcp(out_pp)
@@ -137,6 +139,7 @@ def test_spcp_roundtrip(project, tmp_path: Path) -> None:
     cloned_pp = next(p for p in project_io.precipitations() if p.name == name)
     for field in ("wet_soil", "light_well", "jet_well", "big_well", "deep_well"):
         assert getattr(pp, field) == getattr(cloned_pp, field), field
+    assert cloned_pp.cover_h == 25.0
     kind, name = project_io.import_spcp(out_pw)
     assert kind == "width"
     cloned_pw = next(w for w in project_io.width_principles() if w.name == name)
@@ -620,7 +623,7 @@ def test_precipitation_text_paragraph_and_excavation(qapp, project) -> None:
 
     pp = project_io.precipitations()[0]
     text = precipitation_text(pp)
-    assert text.startswith("基坑挖Ⅲ类土，坞塝采用中粗砂回填至管顶50cm，顶部采用素土回填；")
+    assert text.startswith("基坑挖Ⅲ类土，坞塝采用中粗砂回填至管顶以上50cm，顶部采用素土回填；")
     assert "沟槽深度0~3.5m采用湿土排水" in text
     assert "3.5~6m采用轻型井点降水" in text
     assert "10~15m采用大口径井点降水" in text
@@ -653,19 +656,25 @@ def test_precipitation_dialog_describe_follows_excavation_panel(qapp, project) -
     try:
         dialog.show()
         qapp.processEvents()
-        assert "基坑挖Ⅲ类土，坞塝采用中粗砂回填至管顶50cm" in dialog._describe.text()
+        assert "基坑挖Ⅲ类土，坞塝采用中粗砂回填至管顶以上50cm" in dialog._describe.text()
         # 开挖类型变化 → 描述里的土质跟着变
         dialog._excvt.setCurrentText("Ⅳ类土")
         assert "基坑挖Ⅳ类土" in dialog._describe.text()
         # 坞塝材质 / 顶部回填
         dialog._dock_material.setText("碎石")
-        assert "坞塝采用碎石回填至管顶50cm" in dialog._describe.text()
+        assert "坞塝采用碎石回填至管顶以上50cm" in dialog._describe.text()
         dialog._cover.setText("黄土")
         assert "顶部采用黄土回填" in dialog._describe.text()
-        # 坞塝回填方式：三种目标的措辞
-        dialog._dock_mode.setCurrentText("至管顶标高")
+        # 「至管顶」时右侧出现管顶以上高度（cm）输入框，改数字即时改描述
+        assert dialog._dock_mode.currentText() == "至管顶"
+        assert not dialog._cover_h.isHidden() and dialog._cover_h_unit.text() == "cm"
+        dialog._cover_h.setText("30")
+        assert "坞塝采用碎石回填至管顶以上30cm，顶部采用黄土回填" in dialog._describe.text()
+        dialog._cover_h.setText("0")
         assert "坞塝采用碎石回填至管顶标高，顶部采用黄土回填" in dialog._describe.text()
+        # 其余方式：输入框隐藏，措辞回到管中心 / 沟槽顶
         dialog._dock_mode.setCurrentText("至管中心标高")
+        assert dialog._cover_h.isHidden() and dialog._cover_h_unit.isHidden()
         assert "回填至管中心标高，上部采用黄土回填" in dialog._describe.text()
         dialog._dock_mode.setCurrentText("至沟槽顶标高")
         assert "全部采用碎石回填至沟槽顶标高" in dialog._describe.text()
@@ -676,5 +685,6 @@ def test_precipitation_dialog_describe_follows_excavation_panel(qapp, project) -
         dialog.reject()
         pp = project_io.precipitations()[0]
         assert pp.excvt == "Ⅲ类土" and pp.dock_l == "中粗砂" and pp.cover == "素土"
+        assert pp.cover_h == 50.0
     finally:
         dialog.close()

@@ -116,6 +116,79 @@ def test_precipitation_dialog_dock_mapping_roundtrip(qapp, project):
     reopened.close()
 
 
+def test_precipitation_dialog_cover_h_roundtrip(qapp, project, monkeypatch):
+    """「至管顶」自定义管顶以上高度：确认落库、重开还原；0cm 时材质随覆土。"""
+    from app.views.dialogs.principle_dialogs import PrecipitationEditDialog
+
+    dialog = PrecipitationEditDialog(project_io_precipitation_id())
+    dialog._dock_material.setText("中粗砂")
+    dialog._cover.setText("素土")
+    dialog._dock_mode.setCurrentText("至管顶")
+    dialog._cover_h.setText("30")
+    dialog._confirm()
+    precipitation = dialog._precipitation()
+    assert precipitation.cover_h == 30.0
+    assert (precipitation.dock_h, precipitation.cover50) == ("中粗砂", "中粗砂")
+
+    reopened = PrecipitationEditDialog(precipitation.id)
+    assert reopened._dock_mode.currentText() == "至管顶"
+    assert reopened._cover_h.text() == "30"
+    assert not reopened._cover_h.isHidden()  # 至管顶才显示 cm 输入框
+    # 改成 0cm：正好回填至管顶标高，管顶以上层材质并入覆土（不再单列坞塝材质）
+    reopened._cover_h.setText("0")
+    reopened._confirm()
+    precipitation = reopened._precipitation()
+    assert precipitation.cover_h == 0.0
+    assert (precipitation.dock_h, precipitation.cover50, precipitation.cover) == (
+        "中粗砂", "素土", "素土",
+    )
+
+    # 非数字（绕过输入校验）：提示并留在窗体，不落库
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        "app.views.dialogs.principle_dialogs.FramelessMessageBox.warning",
+        lambda *args, **_kwargs: warnings.append(args[2] if len(args) > 2 else ""),
+    )
+    dialog2 = PrecipitationEditDialog(precipitation.id)
+    dialog2._dock_mode.setCurrentText("至管顶")
+    dialog2._cover_h.setText("abc")
+    dialog2._confirm()
+    assert warnings and "数字" in warnings[-1]
+    assert dialog2._precipitation().cover_h == 0.0
+    dialog2.close()
+
+
+def test_precipitation_cover_h_persists_and_migrates(qapp, project):
+    """管顶以上高度随工程保存重开；旧文件（无 cover_h）按四个材质字段反推。"""
+    from app.core.models import base as orm
+    from app.services import project_io, stn_format
+
+    pp = project_io.precipitations()[0]
+    pp.cover_h = 35.0
+    project_io.commit()
+    project_io.close_project()
+    project_io.open_project(project)
+    assert project_io.precipitations()[0].cover_h == 35.0
+
+    # 旧文件缺 cover_h：旧版「至管顶标高」（cover50 随覆土）→ 0cm，
+    # 其余方式（含旧版「至管顶50cm」）→ 50cm
+    def rewrite_precipitation(**changes) -> None:
+        project_io.close_project()
+        document = stn_format.load_stn(project)
+        item = document.data["principles"]["precipitations"][0]
+        item.pop("cover_h", None)
+        item.update(changes)
+        stn_format.write_stn(project, document.data)
+        project_io.open_project(project)
+
+    rewrite_precipitation(dock_h="中粗砂", cover50="素土", cover="素土")
+    assert project_io.precipitations()[0].cover_h == 0.0
+    rewrite_precipitation(dock_h="中粗砂", cover50="中粗砂", cover="素土")
+    assert project_io.precipitations()[0].cover_h == 50.0
+    rewrite_precipitation(dock_h="素土", cover50="素土", cover="素土")
+    assert project_io.precipitations()[0].cover_h == 50.0
+
+
 def test_main_window_replica_layout(qapp, project):
     from app.core.event_bus import bus
     from app.services.element_library import element_library

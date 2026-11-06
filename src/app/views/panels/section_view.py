@@ -14,8 +14,10 @@ level_slope / groove_width），保证图上的沟槽形状与工程量公式完
 `SectionPanel` = 断面画布容器（旧版多原则时的 PNLpicCtrler 选择行已随功能取消）。
 
 旧版 PaintBackFilled 的逐层递推（本模块 ``_walk_layers``）：
-从槽底起按"换填→垫层→坞膀下半→坞膀上半→管顶50cm→覆土"逐层向上，
+从槽底起按"换填→垫层→坞膀下半→坞膀上半→管顶以上→覆土"逐层向上，
 每段底宽按 高度增量×放坡系数×2 外扩，跨围护分级时外扩平台宽度。
+「管顶以上」层的厚度取挖填降水原则的 ``cover_h``（cm，用户自定义），
+与工程量计算共用同一个 :func:`app.core.calc.groove.backfill_layers`。
 """
 
 from __future__ import annotations
@@ -203,7 +205,7 @@ def draw_scene(
             if previous is not None:
                 painter.drawLine(int(previous[0]), int(previous[1]), int(x), int(y))
             previous = (x, y)
-        # 合槽分层线（换填 / 垫层 / 坞膀 / 管顶 50cm）与虚拟竖直墙
+        # 合槽分层线（换填 / 垫层 / 坞膀 / 管顶以上）与虚拟竖直墙
         if scene.layer_lines:
             painter.setPen(QPen(_COLOR_LAYER, 1))
             for x1, y1, x2, y2 in scene.layer_lines:
@@ -1153,7 +1155,7 @@ def _build_group_scene(
         outline.append((half + run, h_max - d))
 
     # 合槽分层线 + 虚拟竖直墙。各构件自己的回填分层（换填 / 垫层 / 坞膀 /
-    # 管顶 50cm / 覆土）先统一算好，独立 / 统一回填标高两种口径分别画线。
+    # 管顶以上 / 覆土）先统一算好，独立 / 统一回填标高两种口径分别画线。
     member_layers: list[list[tuple[str, object, str]]] = []
     for snap in snapshots:
         if snap["info"].pp is None:
@@ -1197,7 +1199,7 @@ def _build_group_scene(
                 )
                 if take:
                     best[role] = elevation
-        # 只画材质分界：垫层顶 / 管顶50cm（含换填）。坞膀下半顶（≈管中心
+        # 只画材质分界：垫层顶 / 管顶以上（含换填）。坞膀下半顶（≈管中心
         # 标高）与坞膀上半顶（≈管顶标高）只是计算分层界面，不画
         selected = sorted(
             {

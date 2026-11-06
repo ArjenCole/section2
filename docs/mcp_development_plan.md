@@ -483,13 +483,13 @@ streamable_http_client` + `ClientSession`（`async with`）连接运行中桌面
 |---|---|---|---|---|
 | T36 | `list_principles` | 读 | `kind*` | `[{name, 引用计数}]`（引用计数帮助删除决策） |
 | T37 | `get_principle_detail` | 读 | `kind*`、`name*` | 按 kind 返回完整结构（见下） |
-| T38 | `create_enclosure` | 写 | `name*`、`excvt`（7 土质枚举）、`found_angle`、`con_found`、`dock_l`、`dock_h`（4 种坞塝回填枚举）、`cover50`、`cover`、`cushions[{name,h_mm}]`（垫层，材质来自 Ei 库）、`works[{min_depth, cpnt_cat(Ei), stop_type(WSi), levels[{h 或 -1 均分, step_width, level_type(Ei)}]}]`（**整表提交**） | 全量创建（一次做完对话框所有步骤）；重名自动加后缀 |
+| T38 | `create_enclosure` | 写 | `name*`、`excvt`（7 土质枚举）、`found_angle`、`con_found`、`dock_l`、`dock_h`（坞塝回填 3 种方式：至管顶 / 至管中心标高 / 至沟槽顶标高）、`cover50`、`cover`、`cover_h`（管顶以上回填高度 cm）、`cushions[{name,h_mm}]`（垫层，材质来自 Ei 库）、`works[{min_depth, cpnt_cat(Ei), stop_type(WSi), levels[{h 或 -1 均分, step_width, level_type(Ei)}]}]`（**整表提交**） | 全量创建（一次做完对话框所有步骤）；重名自动加后缀 |
 | T39 | `create_foundation` | 写 | `name*`、`replacements[{name,h_mm}]`、`component{group:"Fi", template_name, params{…}}`（可省略=不挂特殊地基） | |
 | T40 | `create_precipitation` | 写 | `name*`、`wells{湿土排水/轻型井点/喷射井点/大口井/深井:{enabled, elevation, gap, sides}}` | 存储格式 `elevation\|gap\|sides`（`format_precipitation` 现成语义） |
 | T41 | `create_width_principle` | 写 | `name*`、`mode*`(`"WorkWidth"`/`"B"`)、`items[]`（缺省=播种图集默认表） | `project_io.seed_width_tables` |
 | T42 | `rename_principle` | 写 | `kind*`、`name*`、`new_name*` | `project_io.rename_*` |
 | T43 | `delete_principle` | 写 | `kind*`、`name*`、`merge_target_name?` | 删除时引用并入目标；**最后一条拒绝删**；缺 merge_target 时返回可用原则清单（现成语义） |
-| T44 | `set_enclosure_fields` | 写 | `name*` + 顶栏字段（excvt/found_angle/con_found/dock_l/dock_h/cover50/cover/cushions 整表） | 增量修改 |
+| T44 | `set_enclosure_fields` | 写 | `name*` + 顶栏字段（excvt/found_angle/con_found/dock_l/dock_h/cover50/cover/cover_h/cushions 整表） | 增量修改 |
 | T45 | `set_enclosure_works` | 写 | `enclosure_name*`、`works[]` 整表替换（同 T38 的 works） | 做法表（min_depth 首行恒 0 校验） |
 | T46 | `set_work_levels` | 写 | `work_id*`、`levels[]` 整表替换 | 多级围护（h=-1 = 均分剩余高度，description 写清语义） |
 | T47 | `set_replacement_layers` | 写 | `foundation_name*`、`layers[]` 整表替换 | 换填层 |
@@ -507,7 +507,7 @@ streamable_http_client` + `ClientSession`（`async with`）连接运行中桌面
 ```jsonc
 // kind="enclosure"
 { "name": "…", "excvt": "Ⅲ类土", "found_angle": 120, "con_found": true,
-  "dock_l": "…", "dock_h": "至管顶50cm", "cover50": …, "cover": …,
+  "dock_l": "…", "dock_h": "至管顶", "cover50": …, "cover": …, "cover_h": 50,
   "cushions": [{"name": "碎石垫层", "h": 100}],
   "works": [ { "work_id": 1, "min_depth": 0, "cpnt_cat": "钢板桩",
       "stop_type": "…", "levels": [ {"h": 3, "step_width": 0.8,
@@ -516,7 +516,10 @@ streamable_http_client` + `ClientSession`（`async with`）连接运行中桌面
 { "name": "…", "replacements": [{"name": "碎石", "h": 200}],
   "component": { "component_id": 7, "name": "高压旋喷桩", "params": […], "formulas": […] } }
 // kind="precipitation"
-{ "name": "…", "wells": { "轻型井点": {"enabled": true, "elevation": 6, "gap": 1.2, "sides": 2}, … } }
+{ "name": "…", "excvt": "Ⅲ类土", "dock_l": "中粗砂", "dock_h": "中粗砂",
+  "cover50": "中粗砂", "cover": "素土", "cover_h": 50,
+  "dock_mode": "至管顶",  // 只读派生：至管顶 / 至管中心标高 / 至沟槽顶标高
+  "wells": { "轻型井点": {"enabled": true, "elevation": 6, "gap": 1.2, "sides": 2}, … } }
 // kind="width"
 { "name": "…", "mode": "WorkWidth",
   "items": [ {"pipe_type": "混凝土管-刚性接口", "entries": {"600": 500, "800": 800}} ] }

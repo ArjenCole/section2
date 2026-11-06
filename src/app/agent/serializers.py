@@ -23,6 +23,7 @@ from app.core.models.models import (
     PcpPrecipitation,
     PcpWidth,
     category_name,
+    dock_mode_of,
     parse_precipitation,
 )
 from app.core.models.models import PRECIPITATION_COLUMNS, PRECIPITATION_LABELS
@@ -345,7 +346,8 @@ def precipitation_dict(precipitation: PcpPrecipitation) -> dict:
             "gap": gap,
             "sides": sides,
         }
-    # v10 起挖填类型（开挖土质 / 回填材质）并入挖填降水原则
+    # v10 起挖填类型（开挖土质 / 回填材质）并入挖填降水原则；
+    # v11 起「坞塝回填」由四个材质字段 + 管顶以上高度（cover_h）共同表达
     return {
         "name": precipitation.name,
         "excvt": precipitation.excvt,
@@ -353,6 +355,8 @@ def precipitation_dict(precipitation: PcpPrecipitation) -> dict:
         "dock_h": precipitation.dock_h,
         "cover50": precipitation.cover50,
         "cover": precipitation.cover,
+        "cover_h": float(precipitation.cover_h or 0.0),
+        "dock_mode": dock_mode_of(precipitation),
         "wells": wells,
     }
 
