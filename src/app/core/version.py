@@ -13,7 +13,7 @@ APP_ORG_DOMAIN = "section.local"
 #: 显示在窗口标题、关于框、崩溃报告，并写入 .stn 数据体的 app_version。
 #: 序号跨渠道连续累加（alpha 到 .6，首个 beta 就是 .7），每发一次包 +1，
 #: 这样四段数字版本号单调递增，正式版不会因为去掉后缀而“退回” .0。
-APP_VERSION = "2.0.0-alpha.1"
+APP_VERSION = "2.0.0-alpha.2"
 
 #: 是否为预发布（内测）版本；界面据此标注“内测版”并提示备份数据。
 IS_PRERELEASE = "-" in APP_VERSION
