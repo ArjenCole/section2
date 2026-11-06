@@ -734,18 +734,81 @@ def _role_symbol(role: str, order: int) -> str:
     return ""
 
 
-def _assign_symbols(candidates: list[_Candidate]) -> dict[str, str]:
-    """给候选片段分配短符号：语义量优先用 B/H/D 等，其余用 X1、X2…。
+#: 通用中间量按性质的符号前缀：宽度 / 高度 / 面积（见 :func:`_candidate_natures`）
+_NATURE_SYMBOLS = {"width": "tB", "height": "tH", "area": "tS"}
+#: 值量级达到该数（mm²，约 0.1 m²）的游离片段按面积类取名；几何长度到不了这个量级
+_AREA_VALUE_MIN = 1e5
+
+
+def _candidate_natures(
+    terms: list["Term"], candidates: list[_Candidate]
+) -> dict[str, str]:
+    """给通用候选片段定性（width / height / area），供符号按性质取名。
+
+    片段的规范键出现在面积行“高”（h）算式里 → 高度类（层高算式是纯竖向链，
+    优先判定——坡段 1*h 会把高度带进 u/v 算式）；只出现在“下底宽 / 上底宽”
+    （u/v）算式里 → 宽度类；只出现在公式型分项（弓形面积等，无 u/v/h 分解）
+    里的按值量级兜底：达到面积量级（mm²）视为面积类（tS），其余视为横向长度
+    归宽度类（如弓形半径 Do/2）。
+    """
+    width_keys: set[str] = set()
+    height_keys: set[str] = set()
+    for term in terms:
+        area = term.area
+        if area is None:
+            continue
+        for part in (area.u, area.v):
+            node = _parse_expression(part.e) if part is not None else None
+            if node is not None:
+                width_keys.update(_node_key(n) for n, _depth in _walk_nodes(node))
+        node = _parse_expression(area.h.e) if area.h is not None else None
+        if node is not None:
+            height_keys.update(_node_key(n) for n, _depth in _walk_nodes(node))
+    natures: dict[str, str] = {}
+    for candidate in candidates:
+        if candidate.key in height_keys:
+            # 高度优先：层高算式是纯竖向链；坡段 1*h 会把高度带进 u/v 算式
+            natures[candidate.key] = "height"
+        elif candidate.key in width_keys:
+            natures[candidate.key] = "width"
+        else:
+            value = _node_value(candidate.node)
+            natures[candidate.key] = (
+                "area" if value is not None and abs(value) >= _AREA_VALUE_MIN else "width"
+            )
+    return natures
+
+
+def _assign_symbols(
+    candidates: list[_Candidate], natures: dict[str, str] | None = None
+) -> dict[str, str]:
+    """给候选片段分配短符号：语义量优先用 B/H/D 等，通用量按性质用 tB/tH/tS。
 
     带 ``role`` 的候选按固定规则编号：整个槽底宽 B、层底宽 B1/B2…（按加宽
-    顺序）、总高 H、分层高 H1/H2…（按从下往上的层号）。
+    顺序）、总高 H、分层高 H1/H2…（按从下往上的层号）。通用量（无角色、
+    无偏好符号）按 :func:`_candidate_natures` 的性质取前缀：宽度 tB、高度
+    tH、面积 tS——第一个免后缀，其后从 1 开始递增（tB、tB1、tB2…）。
     """
     used: set[str] = set()
     symbols: dict[str, str] = {}
+    counters: dict[str, int] = {}
     for candidate in candidates:
         base = _role_symbol(candidate.role, candidate.order) or _PREFERRED_SYMBOLS.get(
-            candidate.label, "X"
+            candidate.label, ""
         )
+        if not base:
+            kind = (natures or {}).get(candidate.key, "width")
+            base = _NATURE_SYMBOLS.get(kind, "tB")
+            number = counters.get(base, 0)
+            while True:
+                symbol = base if number == 0 else f"{base}{number}"
+                number += 1
+                if symbol not in used:
+                    break
+            counters[base] = number
+            used.add(symbol)
+            symbols[candidate.key] = symbol
+            continue
         symbol = base
         index = 2
         while symbol in used:
@@ -909,7 +972,7 @@ def _select_candidates(
 ) -> list[_Candidate]:
     """从所有分项语法树中选可提取片段（语义量 → 确有重复的片段）。
 
-    ``exclude_keys`` 是构件参数自身的数值节点：参数走符号定义，不再提成 X1。
+    ``exclude_keys`` 是构件参数自身的数值节点：参数走符号定义，不再提成中间量。
     """
     root_keys = {_node_key(root) for root in roots}
     aggregated: dict[str, _Candidate] = {}
@@ -970,8 +1033,8 @@ def _select_candidates(
     # 通用重复片段仍限 8 个，避免符号表失控。
     take(semantic, None)
     # 通用片段只在“确有重复”时提取；不再把只出现一次的超长片段提成变量
-    # （那只会让主算式变成 X1*100，反而多一次跳转）。同时避开语义量的内部，
-    # 避免出现“计算深度 = 2.5+0.3+X”这类套娃定义。
+    # （那只会让主算式多一层无谓跳转）。同时避开语义量的内部，
+    # 避免出现“计算深度 = 2.5+0.3+某中间量”这类套娃定义。
     semantic_texts = [item.text for item in selected]
     repeated = [
         item
@@ -1065,14 +1128,14 @@ def _compact_terms(
 
     tag_map = _collect_tag_keys(tags)
     param_refs = _collect_param_refs(tags)
-    # 固定符号（t/a/C1/C2/D/Do/b1）自身的数值节点不提成 X1
+    # 固定符号（t/a/C1/C2/D/Do/b1）自身的数值节点不提成中间量
     param_expr_keys: set[str] = set()
     for ref in param_refs:
         parsed_ref = _parse_expression(ref.expr)
         if parsed_ref is not None:
             param_expr_keys.add(_node_key(parsed_ref))
     selected = _select_candidates(parsed, tag_map, notes, param_expr_keys)
-    symbols = _assign_symbols(selected)
+    symbols = _assign_symbols(selected, _candidate_natures(terms, selected))
     selected_keys = set(symbols)
 
     # 面积行的“顶宽”不一定作为独立子式出现在面积式里（(2B+2Hs)*H/2），

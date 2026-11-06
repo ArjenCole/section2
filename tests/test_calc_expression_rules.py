@@ -265,6 +265,82 @@ def test_compact_terms_keep_v_form_without_common_tail() -> None:
     assert view2.formula == "V=1"
 
 
+def test_generic_intermediate_symbols_carry_nature_prefix() -> None:
+    """通用中间量按性质取名 tB/tH/tS（宽度/高度/面积），不再出现 X。
+
+    重复片段出现在层高（h）算式里 → 高度类 tH（层高算式是纯竖向链，优先级
+    高于 u/v——坡段 1*h 会把高度带进宽度算式）；只在下底宽 / 上底宽算式里
+    出现 → 宽度类 tB；同一性质第一个免后缀，其后从 1 开始递增。
+    """
+    import re
+
+    from app.core.calc.tracer import AreaParts
+
+    width1 = "600+65*2+130*2"
+    width2 = "700+75*2+140*2"
+    height = "130+182+65"
+    out = QDict()
+    for note, width in (("垫层", width1), ("坞膀", width2)):
+        u_text = f"{width}+500"
+        v_text = f"{width}+500+1*({height})"
+        h_text = f"({height})"
+        area_expr = f"(({u_text})+({v_text}))*({h_text})/2"
+        out.add(
+            "开挖|Ⅲ类土|m3",
+            evaluate(f"({area_expr})/10^6*100"),
+            f"({area_expr})/10^6*100",
+            note,
+            area=AreaParts(
+                "trapezoid",
+                Dim(evaluate(u_text), u_text),
+                Dim(evaluate(v_text), v_text),
+                Dim(evaluate(h_text), h_text),
+            ),
+        )
+    view = out.get("开挖|Ⅲ类土|m3").presentation()
+    symbols = [item.symbol for item in view.definitions]
+    assert not any(symbol.startswith("X") for symbol in symbols), symbols
+    widths = [symbol for symbol in symbols if symbol.startswith("tB")]
+    heights = [symbol for symbol in symbols if symbol.startswith("tH")]
+    # 两条宽度片段：第一个免后缀，第二个从 1 开始；高度片段只有一条
+    assert sorted(widths) == ["tB", "tB1"], symbols
+    assert heights == ["tH"], symbols
+    # 展开定义后主算式仍与完整式同值
+    expanded = view.main
+    for _ in range(len(view.definitions) + 1):
+        for item in view.definitions:
+            expanded = re.sub(rf"\b{item.symbol}\b", f"({item.expression})", expanded)
+    assert evaluate(expanded) == pytest.approx(evaluate(view.full), rel=1e-9)
+
+
+def test_candidate_natures_classify_leftover_fragments() -> None:
+    """游离片段（不在任何 u/v/h 算式里）按值量级兜底：面积量级 → tS，其余 → tB。
+
+    弓形半径 Do/2 这类只出现在公式型分项（扣管位·弓形）里的横向长度归宽度类；
+    达到面积量级（mm² ≥ 1e5）的重复片段才是面积类。
+    """
+    from app.core.calc.tracer import (
+        _Candidate,
+        _assign_symbols,
+        _candidate_natures,
+        _node_key,
+        _parse_expression,
+    )
+
+    def candidate(text: str) -> _Candidate:
+        node = _parse_expression(text)
+        return _Candidate(
+            key=_node_key(node), text=text, node=node, length=len(text), count=2, depth=0
+        )
+
+    candidates = [candidate("(600+65*2)/2"), candidate("5000*5000")]
+    natures = _candidate_natures([], candidates)
+    assert natures[candidates[0].key] == "width"
+    assert natures[candidates[1].key] == "area"
+    symbols = _assign_symbols(candidates, natures)
+    assert list(symbols.values()) == ["tB", "tS"]
+
+
 def test_merged_rows_carry_member_ids() -> None:
     """合并行的 quantities 记录 (构件id, Quantity)，供详情弹窗按成员定位断面。"""
     from app.views.panels.unit_panel import UnitPanel
