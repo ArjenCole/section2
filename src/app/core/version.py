@@ -8,11 +8,11 @@ APP_DISPLAY_NAME = "Section 2.0"
 APP_ORG_NAME = "Section"
 APP_ORG_DOMAIN = "section.local"
 
-#: 程序版本号（语义化版本）。内测/公测阶段带预发布后缀，正式版去掉后缀：
-#: 2.0.0-alpha.1 → … → 2.0.0-alpha.6 → 2.0.0-beta.7 → … → 2.0.0-rc.9 → 2.0.0
+#: 程序版本号。内测/公测阶段带预发布后缀，正式版把构建序号直接写成第 4 段：
+#: 2.0.0-alpha.1 → … → 2.0.0-alpha.6 → 2.0.0-beta.7 → … → 2.0.0-rc.9 → 2.0.0.10
 #: 显示在窗口标题、关于框、崩溃报告，并写入 .stn 数据体的 app_version。
-#: 后缀序号跨渠道连续累加（alpha 到 .6，首个 beta 就是 .7），每发一次包 +1，
-#: 这样四段数字版本号在整个内测周期里单调递增，方便同事报问题时对上构建。
+#: 序号跨渠道连续累加（alpha 到 .6，首个 beta 就是 .7），每发一次包 +1，
+#: 这样四段数字版本号单调递增，正式版不会因为去掉后缀而“退回” .0。
 APP_VERSION = "2.0.0-alpha.1"
 
 #: 是否为预发布（内测）版本；界面据此标注“内测版”并提示备份数据。
@@ -22,22 +22,27 @@ IS_PRERELEASE = "-" in APP_VERSION
 def numeric_version(version: str = APP_VERSION) -> str:
     """把语义化版本压成旧版兼容的四段纯数字。
 
-    ``2.0.0-alpha.1`` → ``2.0.0.1``；``2.0.0-beta.7`` → ``2.0.0.7``；
-    ``2.0.0``（正式版）→ ``2.0.0.0``；已经是四段的原样返回。
-    第 4 段就是预发布序号本身，因此 alpha/beta/rc 之间天然连续累加。
+    预发布取后缀序号：``2.0.0-alpha.1`` → ``2.0.0.1``，``2.0.0-beta.7`` →
+    ``2.0.0.7``，alpha/beta/rc 之间天然连续累加。
+
+    正式版没有后缀可依，第 4 段必须直接写进版本号（``2.0.0.10``）：本函数
+    拿不到“上一个包是几号”，与其悄悄退回 ``.0`` 让 EXE 版本号变小，不如要求
+    显式写清。已经是四段的版本原样返回。
     """
     release, _, pre = version.partition("-")
     parts = release.split(".")
-    if len(parts) >= 4:
-        return ".".join(parts[:4])
     if not all(part.isdigit() for part in parts):
         raise ValueError(f"无法解析版本号：{version!r}")
-    number = 0
-    if pre:
-        _, _, tail = pre.partition(".")
-        if tail.isdigit():
-            number = int(tail)
-    return ".".join([*parts, str(number)])
+    if len(parts) >= 4:
+        return ".".join(parts[:4])
+    if not pre:
+        raise ValueError(
+            f"正式版版本号要写成四段以延续构建序号（如 {release}.10）：{version!r}"
+        )
+    _, _, tail = pre.partition(".")
+    if not tail.isdigit():
+        raise ValueError(f"预发布版本号要带序号（如 {release}-alpha.1）：{version!r}")
+    return ".".join([*parts, tail])
 
 
 #: `.stn` 头部 `<Assembly><Version>` 写入的版本号（也用于 EXE 文件版本）。

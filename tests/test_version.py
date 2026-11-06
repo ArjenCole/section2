@@ -27,13 +27,27 @@ def test_current_version_maps_to_numeric_header():
         ("2.0.0-alpha.6", "2.0.0.6"),
         ("2.0.0-beta.7", "2.0.0.7"),  # 接 alpha.6 的序号，不重新计数
         ("2.0.0-rc.9", "2.0.0.9"),
-        ("2.0.0", "2.0.0.0"),  # 正式版
+        ("2.0.0.10", "2.0.0.10"),  # 正式版：第 4 段接着累加
         ("2.0.0.0", "2.0.0.0"),  # 已是四段，原样返回
         ("1.2.2.171220", "1.2.2.171220"),
     ],
 )
 def test_numeric_version(version, expected):
     assert numeric_version(version) == expected
+
+
+@pytest.mark.parametrize("version", ["2.0.0", "2.0.0-alpha", "两个点.0.0"])
+def test_numeric_version_rejects_ambiguous_versions(version):
+    """正式版必须写成四段：否则会悄悄退回 .0，EXE 版本号反而变小。"""
+    with pytest.raises(ValueError):
+        numeric_version(version)
+
+
+def test_release_continues_after_rc():
+    """rc.9 之后正式版写 2.0.0.10，数字版本必须继续变大而不是回退。"""
+    rc = tuple(int(part) for part in numeric_version("2.0.0-rc.9").split("."))
+    release = tuple(int(part) for part in numeric_version("2.0.0.10").split("."))
+    assert release > rc
 
 
 def test_prerelease_counter_is_monotonic_across_channels():
