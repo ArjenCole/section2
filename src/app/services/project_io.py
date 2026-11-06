@@ -736,13 +736,13 @@ def create_enclosure(name: str = "新围护原则") -> PcpEnclosure | None:
     return enclosure
 
 
-def create_precipitation(name: str = "新挖填降水原则") -> PcpPrecipitation | None:
+def create_precipitation(name: str = "新增挖填原则") -> PcpPrecipitation | None:
     """新建挖填降水原则（井型取旧版构造函数默认值，挖填类型取列默认）。重名自动加后缀。"""
     if not orm.is_open():
         return None
     session = orm.session()
     precipitation = PcpPrecipitation(
-        name=unique_principle_name(name or "新挖填降水原则", precipitation_names()),
+        name=unique_principle_name(name or "新增挖填原则", precipitation_names()),
         order_no=next_order_no(PcpPrecipitation),
     )
     for key, (elevation, gap, sides) in PRECIPITATION_DEFAULTS.items():

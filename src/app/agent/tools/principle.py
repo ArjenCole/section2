@@ -105,7 +105,7 @@ def tool_create_foundation(arguments: dict) -> dict:
 
 def tool_create_precipitation(arguments: dict) -> dict:
     require_open()
-    name = str(arguments.get("name") or "新挖填降水原则")
+    name = str(arguments.get("name") or "新增挖填原则")
     precipitation = project_io.create_precipitation(name)
     if precipitation is None:
         raise ToolError("新建挖填降水原则失败：请确认已打开工程。")

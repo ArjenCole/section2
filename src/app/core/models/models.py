@@ -550,7 +550,7 @@ class PcpPrecipitation(Base):
     __tablename__ = "principle_precipitation"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(200), default="新挖填降水原则")
+    name: Mapped[str] = mapped_column(String(200), default="新增挖填原则")
     #: 降水参数，列名即井型；值为 "elevation|gap|sides"（见 parse_precipitation）
     wet_soil: Mapped[str] = mapped_column(String(50), default="0|0|0")
     light_well: Mapped[str] = mapped_column(String(50), default="3.5|1.2|2")
