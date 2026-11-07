@@ -1153,7 +1153,14 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
     filled: set[int] = set()
     for member in snapshots:
         out = QDict()
-        if _member_dig_fill(member, out, member.bands):
+        try:
+            produced = _member_dig_fill(member, out, member.bands)
+        except AssertionError as error:
+            # 记法链被污染（如面积量纲混进标高链）只影响该成员的分层积分，
+            # 断言全文（两侧算式与记法指数）转逐构件错误展示，其余成员照常
+            errors[member.element.id] = f"分层几何记法异常，未生成工程量（{error}）。"
+            continue
+        if produced:
             filled.add(member.element.id)
         else:
             errors[member.element.id] = errors.get(member.element.id) or "覆土不足或分层无效，未生成工程量。"
