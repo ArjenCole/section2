@@ -144,6 +144,15 @@ _ICON_BODIES = {
         '<path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586'
         'a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551" />'
     ),
+    # 导出 EXCEL（brackets2 同款）：折角页面 + 前景 Excel 绿磁贴（白 X），
+    # 磁贴/白 X 带显式颜色，亮暗主题都保持 Office 文件图标的样子
+    "export-excel": (
+        '<path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" stroke-width="1.8"/>'
+        '<path d="M15 2v3a2 2 0 0 0 2 2h3" stroke-width="1.8"/>'
+        '<rect x="2" y="8" width="13" height="12" rx="2.5" fill="#21A366" stroke="none"/>'
+        '<path d="m5.7 11.4 5.6 5.6" stroke="#FFFFFF" stroke-width="2.3"/>'
+        '<path d="m11.3 11.4-5.6 5.6" stroke="#FFFFFF" stroke-width="2.3"/>'
+    ),
 }
 
 _ICON_SVG = {

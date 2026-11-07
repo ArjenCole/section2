@@ -9,6 +9,7 @@ Excel 导出：定额 / 清单两张表，含“计算表达式”列（产品�
 from __future__ import annotations
 
 import csv
+import re
 from pathlib import Path
 
 from sqlalchemy import select
@@ -240,3 +241,209 @@ def export_excel(
     target.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(target)
     return {"path": str(target), "rows": exported_rows, "kind": kind}
+
+
+# --------------------------------------------------------------------------- #
+# 工程数量表导出（工具栏「导出 Excel」）：6 列，1.0 基础上右侧增添纯数字算式列
+# --------------------------------------------------------------------------- #
+#: 导出表格固定列：类别 / 名称 / 单位 / 数量 / 表达式（主式） / 算式（纯数字代入式）
+_QUANTITY_HEADERS = ["类别", "名称", "单位", "数量", "表达式", "算式"]
+#: 分单位工程口径：行前带“单位工程”列（合并口径不用）
+_UNIT_QUANTITY_HEADERS = ["单位工程", *_QUANTITY_HEADERS]
+_UNIT_COL_WIDTH = 18
+#: 清单项目行底色（删除版 excel_export 同款浅蓝）
+_LISTING_FILL = "D6EAF8"
+_QUOTA_WIDTHS = (14, 34, 10, 14, 46, 60)
+
+
+def _main_expression(quantity) -> str:
+    """表达式列的内容：主算式（带符号）；退化为 V1+V2 时改用完整数值算式。
+
+    单位工程内部的主算式是 (S1-S2)/10^6*120 这类带几何符号的真式子；跨单位
+    合并后各分项不再共享符号，展示层只能给 V1+V2 这类占位式——脱离详情弹窗
+    （中间量定义）没有意义，导出静态表格时改用完整数值算式。
+    """
+    main = quantity.display_expression
+    if "V" in main and re.fullmatch(r"[V\d+\-()\s]+", main):
+        return quantity.expression
+    return main
+
+
+def _quantity_row(quantity) -> list:
+    """一条定额量 → [类别, 名称, 单位, 数量, 表达式(主式), 算式(纯数字)]。"""
+    parts = quantity.key.split("|")
+    return [
+        parts[0] if parts else "",
+        parts[1] if len(parts) > 1 else "",
+        parts[2] if len(parts) > 2 else "",
+        quantity.value,
+        _main_expression(quantity),
+        quantity.expression,
+    ]
+
+
+def _quota_rows(qdict) -> list[list]:
+    """定额汇总表行（按类别排序），``qdict`` 为单位工程或跨单位合并后的 QDict。"""
+    from app.core.calc.tracer import sorted_items
+
+    return [_quantity_row(quantity) for quantity in sorted_items(qdict)]
+
+
+def _listing_rows(detail) -> list[tuple[list, bool]]:
+    """清单工程量表行：``(值, 是否清单项目行)``，清单项目行下挂定额拆分行。
+
+    ``detail`` 是 :func:`app.viewmodels.unit_vm.compute_unit` 返回的
+    ``[(构件行, 该构件 QDict)]``。
+    """
+    rows: list[tuple[list, bool]] = []
+    for element_row, qdict in detail:
+        rows.append(
+            (
+                [
+                    category_name(element_row.category),
+                    element_row.spec or element_row.name,
+                    element_row.unit,
+                    element_row.amount_value,
+                    element_row.amount,
+                    element_row.amount,
+                ],
+                True,
+            )
+        )
+        rows.extend((row, False) for row in _quota_rows(qdict))
+    return rows
+
+
+def _merged_listing_rows(computed) -> list[tuple[list, bool]]:
+    """合并口径的清单行：清单项目按 (类别, 名称, 单位) 跨单位加总。
+
+    数量求和、数量原文用 " + " 连接（同 :meth:`UnitPanel._merge_quantities`
+    跳过空 / "0" 的规则），拆分行把组内各构件 QDict 逐项合并后输出。
+    """
+    from app.core.calc.tracer import QDict
+
+    groups: dict[tuple[str, str, str], dict] = {}
+    for _unit_name, _summary, detail in computed:
+        for element_row, qdict in detail:
+            key = (
+                category_name(element_row.category),
+                element_row.spec or element_row.name,
+                element_row.unit,
+            )
+            entry = groups.get(key)
+            if entry is None:
+                entry = groups[key] = {"amount": 0.0, "exprs": [], "qdict": QDict()}
+            entry["amount"] += element_row.amount_value
+            if element_row.amount.strip() not in ("", "0"):
+                entry["exprs"].append(element_row.amount)
+            entry["qdict"].extend(qdict)
+    rows: list[tuple[list, bool]] = []
+    for (category, name, unit), entry in groups.items():
+        joined = " + ".join(entry["exprs"])
+        rows.append(([category, name, unit, entry["amount"], joined, joined], True))
+        rows.extend((row, False) for row in _quota_rows(entry["qdict"]))
+    return rows
+
+
+def _write_sheet(sheet, headers: list[str], rows: list[tuple[list, bool]]) -> None:
+    """把一张工程数量表写进 sheet：表头加粗、清单项目行浅蓝、冻结首行。"""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+    fill = PatternFill("solid", fgColor=_LISTING_FILL)
+    for values, is_listing in rows:
+        sheet.append(values)
+        if is_listing:
+            for cell in sheet[sheet.max_row]:
+                cell.fill = fill
+    widths = (_UNIT_COL_WIDTH, *_QUOTA_WIDTHS) if len(headers) > len(_QUANTITY_HEADERS) else _QUOTA_WIDTHS
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[openpyxl.utils.get_column_letter(index)].width = width
+    # 数量列写的是 float，限定最多 4 位小数显示（单元格里仍可直接再计算）
+    amount_column = headers.index("数量") + 1
+    for row in range(2, sheet.max_row + 1):
+        sheet.cell(row=row, column=amount_column).number_format = "0.####"
+    sheet.freeze_panes = "A2"
+
+
+def export_quantity_tables(
+    path: str | Path,
+    unit_ids: list[int],
+    merged: bool = False,
+) -> dict:
+    """导出工程数量表（定额 + 清单，一次一个 xlsx 文件，固定两张 sheet）。
+
+    sheet 只放一个表：``定额工程量`` / ``清单工程量``。默认分单位工程口径，
+    行前带“单位工程”列、各单位工程各自汇总合计；``merged=True`` 为合并口径
+    ——所选单位工程的工程量全部加总，不带单位工程列。列见
+    :data:`_QUANTITY_HEADERS`（数量列为 float，表达式为主算式、算式为纯数字
+    代入式）。返回 ``{path, sheets, rows}``。
+    """
+    import openpyxl
+
+    from app.core.calc.tracer import QDict
+    from app.viewmodels.unit_vm import compute_unit
+
+    if not unit_ids:
+        raise ValueError("请至少选择一个单位工程。")
+    target = Path(path)
+    if target.suffix.lower() != ".xlsx":
+        target = target.with_suffix(".xlsx")
+
+    computed: list[tuple[str, QDict, list]] = []
+    for uid in unit_ids:
+        unit = orm.session().get(Unit, int(uid))
+        if unit is None:
+            raise ValueError(f"找不到 id={uid} 的单位工程。")
+        summary, detail = compute_unit(int(uid))
+        computed.append((unit.name, summary, detail))
+
+    workbook = openpyxl.Workbook()
+    workbook.remove(workbook.active)
+
+    if merged:
+        merged_summary = QDict()
+        for _name, unit_summary, _detail in computed:
+            merged_summary.extend(unit_summary)
+        _write_sheet(
+            workbook.create_sheet("定额工程量"),
+            _QUANTITY_HEADERS,
+            [(row, False) for row in _quota_rows(merged_summary)],
+        )
+        _write_sheet(
+            workbook.create_sheet("清单工程量"),
+            _QUANTITY_HEADERS,
+            _merged_listing_rows(computed),
+        )
+    else:
+        # 分单位工程口径：各单位工程各自汇总合计，行前带“单位工程”列
+        quota_rows: list[tuple[list, bool]] = []
+        listing_rows: list[tuple[list, bool]] = []
+        for unit_name, unit_summary, detail in computed:
+            quota_rows.extend(
+                ([unit_name, *row], False) for row in _quota_rows(unit_summary)
+            )
+            listing_rows.extend(
+                ([unit_name, *row], is_listing)
+                for row, is_listing in _listing_rows(detail)
+            )
+        _write_sheet(
+            workbook.create_sheet("定额工程量"), _UNIT_QUANTITY_HEADERS, quota_rows
+        )
+        _write_sheet(
+            workbook.create_sheet("清单工程量"), _UNIT_QUANTITY_HEADERS, listing_rows
+        )
+
+    exported_rows = sum(
+        sheet.max_row - 1 for sheet in workbook.worksheets  # 不含表头
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(target)
+    return {
+        "path": str(target),
+        "sheets": [sheet.title for sheet in workbook.worksheets],
+        "rows": exported_rows,
+    }

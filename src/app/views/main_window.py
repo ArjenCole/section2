@@ -579,6 +579,7 @@ class MainWindow(QMainWindow):
         "act_new": "file-plus",
         "act_open": "folder-open",
         "act_save": "save",
+        "act_export_excel": "export-excel",
         "act_undo": "undo",
         "act_redo": "redo",
         "act_add_segment": "folder-plus",
@@ -593,6 +594,8 @@ class MainWindow(QMainWindow):
         self._act_open = self._action("打开工程(&O)…", self._open_project, "Ctrl+O")
         self._act_save = self._action("保存(&S)", self._save_project, "Ctrl+S")
         self._act_save_as = self._action("另存为(&A)…", self._save_project_as, "Ctrl+Shift+S")
+        # 导出工程数量表（brackets2 同款图标 / Ctrl+E）
+        self._act_export_excel = self._action("导出 Excel(&E)…", self._export_excel, "Ctrl+E")
         self._act_undo = self._action("撤销(&U)", self._undo, "Ctrl+Z")
         self._act_redo = self._action("重做(&R)", self._redo, "Ctrl+Y")
         # 复制 / 剪切 / 粘贴（brackets 同款：编辑菜单 + 快捷键，构件剪贴板跨文件可用）
@@ -648,6 +651,7 @@ class MainWindow(QMainWindow):
             self._act_save,
             self._act_save_as,
             self._act_close,
+            self._act_export_excel,
             self._act_undo,
             self._act_redo,
             self._act_add_segment,
@@ -663,6 +667,7 @@ class MainWindow(QMainWindow):
             self._act_save,
             self._act_save_as,
             self._act_close,
+            self._act_export_excel,
             self._act_undo,
             self._act_redo,
             self._act_add_segment,
@@ -720,6 +725,7 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self._act_save)
         file_menu.addAction(self._act_save_as)
+        file_menu.addAction(self._act_export_excel)
         file_menu.addAction(self._act_close)
         file_menu.addSeparator()
         file_menu.addAction(self._act_import_legacy)
@@ -779,6 +785,9 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self._act_add_unit)
         toolbar.addSeparator()
         toolbar.addAction(self._act_format_painter)
+        toolbar.addSeparator()
+        # 导出工程数量表：单独一组（brackets2 工具栏同款分组习惯）
+        toolbar.addAction(self._act_export_excel)
         toolbar.addSeparator()
         toolbar.addAction(self._act_theme)
         toolbar.addAction(self._act_ai_panel)
@@ -1115,6 +1124,13 @@ class MainWindow(QMainWindow):
         bus().project_opened.emit(str(path))
         self._tree_panel.vm.load()
         return True
+
+    def _export_excel(self) -> None:
+        """导出工程数量表（定额 + 清单，brackets2 同款图标与交互）。"""
+        from app.views.dialogs.export_excel_dialog import ExportExcelDialog
+
+        dialog = ExportExcelDialog(self)
+        dialog.exec()
 
     def _close_project(self) -> None:
         if not project_io.is_open():
