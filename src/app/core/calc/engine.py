@@ -169,8 +169,7 @@ class ElementInput:
         """
         if self.category in (CATEGORY_BURIED, CATEGORY_JACKING, CATEGORY_PULLING):
             return (
-                mm(self.pipes[0].iD)
-                .as_param("iD", "管道内径", "构件管材·内径")
+                pipe_id_dim(self.pipes[0].iD, self.pipes[0].direct)
                 .named("断面宽", "管道内径")
                 if self.pipes
                 else mm(0.0)
@@ -200,8 +199,7 @@ class ElementInput:
         """断面高的 mm 记法算式伴随（箱涵 = 净高 + 底板厚 + 顶板厚）。"""
         if self.category in (CATEGORY_BURIED, CATEGORY_JACKING, CATEGORY_PULLING):
             return (
-                mm(self.pipes[0].iD)
-                .as_param("iD", "管道内径", "构件管材·内径")
+                pipe_id_dim(self.pipes[0].iD, self.pipes[0].direct)
                 .named("断面高", "管道内径")
                 if self.pipes
                 else mm(0.0)
@@ -335,6 +333,7 @@ def build_element_input(
             cat=pipe.pipe_category,
             od=pipe.od,
             inner_d=pipe.inner_d,
+            direct=pipe.direct or "",  # 图集直取对（表达式展示标注用）
         )
         for pipe in element.pipes
     ]
@@ -488,6 +487,55 @@ def workwidth_of(pw: PcpWidth | None, info: ElementInput) -> float:
     return widths.get(row, {}).get(key, 0.0)
 
 
+def pipe_direct_labels(direct: str) -> dict[str, tuple[str, str]]:
+    """图集直取对 → iD/oD/t 的 (来源, 代入式 display) 展示标注。
+
+    ``direct`` 见 :class:`PipeSpec`：构件库快照只存图集直取的两个值，第三个
+    由另外两个反算（对应关系见 ``AtlasCatalog.read``）；""（旧数据 / 非构件库
+    插入）维持旧口径（iD/oD 直取样式、t 反算）。只影响计算表达式窗体
+    "基本参数"页的来源与代入式列，不影响任何数值。
+    """
+    if direct == "id_t":
+        # 图集直接给 iD + t（混凝土 / 顶管 / HDPE 缠绕表）：oD 反算
+        return {
+            "iD": ("图集直取", ""),
+            "t": ("图集直取", ""),
+            "oD": ("反算：iD+2t", "iD+2*t"),
+        }
+    if direct == "od_t":
+        # 图集直接给 oD + t（PE 给水 / PVC-U 双壁波纹 / 钢带 / 金属管表）：iD 反算
+        return {
+            "iD": ("反算：oD-2t", "oD-2*t"),
+            "t": ("图集直取", ""),
+            "oD": ("图集直取", ""),
+        }
+    if direct == "od_id":
+        # 结构壁管（PVC-U 加筋 / PE 缠绕）：图集直接给 oD + iD，t 反算
+        # （图集 t 列不含肋高 / 结构壁，不是几何壁厚）
+        return {
+            "iD": ("图集直取", ""),
+            "t": ("反算：(oD-iD)/2", "(oD-iD)/2"),
+            "oD": ("图集直取", ""),
+        }
+    return {
+        "iD": ("构件管材·内径", ""),
+        "t": ("（oD-iD）/2", "(oD-iD)/2"),
+        "oD": ("构件管材·外径", ""),
+    }
+
+
+def pipe_id_dim(value: float, direct: str) -> Dim:
+    """管道内径的展示符号（断面宽 / 断面高链用），来源按图集直取对标注。"""
+    source, display = pipe_direct_labels(direct)["iD"]
+    return mm(value).as_param("iD", "管道内径", source, display=display)
+
+
+def _labeled_param(dim: Dim, symbol: str, label: str, annotation: tuple[str, str]) -> Dim:
+    """按 (来源, 代入式 display) 标注挂展示符号（display 必须关键字传）。"""
+    source, display = annotation
+    return dim.as_param(symbol, label, source, display=display)
+
+
 def atlas_dims(info: ElementInput, at: AtlasParam) -> AtlasDims:
     """图集参数的算式伴随（mm 记法）：覆盖值取参数行原文，查表值以原始表值进算式。
 
@@ -500,6 +548,9 @@ def atlas_dims(info: ElementInput, at: AtlasParam) -> AtlasDims:
     iD / oD / t / a / C1 / C2 同时挂上展示符号（:meth:`Dim.as_param`）：计算仍用
     原始数值，计算表达式窗体把它们提到中间符号表，算式里显示成 ``iD`` / ``oD`` /
     ``t`` / ``a`` / ``C1`` / ``C2``（见 :mod:`app.core.calc.tracer` 展示层）。
+    iD / oD / t 三行的"来源 / 代入式"按图集直取对（``pipes[0].direct``，见
+    :func:`pipe_direct_labels`）标注：直取值为裸数字、被反算的显示成另两个
+    的公式；""（旧数据）维持 iD/oD 直取、t 反算的旧口径。
     """
     def _override(name: str, symbol: str, label: str) -> Dim | None:
         found = info.param_dims.get(name) if name in info.params else None
@@ -527,7 +578,9 @@ def atlas_dims(info: ElementInput, at: AtlasParam) -> AtlasDims:
         t = mm(at.t).as_param("t", "管道壁厚", "图集参数 t")
     else:
         # 新数据用构件库 / 详情面板的 oD、iD；旧数据按 DN + 壁厚兜底。
-        # 三者关系固定为 oD = iD + 2t，t 由差值反算，保证算式同源。
+        # 三者关系固定为 oD = iD + 2t，数值不受直取对影响；直取对
+        # （pipe.direct，见 AtlasCatalog.read / pipe_direct_labels）只决定
+        # 表达式里哪个值标注为图集直取、哪个标注为另两个的反算式。
         inner_value = (
             float(pipe.inner_d)
             if pipe.inner_d is not None
@@ -542,11 +595,20 @@ def atlas_dims(info: ElementInput, at: AtlasParam) -> AtlasDims:
                 else inner_value + 2.0 * float(pipe.t if pipe.t is not None else at.t)
             )
         )
-        inner = mm(inner_value).as_param("iD", "管道内径", "构件管材·内径")
-        outer = mm(outer_value).as_param("oD", "管道外径", "构件管材·外径")
-        t = ((outer - inner) / 2).as_param(
-            "t", "管道壁厚", "（oD-iD）/2", display="(oD-iD)/2"
+        t_value = (
+            float(pipe.t)
+            if pipe.t is not None
+            else max((outer_value - inner_value) / 2.0, 0.0)
         )
+        labels = pipe_direct_labels(pipe.direct)
+        inner = _labeled_param(mm(inner_value), "iD", "管道内径", labels["iD"])
+        outer = _labeled_param(mm(outer_value), "oD", "管道外径", labels["oD"])
+        if pipe.direct in ("id_t", "od_t"):
+            # 图集直取 t：裸数字进算式（完整算式更短，来源与图集行一致）
+            t = _labeled_param(mm(t_value), "t", "管道壁厚", labels["t"])
+        else:
+            # od_id（结构壁管）/ 旧数据：t 由 (oD-iD)/2 反算
+            t = _labeled_param((outer - inner) / 2, "t", "管道壁厚", labels["t"])
     return AtlasDims(
         od=outer,
         id=inner,

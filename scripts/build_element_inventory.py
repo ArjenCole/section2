@@ -5,10 +5,13 @@
 每个模板额外带上：
 
 * 每根管的 **管材类别**（``cat``，由材质名称按 core.pipe_category 折算一次固化）、
-  **外径 oD / 内径 iD**（从图集一次性提取；图集没有时按 ``iD=DN``、
-  ``oD=iD+2t`` 兜底）与 **图集壁厚**（``t``）——**8 组**：采用/不采用混凝土基础
-  × 90/120/150/180（砼基础表的 t 随角度变化，例如 DN600 Ⅱ级管砂基础 120° 是
-  55mm、90° 是 60mm）；
+  **图集直取对**（``direct``：``"id_t"`` = 图集给 iD+t（如混凝土/顶管表）、
+  ``"od_t"`` = 给 oD+t（如 PE 给水/钢带/金属管表）、``"od_id"`` = 给 oD+iD
+  （PVC-U 加筋 / PE 缠绕等结构壁管，图集 t 不含肋高））——**只存直取的两个
+  值**：id_t 不存 od、od_t 不存 id、od_id 不存 t（八组壁厚全 null），第三个
+  由插入时的 normalize 反算补齐；与 **图集壁厚**（``t``）——**8 组**：
+  采用/不采用混凝土基础 × 90/120/150/180（砼基础表的 t 随角度变化，例如
+  DN600 Ⅱ级管砂基础 120° 是 55mm、90° 是 60mm）；
 * 构件的 **工作面加宽 / 垫层厚 / 基础厚**（``a / C1 / C2``）同样 8 组。
 
 这 8 组是详情面板"候选参数列"的数据源（一次性快照，允许用户改，不再自动变）；
@@ -113,12 +116,13 @@ def _query(category: int, pipes, params, enclosure, con_found: bool, angle: int)
     )
 
 
-def _pipe_diameters(pipe, category: int, params, enclosure) -> tuple[float, float]:
-    """从图集一次性提取 (oD, iD)；图集没有内外径时按 DN/t 兜底。
+def _pipe_diameters(pipe, category: int, params, enclosure) -> tuple[float, float, str]:
+    """从图集一次性提取 (oD, iD, 直取对标记)；图集没有内外径时按 DN/t 兜底。
 
     取默认地基组合（采用砼基础 + 120°）的图集行。混凝土管的 t 随角度略有
-    差异（同一 DN 不同角度 5~10mm），构件库只存一组 oD/iD，这里按默认组合
-    固化；用户仍可在详情面板按当前壁厚联动修改。
+    差异（同一 DN 不同角度 5~10mm），构件库只存一组直取值，这里按默认组合
+    固化；直取对之外的那个直径不存，插入时按当前壁厚反算（用户仍可在详情
+    面板按当前壁厚联动修改）。
     """
     from app.core.pipe_dimensions import normalize
 
@@ -126,13 +130,18 @@ def _pipe_diameters(pipe, category: int, params, enclosure) -> tuple[float, floa
     query.a = query.c1 = query.c2 = None
     at = resolve_atlas(query)
     if at.od > 0 and at.id > 0:
-        return float(at.od), float(at.id)
+        return float(at.od), float(at.id), at.direct
     _od, inner, _t = normalize(int(pipe.dn), t=float(at.t or 0.0))
-    return float(inner + 2.0 * float(at.t or 0.0)), float(inner)
+    return float(inner + 2.0 * float(at.t or 0.0)), float(inner), ""
 
 
 def _pipe_row(pipe, category: int, params, enclosure) -> dict:
-    """单个管道行：类别 + oD/iD + 八组图集壁厚（该组合查不到记 null）。"""
+    """单个管道行：类别 + 图集直取对 + 八组图集壁厚（该组合查不到记 null）。
+
+    直取对（``direct``，见 ``AtlasCatalog.read``）之外的那个值**不存**：
+    ``id_t`` 不存 od、``od_t`` 不存 id、``od_id``（结构壁管，t 反算）八组
+    壁厚全 null——插入构件时由 normalize 反算补齐。
+    """
     thickness: dict[str, float | None] = {}
     for con_found, angle in COMBOS:
         at = resolve_atlas(_query(category, [pipe], params, enclosure, con_found, angle))
@@ -148,16 +157,22 @@ def _pipe_row(pipe, category: int, params, enclosure) -> dict:
         thickness[combo_key(con_found, angle)] = (
             round(t_geo, 3) if t_geo > 0 else None
         )
-    od, inner = _pipe_diameters(pipe, category, params, enclosure)
-    return {
+    od, inner, direct = _pipe_diameters(pipe, category, params, enclosure)
+    row: dict = {
         "mat": pipe.mat,
         "cat": category_of_mat(pipe.mat),
         "dn": int(pipe.dn),
         "content": str(pipe.content),
-        "od": round(od, 3),
-        "id": round(inner, 3),
-        "t": thickness,
+        "direct": direct,
+        # 直取对之外的值不存（None），插入时反算
+        "od": None if direct == "id_t" else round(od, 3),
+        "id": None if direct == "od_t" else round(inner, 3),
     }
+    if direct == "od_id":
+        row["t"] = {key: None for key in thickness}
+    else:
+        row["t"] = thickness
+    return row
 
 
 def build() -> dict:
@@ -207,13 +222,16 @@ def build() -> dict:
                 stats["elements"] += 1
                 stats["pipes"] += len(pipes)
                 for row in pipes:
-                    if all(value is None for value in row["t"].values()):
+                    # od_id 型（t 由 oD/iD 反算）壁厚本来就全空，不算"查不到"
+                    if row["direct"] != "od_id" and all(
+                        value is None for value in row["t"].values()
+                    ):
                         stats["no_thickness"] += 1
             units.append({"name": unit.name, "elements": elements})
         categories.append({"name": segment.name, "units": units})
 
     return {
-        "version": 2,
+        "version": 3,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "source": SOURCE.name,
         "atlas": DEFAULT_ATLAS_NAME,

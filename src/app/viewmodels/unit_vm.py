@@ -175,6 +175,8 @@ class PipeRow:
     t: float | None = None
     #: 管材类别（宽度表行名，见 core.pipe_category）：计算唯一依据
     cat: str = ""
+    #: 图集直取对标记（id_t / od_t / od_id；"" = 旧数据），见 core.models.Pipe
+    direct: str = ""
 
 
 @dataclass
@@ -321,6 +323,7 @@ def pipe_rows(element_id: int) -> list[PipeRow]:
             od=pipe.od,
             inner_d=pipe.inner_d,
             t=pipe.t,
+            direct=pipe.direct or "",
         )
         for pipe in element.pipes
     ]
@@ -743,21 +746,29 @@ def _seed_atlas_defaults(element: Element) -> None:
             target.od, target.inner_d = od, inner
 
 
-def _pipe_fields(data) -> tuple[str, str, int, str, float | None, float | None, float | None]:
-    """管道输入归一化 → (材质, 管材类别, DN, 含量, t, oD, iD)。
+def _pipe_fields(
+    data,
+) -> tuple[str, str, int, str, float | None, float | None, float | None, str]:
+    """管道输入归一化 → (材质, 管材类别, DN, 含量, t, oD, iD, 图集直取对)。
 
     接受以下写法，兼容旧调用与 AI 工具：
-    ``(mat, cat, dn, content, t, od, inner_d)`` /
+    ``(mat, cat, dn, content, t, od, inner_d[, direct])`` /
     ``(mat, cat, dn, content, od, inner_d)`` /
     ``(mat, cat, dn, content, t)`` / ``(mat, dn, content, t)`` / ``(mat, dn, content)``；
     没有类别时按材质折算（``core.pipe_category``），没有壁厚记 None（= 按图集）。
-    没有 oD/iD 时由 :func:`app.core.pipe_dimensions.normalize` 按 DN/t 兜底。
+    没有 oD/iD 时由 :func:`app.core.pipe_dimensions.normalize` 按 DN/t 兜底；
+    ``direct``（图集直取对，见 ``PipeTemplate.direct``）标记快照只存了哪两个
+    值——缺的那个由 normalize 反算补齐（id_t：oD=iD+2t；od_t：iD=oD-2t；
+    od_id：t=(oD-iD)/2），三值恒满足 ``oD = iD + 2t``。
     """
     from app.core.pipe_category import normalize_category
     from app.core.pipe_dimensions import as_float, normalize
 
     od = inner_d = None
-    if len(data) >= 7:
+    direct = ""
+    if len(data) >= 8:
+        mat, cat, dn, content, t, od, inner_d, direct = data[:8]
+    elif len(data) == 7:
         mat, cat, dn, content, t, od, inner_d = data[:7]
     elif len(data) == 6:
         mat, cat, dn, content, od, inner_d = data
@@ -792,6 +803,7 @@ def _pipe_fields(data) -> tuple[str, str, int, str, float | None, float | None, 
         t_value,
         od_value,
         inner_value,
+        str(direct or ""),
     )
 
 
@@ -891,7 +903,7 @@ def create_element(
             # 直埋 / 非开挖只允许一条管材：多根输入取首根（面宽 / 候选也只认首根）
             pipes = pipes[:1]
         for pipe_data in pipes:
-            mat, cat, dn, content, t, od, inner_d = _pipe_fields(pipe_data)
+            mat, cat, dn, content, t, od, inner_d, direct = _pipe_fields(pipe_data)
             element.pipes.append(
                 Pipe(
                     mat=mat,
@@ -901,6 +913,7 @@ def create_element(
                     t=t,
                     od=od,
                     inner_d=inner_d,
+                    direct=direct,
                 )
             )
     if params:
@@ -999,6 +1012,7 @@ def element_snapshot(element_id: int) -> dict | None:
                 pipe.t,
                 pipe.od,
                 pipe.inner_d,
+                pipe.direct or "",
             )
             for pipe in element.pipes
         ],
@@ -1239,12 +1253,20 @@ def insert_element_template(unit_id: int, template, before_element_id: int | Non
             pipe.thickness_at(con_found, angle),
             pipe.od,
             pipe.inner_d,
+            # 图集直取对（快照只存两个值，缺的那个由 _pipe_fields/normalize 反算补齐）
+            pipe.direct,
         ]
         for pipe in template.pipes
     ]
     # 管道壁厚也进候选：取首根管的 8 组壁厚快照（图集里同一管径各角度壁厚相同，
-    # 仍逐组存，便于用户按角度改）
+    # 仍逐组存，便于用户按角度改）。od_id 型（t 由 oD/iD 反算，结构壁管）快照
+    # 不存壁厚：这里按直取的两个直径算出来填好，候选列不出现空壁厚。
     head_thickness = template.pipes[0].thickness if template.pipes else {}
+    derived_t: float | None = None
+    if template.pipes:
+        head = template.pipes[0]
+        if head.direct == "od_id" and head.od is not None and head.inner_d is not None:
+            derived_t = max((head.od - head.inner_d) / 2.0, 0.0)
     candidates = []
     for key, row in template.atlas.items():
         if row is None:
@@ -1252,6 +1274,8 @@ def insert_element_template(unit_id: int, template, before_element_id: int | Non
         con_found = key.startswith("con")
         angle = int(key[len("con") if con_found else len("plain"):])
         thickness = head_thickness.get(key)
+        if thickness is None and derived_t is not None:
+            thickness = derived_t
         candidates.append((con_found, angle, thickness, row[0], row[1], row[2]))
     return insert_element_data(
         unit_id,
@@ -1883,6 +1907,7 @@ def create_pipe(
     cat: str = "",
     od: float | None = None,
     inner_d: float | None = None,
+    direct: str = "",
 ) -> Pipe | None:
     from app.core.pipe_category import normalize_category
     from app.core.pipe_dimensions import normalize
@@ -1906,6 +1931,7 @@ def create_pipe(
         t=t_value,
         od=od_value,
         inner_d=inner_value,
+        direct=str(direct or ""),
     )
     orm.session().add(pipe)
     orm.session().flush()  # 让 element.pipes 看到新管（match 按首根管材质选组）

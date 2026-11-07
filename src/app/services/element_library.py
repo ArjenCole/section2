@@ -4,12 +4,14 @@
 与工程 .stn 同为 XML，只有管材名称与旧参数。新版把它离线快照成 JSON 资产
 （见 ``scripts/build_element_inventory.py``）：每个模板带上
 
-* 每根管的 **管材类别**（``cat``）、**外径 oD / 内径 iD** 与 **图集壁厚**
-  （90 / 120 / 150 / 180 四套）；
+* 每根管的 **管材类别**（``cat``）、**图集直取对**（``direct``：图集行直接
+  给出的两个值，第三个由它们反算，见 ``AtlasCatalog.read``）与 **图集壁厚**
+  （90 / 120 / 150 / 180 四套，直取对为 oD+iD 的结构壁管不存）；
 * 构件的 **工作面加宽 / 垫层厚 / 基础厚**（三套角度）。
 
-运行时不再查图集表：插入时按当前围护原则的基础角度取一套写进条目，
-之后计算、断面、面宽、包封扣管位都只读条目自身。
+运行时不再查图集表：插入时按当前围护原则的基础角度取一套写进条目（直取对
+之外缺失的那个值由 normalize 反算补齐），之后计算、断面、面宽、包封扣管位
+都只读条目自身。
 
 没有 JSON 时退回解析旧 .stn（此时没有快照，插入按现场查图集补值）。
 """
@@ -34,17 +36,22 @@ ATLAS_ANGLES: tuple[int, ...] = (90, 120, 150, 180)
 
 @dataclass(frozen=True)
 class PipeTemplate:
-    """模板里的一根管：管材类别 + 材质 + DN + 含量 + oD/iD + 八组图集壁厚。"""
+    """模板里的一根管：管材类别 + 材质 + DN + 含量 + 图集直取对 + 八组图集壁厚。"""
 
     mat: str
     cat: str
     dn: int
     content: str
-    #: 图集一次性提取的外径 oD / 内径 iD（mm）；None = 旧资产，插入时按 DN/t 兜底
+    #: "图集直取对"标记（见 AtlasCatalog.read）：快照只存这两个直取值，第三个
+    #: 由它们反算——``"id_t"`` 存 iD+t（oD 反算）、``"od_t"`` 存 oD+t（iD 反算）、
+    #: ``"od_id"`` 存 oD+iD（t 反算，结构壁管）；"" = 旧资产，三值可能都在
+    direct: str = ""
+    #: 图集一次性提取的外径 oD / 内径 iD（mm）；**直取对之外的值为 None**
+    #: （插入时由 normalize 反算补齐）；None 且 direct 为空 = 旧资产，按 DN/t 兜底
     od: float | None = None
     inner_d: float | None = None
     #: {"con90": 19.0, "plain120": None, …} 八组（砼/非砼 × 4 角度）；
-    #: 图集查不到的组合为 None
+    #: 图集查不到的组合为 None；od_id 型（t 反算）八组全 None
     thickness: dict[str, float | None] = field(default_factory=dict)
 
     def thickness_at(self, con_found: bool, angle: int) -> float | None:
@@ -222,6 +229,7 @@ def _template_from_asset(element: dict) -> ElementTemplate:
             cat=normalize_category(str(pipe.get("cat") or ""), mat=str(pipe.get("mat") or "")),
             dn=int(pipe.get("dn") or 0),
             content=str(pipe.get("content") or "1"),
+            direct=str(pipe.get("direct") or ""),
             od=(
                 float(pipe["od"])
                 if pipe.get("od") is not None

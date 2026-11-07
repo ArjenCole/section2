@@ -447,7 +447,7 @@ def encased_pipe_deduction(info, out: QDict, z_bottom: float | None = None) -> N
     因此这里按各管自己的图集值记录，不挂 ``t`` 符号。
     """
     from app.services.atlas import PipeSpec, resolve_atlas
-    from app.core.calc.engine import build_atlas_query
+    from app.core.calc.engine import build_atlas_query, pipe_direct_labels
 
     for pipe, content in zip(info.pipes, info.pipe_content_dims):
         if content.v == 0:
@@ -462,6 +462,7 @@ def encased_pipe_deduction(info, out: QDict, z_bottom: float | None = None) -> N
                 cat=pipe.cat,
                 od=pipe.od,
                 inner_d=pipe.inner_d,
+                direct=pipe.direct,
             )
         ]
         at = resolve_atlas(query)
@@ -471,8 +472,10 @@ def encased_pipe_deduction(info, out: QDict, z_bottom: float | None = None) -> N
             od_value = float(pipe.dn) + 2.0 * float(t_value or 0.0)
         od_dim = mm(od_value)
         if len(info.pipes) == 1:
-            # 单管：外径挂 oD 符号；多管直径可能不同，保留各自数值
-            od_dim = od_dim.as_param("oD", "管道外径", "构件管材·外径")
+            # 单管：外径挂 oD 符号（来源按图集直取对标注）；多管直径可能
+            # 不同，保留各自数值
+            source, display = pipe_direct_labels(pipe.direct or "")["oD"]
+            od_dim = od_dim.as_param("oD", "管道外径", source, display=display)
         radius = od_dim / 2
         geometry = (
             _rect_geometry(z_bottom, z_bottom + radius.v * 2.0, radius.v)

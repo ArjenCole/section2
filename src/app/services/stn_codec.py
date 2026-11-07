@@ -37,7 +37,8 @@
 
 构件（element）字段：``category`` / ``name`` / ``depth`` / ``amount`` /
 ``pe_name`` / ``pf_name`` / ``pp_name`` / ``pw_name`` / ``source``，
-加 ``pipes``（``{"cat","mat","dn","od","id","content","t"}``；旧文件可缺 ``od``/``id``）、
+加 ``pipes``（``{"cat","mat","dn","od","id","content","t","direct"}``；旧文件
+可缺 ``od``/``id``/``direct``，direct = 图集直取对标记，见 core.models.Pipe）、
 ``params``（``[{"key","unit","value"}]``）、
 ``quantities``（``[{"category","item","unit","value"}]``）、
 ``atlas_candidates``（``[{"con_found","angle","t","a","c1","c2"}]``，值为 null
@@ -350,6 +351,8 @@ def _dump_element(element: Element, group_index: int | None = None) -> dict:
                 "od": None if pipe.od is None else float(pipe.od),
                 "id": None if pipe.inner_d is None else float(pipe.inner_d),
                 "t": None if pipe.t is None else float(pipe.t),
+                # 图集直取对标记（v10，可缺省）：旧文件缺键 = ""（来源未知）
+                "direct": pipe.direct or "",
             }
             for pipe in element.pipes
         ],
@@ -725,6 +728,7 @@ def _load_element(data: dict, *, order_no: int) -> Element:
                 od=od,
                 inner_d=inner,
                 t=t_value,
+                direct=str(pipe_data.get("direct") or ""),
             )
         )
     for param in data.get("params") or []:

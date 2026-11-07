@@ -86,6 +86,10 @@ class AtlasParam:
     workwidth: float = 0.0  # 工作面宽度 mm（单侧）
     groove_b: float = 0.0  # 沟槽底宽 m（旧版 grooveB；0 表示按断面推算）
     q: float = 0.0
+    #: 本组 (oD, iD, t) 的"图集直取对"：``"id_t"`` / ``"od_t"`` / ``"od_id"``，
+    #: 另一个值由这两个反算（见 :meth:`AtlasCatalog.read`）；"" = 非查表来源
+    #: （条目快照短路 / 包封等类别 / 管道覆盖），图集对应关系未知
+    direct: str = ""
 
 
 @dataclass
@@ -96,6 +100,9 @@ class PipeSpec:
     （见 :func:`app.core.pipe_category.category_of_mat`，仅供库外构件兜底）。
     ``od`` / ``inner_d`` 为构件库快照或详情面板的显式直径（mm）；None = 旧数据，
     按 DN + 壁厚兜底。``t`` 为有效壁厚（mm）；None = 自动按图集。
+    ``direct`` 为"图集直取对"标记（``"id_t"`` / ``"od_t"`` / ``"od_id"``，
+    见 :meth:`AtlasCatalog.read`）：只供计算表达式窗体标注哪个值是图集直取、
+    哪个由另外两个反算，不影响任何数值。
     """
 
     mat: str = ""
@@ -104,6 +111,7 @@ class PipeSpec:
     cat: str = ""
     od: float | None = None
     inner_d: float | None = None
+    direct: str = ""
 
     def resolved_category(self) -> str:
         from app.core.pipe_category import normalize_category
@@ -277,8 +285,8 @@ class AtlasCatalog:
         record: dict[str, str] | None,
         table_index: int | None = None,
         level: str | None = None,
-    ) -> tuple[float, float, float, float, float, float, float]:
-        """从图集行读 ``(oD, iD, t, a, C1, C2, Q)``。
+    ) -> tuple[float, float, float, float, float, float, float, str]:
+        """从图集行读 ``(oD, iD, t, a, C1, C2, Q, direct)``。
 
         ``oD`` 列存在时直接用它；没有 ``oD`` 列的表按 ``D`` 的语义推算：
 
@@ -290,9 +298,19 @@ class AtlasCatalog:
 
         有 ``oD`` 时，``D`` 是内径的管类 ``iD=D``（加筋管肋高、PE 缠绕的
         结构壁不在 ``t`` 里），其余 ``iD=oD-2t``。
+
+        ``direct`` 是本行的"图集直取对"标记（构件库快照只存这两个值，第三个
+        由这两个反算，见 ``PipeTemplate.direct``），与上面的推算分支一一对应：
+
+        * ``"id_t"``：iD 与 t 直取，oD = iD+2t 反算（D 是内径且无 oD 列）；
+        * ``"od_t"``：oD 与 t 直取，iD = oD-2t 反算（D 是外径 / 公称外径，
+          或有 oD 列且 D 不是内径）；
+        * ``"od_id"``：oD 与 iD 直取，t = (oD-iD)/2 反算（有 oD 列且 D 是
+          内径：图集 t 不含结构壁，不是几何壁厚）；
+        * ``""``：无行（record 为 None）。
         """
         if record is None:
-            return (-1.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            return (-1.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, "")
         diameter = _num(record.get("D"))
         t = _num(record.get("t"))
         has_od = bool(record.get("oD"))
@@ -301,12 +319,15 @@ class AtlasCatalog:
         if has_od:
             od = oD
             inner = diameter if kind == "ID" else max(oD - 2.0 * t, 0.0)
+            direct = "od_id" if kind == "ID" else "od_t"
         elif kind == "ID":
             inner = diameter
             od = diameter + 2.0 * t
+            direct = "id_t"
         else:
             od = diameter
             inner = max(diameter - 2.0 * t, 0.0)
+            direct = "od_t"
         return (
             od,
             inner,
@@ -315,6 +336,7 @@ class AtlasCatalog:
             _num(record.get("C1")),
             _num(record.get("C2")),
             _num(record.get("Q")),
+            direct,
         )
 
 
@@ -418,6 +440,7 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
 
     cat = catalog()
     od, inner, t, a, c1, c2, q = -1.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    direct = ""
     workwidth = 0.0
     groove_b = 0.0
     angle = str(query.found_angle)
@@ -450,11 +473,11 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
             tmp_level = "双插口管"
         if "钢承口" in mat:
             tmp_level = "钢承口管"
-        od, inner, t, a, c1, c2, q = cat.read(
+        od, inner, t, a, c1, c2, q, direct = cat.read(
             cat.find(2, dn_text, level=tmp_level), 2, tmp_level
         )
     elif query.category == 5:  # 牵引管
-        od, inner, t, a, c1, c2, q = cat.read(cat.find(4, dn_text), 4, "0")
+        od, inner, t, a, c1, c2, q, direct = cat.read(cat.find(4, dn_text), 4, "0")
     elif query.category == 1:  # 直埋管道
         is_con_pipe = pipe_cat in CONCRETE_PIPE_CATEGORIES
         if is_con_pipe and query.con_found and ("预应力" not in mat):
@@ -475,7 +498,7 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
                     if query.strict_angle
                     else cat.find_nearest_angle(0, dn_text, angle, level)
                 )
-            od, inner, t, a, c1, c2, q = cat.read(row, 0, level)
+            od, inner, t, a, c1, c2, q, direct = cat.read(row, 0, level)
             workwidth = _width_of_dn(query.widths, pipe_cat, query.pipes[0].dn)
             groove_b = _groove_b_dn(query, pipe_cat, query.pipes[0].dn)
         elif is_con_pipe:
@@ -489,7 +512,7 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
             tmp_angle = angle
             if tmp_level == "预应力" and query.size_b < 0.6 and tmp_angle == "90":
                 tmp_angle = "120"
-            od, inner, t, a, c1, c2, q = cat.read(
+            od, inner, t, a, c1, c2, q, direct = cat.read(
                 cat.find(1, dn_text, tmp_angle, tmp_level), 1, tmp_level
             )
             workwidth = 0.0
@@ -499,7 +522,7 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
             # 表内细分级别（HDPE / PVC / PE / 球墨 K9 / 焊接 1.6MPa …）。
             width_category = pipe_cat
             if "HDPE" in mat:
-                od, inner, t, a, c1, c2, q = cat.read(
+                od, inner, t, a, c1, c2, q, direct = cat.read(
                     cat.find(3, dn_text, angle), 3, "0"
                 )
             elif ("PVC" in mat) or ("pvc" in mat):
@@ -510,16 +533,16 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
                     tmp_level = "硬聚氯乙烯(PVC-U)平壁管 4kN/m2"
                     if "8" in mat:
                         tmp_level = "硬聚氯乙烯(PVC-U)平壁管 8kN/m2"
-                od, inner, t, a, c1, c2, q = cat.read(
+                od, inner, t, a, c1, c2, q, direct = cat.read(
                     cat.find(5, dn_text, angle, tmp_level), 5, tmp_level
                 )
             elif "PE" in mat:
                 if query.size_b < 0.15:
-                    od, inner, t, a, c1, c2, q = cat.read(
+                    od, inner, t, a, c1, c2, q, direct = cat.read(
                         cat.find(4, dn_text), 4, "0"
                     )
                 elif "钢带" in mat:
-                    od, inner, t, a, c1, c2, q = cat.read(
+                    od, inner, t, a, c1, c2, q, direct = cat.read(
                         cat.find(7, dn_text, angle, "钢带增强聚乙烯(PE)管"),
                         7,
                         "钢带增强聚乙烯(PE)管",
@@ -532,7 +555,7 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
                             if ("B" in mat or "b" in mat)
                             else "聚氯乙烯(PE)缠绕结构壁管 B型"
                         )
-                    od, inner, t, a, c1, c2, q = cat.read(
+                    od, inner, t, a, c1, c2, q, direct = cat.read(
                         cat.find(6, dn_text, angle, tmp_level), 6, tmp_level
                     )
             elif ("球墨" in mat) or ("球铁" in mat) or ("铸铁" in mat):
@@ -541,7 +564,7 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
                     tmp_level = "K8"
                 if ("K10" in mat) or ("k10" in mat):
                     tmp_level = "K10"
-                od, inner, t, a, c1, c2, q = cat.read(
+                od, inner, t, a, c1, c2, q, direct = cat.read(
                     cat.find(8, dn_text, angle, tmp_level), 8, tmp_level
                 )
             elif "钢管" in mat:
@@ -556,7 +579,7 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
                         tmp_level = "焊接钢管1.6Mpa"
                 elif "无缝" in mat:
                     tmp_level = "无缝钢管"
-                od, inner, t, a, c1, c2, q = cat.read(
+                od, inner, t, a, c1, c2, q, direct = cat.read(
                     cat.find(9, dn_text, angle, tmp_level), 9, tmp_level
                 )
             width_dn = query.pipes[0].dn if query.pipes else 0
@@ -578,6 +601,7 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
             workwidth=workwidth,
             groove_b=groove_b,
             q=q,
+            direct=direct,
         ),
     )
 
@@ -592,6 +616,7 @@ def _apply_overrides(query: AtlasQuery, at: AtlasParam) -> AtlasParam:
     参数决定；壁厚被覆盖时外径按 内径 + 2×壁厚 重推，与图集 oD 列同源。
     """
     a, c1, c2, t, od, inner = at.a, at.c1, at.c2, at.t, at.od, at.id
+    direct = at.direct
     if query.a is not None:
         a = query.a
     if query.c1 is not None:
@@ -603,11 +628,15 @@ def _apply_overrides(query: AtlasQuery, at: AtlasParam) -> AtlasParam:
         if pipe.od is not None and pipe.inner_d is not None:
             od, inner = float(pipe.od), float(pipe.inner_d)
             t = max((od - inner) / 2.0, 0.0)
+            direct = ""  # 三值改由条目快照提供，图集行对应关系不再适用
         elif pipe.t is not None:
             t = float(pipe.t)
             inner = float(pipe.dn)
             od = inner + 2.0 * t
-    return dataclasses.replace(at, od=od, id=inner, t=t, a=a, c1=c1, c2=c2)
+            direct = ""
+    return dataclasses.replace(
+        at, od=od, id=inner, t=t, a=a, c1=c1, c2=c2, direct=direct
+    )
 
 
 def _groove_b(query: AtlasQuery, category: str, size_b: float) -> float:

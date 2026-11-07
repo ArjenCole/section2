@@ -489,6 +489,12 @@ class Pipe(Base):
     inner_d: Mapped[float | None] = mapped_column(Float, nullable=True)
     #: 管道壁厚 t mm（有效壁厚；空 = 按 oD/iD 反算，见 core.pipe_dimensions）
     t: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: "图集直取对"标记（构件库快照口径，见 AtlasCatalog.read）：id_t = 图集
+    #: 直接给 iD+t（oD 反算）、od_t = 给 oD+t（iD 反算）、od_id = 给 oD+iD
+    #: （t 反算，结构壁管）；空 = 旧数据 / 非构件库插入，来源未知，表达式按
+    #: iD/oD 直取、t 反算的旧口径展示。只影响展示，不影响数值（三值恒满足
+    #: oD = iD + 2t）
+    direct: Mapped[str] = mapped_column(String(10), default="")
 
     element: Mapped[Element] = relationship(back_populates="pipes")
 
