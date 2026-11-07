@@ -43,6 +43,34 @@ def test_finish_enabled_only_with_nonempty_name(qapp):
     assert not _finish_button(wizard)
 
 
+def test_typing_keeps_focus_in_project_name(qapp):
+    """回归：项目名称每打一个字焦点就跑（2026-11 修复）。
+
+    QWizard 收到 completeChanged 会同步整体 hide/show 页面（antiFlickerWidget
+    防闪烁机制），焦点控件被隐藏时 Qt 把焦点交给窗口 Tab 链上的下一个控件
+    ——无边框容器里是标题栏关闭按钮——且页面重新显示后焦点不恢复。修复在
+    _emit_complete_changed 里发射完补回焦点；这里用真实容器 + 打字验证。
+    """
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    from app.views.dialogs.new_project_wizard import NewProjectWizard
+
+    wizard = NewProjectWizard()
+    wizard.restart()
+    wizard.show()
+    qapp.processEvents()
+    edit = wizard._basic_page.project_name
+    edit.setFocus()
+    qapp.processEvents()
+    assert QApplication.focusWidget() is edit
+
+    QTest.keyClicks(edit, "a")
+    qapp.processEvents()
+    assert QApplication.focusWidget() is edit
+    assert _finish_button(wizard)  # 名字非空，完成按钮保持可用
+
+
 def test_values_align_with_spec_and_use_defaults(qapp):
     """values() 键与 NewProjectSpec 字段对齐；四个默认原则名与图集按代码缺省带出。"""
     from app.views.dialogs.new_project_wizard import NewProjectWizard

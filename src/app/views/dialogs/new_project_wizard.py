@@ -13,6 +13,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QAbstractSpinBox,
     QCheckBox,
     QFormLayout,
@@ -89,7 +90,24 @@ class BasicInfoPage(QWizardPage):
 
         # 不用 registerField("name*")：Qt 6.9+ 把必填字段判定为“当前值 ≠ 初始值”，
         # 预填的默认名会令完成按钮一直禁用，这里显式按非空判断。
-        self.project_name.textChanged.connect(self.completeChanged)
+        self.project_name.textChanged.connect(self._emit_complete_changed)
+
+    def _emit_complete_changed(self) -> None:
+        """textChanged → completeChanged 的中转：发射完把被抢走的焦点还给输入框。
+
+        QWizard 收到 completeChanged 会同步执行 _q_updateButtonStates：
+        antiFlickerWidget->hide() → 更新按钮可见/可用态 → show()。页面全部
+        内容（含 project_name）都是 antiFlickerWidget 的子控件，随之一隐一
+        现。焦点控件被隐藏时 Qt 把焦点交给窗口 Tab 链上的下一个控件（无边框
+        容器里是标题栏关闭按钮），内容重新显示后焦点不恢复——表现为“项目
+        名称每打一个字焦点就跑掉”。这是 QWizard 的固有行为，凡向导外有可
+        聚焦控件（自绘标题栏）即必现；发射前记住焦点归属，发射完补回焦点。
+        """
+        edit = self.project_name
+        had_focus = QApplication.focusWidget() is edit
+        self.completeChanged.emit()
+        if had_focus and QApplication.focusWidget() is not edit:
+            edit.setFocus()
 
     def isComplete(self) -> bool:
         return bool(self.project_name.text().strip())
