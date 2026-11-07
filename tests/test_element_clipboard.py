@@ -248,6 +248,69 @@ def test_insert_group_rejects_single_member(two_unit_project) -> None:
     assert insert_group_data(unit_a.id, data, e1.id) is None
 
 
+def test_copy_paste_carries_atlas_candidates(two_unit_project) -> None:
+    """复制/粘贴保留图集候选（回归：粘贴件的候选参数列丢失）。
+
+    快照早年不带 atlas_candidates：粘贴出的构件（合槽里复制的第二根管、
+    复制成独立构件）候选行为空 → 详情面板不显示候选参数列，从构件库重插
+    才正常。快照必须整组带走候选；源头就没有候选的旧构件，粘贴时现场查
+    图集补一次（ensure 兜底，参数行保持快照原值）。
+    """
+    import json
+
+    unit_a, unit_b = two_unit_project
+    source = _make_pipe(unit_a.id, "源构件")
+    source_candidates = sorted(
+        source.atlas_candidates, key=lambda row: (row.order_no, row.id)
+    )
+    assert len(source_candidates) == 8  # 混凝土管：砼/非砼 × 90/120/150/180
+
+    snap = unit_vm.element_copy_snapshot(source.id)
+    assert len(snap["atlas_candidates"]) == 8
+
+    def _rows(element) -> list[tuple]:
+        return [
+            (row.con_found, row.angle, row.t, row.a, row.c1, row.c2)
+            for row in sorted(
+                element.atlas_candidates, key=lambda row: (row.order_no, row.id)
+            )
+        ]
+
+    # 独立粘贴：走系统剪贴板同款 JSON 往返（元组 → 列表）再落库
+    pasted = unit_vm.insert_element_data(
+        unit_b.id, json.loads(json.dumps(snap)), None
+    )
+    assert pasted is not None
+    assert _rows(pasted) == _rows(source)
+    # 参数行原样带走，不被候选改写
+    assert [(p.key, p.unit, p.value) for p in pasted.params] == [
+        (p.key, p.unit, p.value) for p in source.params
+    ]
+
+    # 整组复制 → 粘贴：成员候选一并带走
+    e2 = _make_pipe(unit_a.id, "组员", dn=800)
+    group, _error = unit_vm.create_trench_group([source.id, e2.id])
+    assert group is not None
+    group_data = unit_vm.group_snapshot(group.id)
+    pasted_group = unit_vm.insert_group_data(unit_b.id, group_data, None)
+    assert pasted_group is not None
+    for member in sorted(pasted_group.members, key=lambda item: (item.order_no, item.id)):
+        assert len(member.atlas_candidates) == 8
+
+    # 源头就没有候选的旧构件：粘贴时现场查图集补一次
+    old = _make_pipe(unit_a.id, "旧构件", dn=1000)
+    for row in list(old.atlas_candidates):
+        orm.session().delete(row)
+    project_io.commit()
+    orm.session().expire(old, ["atlas_candidates"])
+    assert not old.atlas_candidates
+    pasted_old = unit_vm.insert_element_data(
+        unit_a.id, unit_vm.element_copy_snapshot(old.id), None
+    )
+    assert pasted_old is not None
+    assert len(pasted_old.atlas_candidates) == 8
+
+
 # --------------------------------------------------------------------------- #
 # 系统剪贴板
 # --------------------------------------------------------------------------- #

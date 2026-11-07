@@ -953,6 +953,14 @@ def create_element(
             )
     if seed_atlas_defaults and category != CATEGORY_STRUCTURE:
         _seed_atlas_defaults(element)
+    elif category == CATEGORY_BURIED and not element.atlas_candidates:
+        # 复制/粘贴建出的直埋构件没有候选（快照源头就没有候选，如旧版本
+        # 建的构件）：现场查图集补一次。没有候选行，详情面板就不显示候选
+        # 参数列（与构件库插入、空白新增同口径）；参数行保持快照原值，
+        # 不做自动匹配改写。
+        from app.services.atlas_match import ensure_atlas_candidates
+
+        ensure_atlas_candidates(element)
     project_io.commit()
     bus().unit_changed.emit(unit_id)
     # 新条目获得焦点：面板选中新行（构件库双击插入、AI 新增共用此行为），
@@ -962,7 +970,7 @@ def create_element(
 
 
 def element_snapshot(element_id: int) -> dict | None:
-    """构件条目完整快照（复制/剪切/粘贴用，含管材、参数、工程量）。"""
+    """构件条目完整快照（复制/剪切/粘贴用，含管材、参数、工程量、图集候选）。"""
     element = _element(element_id)
     if element is None:
         return None
@@ -995,6 +1003,14 @@ def element_snapshot(element_id: int) -> dict | None:
             for pipe in element.pipes
         ],
         "params": [(param.key, param.unit, param.value) for param in element.params],
+        # 图集候选一并带走：候选是构件自带的一次性快照（用户可改），粘贴件
+        # 缺了它，详情面板就不显示候选参数列（砼/非砼 × 90/120/150/180）
+        "atlas_candidates": [
+            (row.con_found, row.angle, row.t, row.a, row.c1, row.c2)
+            for row in sorted(
+                element.atlas_candidates, key=lambda row: (row.order_no, row.id)
+            )
+        ],
         "quantities": [
             (quantity.category, quantity.item, quantity.unit, quantity.value)
             for quantity in element.quantities
