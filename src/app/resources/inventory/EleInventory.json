@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "generated_at": "2026-11-07T22:37:58",
+  "generated_at": "2026-11-07T23:45:05",
   "source": "EleInventory.stn",
   "atlas": "06MS201-1",
   "angles": [
@@ -13081,6 +13081,224 @@
                   "a": null,
                   "c1": null,
                   "c2": 605.0
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "钢带增强聚乙烯(PE)螺旋波纹管",
+          "elements": [
+            {
+              "category": "直埋管道",
+              "name": "",
+              "depth": "0",
+              "amount": "0",
+              "source": "",
+              "pipes": [
+                {
+                  "mat": "钢带增强聚乙烯(PE)螺旋波纹管",
+                  "cat": "化学建材管道",
+                  "dn": 800,
+                  "content": "1",
+                  "direct": "od_t",
+                  "od": 794.0,
+                  "id": null,
+                  "t": {
+                    "con90": 4.5,
+                    "con120": 4.5,
+                    "con150": 4.5,
+                    "con180": 4.5,
+                    "plain90": 4.5,
+                    "plain120": 4.5,
+                    "plain150": 4.5,
+                    "plain180": 4.5
+                  }
+                }
+              ],
+              "params": [],
+              "atlas": {
+                "con90": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 116.28
+                },
+                "con120": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 198.5
+                },
+                "con150": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 294.25
+                },
+                "con180": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 397.0
+                },
+                "plain90": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 116.28
+                },
+                "plain120": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 198.5
+                },
+                "plain150": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 294.25
+                },
+                "plain180": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 397.0
+                }
+              }
+            },
+            {
+              "category": "直埋管道",
+              "name": "",
+              "depth": "0",
+              "amount": "0",
+              "source": "",
+              "pipes": [
+                {
+                  "mat": "钢带增强聚乙烯(PE)螺旋波纹管",
+                  "cat": "化学建材管道",
+                  "dn": 1000,
+                  "content": "1",
+                  "direct": "od_t",
+                  "od": 995.0,
+                  "id": null,
+                  "t": {
+                    "con90": 5.0,
+                    "con120": 5.0,
+                    "con150": 5.0,
+                    "con180": 5.0,
+                    "plain90": 5.0,
+                    "plain120": 5.0,
+                    "plain150": 5.0,
+                    "plain180": 5.0
+                  }
+                }
+              ],
+              "params": [],
+              "atlas": {
+                "con90": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 145.71
+                },
+                "con120": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 252.52
+                },
+                "con150": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 368.74
+                },
+                "con180": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 497.5
+                },
+                "plain90": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 145.71
+                },
+                "plain120": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 252.52
+                },
+                "plain150": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 368.74
+                },
+                "plain180": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 497.5
+                }
+              }
+            },
+            {
+              "category": "直埋管道",
+              "name": "",
+              "depth": "0",
+              "amount": "0",
+              "source": "",
+              "pipes": [
+                {
+                  "mat": "钢带增强聚乙烯(PE)螺旋波纹管",
+                  "cat": "化学建材管道",
+                  "dn": 1200,
+                  "content": "1",
+                  "direct": "od_t",
+                  "od": 1195.0,
+                  "id": null,
+                  "t": {
+                    "con90": 5.0,
+                    "con120": 5.0,
+                    "con150": 5.0,
+                    "con180": 5.0,
+                    "plain90": 5.0,
+                    "plain120": 5.0,
+                    "plain150": 5.0,
+                    "plain180": 5.0
+                  }
+                }
+              ],
+              "params": [],
+              "atlas": {
+                "con90": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 175.0
+                },
+                "con120": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 307.83
+                },
+                "con150": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 442.86
+                },
+                "con180": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 597.5
+                },
+                "plain90": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 175.0
+                },
+                "plain120": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 307.83
+                },
+                "plain150": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 442.86
+                },
+                "plain180": {
+                  "a": null,
+                  "c1": null,
+                  "c2": 597.5
                 }
               }
             }
@@ -26282,8 +26500,8 @@
     }
   ],
   "stats": {
-    "elements": 407,
-    "pipes": 373,
+    "elements": 410,
+    "pipes": 376,
     "no_thickness": 14,
     "no_atlas": 70
   }

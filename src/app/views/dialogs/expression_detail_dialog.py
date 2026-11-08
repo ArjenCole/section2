@@ -28,7 +28,6 @@ from PySide6.QtGui import (
     QGuiApplication,
     QIcon,
     QPainter,
-    QPalette,
     QPen,
     QPixmap,
     QPolygonF,
@@ -558,9 +557,18 @@ class ExpressionDetailDialog(FramelessDialog):
     # ------------------------------------------------------------------ 复制
     @staticmethod
     def _copy_icon() -> QIcon:
-        """画一个无边框的“复制”小图标（两张叠放的纸）。"""
-        color = QGuiApplication.palette().color(QPalette.ColorRole.WindowText)
-        background = QGuiApplication.palette().color(QPalette.ColorRole.Window)
+        """画一个无边框的“复制”小图标（两张叠放的纸）。
+
+        颜色取自 ThemeManager 而不是 QGuiApplication.palette()：主题只换
+        QSS 不换应用调色板，palette 永远是系统浅色，暗色主题下前景纸的
+        白色填充会显示成一块白斑。
+        """
+        from app.resources.qss.theme import ThemeManager
+
+        theme = ThemeManager.instance().current()
+        color = QColor(theme.text_primary)
+        # 前景纸填充用窗体底色（按钮背景透明，纸的遮挡靠同底色实现）
+        background = QColor(theme.bg_dialog)
         pixmap = QPixmap(32, 32)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)

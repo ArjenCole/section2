@@ -4,6 +4,10 @@
 （407 个模板，只有管材名称与旧参数，没有图集值）；输出是同名的 JSON 资产，
 每个模板额外带上：
 
+另有少量**合成模板**（``SYNTHESIZED_UNITS``）：旧库没录、图集有完整行的
+管种（钢带增强 PE 螺旋波纹管 DN800/1000/1200），结构对齐旧库直埋模板、
+图集值同样现场查。
+
 * 每根管的 **管材类别**（``cat``，由材质名称按 core.pipe_category 折算一次固化）、
   **图集直取对**（``direct``：``"id_t"`` = 图集给 iD+t（如混凝土/顶管表）、
   ``"od_t"`` = 给 oD+t（如 PE 给水/钢带/金属管表）、``"od_id"`` = 给 oD+iD
@@ -35,6 +39,7 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "src") not in sys.path:
@@ -67,6 +72,15 @@ def combo_key(con_found: bool, angle: int) -> str:
 
 #: 构件类别里要快照图集参数的（顶管 / 牵引只算管材，没有 a / C1 / C2 行）
 ATLAS_CATEGORIES = (1, 2, 3, 6)
+
+#: 合成模板：旧版构件库没录、但图集有完整行的管种（unit 名 = 材质名 = 图集
+#: 表内 level 列名）。图集值全部经 resolve_atlas 现查（不手抄），图集 xlsx
+#: 修正后重跑本脚本即得正确快照。钢带管来源见 docs/管道图集直径数据梳理.md
+#: 表 7 附注（旧版 mcAtlas.cs 用 sheet 名当 level 过滤值，永远查不到行，
+#: 构件库因此一直缺这个管种）。
+SYNTHESIZED_UNITS: tuple[tuple[str, str, tuple[int, ...]], ...] = (
+    ("直埋塑料管", "钢带增强聚乙烯(PE)螺旋波纹管", (800, 1000, 1200)),
+)
 
 
 def _param_map(params: list[tuple[str, str]]) -> dict[str, tuple[float, str]]:
@@ -175,6 +189,40 @@ def _pipe_row(pipe, category: int, params, enclosure) -> dict:
     return row
 
 
+def _synthetic_unit(mat: str, dns: tuple[int, ...], enclosure) -> dict:
+    """合成 unit：每个 DN 一个直埋模板，图集值现场查（与 legacy 模板同口径）。
+
+    模板结构对齐旧库直埋模板：name 空（树上显示规格兜底）、params 空
+    （参数行由插入时的候选自动匹配写）、图集 8 组 a/C1/C2 快照。
+    """
+    elements: list[dict] = []
+    for dn in dns:
+        pipe = SimpleNamespace(mat=mat, dn=dn, content="1")
+        params: dict = {}
+        pipes = [_pipe_row(pipe, 1, params, enclosure)]
+        atlas: dict[str, dict[str, float | None]] = {}
+        for con_found, angle in COMBOS:
+            at = resolve_atlas(_query(1, [pipe], params, enclosure, con_found, angle))
+            atlas[combo_key(con_found, angle)] = {
+                "a": at.a or None,
+                "c1": at.c1 or None,
+                "c2": at.c2 or None,
+            }
+        elements.append(
+            {
+                "category": CATEGORY_NAMES.get(1, ""),
+                "name": "",
+                "depth": "0",
+                "amount": "0",
+                "source": "",
+                "pipes": pipes,
+                "params": [],
+                "atlas": atlas,
+            }
+        )
+    return {"name": mat, "elements": elements}
+
+
 def build() -> dict:
     legacy = parse_legacy(SOURCE)
     enclosure = legacy.enclosures[0] if legacy.enclosures else None
@@ -229,6 +277,25 @@ def build() -> dict:
                         stats["no_thickness"] += 1
             units.append({"name": unit.name, "elements": elements})
         categories.append({"name": segment.name, "units": units})
+
+    # 合成模板：旧库没录、图集有完整行的管种，挂到目标段的末尾
+    for segment_name, mat, dns in SYNTHESIZED_UNITS:
+        unit = _synthetic_unit(mat, dns, enclosure)
+        target = next(
+            (item for item in categories if item["name"] == segment_name), None
+        )
+        if target is None:
+            target = {"name": segment_name, "units": []}
+            categories.append(target)
+        target["units"].append(unit)
+        for element in unit["elements"]:
+            stats["elements"] += 1
+            stats["pipes"] += len(element["pipes"])
+            for row in element["pipes"]:
+                if row["direct"] != "od_id" and all(
+                    value is None for value in row["t"].values()
+                ):
+                    stats["no_thickness"] += 1
 
     return {
         "version": 3,

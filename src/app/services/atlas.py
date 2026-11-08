@@ -542,10 +542,13 @@ def resolve_atlas(query: AtlasQuery) -> AtlasParam:
                         cat.find(4, dn_text), 4, "0"
                     )
                 elif "钢带" in mat:
+                    # 级别文字 = 图集表内 level 列值（06MS201-2 钢带增强 PE
+                    # 螺旋波纹管；sheet 名"钢带增强聚乙烯(PE)管"与 level 列
+                    # 不一致——旧版 mcAtlas.cs 用 sheet 名过滤，永远查不到行）
                     od, inner, t, a, c1, c2, q, direct = cat.read(
-                        cat.find(7, dn_text, angle, "钢带增强聚乙烯(PE)管"),
+                        cat.find(7, dn_text, angle, "钢带增强聚乙烯(PE)螺旋波纹管"),
                         7,
-                        "钢带增强聚乙烯(PE)管",
+                        "钢带增强聚乙烯(PE)螺旋波纹管",
                     )
                 else:
                     tmp_level = "聚氯乙烯(PE)双壁波纹管"

@@ -55,8 +55,7 @@ def _resolve(category: int, mat: str, dn: int):
         (1, "硬聚氯乙烯(PVC-U)加筋管", 300, "od_id"),  # 表5 加筋（有 oD 列，D=内径）
         (1, "PVC双壁波纹管", 200, "od_t"),  # 表5 双壁波纹（有 oD 列，D=公称外径）
         (1, "聚氯乙烯(PE)缠绕结构壁管A型", 300, "od_id"),  # 表6 缠绕（有 oD 列，D=内径）
-        # 注：表 7 钢带增强 PE 的图集级别文字与 resolve_atlas 用的不一致（既有
-        # 问题），resolve 查不到行，不纳入直取对断言
+        (1, "钢带增强聚乙烯(PE)螺旋波纹管", 800, "od_t"),  # 表7 钢带增强（级别文字已对齐）
         (1, "球墨铸铁管 K9", 100, "od_t"),  # 表8 球墨铸铁
         (1, "焊接钢管1.6Mpa", 100, "od_t"),  # 表9 钢管
     ],
@@ -150,6 +149,36 @@ def test_insert_template_fills_derived_value(tmp_path, direct) -> None:
         assert pipe.t == pytest.approx((head.od - head.inner_d) / 2.0)
         # 候选参数列的壁厚也按反算值填好（不留空）
         assert all(row.t is not None for row in element.atlas_candidates)
+
+
+def test_insert_synthesized_steel_band_template(tmp_path) -> None:
+    """合成模板（旧库没录、图集补录的钢带管）：名称取图集 level 名，插入补 iD。"""
+    unit = _project_with_unit(tmp_path)
+    template = next(
+        result["template"]
+        for result in element_library.search_templates(keyword="钢带增强")
+        if result["template"].pipes and result["template"].pipes[0].dn == 800
+    )
+    assert template.label == "钢带增强聚乙烯(PE)螺旋波纹管 DN800"
+    assert template.pipes[0].direct == "od_t"
+    assert template.pipes[0].od == pytest.approx(794.0)
+    assert template.pipes[0].inner_d is None  # od_t：快照不存内径
+
+    element = unit_vm.insert_element_template(unit.id, template)
+    assert element is not None
+    pipe = element.pipes[0]
+    assert pipe.mat == "钢带增强聚乙烯(PE)螺旋波纹管"
+    assert pipe.direct == "od_t"
+    # oD/t 图集直取，iD 插入时反算补齐
+    assert pipe.od == pytest.approx(794.0)
+    assert pipe.t == pytest.approx(4.5)
+    assert pipe.inner_d == pytest.approx(794.0 - 2 * 4.5)
+    # 候选参数列带图集 C2（角度 121/122 脏值已修正，120° 组命中）
+    assert all(row.c2 is not None for row in element.atlas_candidates)
+    matched = next(
+        row for row in element.atlas_candidates if row.angle == 120 and row.con_found
+    )
+    assert matched.c2 == pytest.approx(198.5)
 
 
 # --------------------------------------------------------------------------- #

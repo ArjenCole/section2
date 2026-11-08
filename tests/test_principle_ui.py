@@ -25,8 +25,15 @@ def test_element_library_categories_and_templates() -> None:
         "直埋混凝土管", "直埋塑料管", "直埋金属类管道", "混凝土结构", "非开挖管道", "附属构筑物",
     )
     templates = [tpl for units in library.units.values() for unit in units for tpl in unit.elements]
-    assert len(templates) == 407
+    # 407 个旧库模板 + 3 个合成模板（钢带增强 PE 螺旋波纹管 DN800/1000/1200，
+    # 见 build_element_inventory.SYNTHESIZED_UNITS）
+    assert len(templates) == 410
     assert all(tpl.label for tpl in templates)
+    steel_unit = next(
+        unit for unit in library.units_of("直埋塑料管") if "钢带" in unit.name
+    )
+    assert steel_unit.name == "钢带增强聚乙烯(PE)螺旋波纹管"
+    assert [pipe.dn for tpl in steel_unit.elements for pipe in tpl.pipes] == [800, 1000, 1200]
     # 附属构筑物（构筑物类）：24 座检查井 + 单篦/双篦雨水口 + 排放口 + 自定义构筑物
     structures = library.units_of("附属构筑物")[0].elements
     assert len(structures) == 3
