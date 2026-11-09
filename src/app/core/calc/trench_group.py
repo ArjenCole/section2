@@ -251,16 +251,26 @@ def _width_and_slope_for_interval(
     返回 ``(W_下, Σ(H*s))``；线性宽度满足 ``W_上 = W_下 + Σ(s)*Δh``，因此
     梯形面积写成 ``(2*W_下 + Σ(H*s))/2*Δh``——与非合槽构件的
     ``trapezoid_lr_expr`` 同形，下底只出现一次（``2*下底``）。
+
+    恒宽段（本体 / 工作面 / 条带）先累加、坡段后累加：下底宽读作
+    「本体+两侧工作面+坡外扩」，且「本体+两侧工作面」在各分层的下底宽里
+    连续出现，展示层才能把它整体提成槽底宽中间量（坡项夹在两个工作面
+    之间时会截断公共片段）。
     """
-    low = dim(0.0)
-    slope_terms = dim(0.0)
+    constant: list[_SlopeSegment] = []
+    sloped: list[_SlopeSegment] = []
     for profile in profiles:
         segment = _segment_for_interval(profile, lo, hi)
         if segment is None:
             continue
+        (constant if segment.slope.v == 0 else sloped).append(segment)
+    low = dim(0.0)
+    slope_terms = dim(0.0)
+    for segment in constant:
         low = low + segment.width_at(lo)
-        if segment.slope.v != 0:
-            slope_terms = slope_terms + segment.slope * height
+    for segment in sloped:
+        low = low + segment.width_at(lo)
+        slope_terms = slope_terms + segment.slope * height
     return low, slope_terms
 
 
@@ -764,6 +774,19 @@ def _resolve_member(
     )
 
 
+def _body_width(member: "_Member") -> Dim:
+    """本体全宽：左右半宽对称（默认 / 砼基础外皮半径）时直接用全宽算式。
+
+    基础参数本来就是全宽（断面宽+2×(壁厚+工作面加宽)），对称时不必拆成
+    两个半宽再相加——那会让下底宽显示成 ``(…)/2+(…)/2``，还截断展示层的
+    公共片段提取。浅构件侵入被替换成外边线半径（管外皮 oD/2）等不对称
+    场景仍按左右半宽拼。
+    """
+    if member.half_left.e == member.half_right.e:
+        return member.base_width
+    return member.half_left + member.half_right
+
+
 def member_depths(group: TrenchGroup) -> dict[int, float]:
     """组内各构件的实际槽底深度（埋深 + 基础 + 壁厚 + 垫层）；算不出的跳过。"""
     session = orm.session()
@@ -1053,7 +1076,7 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
         member.profiles = []
         member.profiles_left = []
         member.profiles_right = []
-        base = _rect_segments(member.half_left + member.half_right, member.depth)
+        base = _rect_segments(_body_width(member), member.depth)
         if base:
             member.profiles.append(base)
         if i == 0:
@@ -1094,7 +1117,7 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
                 right = _wall_profiles(member.work_width_right, member.depth)
             member.profiles += right
             member.profiles_right += right
-        flat = member.half_left + member.half_right
+        flat = _body_width(member)
         if i == 0:
             flat = flat + member.work_width_left
         else:
