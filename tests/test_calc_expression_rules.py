@@ -601,6 +601,57 @@ def test_presentation_triangle_area_uses_v_h_form() -> None:
     assert "u1" not in {part.symbol for part in term.parts}
 
 
+def test_presentation_splits_overlong_definitions() -> None:
+    """定义式超过单元格可显示宽度（_MAX_DEFINITION_LENGTH）时嵌套提取。
+
+    两条深度不同的弓形扣减式（合槽扣管占位的真实形态）：弓形式 90+ 字符且
+    各只出现一次，常规“确有重复才提取”不会提；长度控制把弓形式连同内部
+    深度链逐轮提成新中间量，最终所有会写进单元格的式子都收进上限，
+    主算式按定义展开仍与完整式同值。
+    """
+    import re
+
+    from app.core.calc.tracer import _MAX_DEFINITION_LENGTH
+
+    def bow(depth: str) -> str:
+        return (
+            f"450^2*ACOS((450-({depth}))/450)-(450-({depth}))"
+            f"*SQRT(({depth})*(2*450-({depth})))"
+        )
+
+    shallow, deep = "200+100+50", "200+100+50+30"
+    # 深弓 − 浅弓 > 0：expr 存数值代入部分（正值），符号由 value 决定；
+    # 弓形式顶层是加减，作减数时要像引擎 wrap() 一样先括起来
+    expression = f"(({bow(deep)})-({bow(shallow)}))/10^6*100"
+    assert len(expression) > _MAX_DEFINITION_LENGTH  # 前提：完整式确实超限
+    out = QDict()
+    out.add("回填|中粗砂|m3", evaluate(expression), expression, "扣管位")
+    view = out.get("回填|中粗砂|m3").presentation()
+
+    assert len(view.main) <= _MAX_DEFINITION_LENGTH
+    assert view.definitions, "应有中间量定义"
+    for item in view.definitions:
+        assert len(item.expression) <= _MAX_DEFINITION_LENGTH, item
+    # 展开不变式：主算式按定义逐层展开 == 完整式 == 原式数值
+    expanded = view.main
+    for _ in range(len(view.definitions) + 1):
+        for item in view.definitions:
+            expanded = re.sub(rf"\b{item.symbol}\b", f"({item.expression})", expanded)
+    assert evaluate(expanded) == pytest.approx(evaluate(view.full), rel=1e-9)
+    assert evaluate(view.full) == pytest.approx(evaluate(expression), rel=1e-9)
+
+
+def test_presentation_keeps_short_definitions_untouched() -> None:
+    """长度控制只针对超限式：本就收进上限的展示不新增中间量。"""
+    out = QDict()
+    out.add("垫层|中粗砂|m3", 1.0, "(600+65*2+130*2+500*2)*0.1", "垫层")
+    view = out.get("垫层|中粗砂|m3").presentation()
+    assert view.main == "(600+65*2+130*2+500*2)*0.1"
+    assert not any(
+        item.kind == "intermediate" and not item.basic for item in view.definitions
+    )
+
+
 def test_expression_outline_does_not_build_presentation() -> None:
     """表格首屏摘要必须零解析：不调用 presentation，多分项按符号列说明。"""
     out = QDict()

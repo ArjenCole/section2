@@ -23,6 +23,11 @@
   槽底宽、计算深度、外径、弓形面积等重复片段各定义一次，主算式只引用符号；
   定义式仍由原始数字组成，派生结果只放在“计算结果”列，不代回公式。
   ``expression`` 完整算式始终保留，供复制 Excel 与逐项复核。
+* **长度控制**（:func:`_extract_for_length`）：会写进单元格的式子（分项算式、
+  中间量代入式、u/v/h 分解式）超过 :data:`_MAX_DEFINITION_LENGTH`（约计算
+  表达式窗体“代入式”列宽的 2/3，56 个 ASCII 字符）时，把超限式内部的片段
+  再提成新中间量（tB/tH/tS 继续编号），逐轮直到全部收进上限——完整数值
+  算式不受影响，只是中间符号表多几行定义。
 
 算式求值与表达式拼接共用同一套数值：先拼出可求值的算式字符串，
 再用 core.evaluator 对它求值得到结果，禁止两套算法各算各的。
@@ -648,8 +653,20 @@ def _parse_expression(expression: str) -> ast.AST | None:
         return None
 
 
-def _node_key(node: ast.AST) -> str:
-    return ast.dump(node, annotate_fields=False, include_attributes=False)
+def _node_key(
+    node: ast.AST, memo: dict[int, tuple[str, ast.AST]] | None = None
+) -> str:
+    if memo is not None:
+        cached = memo.get(id(node))
+        if cached is not None:
+            return cached[0]
+    key = ast.dump(node, annotate_fields=False, include_attributes=False)
+    if memo is not None:
+        # 备忘的值带着节点本身：渲染管线对同一份 deepcopy 反复取键（子树清点 /
+        # 两级替换），按 id 缓存把 4 遍 dump 并成 1 遍；替换会游离出子树并释放，
+        # 备忘持活这些节点，id 才不会被新对象复用、缓存键在本次调用内始终可信
+        memo[id(node)] = (key, node)
+    return key
 
 
 def _node_value(node: ast.AST) -> float | None:
@@ -739,6 +756,23 @@ _NATURE_SYMBOLS = {"width": "tB", "height": "tH", "area": "tS"}
 #: 值量级达到该数（mm²，约 0.1 m²）的游离片段按面积类取名；几何长度到不了这个量级
 _AREA_VALUE_MIN = 1e5
 
+#: 会写进单元格的式子（分项算式 / 中间量代入式 / u·v·h 分解式）的长度上限
+#: （ASCII 字符数）。计算表达式窗体固定 980px 宽，“代入式”列吃剩余宽度约
+#: 630px，2/3 ≈ 420px，13px 字体折合 56 个 ASCII 字符；超过的定义式在
+#: :func:`_extract_for_length` 里把内部片段再提成新中间量，直到全部收进上限。
+_MAX_DEFINITION_LENGTH = 56
+#: 片段替换后展示长度不足该数的不提（提了省不下几个字符，白多一行定义）
+_MIN_EXTRACT_LENGTH = 5
+#: 提取收益（出现次数 × (片段长度 − 新符号名长度)）低于该数的不提
+_MIN_EXTRACT_GAIN = 4
+#: 新符号名长度按 3 估（tB / tB1），收益估算用
+_SYMBOL_LENGTH_ESTIMATE = 3
+#: 长度控制的轮数上限与每条工程量新提中间量的个数上限（避免符号表失控）
+_MAX_EXTRACT_ROUNDS = 8
+_MAX_LENGTH_SYMBOLS = 16
+#: 每轮每个超限式最多提几个片段：一轮多提几个换更少的轮数
+_PICKS_PER_ROUND = 2
+
 
 def _candidate_natures(
     terms: list["Term"], candidates: list[_Candidate]
@@ -822,12 +856,18 @@ def _assign_symbols(
 class _ReplaceNodes(ast.NodeTransformer):
     """按 canonical key 替换为变量名；``stop`` 用于定义式自身不再替换。"""
 
-    def __init__(self, symbols: dict[str, str], stop: str = "") -> None:
+    def __init__(
+        self,
+        symbols: dict[str, str],
+        stop: str = "",
+        memo: dict[int, tuple[str, ast.AST]] | None = None,
+    ) -> None:
         self.symbols = symbols
         self.stop = stop
+        self.memo = memo
 
     def visit(self, node: ast.AST) -> ast.AST:
-        key = _node_key(node)
+        key = _node_key(node, self.memo)
         if key != self.stop and key in self.symbols:
             return ast.Name(id=self.symbols[key], ctx=ast.Load())
         return super().visit(node)
@@ -841,11 +881,14 @@ class _ReplaceParams(ast.NodeTransformer):
     标签合并都按左→右进行，顺序一致）。
     """
 
-    def __init__(self, keys: dict[str, str | list[str]]) -> None:
+    def __init__(
+        self, keys: dict[str, str | list[str]], memo: dict[int, tuple[str, ast.AST]] | None = None
+    ) -> None:
         self.keys = keys
+        self.memo = memo
 
     def visit(self, node: ast.AST) -> ast.AST:
-        symbol = self.keys.get(_node_key(node))
+        symbol = self.keys.get(_node_key(node, self.memo))
         if isinstance(symbol, list):
             if not symbol:  # 出现次数比参数多：多出来的保留数字
                 return super().visit(node)
@@ -868,12 +911,14 @@ def _collect_param_refs(tags: Iterable[NamedValue]) -> list[ParamRef]:
     return list(refs.values())
 
 
-def _node_keys_within(node: ast.AST, skip_keys: set[str]) -> set[str]:
+def _node_keys_within(
+    node: ast.AST, skip_keys: set[str], memo: dict[int, tuple[str, ast.AST]] | None = None
+) -> set[str]:
     """节点内出现过的 canonical key；``skip_keys`` 的子树（已提成符号）不进入。"""
     keys: set[str] = set()
 
     def walk(current: ast.AST) -> None:
-        key = _node_key(current)
+        key = _node_key(current, memo)
         if key in skip_keys:
             return
         keys.add(key)
@@ -899,6 +944,7 @@ def _param_key_map(
     node: ast.AST,
     skip_keys: set[str],
     nested_params: set[str] | frozenset[str] = frozenset(),
+    memo: dict[int, tuple[str, ast.AST]] | None = None,
 ) -> dict[str, str | list[str]]:
     """当前算式里“参数数值节点 → 符号”的映射。
 
@@ -909,7 +955,7 @@ def _param_key_map(
     内”的参数、又有候选外的参数（如槽底宽里的 a 与垫层厚里的 C1 同为 100），
     候选外的才是当前算式里剩下的那个，候选内的不参与本式替换。
     """
-    present = _node_keys_within(node, skip_keys)
+    present = _node_keys_within(node, skip_keys, memo)
     refs = list(refs)
     # 按数值分组；同值里只要有候选外的参数，就只保留候选外的那几路
     by_value: dict[float, list[ParamRef]] = {}
@@ -942,10 +988,36 @@ def _param_key_map(
     return mapping
 
 
+def _render_node_expression(
+    node: ast.AST,
+    symbols: dict[str, str],
+    tag_map: dict[str, NamedValue],
+    refs: list[ParamRef],
+    stop: str = "",
+) -> str:
+    """语法树节点按当前符号 / 参数符号替换后的定义式（最小括号形式）。
+
+    长度控制与最终输出共用本函数，保证“量出来的长度”就是显示出来的长度。
+    ``stop`` 传节点自身的 canonical key 时，节点整体不再被替换成符号——
+    符号化片段自己的定义式渲染用（否则会渲染成符号名本身）。
+    """
+    selected_keys = set(symbols)
+    skip = selected_keys - ({stop} if stop else set())
+    # 先 deepcopy 再清点 / 两级替换：四趟遍历同一份副本，键的 id 备忘全程有效
+    node = copy.deepcopy(node)
+    memo: dict[int, tuple[str, ast.AST]] = {}
+    candidates = skip & _node_keys_within(node, set(), memo)
+    param_keys = _param_key_map(
+        refs, node, skip, _candidate_params(tag_map, candidates), memo
+    )
+    transformed = _ReplaceNodes(symbols, stop=stop, memo=memo).visit(node)
+    transformed = _ReplaceParams(param_keys, memo).visit(transformed)
+    return _format_definition(_excel_expression(_safe_simplify(transformed)))
+
+
 def _render_dim_expression(
     dim: Dim,
     symbols: dict[str, str],
-    selected_keys: set[str],
     tag_map: dict[str, NamedValue],
 ) -> tuple[str, float]:
     """把 Dim 的算式按当前符号 / 固定符号替换后输出（展示用），并返回原式值。"""
@@ -953,14 +1025,7 @@ def _render_dim_expression(
     if node is None:
         return dim.e, dim.v * (10 ** dim.s)
     value = _node_value(node)
-    refs = _collect_param_refs(dim.tags)
-    candidates = selected_keys & _node_keys_within(node, set())
-    param_keys = _param_key_map(
-        refs, node, selected_keys, _candidate_params(tag_map, candidates)
-    )
-    transformed = _ReplaceNodes(symbols).visit(copy.deepcopy(node))
-    transformed = _ReplaceParams(param_keys).visit(transformed)
-    text = _format_definition(_excel_expression(_safe_simplify(transformed)))
+    text = _render_node_expression(node, symbols, tag_map, _collect_param_refs(dim.tags))
     return text, value if value is not None else dim.v * (10 ** dim.s)
 
 
@@ -1051,6 +1116,197 @@ def _select_candidates(
     return selected
 
 
+#: 片段清单的精确渲染条数上限：先按“原文长度 × 出现次数”廉价预筛（原文长度
+#: 是替换后展示长度的上界，只用于排序），只有排在前面的片段才逐个精确渲染
+#: （替换 + 最小括号是大头）——避免超限式的每个子树都走一遍渲染管线
+_INVENTORY_RENDER_LIMIT = 12
+
+
+def _fragment_inventory(
+    node: ast.AST,
+    symbols: dict[str, str],
+    tag_map: dict[str, NamedValue],
+    refs: list[ParamRef],
+    param_expr_keys: set[str],
+    root_keys: set[str],
+    length_cache: dict[str, int],
+) -> dict[str, list]:
+    """超限式内可提取片段的清单：canonical key → [出现次数, 展示长度, 节点, 深度]。
+
+    只统计“替换当前符号后仍是算式”的子节点：常数 / 单变量、已是符号的片段、
+    构件参数数值节点、整个分项根都不提；替换后展示长度不足
+    :data:`_MIN_EXTRACT_LENGTH` 或收益不足 :data:`_MIN_EXTRACT_GAIN` 的不提。
+    展示长度按全量参数符号渲染（新中间量的定义式就是这个口径），同一轮内
+    按 key 缓存。
+    """
+    stop_key = _node_key(node)
+    raw: dict[str, list] = {}
+    memo: dict[int, tuple[str, ast.AST]] = {}
+    for sub, depth in _walk_nodes(node):
+        if isinstance(sub, (ast.Constant, ast.Name)):
+            continue
+        key = _node_key(sub, memo)
+        if key == stop_key or key in symbols or key in param_expr_keys or key in root_keys:
+            continue
+        entry = raw.get(key)
+        if entry is not None:
+            entry[0] += 1
+            continue
+        raw[key] = [1, len(_excel_expression(sub)), sub, depth]
+    found: dict[str, list] = {}
+    ranked = sorted(
+        raw.items(),
+        key=lambda item: item[1][0] * (item[1][1] - _SYMBOL_LENGTH_ESTIMATE),
+        reverse=True,
+    )
+    for key, (count, _raw_length, sub, depth) in ranked[:_INVENTORY_RENDER_LIMIT]:
+        length = length_cache.get(key)
+        if length is None:
+            length = len(_render_node_expression(sub, symbols, tag_map, refs))
+            length_cache[key] = length
+        if length < _MIN_EXTRACT_LENGTH:
+            continue
+        if count * (length - _SYMBOL_LENGTH_ESTIMATE) < _MIN_EXTRACT_GAIN:
+            continue
+        found[key] = [count, length, sub, depth]
+    return found
+
+
+def _extract_for_length(
+    terms: list["Term"],
+    parsed: list[ast.AST],
+    selected: list[_Candidate],
+    symbols: dict[str, str],
+    tag_map: dict[str, NamedValue],
+    param_refs: list[ParamRef],
+    param_expr_keys: set[str],
+) -> list[_Candidate]:
+    """会写进单元格的式子超过 :data:`_MAX_DEFINITION_LENGTH` 时嵌套提取。
+
+    每轮先按当前符号渲染所有单元格内容（分项算式、u/v/h 分解式、中间量
+    定义式），找出超限式；再从每个超限式的语法树里挑一个“替换后缩短最多”
+    的内部片段提成新中间量（同一片段跨式去重，符号按性质取 tB/tH/tS 继续
+    既有编号），下一轮带着新符号重新渲染再查——直到全部收进上限、提无可提
+    或达到轮数 / 个数上限。新片段也允许出现在既有语义量（B / H…）的定义里
+    ——那正是缩短它们的手段，与通用候选“不套娃”的筛选规则不冲突（那条规则
+    只管“确有重复才提取”的常规路径）。
+
+    完整数值算式不受影响：提取只改展示层的符号表。返回追加了新候选的
+    ``selected``；新符号直接写进 ``symbols``。
+    """
+    root_keys = {_node_key(root) for root in parsed}
+    # 原文（无替换）长度是渲染长度的上界：片段提成符号只缩短，参数把数值
+    # 换成符号最多长出 growth 个字符（符号名比数值原文长的罕见场合）。原文
+    # 加 growth 仍收进上限的式子永远不会超限，逐轮检查不必精确渲染。
+    growth = max(
+        (len(ref.symbol) - len(ref.expr) for ref in param_refs), default=0
+    )
+    root_raw = [len(_excel_expression(root)) for root in parsed]
+    part_raw: list[tuple[ast.AST, Dim, str, int]] = []
+    for term in terms:
+        area = term.area
+        if area is None:
+            continue
+        for part in (area.u, area.v, area.h):
+            if part is None:
+                continue
+            node = _parse_expression(part.e)
+            if node is None:
+                continue
+            part_raw.append((node, part, term.note, len(_excel_expression(node))))
+    added = 0
+    for _round in range(_MAX_EXTRACT_ROUNDS):
+        # 会显示成单元格内容的式子及其建议来源：分项根（面积行统一显示成
+        # u/v/h 的不查根，查分解式）、面积分解量、中间量定义式
+        over: list[tuple[ast.AST, str]] = []
+        for term, root, raw_length in zip(terms, parsed, root_raw):
+            area = term.area
+            if area is not None and area.kind in ("trapezoid", "triangle", "rectangle"):
+                continue
+            if raw_length + growth <= _MAX_DEFINITION_LENGTH:
+                continue
+            text = _render_node_expression(
+                root, symbols, tag_map, _collect_param_refs(term.tags)
+            )
+            if len(text) > _MAX_DEFINITION_LENGTH:
+                over.append((root, term.note))
+        for node, part, note, raw_length in part_raw:
+            if raw_length + growth <= _MAX_DEFINITION_LENGTH:
+                continue
+            text, _value = _render_dim_expression(part, symbols, tag_map)
+            if len(text) > _MAX_DEFINITION_LENGTH:
+                over.append((node, note))
+        for candidate in selected:
+            if len(candidate.text) + growth <= _MAX_DEFINITION_LENGTH:
+                continue
+            tag = tag_map.get(candidate.key)
+            refs = tag.params if tag is not None and tag.params else param_refs
+            text = _render_node_expression(
+                candidate.node, symbols, tag_map, refs, stop=candidate.key
+            )
+            if len(text) > _MAX_DEFINITION_LENGTH:
+                over.append((candidate.node, candidate.source))
+        if not over or added >= _MAX_LENGTH_SYMBOLS:
+            break
+
+        # 每个超限式各挑收益最高的几个片段（同轮去重）；收益 = 出现次数 × 缩短量。
+        # 一轮多提几个能少跑几轮（每轮都要全量重渲染超限式，渲染是大头）
+        length_cache: dict[str, int] = {}
+        picked: dict[str, tuple[ast.AST, int, str]] = {}
+        for node, source in over:
+            inventory = _fragment_inventory(
+                node, symbols, tag_map, param_refs, param_expr_keys, root_keys, length_cache
+            )
+            ranked = sorted(
+                inventory.items(),
+                key=lambda item: item[1][0] * (item[1][1] - _SYMBOL_LENGTH_ESTIMATE),
+                reverse=True,
+            )
+            for key, (count, length, sub, depth) in ranked[:_PICKS_PER_ROUND]:
+                gain = count * (length - _SYMBOL_LENGTH_ESTIMATE)
+                if gain < _MIN_EXTRACT_GAIN:
+                    break  # 按收益降序，后面更小
+                if key not in picked:
+                    picked[key] = (sub, depth, source)
+        if not picked:
+            break
+
+        new: list[_Candidate] = []
+        for key, (sub, depth, source) in picked.items():
+            if added + len(new) >= _MAX_LENGTH_SYMBOLS:
+                break
+            new.append(
+                _Candidate(
+                    key=key,
+                    text=_excel_expression(sub),
+                    node=sub,
+                    length=length_cache.get(key, 0),
+                    count=1,
+                    depth=depth,
+                    source=source or "",
+                )
+            )
+        if not new:
+            break
+        natures = _candidate_natures(terms, new)
+        used = set(symbols.values())
+        counters: dict[str, int] = {}
+        for candidate in new:
+            base = _NATURE_SYMBOLS.get(natures.get(candidate.key, "width"), "tB")
+            number = counters.get(base, 0)
+            while True:
+                symbol = base if number == 0 else f"{base}{number}"
+                number += 1
+                if symbol not in used:
+                    break
+            counters[base] = number
+            used.add(symbol)
+            symbols[candidate.key] = symbol
+            selected.append(candidate)
+            added += 1
+    return selected
+
+
 def _split_volume_tail(expr: str) -> tuple[str, int, str] | None:
     """识别 ``(面积式)/10^s*数量尾`` 形态：返回 (面积式, s, 尾)；不命中返回 None。
 
@@ -1136,7 +1392,11 @@ def _compact_terms(
             param_expr_keys.add(_node_key(parsed_ref))
     selected = _select_candidates(parsed, tag_map, notes, param_expr_keys)
     symbols = _assign_symbols(selected, _candidate_natures(terms, selected))
-    selected_keys = set(symbols)
+    # 长度控制：会写进单元格的式子超过可显示宽度（2/3 列宽）时，
+    # 把超限式内部的片段再提成新中间量，直到全部收进上限
+    selected = _extract_for_length(
+        terms, parsed, selected, symbols, tag_map, param_refs, param_expr_keys
+    )
 
     # 面积行的“顶宽”不一定作为独立子式出现在面积式里（(2B+2Hs)*H/2），
     # 但它带着 B1/B2… 角色：补一条定义，展示层才能在 u/v/h 里引用它。
@@ -1170,7 +1430,7 @@ def _compact_terms(
             while symbol in used_symbols:
                 symbol = f"{base}{suffix}"
                 suffix += 1
-            text, value = _render_dim_expression(part, symbols, selected_keys, tag_map)
+            text, value = _render_dim_expression(part, symbols, tag_map)
             extra_definitions.append(
                 ExpressionDefinition(
                     symbol=symbol,
@@ -1195,7 +1455,7 @@ def _compact_terms(
         symbol = part_symbols.get(id(part))
         if symbol is not None:
             return symbol, part_values[id(part)]
-        return _render_dim_expression(part, symbols, selected_keys, tag_map)
+        return _render_dim_expression(part, symbols, tag_map)
 
     symbol_geometry: dict[str, tuple[tuple[float, float], ...]] = {}
 
@@ -1210,7 +1470,7 @@ def _compact_terms(
     area_definitions: list[ExpressionDefinition] = []
     for index, (term, root) in enumerate(zip(terms, parsed), start=1):
         if factored:
-            # 面积值必须在符号替换前求值：_ReplaceNodes 会原地改写 root 的子树
+            # 面积值按原始语法树求值（渲染只读，不改 root）
             area_value = _node_value(root)
             symbol = _next_subtotal_symbol(symbols, index)
             value = area_value if area_value is not None else term.value
@@ -1220,14 +1480,7 @@ def _compact_terms(
         # 参数替换映射也要在候选替换前算：候选子树里的参数已归到各自的定义里。
         # 用该分项自己的标签顺序，数值相同的参数才能按算式左→右的出现顺序对上。
         term_refs = _collect_param_refs(term.tags)
-        # 本式里实际出现的候选片段（含嵌套的）才把参数算作“已提成符号”
-        root_candidates = selected_keys & _node_keys_within(root, set())
-        param_keys = _param_key_map(
-            term_refs, root, selected_keys, _candidate_params(tag_map, root_candidates)
-        )
-        transformed = _ReplaceNodes(symbols).visit(root)
-        transformed = _ReplaceParams(param_keys).visit(transformed)
-        expression = _excel_expression(_safe_simplify(transformed))
+        expression = _render_node_expression(root, symbols, tag_map, term_refs)
 
         # 面积行统一显示：梯形 (u+v)*h/2、三角形 v*h/2、矩形 u*h
         parts: list[ExpressionDefinition] = []
@@ -1348,22 +1601,9 @@ def _compact_terms(
         # 语义量标签带着“该片段用到哪些构件参数”；通用片段退回全部参数，
         # 由 _param_key_map 按实际出现的数值节点过滤。
         candidate_refs = tag.params if tag is not None and tag.params else param_refs
-        # 只把确实嵌套在本定义式里的候选片段算作“已提成符号”（别的分项的
-        # 候选片段不影响本式，否则同值参数会被误判成都在候选内）
-        nested_keys = (
-            selected_keys & _node_keys_within(candidate.node, set())
-        ) - {candidate.key}
-        param_keys = _param_key_map(
-            candidate_refs,
-            candidate.node,
-            selected_keys - {candidate.key},
-            _candidate_params(tag_map, nested_keys),
+        expression = _render_node_expression(
+            candidate.node, symbols, tag_map, candidate_refs, stop=candidate.key
         )
-        transformed = _ReplaceNodes(symbols, stop=candidate.key).visit(
-            copy.deepcopy(candidate.node)
-        )
-        transformed = _ReplaceParams(param_keys).visit(transformed)
-        expression = _format_definition(_excel_expression(_safe_simplify(transformed)))
         definitions.append(
             ExpressionDefinition(
                 symbol=symbols[candidate.key],
