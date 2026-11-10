@@ -8,12 +8,16 @@
 启动时记录日志文件的偏移，退出时只发送本次新增的部分（2.0 的日志文件是
 跨会话追加的，不能像 1.0 那样整个文件发完就删）。发送放在后台线程，最多
 等 JOIN_TIMEOUT 秒；任何失败只写日志，不影响退出。
+
+开发/自用电脑没必要把日志发到监督邮箱，名单见 NO_MAIL_HOSTS：命中的机器
+退出时直接跳过，连网络探测都不做。
 """
 
 from __future__ import annotations
 
 import getpass
 import logging
+import os
 import platform
 import smtplib
 import socket
@@ -43,6 +47,12 @@ SMTP_TIMEOUT = 10.0
 NET_CHECK_TIMEOUT = 5.0
 #: 退出时等待发送线程的最长时间（秒），超时则交给进程退出回收（daemon）
 JOIN_TIMEOUT = 15.0
+
+#: 不发日志邮件的电脑名单（主机名，忽略大小写与域后缀）。
+#: 开发/自用电脑不往监督邮箱发日志：命中名单的机器退出时直接跳过，
+#: 也不做网络探测。主机名见 Windows「设置 → 系统 → 系统信息 → 设备名称」
+#: 或 socket.gethostname()；换机器名后要同步更新这里。
+NO_MAIL_HOSTS: frozenset[str] = frozenset({"jinhe"})
 
 _session_offset = 0  # 本次会话日志的起始偏移（启动时记录）
 _session_start = time.localtime()  # 本次会话开始时间（附件文件名 / 正文用）
@@ -88,6 +98,26 @@ def _net_ok() -> bool:
     except OSError as error:
         _logger.info("无网络或 %s 不可达，跳过日志发送：%s", SMTP_HOST, error)
         return False
+
+
+def _current_hostname() -> str:
+    """当前计算机名（单独成函数，便于测试替换）。"""
+    return socket.gethostname()
+
+
+def _short_host(name: str) -> str:
+    """主机名归一化：去掉域后缀、忽略大小写，用于和 NO_MAIL_HOSTS 比较。"""
+    return name.strip().lower().split(".", 1)[0]
+
+
+def _is_no_mail_machine() -> bool:
+    """本机是否在不发日志邮件的名单里。
+
+    环境变量 SECTION2_NO_MAIL=1 可强制跳过（自动化测试用），与名单无关。
+    """
+    if os.environ.get("SECTION2_NO_MAIL") == "1":
+        return True
+    return _short_host(_current_hostname()) in NO_MAIL_HOSTS
 
 
 def _build_message(subject: str, body: str, content: bytes, filename: str) -> EmailMessage:
@@ -139,11 +169,15 @@ def _send_quiet(content: bytes) -> None:
 def send_session_log(join_timeout: float = JOIN_TIMEOUT) -> None:
     """程序退出时调用：把本次会话日志作为附件发到监督邮箱。
 
-    无网络、无新增日志或本次进程已发送过则跳过。发送在后台线程进行，
-    最多等待 join_timeout 秒，超时后随进程退出回收线程。
+    不发邮件的电脑（NO_MAIL_HOSTS）、无网络、无新增日志或本次进程已发送过
+    则跳过。发送在后台线程进行，最多等待 join_timeout 秒，超时后随进程
+    退出回收线程。
     """
     global _sent
     if _sent:
+        return
+    if _is_no_mail_machine():
+        _logger.info("本机（%s）在不发日志邮件的名单里，跳过发送", _current_hostname())
         return
     if not _net_ok():
         return

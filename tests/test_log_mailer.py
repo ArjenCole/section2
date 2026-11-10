@@ -35,6 +35,9 @@ def reset_state(monkeypatch):
     """重置模块级会话状态，避免用例间串扰。"""
     monkeypatch.setattr(log_mailer, "_sent", False)
     monkeypatch.setattr(log_mailer, "_session_offset", 0)
+    # 默认当成“不在不发邮件名单里的普通电脑”，名单相关用例再单独覆盖
+    monkeypatch.setattr(log_mailer, "_current_hostname", lambda: "test-pc")
+    monkeypatch.delenv("SECTION2_NO_MAIL", raising=False)
     _FakeSMTP.instances.clear()
 
 
@@ -136,3 +139,38 @@ def test_send_session_log_skips_on_send_error(reset_state, tmp_path, monkeypatch
 
     monkeypatch.setattr(log_mailer, "_send_quiet", _fail)
     log_mailer.send_session_log(join_timeout=5)  # 不应抛异常
+
+
+def test_no_mail_machine_skips_before_network(reset_state, tmp_path, monkeypatch):
+    """名单里的电脑不发信，也不做网络探测（连日志都不读）。"""
+    monkeypatch.setattr(log_mailer, "_current_hostname", lambda: "JINHE")
+
+    def _no_probe():
+        raise AssertionError("不发邮件的电脑不应探测网络")
+
+    def _no_send(content):
+        raise AssertionError("不发邮件的电脑不应发起发送")
+
+    monkeypatch.setattr(log_mailer, "_net_ok", _no_probe)
+    monkeypatch.setattr(log_mailer, "_send_quiet", _no_send)
+    log_mailer.send_session_log(join_timeout=1)
+    assert _FakeSMTP.instances == []
+
+
+def test_no_mail_host_match_ignores_case_and_domain(reset_state, monkeypatch):
+    """主机名比较忽略大小写与域后缀；不在名单的机器照常发送。"""
+    monkeypatch.setattr(log_mailer, "_current_hostname", lambda: "JINHE")
+    assert log_mailer._is_no_mail_machine()
+    monkeypatch.setattr(log_mailer, "_current_hostname", lambda: "jinhe.corp.local")
+    assert log_mailer._is_no_mail_machine()
+    monkeypatch.setattr(log_mailer, "_current_hostname", lambda: "desktop-abc")
+    assert not log_mailer._is_no_mail_machine()
+
+
+def test_env_override_skips_mail(reset_state, monkeypatch):
+    """SECTION2_NO_MAIL=1 可强制跳过（与主机名无关）。"""
+    monkeypatch.setattr(log_mailer, "_current_hostname", lambda: "desktop-abc")
+    monkeypatch.setenv("SECTION2_NO_MAIL", "1")
+    assert log_mailer._is_no_mail_machine()
+    monkeypatch.setenv("SECTION2_NO_MAIL", "0")
+    assert not log_mailer._is_no_mail_machine()
