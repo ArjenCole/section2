@@ -52,7 +52,7 @@ JOIN_TIMEOUT = 15.0
 #: 开发/自用电脑不往监督邮箱发日志：命中名单的机器退出时直接跳过，
 #: 也不做网络探测。主机名见 Windows「设置 → 系统 → 系统信息 → 设备名称」
 #: 或 socket.gethostname()；换机器名后要同步更新这里。
-NO_MAIL_HOSTS: frozenset[str] = frozenset({"jinhe"})
+NO_MAIL_HOSTS: frozenset[str] = frozenset({"jinhe", "desktop-crane"})
 
 _session_offset = 0  # 本次会话日志的起始偏移（启动时记录）
 _session_start = time.localtime()  # 本次会话开始时间（附件文件名 / 正文用）
