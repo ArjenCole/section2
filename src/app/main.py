@@ -29,8 +29,9 @@ from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator  # noqa: E402
 from PySide6.QtGui import QFontDatabase, QIcon  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from app.core.main_thread import install_main_thread_executor
-from app.core.native_crash import install as install_native_crash
+from app.core.log_mailer import mark_session_offset, send_session_log  # noqa: E402
+from app.core.main_thread import install_main_thread_executor  # noqa: E402
+from app.core.native_crash import install as install_native_crash  # noqa: E402
 from app.core.paths import fonts_dir, log_dir, resources_dir  # noqa: E402
 from app.core.window_diag import install as install_window_diag  # noqa: E402
 from app.core.window_diag import shutdown as shutdown_window_diag  # noqa: E402
@@ -51,6 +52,9 @@ _logger = logging.getLogger("section2")
 
 def setup_logging() -> None:
     """日志同时写 stderr 与用户数据目录下的 section2.log。"""
+    # 在 FileHandler 打开前记录日志文件大小：退出时 log_mailer 按这个偏移
+    # 截取"本次会话新增的日志"作为附件发送（1.0 SendLog 的做法）
+    mark_session_offset()
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
     try:
         handlers.append(logging.FileHandler(log_dir() / "section2.log", encoding="utf-8"))
@@ -166,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
         return app.exec()
     finally:
         shutdown_window_diag()
+        # 退出前把本次会话日志发到监督邮箱（1.0 SendLog：无网络则跳过）
+        send_session_log()
 
 
 if __name__ == "__main__":
