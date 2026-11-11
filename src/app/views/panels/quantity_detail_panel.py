@@ -11,6 +11,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
+    QStyledItemDelegate,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -38,8 +39,31 @@ from app.services.summary import (
 _HEADERS = ["单位工程", *_QUANTITY_HEADERS[:4]]
 _WIDTHS = (_UNIT_COL_WIDTH * 8, *(width * 8 for width in _QUOTA_WIDTHS[:4]))
 
+#: 清单项目行标识（存首列条目，委托据此整行画浅蓝底）
+_LISTING_ROLE = Qt.ItemDataRole.UserRole + 4
+
 #: 数据变更后的延迟重算（构件增删改时避免逐次全量重算拖慢录入）
 _RELOAD_DELAY_MS = 300
+
+
+class _ListingRowDelegate(QStyledItemDelegate):
+    """清单项目行整行浅蓝底（导出 Excel 同款）。
+
+    全局 QSS 的 ``QTableWidget::item { background-color: transparent; }``
+    会盖掉逐条目 ``setBackground`` 设置的底色，必须由委托在默认绘制前自绘。
+    """
+
+    def __init__(self, table: QTableWidget) -> None:
+        super().__init__(table)
+        self._table = table
+
+    def paint(self, painter, option, index) -> None:
+        item = self._table.item(index.row(), 0)
+        if item is not None and item.data(_LISTING_ROLE):
+            painter.save()
+            painter.fillRect(option.rect, QColor(f"#{_LISTING_FILL}"))
+            painter.restore()
+        super().paint(painter, option, index)
 
 
 class QuantityDetailPanel(QWidget):
@@ -92,6 +116,8 @@ class QuantityDetailPanel(QWidget):
         # 列宽沿用导出 Excel 的字符宽（×8 ≈ px）
         for index, width in enumerate(_WIDTHS):
             table.setColumnWidth(index, width)
+        # 清单项目行浅蓝底：QSS 盖掉 item 底色，须委托自绘
+        table.setItemDelegate(_ListingRowDelegate(table))
         return table
 
     # ------------------------------------------------------------------ 数据刷新
@@ -147,9 +173,8 @@ class QuantityDetailPanel(QWidget):
             self._loading = False
 
     def _fill_table(self, table: QTableWidget, rows: list[tuple[list, bool]]) -> None:
-        """把 (值, 是否清单项目行) 行列表写进表格：清单项目行底色同导出 Excel 浅蓝。"""
+        """把 (值, 是否清单项目行) 行列表写进表格：清单项目行整行浅蓝（委托自绘）。"""
         table.setRowCount(len(rows))
-        highlight = QBrush(QColor(f"#{_LISTING_FILL}"))
         for row_index, (values, is_listing) in enumerate(rows):
             for column, text in enumerate(values[: len(_HEADERS)]):
                 if column == 4:  # “数量”列：float 按 0.#### 规则显示
@@ -160,8 +185,8 @@ class QuantityDetailPanel(QWidget):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 if column == 0:
                     item.setForeground(QBrush(self._secondary_color()))
-                if is_listing:
-                    item.setBackground(highlight)
+                    if is_listing:
+                        item.setData(_LISTING_ROLE, True)
                 table.setItem(row_index, column, item)
 
     @staticmethod
