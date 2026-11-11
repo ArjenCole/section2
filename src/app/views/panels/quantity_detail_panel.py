@@ -162,11 +162,19 @@ class QuantityDetailPanel(QWidget):
                 self._quota_table.setRowCount(0)
                 self._listing_table.setRowCount(0)
                 return
-            # 与导出 Excel（分单位工程口径）同源：compute_unit → 行生成器
+            # 与导出 Excel（分单位工程口径）同源：compute_unit → 行生成器。
+            # 本页不显示算式两列，with_expression=False 跳过主算式解析
+            # （该解析极重，是切换节点卡顿的元凶）
             summary, detail = compute_unit(node.id)
             unit_name = node.name
-            quota_rows = [([unit_name, *row], False) for row in _quota_rows(summary)]
-            listing_rows = [([unit_name, *row], is_listing) for row, is_listing in _listing_rows(detail)]
+            quota_rows = [
+                ([unit_name, *row], False)
+                for row in _quota_rows(summary, with_expression=False)
+            ]
+            listing_rows = [
+                ([unit_name, *row], is_listing)
+                for row, is_listing in _listing_rows(detail, with_expression=False)
+            ]
             self._fill_table(self._quota_table, quota_rows)
             self._fill_table(self._listing_table, listing_rows)
         finally:

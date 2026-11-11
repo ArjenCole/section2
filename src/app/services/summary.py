@@ -317,9 +317,22 @@ def _main_expression(quantity) -> str:
     return main
 
 
-def _quantity_row(quantity) -> list:
-    """一条定额量 → [类别, 名称, 单位, 数量, 表达式(主式), 算式(纯数字)]。"""
+def _quantity_row(quantity, with_expression: bool = True) -> list:
+    """一条定额量 → [类别, 名称, 单位, 数量, 表达式(主式), 算式(纯数字)]。
+
+    ``with_expression=False`` 时不解析主算式（解析极重，见 tracer 展示层），
+    两列以空串占位——只显示数量、不需要算式的调用方（工程量明细表）用。
+    """
     parts = quantity.key.split("|")
+    if not with_expression:
+        return [
+            parts[0] if parts else "",
+            parts[1] if len(parts) > 1 else "",
+            parts[2] if len(parts) > 2 else "",
+            quantity.value,
+            "",
+            "",
+        ]
     return [
         parts[0] if parts else "",
         parts[1] if len(parts) > 1 else "",
@@ -330,14 +343,16 @@ def _quantity_row(quantity) -> list:
     ]
 
 
-def _quota_rows(qdict) -> list[list]:
+def _quota_rows(qdict, with_expression: bool = True) -> list[list]:
     """定额汇总表行（按类别排序），``qdict`` 为单位工程或跨单位合并后的 QDict。"""
     from app.core.calc.tracer import sorted_items
 
-    return [_quantity_row(quantity) for quantity in sorted_items(qdict)]
+    return [
+        _quantity_row(quantity, with_expression) for quantity in sorted_items(qdict)
+    ]
 
 
-def _listing_rows(detail) -> list[tuple[list, bool]]:
+def _listing_rows(detail, with_expression: bool = True) -> list[tuple[list, bool]]:
     """清单工程量表行：``(值, 是否清单项目行)``，清单项目行下挂定额拆分行。
 
     ``detail`` 是 :func:`app.viewmodels.unit_vm.compute_unit` 返回的
@@ -358,7 +373,9 @@ def _listing_rows(detail) -> list[tuple[list, bool]]:
                 True,
             )
         )
-        rows.extend((row, False) for row in _quota_rows(qdict))
+        rows.extend(
+            (row, False) for row in _quota_rows(qdict, with_expression)
+        )
     return rows
 
 
