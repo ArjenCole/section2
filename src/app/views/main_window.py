@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenuBar,
     QSizePolicy,
-    QStackedWidget,
+    QTabWidget,
     QToolBar,
     QToolButton,
     QVBoxLayout,
@@ -55,6 +55,7 @@ from app.viewmodels.project_vm import KIND_UNIT, TreeNode
 from app.views.panels.ai_panel import AiPanel
 from app.views.panels.principle_bar import PrincipleBar
 from app.views.panels.tree_panel import TreePanel
+from app.views.panels.quantity_detail_panel import QuantityDetailPanel
 from app.views.panels.summary_panel import SummaryPanel
 from app.views.panels.unit_panel import UnitPanel
 from app.views.widgets.frameless_dialog import FramelessMessageBox
@@ -481,27 +482,46 @@ class MainWindow(QMainWindow):
         self._ai_panel = AiPanel()
         self._ai_panel.setObjectName("AiPanelColumn")
 
-        self._center_stack = QStackedWidget()
+        # 主面板：一组 tab，按左侧选中节点性质切换显示
+        #  0 占位（未选节点）｜1 构件列表｜2 工程量明细表｜3 费用汇总表｜4 综合单价汇总表
+        self._main_tabs = QTabWidget()
+        if not is_mac():
+            self._main_tabs.setDocumentMode(True)
+        self._main_tabs.tabBar().setDrawBase(False)
+
         placeholder = QLabel("请从左侧选择节点。\n文件 → 新建工程 / 打开工程")
         placeholder.setProperty("role", "placeholder")
         placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._center_stack.addWidget(placeholder)
-        self._center_stack.addWidget(self._unit_panel)
-        # 第三页：工程根 / 标段节点的汇总页（上下贯通，无详情面板）
-        self._summary_panel = SummaryPanel()
-        self._center_stack.addWidget(self._summary_panel)
+        self._main_tabs.addTab(placeholder, "")
 
-        # 原则横条（复刻原版 panelPrincple）：位于中部工作区上方，未打开工程时隐藏
+        # 构件列表页：原则横条 + 单位工程工作台（原中部工作区全部内容）
+        workbench = QWidget()
+        workbench_layout = QVBoxLayout(workbench)
+        workbench_layout.setContentsMargins(0, 0, 0, 0)
+        workbench_layout.setSpacing(0)
         self._principle_bar = PrincipleBar()
         self._principle_bar.setVisible(False)
+        workbench_layout.addWidget(self._principle_bar)
+        workbench_layout.addWidget(self._unit_panel, 1)
+        self._main_tabs.addTab(workbench, "构件列表")
+
+        self._quantity_detail = QuantityDetailPanel()
+        self._main_tabs.addTab(self._quantity_detail, "工程量明细表")
+
+        # 汇总页控制器：两个页面分别作为主面板顶级 tab
+        self._summary_panel = SummaryPanel()
+        self._main_tabs.addTab(self._summary_panel.cost_page, "费用汇总表")
+        self._main_tabs.addTab(self._summary_panel.price_page, "综合单价汇总表")
+        self._main_tabs.currentChanged.connect(self._on_main_tab_changed)
+        self._show_main_tabs(0)
+
         self._tree_panel.insert_requested.connect(self._insert_template)
 
         center_page = QWidget()
         center_layout = QVBoxLayout(center_page)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(0)
-        center_layout.addWidget(self._principle_bar)
-        center_layout.addWidget(self._center_stack, 1)
+        center_layout.addWidget(self._main_tabs, 1)
 
         ai_container = QWidget()
         ai_container.setObjectName("AiColumnContainer")
@@ -879,7 +899,8 @@ class MainWindow(QMainWindow):
         self._update_undo_actions()
         self._update_title()
         self._summary_panel.set_node(None)
-        self._center_stack.setCurrentIndex(0)
+        self._quantity_detail.set_node(None)
+        self._show_main_tabs(0)
 
     def _on_node_selected(self, node: TreeNode | None) -> None:
         is_unit = node is not None and node.kind == KIND_UNIT
@@ -894,14 +915,29 @@ class MainWindow(QMainWindow):
             node.name if is_unit else "",
         )
         if node is None:
-            self._center_stack.setCurrentIndex(0)
+            self._show_main_tabs(0)
             return
         if node.kind == KIND_UNIT:
-            self._center_stack.setCurrentIndex(1)
+            # 子节点：构件列表 + 工程量明细表
+            self._quantity_detail.set_node(node)
+            self._show_main_tabs(1, 2)
         else:
-            # 非子节点（工程根 / 标段）：汇总页
+            # 非子节点（工程根 / 标段）：费用汇总表 + 综合单价汇总表
             self._summary_panel.set_node(node)
-            self._center_stack.setCurrentIndex(2)
+            self._show_main_tabs(3, 4)
+
+    def _show_main_tabs(self, *indexes: int) -> None:
+        """按选中节点性质显示主面板 tab 组：未列出的 tab 一律隐藏。"""
+        bar = self._main_tabs.tabBar()
+        for index in range(bar.count()):
+            bar.setTabVisible(index, index in indexes)
+        if indexes:
+            self._main_tabs.setCurrentIndex(indexes[0])
+
+    def _on_main_tab_changed(self, _index: int) -> None:
+        # 切换主面板 tab：页面不可见期间标脏的数据在此补载
+        self._summary_panel.maybe_reload()
+        self._quantity_detail.maybe_reload()
 
     def _on_theme_changed(self, _name: str) -> None:
         self._act_theme.setText("切换亮色主题" if ThemeManager.instance().is_dark() else "切换暗色主题")

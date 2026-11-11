@@ -1,10 +1,9 @@
-"""汇总页：工程根 / 标段节点的费用汇总与综合单价汇总（中部工作区第三页）。
+"""汇总页：工程根 / 标段节点的费用汇总与综合单价汇总（主面板两个顶级 tab）。
 
-左侧项目树选中非子节点（工程根或标段）时显示本页，单位工程仍显示
-工程量工作台。页面上下贯通占满中部工作区（没有单位工程页的详情面板），
-右侧 AI 面板不受影响。
-
-两个 tab：
+主面板是按左侧选中节点性质切换的 tab 组：选中非子节点（工程根或标段）时
+显示本控制器提供的「费用汇总表」与「综合单价汇总表」两个页面（见
+:attr:`SummaryPanel.cost_page` / :attr:`SummaryPanel.price_page`）；
+单位工程则显示构件列表 / 工程量明细表。右侧 AI 面板不受影响。
 
 * 费用汇总表 —— 项目结构每个节点一行（合槽构件同款树状表格：父行
   +/- 展开方框、子行缩进竖线、父行浅色底），合价 = 该节点下所有工程量项
@@ -19,11 +18,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -77,12 +74,15 @@ class _CostNode:
         return bool(self.children)
 
 
-class SummaryPanel(QWidget):
-    """汇总页：费用汇总表 + 综合单价汇总表。"""
+class SummaryPanel(QObject):
+    """汇总页控制器：费用汇总表页 + 综合单价汇总表页（主面板顶级 tab）。
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    两个页面由主窗体加进主面板 tab 组；页面不可见（非当前 tab 或 tab 被
+    隐藏）期间数据变化只标脏，切回时 :meth:`maybe_reload` 补一次重载。
+    """
+
+    def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self.setProperty("role", "panel")
         self._node: TreeNode | None = None
         self._loading = False  # 程序化填装表格时屏蔽 itemChanged
         self._dirty = False  # 页面不可见期间数据变了，显示时补一次重载
@@ -99,27 +99,13 @@ class SummaryPanel(QWidget):
         self._reload_timer.setSingleShot(True)
         self._reload_timer.setInterval(_RELOAD_DELAY_MS)
         self._reload_timer.timeout.connect(self._on_reload_timer)
-        self._build_ui()
+        self.cost_page = self._build_cost_page()
+        self.price_page = self._build_price_page()
         self._connect()
 
     # ------------------------------------------------------------------ 界面
-    def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
-
-        tabs = QTabWidget()
-        from app.views.widgets.mac_window import is_mac
-
-        if not is_mac():
-            tabs.setDocumentMode(True)
-        tabs.tabBar().setDrawBase(False)
-        tabs.addTab(self._build_cost_page(), "费用汇总表")
-        tabs.addTab(self._build_price_page(), "综合单价汇总表")
-        layout.addWidget(tabs, 1)
-
     def _build_cost_page(self) -> QWidget:
-        """费用汇总表：项目结构每个节点一行（合槽构件同款树状表格）。"""
+        """费用汇总表页：项目结构每个节点一行（合槽构件同款树状表格）。"""
         page = QWidget()
         page.setProperty("role", "panel")
         page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -138,7 +124,7 @@ class SummaryPanel(QWidget):
         return page
 
     def _build_price_page(self) -> QWidget:
-        """综合单价汇总表：工程量合并行，仅单价列可编辑。"""
+        """综合单价汇总表页：工程量合并行，仅单价列可编辑。"""
         page = QWidget()
         page.setProperty("role", "panel")
         page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -174,22 +160,26 @@ class SummaryPanel(QWidget):
     def set_node(self, node: TreeNode | None) -> None:
         """项目树选中变化：非子节点（工程根 / 标段）装填本页，None 清空。"""
         self._node = node
-        self._dirty = False
         if node is None:
+            self._dirty = False
             self._price_table.setRowCount(0)
             self._cost_table.setRowCount(0)
             self._unit_summaries = {}
             self._price_rows = []
             return
-        if self.isVisible():
+        if self._any_page_visible():
             self._reload()
         else:
             self._dirty = True
 
-    def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
-        super().showEvent(event)
-        if self._dirty:
+    def maybe_reload(self) -> None:
+        """主面板 tab 切换后调用：页面脏且当前可见时补一次重载。"""
+        if self._dirty and self._any_page_visible():
+            self._dirty = False
             self._reload()
+
+    def _any_page_visible(self) -> bool:
+        return self.cost_page.isVisible() or self.price_page.isVisible()
 
     def _connect(self) -> None:
         """数据变化联动：可见时延后重算，不可见时标脏（显示时补载）。"""
@@ -208,7 +198,7 @@ class SummaryPanel(QWidget):
     def _schedule_reload(self, *, immediate: bool = False) -> None:
         if self._node is None:
             return
-        if not self.isVisible():
+        if not self._any_page_visible():
             self._dirty = True
             return
         if immediate:
@@ -218,7 +208,7 @@ class SummaryPanel(QWidget):
             self._reload_timer.start()
 
     def _on_reload_timer(self) -> None:
-        if not self.isVisible():
+        if not self._any_page_visible():
             self._dirty = True
             return
         self._reload()
