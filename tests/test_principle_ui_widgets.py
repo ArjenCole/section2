@@ -297,14 +297,17 @@ def test_category_abbreviations():
 
 
 def test_pipe_table_headers_and_dn_only(qapp, project):
-    """管材表：只显示 DN；壁厚列已取消，外径/内径在构件参数页。"""
+    """管材表：只显示公称直径（列头「公称直径 / (mm)」两行）；壁厚列已取消，
+    外径/内径在构件参数页。"""
     from PySide6.QtCore import Qt
 
     from app.services import project_io
     from app.viewmodels import unit_vm
     from app.views.panels.unit_panel import _PIPE_HEADERS, UnitPanel
 
-    assert _PIPE_HEADERS == ["管材", "DN", "含量", "类别", ""]
+    assert _PIPE_HEADERS == ["管材", "公称直径\n(mm)", "含量", "类别", ""]
+    # 列头两行显示：第二行只放单位 (mm)
+    assert _PIPE_HEADERS[1].splitlines() == ["公称直径", "(mm)"]
 
     unit = project_io.units(project_io.segments()[0].id)[0]
     buried = unit_vm.create_element(unit.id, category=1, name="直埋")
@@ -356,10 +359,15 @@ def test_param_table_columns_and_no_unit_placeholder(qapp, project):
         qapp.processEvents()
         table = panel._param_table
         assert table.horizontalHeaderItem(1).text() == "单位"
-        # 单位列 = 原 56 × 1.5，参数名列 = 原 150 × 0.6
-        assert _PARAM_UNIT_WIDTH == 84 and _PARAM_NAME_WIDTH == 90
+        # 参数名列 = 原 150 × 0.6；单位列收窄到刚好容下「单位」两个字与 mm 值
+        assert _PARAM_NAME_WIDTH == 90
+        assert _PARAM_UNIT_WIDTH == 52
         assert table.columnWidth(0) == _PARAM_NAME_WIDTH
         assert table.columnWidth(1) == _PARAM_UNIT_WIDTH
+        # 收窄不能把表头 / 取值裁掉：列宽要容得下「单位」与 mm（含单元格内边距）
+        metrics = table.fontMetrics()
+        for text in ("单位", "mm"):
+            assert _PARAM_UNIT_WIDTH >= metrics.horizontalAdvance(text) + 16
 
         # 构筑物（第一行）：名称 / 单位两行的单位列由空值改为 “-”，居中只读
         panel._element_table.setCurrentCell(0, 0)
@@ -425,6 +433,8 @@ def test_candidate_column_highlight_follows_match(qapp, project):
     from app.viewmodels import unit_vm
     from app.viewmodels.unit_vm import selected_candidate_combo
     from app.views.panels.unit_panel import (
+        _MATCH_BG_CROSS,
+        _MATCH_BG_GRAY,
         _MATCH_BG_ROLE,
         _MATCH_BG_SAME,
         UnitPanel,
@@ -444,12 +454,15 @@ def test_candidate_column_highlight_follows_match(qapp, project):
         table = panel._param_table
 
         def highlighted() -> list[int]:
-            # 第 2 行 = 管道壁厚（第 0/1 行是外径 / 内径，候选列固定 "-"）
+            # 第 2 行 = 管道壁厚（第 0/1 行是外径 / 内径，候选列固定 "-"）。
+            # 所有图籍参数列都铺灰底（_MATCH_BG_GRAY），只有当前匹配列是
+            # 选中色（same / 跨组借值 cross），所以这里按选中色筛。
+            match_bgs = (_MATCH_BG_SAME, _MATCH_BG_CROSS)
             return [
                 column
                 for column in range(3, table.columnCount())
                 if table.item(2, column) is not None
-                and table.item(2, column).data(_MATCH_BG_ROLE)
+                and table.item(2, column).data(_MATCH_BG_ROLE) in match_bgs
             ]
 
         keys = [column.key for column in panel._candidate_columns]
@@ -458,6 +471,11 @@ def test_candidate_column_highlight_follows_match(qapp, project):
 
         selected = 3 + keys.index(key)
         assert highlighted() == [selected], "只有当前匹配的那一列被标底色"
+        # 其余候选列只是默认灰底，不会被标成“当前选中”
+        for column in range(3, table.columnCount()):
+            if column == selected:
+                continue
+            assert table.item(2, column).data(_MATCH_BG_ROLE) == _MATCH_BG_GRAY
         for row in (2, 3, 4, 5):
             cell = table.item(row, selected)
             assert cell is not None
