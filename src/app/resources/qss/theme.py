@@ -375,6 +375,21 @@ QPushButton[secondary="true"] { background: transparent; color: $text_secondary;
 QPushButton[secondary="true"]:hover { background-color: $bg_hover; color: $text_primary; }
 /* 固定尺寸的小方块按钮（+、↑、↓ 等）：默认内边距会把单字符裁掉 */
 QPushButton[role="icon-btn"] { padding: 2px; font-size: 18px; }
+/* 工程量明细表表头右侧的表格动作按钮（SVG 图标 + 文字）：常态透明，
+   与同排分段控件的未选中态同色，悬停才浮起一层浅底 */
+QToolButton[role="table-action"] {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 4px 10px;
+    color: $text_secondary;
+}
+QToolButton[role="table-action"]:hover {
+    background-color: $bg_hover;
+    color: $text_primary;
+}
+QToolButton[role="table-action"]:pressed { background-color: $bg_pressed; }
+QToolButton[role="table-action"]:disabled { color: $text_disabled; }
 
 /* ===================== 勾选 ===================== */
 QCheckBox, QRadioButton { background: transparent; spacing: 6px; }

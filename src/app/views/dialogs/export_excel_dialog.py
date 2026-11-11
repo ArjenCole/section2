@@ -40,7 +40,7 @@ _CHECKABLE_FLAGS = (
 )
 
 
-def _open_exported_file(path: Path) -> None:
+def open_exported_file(path: Path) -> None:
     """用系统默认程序打开导出的文件（「导出完成，是否打开文件？」）。"""
     if sys.platform == "darwin":
         subprocess.Popen(["open", str(path)])
@@ -183,4 +183,4 @@ class ExportExcelDialog(FramelessDialog):
             )
             == FramelessMessageBox.Yes
         ):
-            _open_exported_file(path)
+            open_exported_file(path)

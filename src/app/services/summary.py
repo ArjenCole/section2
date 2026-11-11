@@ -512,3 +512,71 @@ def export_quantity_tables(
         "sheets": [sheet.title for sheet in workbook.worksheets],
         "rows": exported_rows,
     }
+
+
+# --------------------------------------------------------------------------- #
+# 工程量明细表「导出当前表格」：单 sheet，列 = 页面 7 列（+ 展开态的表达式 / 算式）
+# --------------------------------------------------------------------------- #
+#: 页面表格列（与 quantity_detail_panel._HEADERS 同序）
+_DETAIL_HEADERS = ["编号", "类别", "名称", "单位", "数量", "单价", "合价"]
+#: 展开态在右侧追加的两列（与导出工程数量表同名同序）
+_DETAIL_EXPRESSION_HEADERS = ["表达式", "算式"]
+#: 页面列宽（字符宽）：编号 / 类别 / 名称 / 单位 / 数量 / 单价 / 合价
+_DETAIL_WIDTHS = (10, 14, 34, 10, 14, 12, 14)
+#: 写成数字（float）的列：数量 / 单价 / 合价，其余列按文本写
+_DETAIL_NUMBER_COLUMNS = ("数量", "单价", "合价")
+
+
+def detail_export_headers(with_expression: bool = True) -> list[str]:
+    """「导出当前表格」的表头：页面 7 列，展开态再追加表达式 / 算式。"""
+    if with_expression:
+        return [*_DETAIL_HEADERS, *_DETAIL_EXPRESSION_HEADERS]
+    return list(_DETAIL_HEADERS)
+
+
+def export_detail_table(
+    path: str | Path,
+    rows: list[tuple[list, bool]],
+    with_expression: bool = True,
+    sheet_title: str = "工程量明细表",
+) -> dict:
+    """把工程量明细表当前显示的内容导出成单 sheet xlsx。
+
+    ``rows`` 为 ``(值, 是否清单项目行)``：值 = (编号, 类别, 名称, 单位, 数量,
+    单价, 合价)；``with_expression=True`` 时右侧再带 (表达式, 算式) 两列。
+    数量 / 单价 / 合价按 float 写（Excel 里可直接再计算），清单项目行保留导出
+    工程数量表同款浅蓝底；表头加粗、冻结首行。返回 ``{path, rows}``。
+    """
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    target = Path(path)
+    if target.suffix.lower() != ".xlsx":
+        target = target.with_suffix(".xlsx")
+
+    headers = detail_export_headers(with_expression)
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = sheet_title
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+    fill = PatternFill("solid", fgColor=_LISTING_FILL)
+    for values, is_listing in rows:
+        sheet.append(values)
+        if is_listing:
+            for cell in sheet[sheet.max_row]:
+                cell.fill = fill
+    widths = (*_DETAIL_WIDTHS, *_QUOTA_WIDTHS[4:]) if with_expression else _DETAIL_WIDTHS
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[get_column_letter(index)].width = width
+    for name in _DETAIL_NUMBER_COLUMNS:
+        column = headers.index(name) + 1
+        for row in range(2, sheet.max_row + 1):
+            sheet.cell(row=row, column=column).number_format = "0.####"
+    sheet.freeze_panes = "A2"
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(target)
+    return {"path": str(target), "rows": sheet.max_row - 1}
