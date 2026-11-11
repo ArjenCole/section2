@@ -6,6 +6,8 @@
 名称 / 单位 / 数量 / 单价 / 合价），清单项目行按导出规则整行浅蓝底色。
 单价列参照综合单价汇总表交互：可编辑，按“项目”名全项目联动写库（见
 ``summary.set_price_propagate``）；合价 = 数量 × 单价自动算出，不可编辑。
+清单项目行（清单表）的单价 / 合价为派生值：合价 = 该条目下所有定额工程量
+行合价的合计，单价 = 合价 ÷ 数量，不可编辑、随定额行单价联动刷新。
 定额 / 清单两张表（对应 xlsx 两张 sheet）用页内分段控件切换（Apple HIG
 同款，避免与主面板 tab 连成两行）。
 """
@@ -228,16 +230,33 @@ class QuantityDetailPanel(QWidget):
         """把 (值, 是否清单项目行) 行列表写进表格。
 
         值 = (类别, 名称, 单位, 数量)；编号列内容与构件列表详情面板定额 /
-        清单工程量 tab 首列一致（清单项目行填“清单项目”，其余留空）。单价列
-        可编辑（key = 类别|项目|单位），合价 = 数量 × 单价自动算出；清单项目
-        行整行浅蓝（委托自绘）。
+        清单工程量 tab 首列一致（清单项目行填“清单项目”，其余留空）。定额行
+        单价可编辑（key = 类别|项目|单位），合价 = 数量 × 单价自动算出；清单
+        项目行的合价 = 该条目下所有定额工程量行合价的合计、单价 = 合价 ÷
+        数量（派生值，不可编辑），随定额行单价联动刷新；清单项目行整行浅蓝
+        （委托自绘）。
         """
         table.setRowCount(len(rows))
         for row_index, (values, is_listing) in enumerate(rows):
             category, name, unit, amount = values[:4]
             amount = float(amount)
-            price_key = f"{category}|{name}|{unit}"
-            price = self._resolve_price(price_key, name)
+            price_key: str | None = None
+            if is_listing:
+                # 清单项目行：合价 = 该条目下所有定额工程量行合价合计，
+                # 单价 = 合价 ÷ 数量（不写库，随定额行单价联动）
+                total = 0.0
+                for child_values, child_is_listing in rows[row_index + 1:]:
+                    if child_is_listing:
+                        break
+                    child_category, child_name, child_unit, child_amount = child_values[:4]
+                    child_amount = float(child_amount)
+                    child_key = f"{child_category}|{child_name}|{child_unit}"
+                    total += child_amount * self._resolve_price(child_key, child_name)
+                price = total / amount if amount else 0.0
+            else:
+                price_key = f"{category}|{name}|{unit}"
+                price = self._resolve_price(price_key, name)
+                total = amount * price
             texts = (
                 "清单项目" if is_listing else "",
                 str(category),
@@ -245,11 +264,11 @@ class QuantityDetailPanel(QWidget):
                 str(unit),
                 f"{amount:.4f}".rstrip("0").rstrip("."),
                 fmt(price),
-                fmt(amount * price),
+                fmt(total),
             )
             for column, text in enumerate(texts):
                 item = QTableWidgetItem(text)
-                if column == _COL_PRICE:
+                if column == _COL_PRICE and price_key is not None:
                     item.setData(_PRICE_KEY_ROLE, price_key)
                 else:
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -300,7 +319,11 @@ class QuantityDetailPanel(QWidget):
             self._loading = False
 
     def _refresh_price_cells(self) -> None:
-        """按最新单价索引重写两表的单价 / 合价（数量不重算）。"""
+        """按最新单价索引重写两表的单价 / 合价（数量不重算）。
+
+        定额行单价 / 合价重乘；清单项目行合价 = 其下定额行合价合计、
+        单价 = 合价 ÷ 数量，随定额行联动重算。
+        """
         for table in (self._quota_table, self._listing_table):
             for row in range(table.rowCount()):
                 price_item = table.item(row, _COL_PRICE)
@@ -320,6 +343,41 @@ class QuantityDetailPanel(QWidget):
                 total_item = table.item(row, _COL_TOTAL)
                 if total_item is not None:
                     total_item.setText(fmt(amount * price))
+        self._refresh_listing_derived_cells()
+
+    def _refresh_listing_derived_cells(self) -> None:
+        """清单项目行的派生单价 / 合价：合价 = 其下定额行合价合计，单价 = 合价 ÷ 数量。"""
+        table = self._listing_table
+        for row in range(table.rowCount()):
+            no_item = table.item(row, _COL_NO)
+            if no_item is None or not no_item.data(_LISTING_ROLE):
+                continue
+            amount_item = table.item(row, _COL_AMOUNT)
+            if amount_item is None:
+                continue
+            amount = amount_item.data(_AMOUNT_ROLE)
+            if amount is None:
+                continue
+            total = 0.0
+            for child in range(row + 1, table.rowCount()):
+                child_no = table.item(child, _COL_NO)
+                if child_no is not None and child_no.data(_LISTING_ROLE):
+                    break
+                child_price_item = table.item(child, _COL_PRICE)
+                child_amount_item = table.item(child, _COL_AMOUNT)
+                if child_price_item is None or child_amount_item is None:
+                    continue
+                child_key = child_price_item.data(_PRICE_KEY_ROLE)
+                child_amount = child_amount_item.data(_AMOUNT_ROLE)
+                if child_key is None or child_amount is None:
+                    continue
+                total += float(child_amount) * self._resolve_price(child_key, self._item_of(child_key))
+            price_item = table.item(row, _COL_PRICE)
+            if price_item is not None:
+                price_item.setText(fmt(total / amount if amount else 0.0))
+            total_item = table.item(row, _COL_TOTAL)
+            if total_item is not None:
+                total_item.setText(fmt(total))
 
     @staticmethod
     def _item_of(price_key: str) -> str:
