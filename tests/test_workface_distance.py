@@ -986,14 +986,14 @@ def test_distance_tab_ui_and_validation(project, qapp, monkeypatch) -> None:
         "与右侧构件中心距离(mm)",
     ]
     # 等深：左构件左侧是外边缘（不可填），右侧共享面可填
-    from PySide6.QtWidgets import QComboBox
+    from PySide6.QtWidgets import QLineEdit
 
     left_editor = panel._distance_table.cellWidget(2, 0)
     right_editor = panel._distance_table.cellWidget(3, 0)
-    # 不可填的一侧统一显示成只含 "-" 的禁用下拉框
-    assert isinstance(left_editor, QComboBox)
-    assert not left_editor.isEnabled() and left_editor.currentText() == "-"
-    assert right_editor.isEnabled() and not isinstance(right_editor, QComboBox)
+    # 不可填的一侧统一显示成只含 "-" 的禁用文本框（9961e9d 由禁用下拉框改来）
+    assert isinstance(left_editor, QLineEdit)
+    assert not left_editor.isEnabled() and left_editor.text() == "-"
+    assert right_editor.isEnabled() and isinstance(right_editor, QLineEdit)
     assert panel._distance_table.item(0, 0).text() not in ("", "-")
 
     # 合法距离：写库
@@ -1181,9 +1181,9 @@ def test_distance_editor_fills_cell(project, qapp) -> None:
     QSS 给 ``QTableWidget::item`` 的 padding（5px 8px）会让 setCellWidget 放进去
     的控件只占「单元格内容区」：32px 的行里只剩 21px 高；再叠加 QLineEdit 自身
     的 6px 纵向内边距 + 1px 边框，文字区只剩 7px（字体需要 17px）——表现为文本框
-    没撑满单元格、输入的文字上下被裁掉。不可填的一侧是只含 "-" 的禁用下拉框。
+    没撑满单元格、输入的文字上下被裁掉。不可填的一侧是只含 "-" 的禁用文本框。
     """
-    from PySide6.QtWidgets import QComboBox, QStyle, QStyleOptionFrame
+    from PySide6.QtWidgets import QStyle, QStyleOptionFrame
     from sqlalchemy import select
 
     from app.core.models import base as orm
@@ -1216,10 +1216,6 @@ def test_distance_editor_fills_cell(project, qapp) -> None:
             assert editor is not None
             cell = distance_table.visualRect(distance_table.model().index(row_index, 0))
             assert editor.geometry() == cell, "单元格控件没有铺满单元格"
-            if isinstance(editor, QComboBox):
-                # 不可填侧：只含 "-" 的禁用下拉框
-                assert not editor.isEnabled() and editor.currentText() == "-"
-                continue
             option = QStyleOptionFrame()
             editor.initStyleOption(option)
             band = editor.style().subElementRect(
