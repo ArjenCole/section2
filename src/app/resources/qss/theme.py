@@ -437,9 +437,10 @@ QTabBar::tab:selected {
 }
 
 /* ===================== 分段控件（页内同层视图切换，Apple HIG NSSegmentedControl 同款） ===================== */
-/* 灰底圆角轨道 + 选中段浮起卡片底，与主面板 tab 在视觉上明确分层，避免连续两行 tab */
+/* 轨道用 bg_pressed（暗色 #4D4D4D / 亮色 #E2E8F0），在 bg_card 页面上足够跳出来；
+   选中段浮起 primary_soft 卡片底 + primary 文字（与主面板 tab 选中色一致） */
 QWidget[role="segment-host"] {
-    background-color: $bg_window;
+    background-color: $bg_pressed;
     border: 1px solid $border;
     border-radius: 8px;
 }
@@ -452,8 +453,8 @@ QPushButton[role="segment-btn"] {
 }
 QPushButton[role="segment-btn"]:hover { color: $text_primary; }
 QPushButton[role="segment-btn"]:checked {
-    background-color: $bg_card;
-    color: $text_primary;
+    background-color: $primary_soft;
+    color: $primary;
     font-weight: 600;
 }
 

@@ -559,6 +559,10 @@ class MainWindow(QMainWindow):
         if node is None or not node.is_unit:
             self._set_status("请于项目树中选中单位工程后再插入构件。", 4000)
             return
+        if self._main_tabs.currentIndex() != 1:
+            # 工程量明细表等其它 tab 下不落地插入，避免构件插进看不见的列表
+            self._set_status("请切换到「构件列表」页后再插入构件。", 4000)
+            return
         self._unit_panel.insert_template(template)
 
     def _apply_ai_visible(self, expanded: bool, *, initial: bool = False) -> None:

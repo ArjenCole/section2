@@ -46,6 +46,9 @@ _WIDTHS = (_UNIT_COL_WIDTH * 8, *(width * 8 for width in _QUOTA_WIDTHS[:4]))
 #: 清单项目行标识（存首列条目，委托据此整行画浅蓝底）
 _LISTING_ROLE = Qt.ItemDataRole.UserRole + 4
 
+#: 清单项目行浅蓝底（#D6EAF8）固定配的深色文字：暗色主题下默认亮字在浅蓝底上看不清
+_LISTING_TEXT = "#17324F"
+
 #: 数据变更后的延迟重算（构件增删改时避免逐次全量重算拖慢录入）
 _RELOAD_DELAY_MS = 300
 
@@ -218,10 +221,13 @@ class QuantityDetailPanel(QWidget):
                     display = str(text)
                 item = QTableWidgetItem(display)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if column == 0:
+                if is_listing:
+                    # 浅蓝底固定配深色文字（暗色主题下亮字在浅蓝底上看不清）
+                    item.setForeground(QBrush(QColor(_LISTING_TEXT)))
+                elif column == 0:
                     item.setForeground(QBrush(self._secondary_color()))
-                    if is_listing:
-                        item.setData(_LISTING_ROLE, True)
+                if column == 0 and is_listing:
+                    item.setData(_LISTING_ROLE, True)
                 table.setItem(row_index, column, item)
 
     @staticmethod
