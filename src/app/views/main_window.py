@@ -55,6 +55,7 @@ from app.viewmodels.project_vm import KIND_UNIT, TreeNode
 from app.views.panels.ai_panel import AiPanel
 from app.views.panels.principle_bar import PrincipleBar
 from app.views.panels.tree_panel import TreePanel
+from app.views.panels.summary_panel import SummaryPanel
 from app.views.panels.unit_panel import UnitPanel
 from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.views.widgets.mac_window import apply_mac_window_chrome, is_mac
@@ -486,6 +487,9 @@ class MainWindow(QMainWindow):
         placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._center_stack.addWidget(placeholder)
         self._center_stack.addWidget(self._unit_panel)
+        # 第三页：工程根 / 标段节点的汇总页（上下贯通，无详情面板）
+        self._summary_panel = SummaryPanel()
+        self._center_stack.addWidget(self._summary_panel)
 
         # 原则横条（复刻原版 panelPrincple）：位于中部工作区上方，未打开工程时隐藏
         self._principle_bar = PrincipleBar()
@@ -874,6 +878,7 @@ class MainWindow(QMainWindow):
         self._set_project_actions(False)
         self._update_undo_actions()
         self._update_title()
+        self._summary_panel.set_node(None)
         self._center_stack.setCurrentIndex(0)
 
     def _on_node_selected(self, node: TreeNode | None) -> None:
@@ -891,7 +896,12 @@ class MainWindow(QMainWindow):
         if node is None:
             self._center_stack.setCurrentIndex(0)
             return
-        self._center_stack.setCurrentIndex(1)
+        if node.kind == KIND_UNIT:
+            self._center_stack.setCurrentIndex(1)
+        else:
+            # 非子节点（工程根 / 标段）：汇总页
+            self._summary_panel.set_node(node)
+            self._center_stack.setCurrentIndex(2)
 
     def _on_theme_changed(self, _name: str) -> None:
         self._act_theme.setText("切换亮色主题" if ThemeManager.instance().is_dark() else "切换暗色主题")

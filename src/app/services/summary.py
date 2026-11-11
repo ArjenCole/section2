@@ -58,6 +58,54 @@ def set_price(key: str, value: float) -> None:
     project_io.commit()
 
 
+def price_maps() -> tuple[dict[str, float], dict[str, float]]:
+    """单价索引：``(key → 单价, 项目名 → 单价)``。
+
+    综合单价汇总页的单价按“项目”列全局联动：工程量 key 没有显式记录时
+    回落到同项目名任意一条记录的单价（每名取第一条）。
+    """
+    if not orm.is_open():
+        return {}, {}
+    by_key: dict[str, float] = {}
+    by_item: dict[str, float] = {}
+    for row in orm.session().scalars(select(Price)):
+        by_key[row.key] = float(row.value)
+        parts = row.key.split("|")
+        item = parts[1] if len(parts) > 1 else ""
+        if item and item not in by_item:
+            by_item[item] = float(row.value)
+    return by_key, by_item
+
+
+def set_price_propagate(key: str, value: float) -> None:
+    """设置单价并按“项目”名联动：同项目名的所有已有记录同步为同一单价。
+
+    在综合单价汇总页改某一行的单价（如标段 1 的“中粗砂”改为 350）后，
+    全项目所有“项目”名相同的记录（含其他标段）都变成同一单价。
+    """
+    set_price(key, value)
+    parts = key.split("|")
+    item = parts[1] if len(parts) > 1 else ""
+    if not item:
+        return
+    from app.services import project_io
+
+    session = orm.session()
+    changed = False
+    for row in session.scalars(select(Price)):
+        row_parts = row.key.split("|")
+        if (
+            len(row_parts) > 1
+            and row_parts[1] == item
+            and row.key != key
+            and row.value != float(value)
+        ):
+            row.value = float(value)
+            changed = True
+    if changed:
+        project_io.commit()
+
+
 def batch_import_prices(path: str | Path) -> dict:
     """从 CSV / xlsx（两列：key、单价）批量载价。返回 {imported, skipped}。"""
     target = Path(path)
