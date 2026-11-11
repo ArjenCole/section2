@@ -1,10 +1,13 @@
 """工程量明细表：单位工程节点的工程量计算表（主面板顶级 tab）。
 
-表格内容与「导出 Excel」的工程数量表一致（分单位工程口径，去掉表达式 /
-算式两列）：行前带“单位工程”列，列见 :data:`_HEADERS`（单位工程 / 类别 /
-名称 / 单位 / 数量），清单项目行按导出规则整行浅蓝底色。定额 / 清单两张
-表（对应 xlsx 两张 sheet）用页内分段控件切换（Apple HIG 同款，避免与主
-面板 tab 连成两行）。页面只读，随构件改动自动刷新。
+表格内容与「导出 Excel」的工程数量表同源（去掉表达式 / 算式两列）：行前
+带“编号”列（内容与构件列表详情面板 定额 / 清单工程量 tab 首列一致：清单
+项目行填“清单项目”、定额拆分行留空），列见 :data:`_HEADERS`（编号 / 类别 /
+名称 / 单位 / 数量 / 单价 / 合价），清单项目行按导出规则整行浅蓝底色。
+单价列参照综合单价汇总表交互：可编辑，按“项目”名全项目联动写库（见
+``summary.set_price_propagate``）；合价 = 数量 × 单价自动算出，不可编辑。
+定额 / 清单两张表（对应 xlsx 两张 sheet）用页内分段控件切换（Apple HIG
+同款，避免与主面板 tab 连成两行）。
 """
 
 from __future__ import annotations
@@ -16,7 +19,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
     QStackedWidget,
-    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -24,27 +26,34 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.event_bus import bus, connect_weak
+from app.core.calc.tracer import fmt
 from app.resources.qss.theme import ThemeManager
 from app.services import project_io
+from app.services import summary as summary_service
 from app.viewmodels.unit_vm import compute_unit
+from app.views.widgets.table_edit_delegate import TableEditDelegate
 from app.views.widgets.table_width import fixed_width_behavior
 
 # 与导出 Excel 同源：行生成器与清单行底色（导出同款浅蓝）
 from app.services.summary import (
     _LISTING_FILL,
-    _QUANTITY_HEADERS,
     _QUOTA_WIDTHS,
-    _UNIT_COL_WIDTH,
     _listing_rows,
     _quota_rows,
 )
 
-#: 页面表格列：单位工程 + 类别/名称/单位/数量（导出 Excel 去掉表达式、算式两列）
-_HEADERS = ["单位工程", *_QUANTITY_HEADERS[:4]]
-_WIDTHS = (_UNIT_COL_WIDTH * 8, *(width * 8 for width in _QUOTA_WIDTHS[:4]))
+#: 页面表格列：编号 + 类别/名称/单位/数量 + 单价/合价（编号列内容与构件
+#: 列表详情面板定额 / 清单工程量 tab 首列一致，单价列交互同综合单价汇总表）
+_HEADERS = ["编号", "类别", "名称", "单位", "数量", "单价", "合价"]
+_COL_NO, _COL_CAT, _COL_NAME, _COL_UNIT, _COL_AMOUNT, _COL_PRICE, _COL_TOTAL = range(7)
+_WIDTHS = (77, *(width * 8 for width in _QUOTA_WIDTHS[:4]), 110, 140)
 
 #: 清单项目行标识（存首列条目，委托据此整行画浅蓝底）
 _LISTING_ROLE = Qt.ItemDataRole.UserRole + 4
+
+#: 单价条目 key（类别|项目|单位，存单价列条目）与数量浮点值（存数量列条目）
+_PRICE_KEY_ROLE = Qt.ItemDataRole.UserRole + 5
+_AMOUNT_ROLE = Qt.ItemDataRole.UserRole + 6
 
 #: 清单项目行浅蓝底（#D6EAF8）固定配的深色文字：暗色主题下默认亮字在浅蓝底上看不清
 _LISTING_TEXT = "#17324F"
@@ -53,11 +62,12 @@ _LISTING_TEXT = "#17324F"
 _RELOAD_DELAY_MS = 300
 
 
-class _ListingRowDelegate(QStyledItemDelegate):
-    """清单项目行整行浅蓝底（导出 Excel 同款）。
+class _ListingRowDelegate(TableEditDelegate):
+    """清单项目行整行浅蓝底（导出 Excel 同款）+ 单价列编辑态抛光。
 
     全局 QSS 的 ``QTableWidget::item { background-color: transparent; }``
     会盖掉逐条目 ``setBackground`` 设置的底色，必须由委托在默认绘制前自绘。
+    继承 :class:`TableEditDelegate` 让可编辑的单价列获得同款无边框编辑器。
     """
 
     def __init__(self, table: QTableWidget) -> None:
@@ -83,6 +93,9 @@ class QuantityDetailPanel(QWidget):
         self._node = None
         self._loading = False  # 程序化填装表格时屏蔽信号
         self._dirty = False  # 页面不可见期间数据变了，显示时补一次重载
+        #: 单价索引（summary.price_maps 的快照，改单价后局部刷新）
+        self._by_key: dict[str, float] = {}
+        self._by_item: dict[str, float] = {}
         self._reload_timer = QTimer(self)
         self._reload_timer.setSingleShot(True)
         self._reload_timer.setInterval(_RELOAD_DELAY_MS)
@@ -100,6 +113,8 @@ class QuantityDetailPanel(QWidget):
 
         self._quota_table = self._make_table(_HEADERS)
         self._listing_table = self._make_table(_HEADERS)
+        self._quota_table.itemChanged.connect(self._on_price_item_changed)
+        self._listing_table.itemChanged.connect(self._on_price_item_changed)
         self._tables = QStackedWidget()
         self._tables.addWidget(self._quota_table)   # 段 0：定额工程量
         self._tables.addWidget(self._listing_table)  # 段 1：清单工程量
@@ -196,39 +211,120 @@ class QuantityDetailPanel(QWidget):
             # 本页不显示算式两列，with_expression=False 跳过主算式解析
             # （该解析极重，是切换节点卡顿的元凶）
             summary, detail = compute_unit(node.id)
-            unit_name = node.name
             quota_rows = [
-                ([unit_name, *row], False)
-                for row in _quota_rows(summary, with_expression=False)
+                (row[:4], False) for row in _quota_rows(summary, with_expression=False)
             ]
             listing_rows = [
-                ([unit_name, *row], is_listing)
+                (row[:4], is_listing)
                 for row, is_listing in _listing_rows(detail, with_expression=False)
             ]
+            self._by_key, self._by_item = summary_service.price_maps()
             self._fill_table(self._quota_table, quota_rows)
             self._fill_table(self._listing_table, listing_rows)
         finally:
             self._loading = False
 
     def _fill_table(self, table: QTableWidget, rows: list[tuple[list, bool]]) -> None:
-        """把 (值, 是否清单项目行) 行列表写进表格：清单项目行整行浅蓝（委托自绘）。"""
+        """把 (值, 是否清单项目行) 行列表写进表格。
+
+        值 = (类别, 名称, 单位, 数量)；编号列内容与构件列表详情面板定额 /
+        清单工程量 tab 首列一致（清单项目行填“清单项目”，其余留空）。单价列
+        可编辑（key = 类别|项目|单位），合价 = 数量 × 单价自动算出；清单项目
+        行整行浅蓝（委托自绘）。
+        """
         table.setRowCount(len(rows))
         for row_index, (values, is_listing) in enumerate(rows):
-            for column, text in enumerate(values[: len(_HEADERS)]):
-                if column == 4:  # “数量”列：float 按 0.#### 规则显示
-                    display = f"{float(text):.4f}".rstrip("0").rstrip(".")
+            category, name, unit, amount = values[:4]
+            amount = float(amount)
+            price_key = f"{category}|{name}|{unit}"
+            price = self._resolve_price(price_key, name)
+            texts = (
+                "清单项目" if is_listing else "",
+                str(category),
+                str(name),
+                str(unit),
+                f"{amount:.4f}".rstrip("0").rstrip("."),
+                fmt(price),
+                fmt(amount * price),
+            )
+            for column, text in enumerate(texts):
+                item = QTableWidgetItem(text)
+                if column == _COL_PRICE:
+                    item.setData(_PRICE_KEY_ROLE, price_key)
                 else:
-                    display = str(text)
-                item = QTableWidgetItem(display)
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if is_listing:
-                    # 浅蓝底固定配深色文字（暗色主题下亮字在浅蓝底上看不清）
-                    item.setForeground(QBrush(QColor(_LISTING_TEXT)))
-                elif column == 0:
-                    item.setForeground(QBrush(self._secondary_color()))
-                if column == 0 and is_listing:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    if is_listing:
+                        # 浅蓝底固定配深色文字（暗色主题下亮字在浅蓝底上看不清）
+                        item.setForeground(QBrush(QColor(_LISTING_TEXT)))
+                    elif column == _COL_NO:
+                        item.setForeground(QBrush(self._secondary_color()))
+                if column == _COL_AMOUNT:
+                    item.setData(_AMOUNT_ROLE, amount)
+                if column == _COL_NO and is_listing:
                     item.setData(_LISTING_ROLE, True)
                 table.setItem(row_index, column, item)
+
+    # ------------------------------------------------------------------ 单价
+    def _resolve_price(self, key: str, item: str) -> float:
+        """key 显式记录优先，无记录回落到同“项目”名单价（按项目名全局联动）。"""
+        price = self._by_key.get(key)
+        if price is not None:
+            return price
+        return self._by_item.get(item, 0.0)
+
+    def _on_price_item_changed(self, item: QTableWidgetItem) -> None:
+        """单价编辑落定：按“项目”名联动写库，两表单价 / 合价同步重乘刷新。"""
+        if self._loading or item.column() != _COL_PRICE:
+            return
+        price_key = item.data(_PRICE_KEY_ROLE)
+        if price_key is None:
+            return
+        text = item.text().strip()
+        try:
+            value = float(text)
+        except ValueError:
+            bus().status_message.emit(f"单价“{text}”不是有效数字。", 4000)
+            self._loading = True
+            try:
+                item.setText(fmt(self._resolve_price(price_key, self._item_of(price_key))))
+            finally:
+                self._loading = False
+            return
+        summary_service.set_price_propagate(price_key, value)
+        # 单价按项目名联动后重建索引，两表一起刷（只重乘，不重算工程量）
+        self._loading = True
+        try:
+            self._by_key, self._by_item = summary_service.price_maps()
+            self._refresh_price_cells()
+        finally:
+            self._loading = False
+
+    def _refresh_price_cells(self) -> None:
+        """按最新单价索引重写两表的单价 / 合价（数量不重算）。"""
+        for table in (self._quota_table, self._listing_table):
+            for row in range(table.rowCount()):
+                price_item = table.item(row, _COL_PRICE)
+                if price_item is None:
+                    continue
+                price_key = price_item.data(_PRICE_KEY_ROLE)
+                if price_key is None:
+                    continue
+                amount_item = table.item(row, _COL_AMOUNT)
+                if amount_item is None:
+                    continue
+                amount = amount_item.data(_AMOUNT_ROLE)
+                if amount is None:
+                    continue
+                price = self._resolve_price(price_key, self._item_of(price_key))
+                price_item.setText(fmt(price))
+                total_item = table.item(row, _COL_TOTAL)
+                if total_item is not None:
+                    total_item.setText(fmt(amount * price))
+
+    @staticmethod
+    def _item_of(price_key: str) -> str:
+        parts = price_key.split("|")
+        return parts[1] if len(parts) > 1 else ""
 
     @staticmethod
     def _secondary_color() -> QColor:
