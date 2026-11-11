@@ -429,34 +429,6 @@ class _ElementNameDelegate(_FocusCellDelegate):
         return super().editorEvent(event, model, option, index)
 
 
-class _PipeCategoryDelegate(_FocusCellDelegate):
-    """管材表“管材”列下拉：四类管材（宽度表行），其余列仍是文本框。
-
-    管材类别是计算唯一依据（面宽表行 / 图集分流 / 断面图砼判断 / 包封扣管位），
-    所以做成固定枚举，避免用户敲出表外文字导致静默兜底。
-    """
-
-    def createEditor(self, parent, option, index):  # noqa: N802 - Qt 命名
-        if index.column() != _PIPE_COL_CAT:
-            return super().createEditor(parent, option, index)
-        combo = QComboBox(parent)
-        combo.addItems(list(PIPE_CATEGORIES))
-        combo.setFrame(False)
-        return combo
-
-    def setEditorData(self, editor, index):  # noqa: N802 - Qt 命名
-        if isinstance(editor, QComboBox):
-            editor.setCurrentText(str(index.data() or ""))
-            return
-        super().setEditorData(editor, index)
-
-    def setModelData(self, editor, model, index):  # noqa: N802 - Qt 命名
-        if isinstance(editor, QComboBox):
-            model.setData(index, editor.currentText())
-            return
-        super().setModelData(editor, model, index)
-
-
 class UnitPanel(QWidget):
     """单位工程工作台。"""
 
@@ -583,9 +555,18 @@ class UnitPanel(QWidget):
             self._pipe_table.fontMetrics().height() * 2 + 17
         )  # 上下 QSS padding 8px + 底边线 1px + 两行文字
         self._pipe_table.setColumnWidth(_PIPE_COL_CONTENT, 66)
-        self._pipe_table.setColumnWidth(_PIPE_COL_CAT, 100)
+        # 类别列宽：容下最长的类别文字（「混凝土管-刚性接口」）+ QSS 左右内边距
+        # （10px×2）+ 下拉区（14px）+ 边框（1px×2）
+        self._pipe_table.setColumnWidth(
+            _PIPE_COL_CAT,
+            max(
+                self._pipe_table.fontMetrics().horizontalAdvance(text)
+                for text in PIPE_CATEGORIES
+            )
+            + 38,
+        )
         self._pipe_table.setColumnHidden(_PIPE_COL_DEL, True)
-        self._pipe_table.setItemDelegate(_PipeCategoryDelegate(self._pipe_table))
+        self._pipe_table.setItemDelegate(_FocusCellDelegate(self._pipe_table))
         # 构件参数表：不画交替行条纹（与主表单同底色）；单位列收窄到刚好
         # 容下「单位」两个字与 mm 值
         self._param_table.setAlternatingRowColors(False)
@@ -1887,6 +1868,7 @@ class UnitPanel(QWidget):
         # 多选恢复显示工程量表（非构筑物选中态把它换成了空面板提示）
         self._qty_table.setVisible(True)
         self._qty_placeholder.setVisible(False)
+        _clear_cell_widgets(self._pipe_table)  # 旧类别下拉显式销毁，避免残留叠加
         _clear_cell_widgets(self._lr_table)
         self._lr_table.setRowCount(0)
         self._lr_table.setVisible(False)
@@ -1924,6 +1906,7 @@ class UnitPanel(QWidget):
         self._group_member_ids = []
         self._pipe_buttons.clear_row_buttons()
         self._pipe_buttons.set_visible(False)
+        _clear_cell_widgets(self._pipe_table)  # 旧类别下拉显式销毁，避免残留叠加
         self._pipe_table.setRowCount(0)
         self._param_table.clearSpans()
         # 候选参数列是按上一个构件动态追加的，一并撤掉（回到三列基础布局）
@@ -2520,6 +2503,9 @@ class UnitPanel(QWidget):
             # 管材表：只显示 DN；外径 / 内径 / 壁厚在构件参数页（合成 oD/iD 行）
             self._pipe_buttons.clear_row_buttons()  # 旧的行尾「-」按钮显式销毁
             self._pipe_table.clearSpans()
+            # 旧类别下拉显式销毁（PySide6 下 setCellWidget 只隐藏不删除，
+            # 行数变少时旧控件会残留叠加）
+            _clear_cell_widgets(self._pipe_table)
             self._pipe_table.setRowCount(len(pipes))
             for index, pipe in enumerate(pipes):
                 mat_item = QTableWidgetItem(pipe.mat)
@@ -2536,12 +2522,21 @@ class UnitPanel(QWidget):
                 content_item = QTableWidgetItem(pipe.content)
                 content_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._pipe_table.setItem(index, _PIPE_COL_CONTENT, content_item)
-                cat_item = QTableWidgetItem(pipe.cat)
-                cat_item.setToolTip(
+                # 类别列：内嵌下拉框（与主表格原则列同款，单击即开）；库外值
+                # 保留显示，避免被兜底覆盖后看不出原值
+                cat_combo = QComboBox()
+                cat_combo.addItems(list(PIPE_CATEGORIES))
+                if pipe.cat and pipe.cat not in PIPE_CATEGORIES:
+                    cat_combo.addItem(pipe.cat)
+                cat_combo.setCurrentText(pipe.cat)
+                cat_combo.setToolTip(
                     "类别（计算唯一依据）：决定面宽表行、图集分流、断面图是否砼基础、"
                     "包封砼扣管位取壁厚。默认由构件库快照写入，可改。"
                 )
-                self._pipe_table.setItem(index, _PIPE_COL_CAT, cat_item)
+                cat_combo.currentTextChanged.connect(
+                    lambda text, pipe_id=pipe.id: self._vm.set_pipe_field(pipe_id, "cat", text)
+                )
+                self._pipe_table.setCellWidget(index, _PIPE_COL_CAT, cat_combo)
                 if pipe_editable:
                     # 行尾「-」删行按钮：与条目行对齐，一行一个（无行即无按钮）
                     self._pipe_buttons.add_row_button(index)
@@ -2970,7 +2965,6 @@ class UnitPanel(QWidget):
             _PIPE_COL_MAT: "mat",
             _PIPE_COL_DN: "dn",
             _PIPE_COL_CONTENT: "content",
-            _PIPE_COL_CAT: "cat",
         }.get(item.column())
         if field is None:
             return
