@@ -130,6 +130,21 @@ _ICON_BODIES = {
         '<path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />'
         '<path d="M8 16H3v5" />'
     ),
+    # 剪切 / 复制 / 粘贴（Lucide scissors / copy / clipboard）
+    "scissors": (
+        '<circle cx="6" cy="6" r="3" /><path d="M8.12 8.12 12 12" />'
+        '<path d="M20 4 8.12 15.88" /><circle cx="6" cy="18" r="3" />'
+        '<path d="M14.8 14.8 20 20" />'
+    ),
+    "copy": (
+        '<rect width="14" height="14" x="8" y="8" rx="2" ry="2" />'
+        '<path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />'
+    ),
+    "clipboard": (
+        '<rect width="8" height="4" x="8" y="2" rx="1" ry="1" />'
+        '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6'
+        'a2 2 0 0 1 2-2h2" />'
+    ),
     # 撤销 / 重做（Lucide undo / redo，与 brackets2 同款路径）
     "undo": (
         '<path d="M3 7v6h6" />'

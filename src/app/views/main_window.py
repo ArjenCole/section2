@@ -584,6 +584,9 @@ class MainWindow(QMainWindow):
         "act_redo": "redo",
         "act_add_segment": "folder-plus",
         "act_add_unit": "file-text",
+        "act_cut": "scissors",
+        "act_copy": "copy",
+        "act_paste": "clipboard",
         "act_format_painter": "paintbrush",
         "act_theme": "moon",
         "act_ai_panel": "panel-right",
@@ -661,6 +664,10 @@ class MainWindow(QMainWindow):
             self._act_group_remove,
             self._act_group_move_left,
             self._act_group_move_right,
+            self._act_cut,
+            self._act_copy,
+            self._act_paste,
+            self._act_format_painter,
         ):
             action.setEnabled(False)
         self._project_actions = (
@@ -672,6 +679,12 @@ class MainWindow(QMainWindow):
             self._act_redo,
             self._act_add_segment,
             self._act_add_unit,
+            # 剪切 / 复制 / 粘贴的有效性与格式刷一致：未开工程禁用，
+            # 打开工程后与格式刷一起恢复（_set_project_actions）
+            self._act_cut,
+            self._act_copy,
+            self._act_paste,
+            self._act_format_painter,
         )
 
     def _action(self, text: str, slot, shortcut: str | None = None) -> QAction:
@@ -783,6 +796,11 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         toolbar.addAction(self._act_add_segment)
         toolbar.addAction(self._act_add_unit)
+        toolbar.addSeparator()
+        # 剪切 / 复制 / 粘贴单独一组（新增单位工程与格式刷之间）
+        toolbar.addAction(self._act_cut)
+        toolbar.addAction(self._act_copy)
+        toolbar.addAction(self._act_paste)
         toolbar.addSeparator()
         toolbar.addAction(self._act_format_painter)
         toolbar.addSeparator()

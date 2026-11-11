@@ -58,6 +58,8 @@ class ElementLibraryPanel(QWidget):
         self._tree.setUniformRowHeights(True)
         self._tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._tree.itemDoubleClicked.connect(self._on_double_clicked)
+        # 手风琴式展开：展开某个类别节点时收起其余顶层节点
+        self._tree.itemExpanded.connect(self._on_item_expanded)
         layout.addWidget(self._tree, 1)
 
     def _connect(self) -> None:
@@ -85,6 +87,13 @@ class ElementLibraryPanel(QWidget):
                 element_item.setData(0, _ROLE_TEMPLATE, template)
                 unit_item.addChild(element_item)
             self._tree.addTopLevelItem(unit_item)
+
+    def _on_item_expanded(self, item: QTreeWidgetItem) -> None:
+        """手风琴式：展开某个单位节点时收起其余顶层节点。"""
+        for i in range(self._tree.topLevelItemCount()):
+            other = self._tree.topLevelItem(i)
+            if other is not item:
+                other.setExpanded(False)
 
     def _on_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
         template = item.data(0, _ROLE_TEMPLATE)

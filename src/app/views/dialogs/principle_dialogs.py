@@ -604,7 +604,10 @@ class ComponentEditDialog(PrincipleSubDialog):
 
     def __init__(self, component: Component, parent: QWidget | None = None) -> None:
         super().__init__("构件编辑器", parent)
-        self.resize(940, 480)
+        # 宽度加宽（940 → 1400）+ 公式面板占比提高（2:3 → 2:6）+ 参数面板
+        # 最小宽度 420：计算公式列拉长为原来的三倍以上，长算式不再频繁出
+        # 横向滚动；参数面板的「值」列也能完整显示
+        self.resize(1400, 480)
         self._component = component
         self._tables: dict[str, QTableWidget] = {}
         self._buttons: dict[str, RowButtonColumn] = {}
@@ -669,8 +672,12 @@ class ComponentEditDialog(PrincipleSubDialog):
 
         grid.addWidget(boxes[""], 0, 0)
         grid.addWidget(boxes["Q"], 0, 1)
+        # 公式面板拿大头（2:6）：计算公式列是Stretch列，面板越宽公式列越宽；
+        # 参数面板设最小宽度（名称120 + 单位60 + 按钮列 + 值列 ≥ 200），
+        # 「值」列完整显示、不出现横向滚动条
         grid.setColumnStretch(0, 2)
-        grid.setColumnStretch(1, 3)
+        grid.setColumnStretch(1, 6)
+        grid.setColumnMinimumWidth(0, 420)
         grid.setRowStretch(0, 1)
         self._body.addLayout(grid, 1)
 
@@ -1234,7 +1241,8 @@ class PrecipitationEditDialog(FramelessDialog):
         四个选项任一变化都即时刷新下方总结文字（_excavation_changed），
         不等「确认」落库——编辑期间只写会话，预览用面板当前值。
         「坞塝回填 = 至管顶」时下拉框变短，右侧让出管顶以上高度（cm）输入框，
-        用户填多少 cm 就按多少 cm 回填（0 = 正好至管顶标高）。
+        用户填多少 cm 就按多少 cm 回填（0 = 正好至管顶标高）；选其他选项时
+        输入框隐藏，下拉框撑满整行，与上方「坞塝材质」输入框一样宽。
         """
         box = QGroupBox("挖填类型")
         form = QFormLayout(box)
@@ -1261,6 +1269,12 @@ class PrecipitationEditDialog(FramelessDialog):
         self._cover_h_unit = QLabel("cm")
         dock_layout.addWidget(self._cover_h)
         dock_layout.addWidget(self._cover_h_unit)
+        # 行最小宽度锁死为「输入框可见」时的行宽（构建期 cover_h 尚未隐藏）：
+        # 切换至管顶 / 其他时窗体最小宽度不变，窗体宽度因此不跳动。行本身始终
+        # 撑满字段列——非至管顶时下拉框独占整行，与「坞塝材质」输入框等宽；
+        # 至管顶时下拉框 + 输入框 + cm 合计占满同一宽度，右缘对齐。
+        dock_row.ensurePolished()
+        dock_row.setMinimumWidth(dock_row.sizeHint().width())
 
         self._cover = QLineEdit()
         form.addRow("开挖类型", self._excvt)

@@ -129,13 +129,14 @@ _EXPR_DETAIL_ROLE = Qt.ItemDataRole.UserRole + 13
 _QUANTITY_WIDTHS = [77, 66, 193, 48, 135, 434]
 
 _PIPE_ROLE = Qt.ItemDataRole.UserRole + 1
-#: 管材表 5 列：管材（材质文字）/ 公称直径 DN / 含量 / 类别 / 行尾「-」删行按钮。
+#: 管材表 5 列：管材（材质文字）/ 公称直径（(mm) 换行放第二行）/ 含量 / 类别 /
+#: 行尾「-」删行按钮。
 #: 壁厚不再在管材行列示：外径 / 内径 / 壁厚统一在「构件参数」页编辑（oD/iD/t）。
 #: "类别"是计算唯一依据（面宽表行、图集分流、断面图砼判断都读它），默认由
 #: 构件库快照写入；"管材"是材质描述文字（规格与设备材料表用），不参与计算。
 #: 删行按钮列只在包封 / 箱涵 / 管廊显示（直埋 / 非开挖恒一条管材、构筑物
 #: 不带管材，增删入口整列隐藏，见 _pipe_panel_editable）。
-_PIPE_HEADERS = ["管材", "DN", "含量", "类别", ""]
+_PIPE_HEADERS = ["管材", "公称直径\n(mm)", "含量", "类别", ""]
 _PIPE_COL_MAT = 0
 _PIPE_COL_DN = 1
 _PIPE_COL_CONTENT = 2
@@ -159,6 +160,8 @@ _MATCH_BG_ROLE = Qt.ItemDataRole.UserRole + 3
 _MATCH_BG_SAME = "same"
 #: 跨组借值（另一组的同角度值）
 _MATCH_BG_CROSS = "cross"
+#: 图籍参数列的统一灰底（未命中标记时，所有候选格默认铺灰）
+_MATCH_BG_GRAY = "gray"
 #: 参数名 / 单位 / 参数值三列；直埋构件在"参数值"右侧追加候选参数列
 #: （砼基础/非砼基础 × 90/120/150/180，混凝土管 8 列、其他管材 4 列）。
 #: 锁定行（该类别显示的图集参数行、构筑物名称 / 单位行）参数名 / 单位只读，
@@ -174,7 +177,8 @@ _CANDIDATE_FIELD_BY_PARAM = {
 #: 参数表列宽：参数名列窄、单位列宽（单位内容居中显示）；
 #: 参数值列与候选参数列按列头文字定宽（见 header_fit_width）
 _PARAM_NAME_WIDTH = 90
-_PARAM_UNIT_WIDTH = 84
+#: 单位列：刚好容下表头「单位」两个字与 mm 值
+_PARAM_UNIT_WIDTH = 52
 #: 没有单位的参数行（附属构筑物的名称 / 单位行，库里单位列为空）显示 “-”
 _NO_UNIT_TEXT = "-"
 _NO_UNIT_PARAM_ROWS: tuple[tuple[str, str], ...] = (
@@ -238,12 +242,13 @@ class _FocusCellDelegate(TableEditDelegate):
         # BackgroundRole，只能在这里自己填（见 _MATCH_BG_ROLE 的说明）
         match_bg = index.data(_MATCH_BG_ROLE)
         if match_bg:
-            painter.fillRect(
-                option.rect,
-                _candidate_borrowed_bg()
-                if match_bg == _MATCH_BG_CROSS
-                else _candidate_selected_bg(),
-            )
+            if match_bg == _MATCH_BG_CROSS:
+                bg = _candidate_borrowed_bg()
+            elif match_bg == _MATCH_BG_GRAY:
+                bg = _candidate_gray_bg()
+            else:
+                bg = _candidate_selected_bg()
+            painter.fillRect(option.rect, bg)
         # 去掉默认的虚线焦点框，统一用边框表示
         option.state &= ~QStyle.StateFlag.State_HasFocus
         super().paint(painter, option, index)
@@ -563,12 +568,27 @@ class UnitPanel(QWidget):
         self._pipe_table.setColumnWidth(_PIPE_COL_MAT, 120)
         self._pipe_table.setColumnWidth(
             _PIPE_COL_DN,
-            max(header_fit_width(self._pipe_table, _PIPE_HEADERS[_PIPE_COL_DN]), 52),
+            # 列头两行显示（公称直径 / (mm)）：列宽按最宽一行定，
+            # 表头加高一行容下第二行文字
+            max(
+                max(
+                    header_fit_width(self._pipe_table, line)
+                    for line in _PIPE_HEADERS[_PIPE_COL_DN].splitlines()
+                ),
+                52,
+            ),
         )
+        _pipe_header = self._pipe_table.horizontalHeader()
+        _pipe_header.setFixedHeight(
+            self._pipe_table.fontMetrics().height() * 2 + 17
+        )  # 上下 QSS padding 8px + 底边线 1px + 两行文字
         self._pipe_table.setColumnWidth(_PIPE_COL_CONTENT, 66)
         self._pipe_table.setColumnWidth(_PIPE_COL_CAT, 100)
         self._pipe_table.setColumnHidden(_PIPE_COL_DEL, True)
         self._pipe_table.setItemDelegate(_PipeCategoryDelegate(self._pipe_table))
+        # 构件参数表：不画交替行条纹（与主表单同底色）；单位列收窄到刚好
+        # 容下「单位」两个字与 mm 值
+        self._param_table.setAlternatingRowColors(False)
         self._param_table.setColumnWidth(0, _PARAM_NAME_WIDTH)
         self._param_table.setColumnWidth(1, _PARAM_UNIT_WIDTH)
         self._param_table.setColumnWidth(2, header_fit_width(self._param_table, _PARAM_HEADERS[2]))
@@ -647,15 +667,27 @@ class UnitPanel(QWidget):
         lr_layout = QVBoxLayout(lr_page)
         lr_layout.setContentsMargins(6, 6, 6, 6)
         lr_layout.setSpacing(4)
-        self._lr_table = QTableWidget(0, 1)
+        # 用 CellFillTable 而不是 QTableWidget：与「工作面宽」页同款——QSS 给
+        # QTableWidget::item 的 padding（5px 8px）会把 setCellWidget 放进去的
+        # 下拉框按「单元格内容区」缩一圈，CellFillTable 每次布局后把控件铺回
+        # 整个单元格，下拉框与主表格原则列一样撑满单元格
+        self._lr_table = CellFillTable(0, 1)
         self._lr_table.setVerticalHeaderLabels([])
         self._lr_table.setHorizontalHeaderLabels(["取值"])
         self._lr_table.setProperty("cardHeader", True)
-        self._lr_table.horizontalHeader().setHighlightSections(False)
         self._lr_table.verticalHeader().setVisible(True)
         self._lr_table.verticalHeader().setDefaultSectionSize(32)
+        # 主题 QSS 的 QHeaderView::section:last 会把行头最后一行的右分割线裁掉
+        # （该规则本意是横向表头去重边）：标记 headerKind 让最后一行保留竖线
+        self._lr_table.verticalHeader().setProperty("headerKind", "vertical")
         fixed_width_behavior(self._lr_table)
-        self._lr_table.setColumnWidth(0, 170)
+        # 取值列宽 = 「计算支撑（类别“支撑”）」整行文字 + 勾选框指示器宽度：
+        # 复选框文字完整显示，不截省略号
+        self._lr_table.setColumnWidth(
+            0,
+            header_fit_width(self._lr_table, "计算支撑（类别“支撑”）")
+            + 24,  # 指示器 15px + spacing 6px + 余量
+        )
         self._lr_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._lr_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         lr_layout.addWidget(self._lr_table, 1)
@@ -691,6 +723,8 @@ class UnitPanel(QWidget):
         self._distance_table.horizontalHeader().setHighlightSections(False)
         self._distance_table.verticalHeader().setVisible(True)
         self._distance_table.verticalHeader().setDefaultSectionSize(32)
+        # 与「围护原则」页同款：行头最后一行保留右分割线
+        self._distance_table.verticalHeader().setProperty("headerKind", "vertical")
         fixed_width_behavior(self._distance_table)
         self._distance_table.setColumnWidth(0, 200)
         self._distance_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -2535,11 +2569,17 @@ class UnitPanel(QWidget):
             self._param_table.clearSpans()
             self._param_table.setColumnCount(len(headers))
             self._param_table.setHorizontalHeaderLabels(headers)
-            # 候选列逐列按列头文字定宽（砼90° / 非砼180° …字数不一，宽窄随之）
-            for offset, column in enumerate(self._candidate_columns):
+            # 候选列宽统一取最宽一列（180°）的列头定宽：所有图籍参数列等宽
+            candidate_width = max(
+                (
+                    header_fit_width(self._param_table, column.label)
+                    for column in self._candidate_columns
+                ),
+                default=0,
+            )
+            for offset in range(len(self._candidate_columns)):
                 self._param_table.setColumnWidth(
-                    len(_PARAM_HEADERS) + offset,
-                    header_fit_width(self._param_table, column.label),
+                    len(_PARAM_HEADERS) + offset, candidate_width
                 )
             self._param_table.setRowCount(len(params))
             auto_params = auto_atlas_params(element) if element is not None else {}
@@ -2610,6 +2650,8 @@ class UnitPanel(QWidget):
                     value_item.setToolTip(value_tip)
                 self._param_table.setItem(index, 0, key_item)
                 self._param_table.setItem(index, 1, unit_item)
+                # 除参数名列外全部居中（单位 / 值 / 图籍参数列）
+                value_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._param_table.setItem(index, 2, value_item)
                 if show_candidates:
                     candidate_field = _CANDIDATE_FIELD_BY_PARAM.get(param.key)
@@ -2656,6 +2698,11 @@ class UnitPanel(QWidget):
                                 )
                             else:
                                 cell.setToolTip(column.tooltip)
+                        # 图籍参数列统一铺灰底（当前匹配列的标记色在上面已覆盖）；
+                        # 内容与表头一样居中显示
+                        cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        if cell.data(_MATCH_BG_ROLE) is None:
+                            cell.setData(_MATCH_BG_ROLE, _MATCH_BG_GRAY)
                         self._param_table.setItem(index, len(_PARAM_HEADERS) + offset, cell)
 
             # 工程量表：仅附属构筑物可录入；其它类别显示占位说明，
@@ -2774,6 +2821,8 @@ class UnitPanel(QWidget):
         self._lr_table.setVerticalHeaderLabels(list(_LR_ROWS))
         for row, widget in enumerate(widgets):
             self._lr_table.setCellWidget(row, 0, widget)
+        # setRowCount 之后行列位置可能还是旧的：显式把控件铺回各自单元格
+        self._lr_table.fit_cell_widgets()
 
     def _fill_distance_tab(self, element) -> None:
         """「工作面宽」tab：合槽子构件显示工作面宽与相邻构件中心距离。
@@ -2808,6 +2857,7 @@ class UnitPanel(QWidget):
         def _width_item(side: str, active: bool, distance_text: str, neighbor: str):
             item = QTableWidgetItem(width_text)
             item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             if distance_text and active:
                 item.setText(f"{width_text}（已失效）")
                 item.setForeground(QBrush(_secondary_color()))
@@ -2825,16 +2875,17 @@ class UnitPanel(QWidget):
 
         def _distance_editor(
             side: str, active: bool, current: str, neighbor: str, outer: bool
-        ) -> QLineEdit | QComboBox:
-            """可填侧 = 中心距离文本框；不可填侧 = 只含 "-" 的禁用下拉框。
+        ) -> QLineEdit:
+            """可填侧 = 中心距离文本框；不可填侧 = 只含 "-" 的禁用文本框。
 
-            不可填（合槽外边缘 / 不是更浅侧）统一显示成禁用的下拉框，与
-            「围护原则」页强制 "-" 的一侧观感一致；原因写在 tooltip 里。
+            不可填（合槽外边缘 / 不是更浅侧）统一显示成禁用的文本框：值本就
+            不可选、只起占位说明作用；原因写在 tooltip 里。
             """
             if not active:
-                forced = QComboBox()
-                forced.addItem("-")
+                forced = QLineEdit("-")
+                forced.setFrame(False)
                 forced.setEnabled(False)
+                forced.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 if outer:
                     forced.setToolTip(
                         "合槽外边缘没有相邻构件，按面宽原则匹配的工作面宽控制。"
@@ -2847,6 +2898,8 @@ class UnitPanel(QWidget):
                 return forced
             editor = QLineEdit(current)
             editor.setFrame(False)
+            # 取值列单元格内容居中显示（与禁用侧的 "-" 一致）
+            editor.setAlignment(Qt.AlignmentFlag.AlignCenter)
             editor.setPlaceholderText("留空 = 按面宽原则")
             editor.setToolTip(
                 f"与{'左' if side == 'left' else '右'}侧构件「{neighbor}」的中心距离"
@@ -3222,3 +3275,9 @@ def _candidate_borrowed_bg() -> QColor:
     """跨组借值时的底色：警示色按 14% 混进卡片底色，仍是浅色但偏暖。"""
     theme = ThemeManager.instance().current()
     return _mix(QColor(theme.bg_card), QColor(theme.warning), 0.14)
+
+
+def _candidate_gray_bg() -> QColor:
+    """图籍参数列的统一灰底：bg_hover 与卡片底色对半混（浅灰，亮暗主题都成立）。"""
+    theme = ThemeManager.instance().current()
+    return _mix(QColor(theme.bg_card), QColor(theme.bg_hover), 0.9)
