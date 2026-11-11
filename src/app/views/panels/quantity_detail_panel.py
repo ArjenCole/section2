@@ -1,9 +1,10 @@
 """工程量明细表：单位工程节点的工程量计算表（主面板顶级 tab）。
 
 表格内容与「导出 Excel」的工程数量表一致（分单位工程口径，去掉表达式 /
-算式两列）：行前带“单位工程”列，定额工程量 / 清单工程量两张子表对应
-xlsx 的两张 sheet，列见 :data:`_HEADERS`（单位工程 / 类别 / 名称 / 单位 /
-数量），清单项目行按导出规则整行浅蓝底色。页面只读，随构件改动自动刷新。
+算式两列）：行前带“单位工程”列，列见 :data:`_HEADERS`（单位工程 / 类别 /
+名称 / 单位 / 数量），清单项目行按导出规则整行浅蓝底色。定额 / 清单两张
+表（对应 xlsx 两张 sheet）用页内分段控件切换（Apple HIG 同款，避免与主
+面板 tab 连成两行）。页面只读，随构件改动自动刷新。
 """
 
 from __future__ import annotations
@@ -11,8 +12,11 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
+    QButtonGroup,
+    QHBoxLayout,
+    QPushButton,
+    QStackedWidget,
     QStyledItemDelegate,
-    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -89,19 +93,42 @@ class QuantityDetailPanel(QWidget):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
+        layout.setSpacing(6)
 
-        tabs = QTabWidget()
-        from app.views.widgets.mac_window import is_mac
-
-        if not is_mac():
-            tabs.setDocumentMode(True)
-        tabs.tabBar().setDrawBase(False)
         self._quota_table = self._make_table(_HEADERS)
         self._listing_table = self._make_table(_HEADERS)
-        tabs.addTab(self._quota_table, "定额工程量")
-        tabs.addTab(self._listing_table, "清单工程量")
-        layout.addWidget(tabs, 1)
+        self._tables = QStackedWidget()
+        self._tables.addWidget(self._quota_table)   # 段 0：定额工程量
+        self._tables.addWidget(self._listing_table)  # 段 1：清单工程量
+
+        # 页内同层视图切换用分段控件（Apple HIG 同款），避免与主面板 tab 连成两行
+        seg_row = QHBoxLayout()
+        seg_row.setContentsMargins(0, 0, 0, 0)
+        seg_row.addWidget(self._build_segment_control())
+        seg_row.addStretch(1)
+        layout.addLayout(seg_row)
+        layout.addWidget(self._tables, 1)
+
+    def _build_segment_control(self) -> QWidget:
+        """灰底圆角轨道 + 两段互斥按钮（定额工程量 / 清单工程量）。"""
+        host = QWidget()
+        host.setProperty("role", "segment-host")
+        host.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        seg_layout = QHBoxLayout(host)
+        seg_layout.setContentsMargins(2, 2, 2, 2)
+        seg_layout.setSpacing(2)
+        self._segment_group = QButtonGroup(self)
+        self._segment_group.setExclusive(True)
+        for index, text in enumerate(("定额工程量", "清单工程量")):
+            button = QPushButton(text)
+            button.setProperty("role", "segment-btn")
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setChecked(index == 0)
+            self._segment_group.addButton(button, index)
+            seg_layout.addWidget(button)
+        self._segment_group.idClicked.connect(self._tables.setCurrentIndex)
+        return host
 
     @staticmethod
     def _make_table(headers: list[str]) -> QTableWidget:
