@@ -68,3 +68,54 @@ def project(tmp_path):
     path = tmp_path / "测试工程.stn"
     project_io.new_project(NewProjectSpec(path=path, unit_names=["雨水工程"]))
     return path
+
+
+# --------------------------------------------------------------------------- #
+# 共享搭建助手（合槽/围护类测试用；原在 test_lr_enclosure 与
+# test_workface_distance 里逐字重复，收拢到这里，用例文件直接 import）
+# --------------------------------------------------------------------------- #
+def first_unit_id():
+    from sqlalchemy import select
+
+    from app.core.models import base as orm
+    from app.core.models.models import Unit
+
+    return orm.session().scalar(select(Unit.id))
+
+
+def make_enclosure(name: str, category: str, slope: float | None = None):
+    """按库模板建一条围护原则（单一做法）；slope 非空时把放坡系数设为该值。"""
+    from app.core.models import base as orm
+    from app.core.models.models import PcpEnclosure
+
+    session = orm.session()
+    pe = PcpEnclosure(name=name, order_no=90 + len(project_io.enclosures()))
+    session.add(pe)
+    session.flush()
+    project_io.new_enclosure_work(
+        session, pe, project_io.component_library(), order_no=0, level_name=category
+    )
+    if slope is not None:
+        for param in pe.works_sorted()[0].levels[0].components[0].params:
+            if param.key == "A":
+                param.value = f"放坡系数 1:X|{slope}"
+    project_io.commit()
+    return pe
+
+
+def make_element(name: str, *, dn=600, depth="3", amount="120", pe_name=None):
+    """建一条管材构件（默认 Ⅱ级混凝土管 DN600），返回构件 id。"""
+    from app.viewmodels import unit_vm
+
+    element = unit_vm.create_element(
+        first_unit_id(),
+        category=1,
+        name=name,
+        depth=depth,
+        amount=amount,
+        pipes=[("Ⅱ级混凝土管", dn, "1")],
+        pe_name=pe_name,
+        seed_atlas_defaults=True,
+    )
+    assert element is not None
+    return element.id

@@ -1,9 +1,9 @@
 # Section 2.0 MCP 服务
 
-Section 2.0 把**全部功能**暴露为 MCP（Model Context Protocol）工具，共 **69 个**：
+Section 2.0 把**全部功能**暴露为 MCP（Model Context Protocol）工具，共 **75 个**：
 外部 AI 客户端（Claude Desktop / Claude Code / Codex / Cursor / Cline / VS Code /
-WorkBuddy…）可以直接建工程、管项目树、录构件、编辑六类原则、查图集、算工程量、
-迁移旧工程、汇总导出。
+WorkBuddy…）可以直接建工程、管项目树、录构件、编组合槽、编辑六类原则、查图集、
+算工程量、迁移旧工程、汇总导出。
 
 > 本项目**没有业务服务端**：MCP 端点只是协议入口（默认关闭、仅本机回环），
 > 不改变"纯桌面应用"的定位；模型调用仍由客户端自己完成。
@@ -94,20 +94,22 @@ section2-mcp --project "D:\工程\某项目.stn"
   写操作与迁移不可用（没有确认面）。
 - 所有本地模式都只绑定 `127.0.0.1`。
 
-## 工具清单（69 个，按组）
+## 工具清单（75 个，按组）
 
 | 组 | 数量 | 代表性工具 |
 |---|---|---|
 | 工程与会话 | 7 | `create_project` `open_project` `save_project_as` `get_project_info` |
 | 项目树 | 6 | `get_project_tree` `add_segment` `add_unit` `delete_node` `move_node` |
-| 构件条目 | 8 | `list_elements` `add_element` `update_element` `delete_element` `duplicate_element` |
-| 构件子行 | 12 | `add_pipe` `update_param` `add_quantity` |
-| 六类原则 | 20 | `list_principles` `get_principle_detail` `create_enclosure` `set_enclosure_works` `set_width_items` `export_principle` |
+| 构件条目 | 13 | `list_elements` `add_element` `update_element` `delete_element` `duplicate_element`；合槽组：`list_trench_groups` `group_elements` `update_group` `dissolve_group` `group_membership` |
+| 构件子行 | 9 | `add_pipe` `update_pipe` `delete_pipe` `add_param` `update_param` `delete_param` `add_quantity` `update_quantity` `delete_quantity` |
+| 六类原则 | 21 | `list_principles` `get_principle_detail` `create_enclosure` `set_enclosure_works` `set_width_items` `export_principle` |
 | 图集/构件库 | 8 | `resolve_atlas` `query_atlas_table` `list_library_templates` `get_component_template` |
 | 计算 | 3 | `compute_unit` `compute_element` `evaluate_expression` |
 | 旧档迁移 | 2 | `inspect_legacy_project` `migrate_legacy_project` |
 | 汇总导出 | 4 | `get_unit_summary` `set_price` `batch_import_prices` `export_excel` |
 | 约定/上下文 | 2 | `get_conventions` `get_current_context` |
+
+7+6+13+9+21+8+3+2+4+2 = **75**。
 
 返回约定（与内置 AI 工具一致）：
 
@@ -136,7 +138,7 @@ section2-mcp --project "D:\工程\某项目.stn"
 
 ```
 src/app/agent/
-├── tool_registry.py   # Tool / ToolRegistry / 69 工具注册表
+├── tool_registry.py   # Tool / ToolRegistry / 75 工具注册表
 ├── tools/             # 按领域分文件的工具实现
 ├── confirm_policy.py  # builtin / mcp 双通道确认
 ├── context.py         # 当前选中上下文（内嵌模式 id 缺省解析）

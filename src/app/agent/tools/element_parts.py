@@ -282,32 +282,3 @@ def register(registry: ToolRegistry) -> None:
             tool_delete_quantity,
         )
     )
-    registry.register(
-        Tool(
-            "add_quantity", "为构筑物新增工程量行（值可写算式）。写操作。",
-            {"type": "object", "properties": {
-                "element_id": element_id_schema, "category": {"type": "string"},
-                "item": {"type": "string"}, "unit": {"type": "string"},
-                "value": {"type": "string"}}},
-            tool_add_quantity,
-        )
-    )
-    registry.register(
-        Tool(
-            "update_quantity", "修改构筑物工程量行。写操作。",
-            {"type": "object", "properties": {
-                "quantity_id": {"type": "integer"}, "category": {"type": "string"},
-                "item": {"type": "string"}, "unit": {"type": "string"},
-                "value": {"type": "string"}},
-             "required": ["quantity_id"]},
-            tool_update_quantity,
-        )
-    )
-    registry.register(
-        Tool(
-            "delete_quantity", "删除构筑物工程量行。写操作。",
-            {"type": "object", "properties": {"quantity_id": {"type": "integer"}},
-             "required": ["quantity_id"]},
-            tool_delete_quantity,
-        )
-    )

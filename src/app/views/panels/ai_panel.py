@@ -536,7 +536,6 @@ class AiPanel(QWidget):
         header.addWidget(title)
         header.addStretch(1)
         self._btn_clear = QPushButton("清空")
-        self._btn_clear.setProperty("secondary", "true")
         self._btn_clear.clicked.connect(self._clear)
         header.addWidget(self._btn_clear)
         self._btn_settings = QPushButton()
@@ -578,7 +577,6 @@ class AiPanel(QWidget):
 
         self._send_btn = QPushButton()
         self._send_btn.setObjectName("aiSendBtn")
-        self._send_btn.setProperty("primary", True)
         self._send_btn.setIcon(self._make_send_arrow_icon())
         self._send_btn.setFixedSize(30, 30)
         self._send_btn.setParent(self._input)

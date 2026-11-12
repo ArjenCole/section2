@@ -1,12 +1,12 @@
-"""无边框对话框基类与统一消息框（照搬 Quotor views/widgets/frameless_dialog.py）。
+"""无边框对话框基类与统一消息框。
 
 为所有弹出窗体提供统一风格：
 - 去除系统标题栏与边框（Qt.FramelessWindowHint）+ 自定义标题栏（支持拖拽）
 - Windows/Linux 完全自绘圆角与外阴影（不调用 DWM 圆角、不依赖系统阴影），
-  Win10/Win11 外观一致
+  Win10/Win11 外观一致；macOS 保留原生窗口边框（见 mac_window.py）
 - :class:`FramelessMessageBox` 提供与 QMessageBox 一致的静态方法 API，
-  图标为 Lucide SVG 着色渲染，按钮文案/顺序统一（肯定在前、取消最后），
-  全项目统一用它替换 QMessageBox。
+  图标为 Lucide SVG 着色渲染，标准按钮的文案/顺序/默认按钮/对齐按平台
+  规范统一由 platform_buttons 安排，全项目统一用它替换 QMessageBox。
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
-    QPushButton,
     QScrollArea,
     QToolButton,
     QVBoxLayout,
@@ -29,6 +28,12 @@ from PySide6.QtWidgets import (
 )
 
 from app.views.widgets.mac_window import apply_mac_window_chrome, is_mac
+from app.views.widgets.platform_buttons import (
+    CANCEL_TEXT,
+    DialogButtonSpec,
+    OK_TEXT,
+    add_dialog_buttons,
+)
 from app.views.widgets.rounded_window import RoundedWindowHelper
 
 # 消息框正文超出限高时使用的纵向滚动条宽度（显式设置，样式与占位宽度保持一致）
@@ -189,7 +194,7 @@ _ICON_SVG = {
     QMessageBox.Icon.Question: "help-circle",
 }
 
-# 图标颜色亮暗主题同色（与 Quotor 一致）
+# 图标颜色亮暗主题同色
 _ICON_COLOR = {
     QMessageBox.Icon.Information: "#3B82F6",
     QMessageBox.Icon.Warning: "#F59E0B",
@@ -197,7 +202,8 @@ _ICON_COLOR = {
     QMessageBox.Icon.Question: "#3B82F6",
 }
 
-# 按钮显示顺序：肯定操作在前 → 破坏性居中 → 取消/关闭最后
+# 按钮显示顺序的输入池：肯定操作在前 → 破坏性居中 → 取消/关闭最后。
+# 实际视觉顺序按平台重排（platform_buttons.ordered）。
 _ALL_BUTTONS = [
     QMessageBox.StandardButton.Save,
     QMessageBox.StandardButton.SaveAll,
@@ -217,6 +223,28 @@ _ALL_BUTTONS = [
     QMessageBox.StandardButton.Cancel,
     QMessageBox.StandardButton.Help,
 ]
+
+# StandardButton → 平台排序角色：accept=肯定动作（默认按钮，Windows 最左 /
+# mac 最右）、reject=取消/关闭（dismiss）、other=其余辅助动作。
+_STANDARD_BUTTON_ROLES = {
+    QMessageBox.StandardButton.Ok: "accept",
+    QMessageBox.StandardButton.Yes: "accept",
+    QMessageBox.StandardButton.YesAll: "accept",
+    QMessageBox.StandardButton.Save: "accept",
+    QMessageBox.StandardButton.SaveAll: "accept",
+    QMessageBox.StandardButton.Apply: "accept",
+    QMessageBox.StandardButton.Retry: "other",
+    QMessageBox.StandardButton.Ignore: "other",
+    QMessageBox.StandardButton.Discard: "other",
+    QMessageBox.StandardButton.No: "other",
+    QMessageBox.StandardButton.NoAll: "other",
+    QMessageBox.StandardButton.Reset: "other",
+    QMessageBox.StandardButton.RestoreDefaults: "other",
+    QMessageBox.StandardButton.Help: "other",
+    QMessageBox.StandardButton.Abort: "reject",
+    QMessageBox.StandardButton.Close: "reject",
+    QMessageBox.StandardButton.Cancel: "reject",
+}
 
 
 def load_icon(name: str, color: str, size: int = 24) -> QIcon:
@@ -504,12 +532,10 @@ class FramelessMessageBox(FramelessDialog):
         self._content_layout = content
         self._scroll: QScrollArea | None = None
 
+        # 按钮行右对齐（Windows/macOS 对话框惯例一致），行首 stretch 由
+        # add_dialog_buttons 负责；顺序与默认按钮按平台规范排布
         self._button_row = QHBoxLayout()
-        self._button_row.addStretch(1)
-        self._button_container = QHBoxLayout()
-        self._button_container.setSpacing(8)
-        self._button_row.addLayout(self._button_container)
-        self._button_row.addStretch(1)
+        self._button_row.setSpacing(8)
         layout.addLayout(self._button_row)
 
     def _set_icon(self, icon_type: QMessageBox.Icon) -> None:
@@ -623,32 +649,28 @@ class FramelessMessageBox(FramelessDialog):
         button_texts: dict | None = None,
     ) -> None:
         self._buttons = buttons
-        while self._button_container.count():
-            item = self._button_container.takeAt(0)
+        while self._button_row.count():
+            item = self._button_row.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
 
-        has_default = default != QMessageBox.StandardButton.NoButton and (buttons & default)
-        # Apple HIG：默认（肯定）按钮放最右、取消等次要按钮在其左侧；
-        # _ALL_BUTTONS 按肯定→取消排序，这里倒序添加使肯定按钮位于最右。
-        for button_value in reversed(_ALL_BUTTONS):
-            if not (buttons & button_value):
-                continue
-            text = (button_texts or {}).get(
-                button_value, _BUTTON_TEXT.get(button_value, str(button_value))
+        specs = [
+            DialogButtonSpec(
+                (button_texts or {}).get(
+                    button_value, _BUTTON_TEXT.get(button_value, str(button_value))
+                ),
+                role=_STANDARD_BUTTON_ROLES.get(button_value, "other"),
+                # clicked(bool) 会把 checked 位置传入：必须先用 checked=False
+                # 接住，value 才能拿到按钮对应的 StandardButton（否则 _result
+                # 恒为 False，保存/不保存等确认全部失效）
+                on_click=lambda checked=False, value=button_value: self._on_button_clicked(value),
+                default=button_value == default,
             )
-            button = QPushButton(text)
-            if button_value == default or (
-                not has_default and button_value == QMessageBox.StandardButton.Ok
-            ):
-                button.setProperty("primary", True)
-                button.setDefault(True)
-            button.setMinimumWidth(72)
-            button.clicked.connect(
-                lambda checked=False, value=button_value: self._on_button_clicked(value)
-            )
-            self._button_container.addWidget(button)
+            for button_value in _ALL_BUTTONS
+            if buttons & button_value
+        ]
+        add_dialog_buttons(self._button_row, specs)
 
     def _on_button_clicked(self, button: QMessageBox.StandardButton) -> None:
         self._result = button
@@ -761,16 +783,14 @@ class FramelessInputDialog(FramelessDialog):
         self._edit.selectAll()
         layout.addWidget(self._edit)
         button_row = QHBoxLayout()
-        button_row.addStretch(1)
-        # Apple HIG：取消在左，默认（确定）按钮在右
-        cancel = QPushButton("取消")
-        cancel.clicked.connect(self.reject)
-        ok = QPushButton("确定")
-        ok.setProperty("primary", True)
-        ok.setDefault(True)
-        ok.clicked.connect(self.accept)
-        button_row.addWidget(cancel)
-        button_row.addWidget(ok)
+        # 标准按钮行：顺序/默认按钮/对齐按平台规范（见 platform_buttons）
+        add_dialog_buttons(
+            button_row,
+            [
+                DialogButtonSpec(CANCEL_TEXT, "reject", on_click=self.reject),
+                DialogButtonSpec(OK_TEXT, "accept", on_click=self.accept),
+            ],
+        )
         layout.addLayout(button_row)
 
     def textValue(self) -> str:

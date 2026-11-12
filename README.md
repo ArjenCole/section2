@@ -2,7 +2,7 @@
 
 线性工程（市政管道等）工程量计算软件 **section** 的 Python 重写版，跨平台（Windows / macOS / Linux）。
 
-初代是 C# WinForms 程序（最终版参照 `section/section-master`，只读参考）。2.0 复刻其全部功能，并新增：
+初代是 C# WinForms 程序（源码只读存放在 `section/section-master/`）。2.0 复刻其全部功能，并新增：
 
 - **管道三直径 DN / oD / iD**：构件库从图集一次性提取外径 `oD`、内径 `iD`；
   管材行只显示公称直径 `DN`，构件参数页新增「管道外径 / 管道内径」两行
@@ -16,15 +16,23 @@
   算式**不做预运算**——派生量只在“计算结果”列显示结果，定义式里始终写全来源
   （管径 / 图集参数 / 面宽原则 / 构件参数…），不会把 1.99 这类派生结果代回公式；
   多选构件的汇总行按构件编号展开，各自的中间量互不串名；
-- **AI 助手面板**（`Ctrl+L`）：流式对话 + 工具调用（一期为构件条目增删改查 4 个工具，
-  写操作一律弹确认窗），支持任意 OpenAI 兼容端点（DeepSeek / OpenAI / Ollama / vLLM / 通义…）；
-- **打开旧版工程自动转译**（brackets 同款）：直接打开 1.0 的 `.stn`，自动转译成 2.0 数据并弹窗
-  提示；原文件先备份到软件数据目录的 `migration_backup` 再原样保留——转译结果处于
+- **AI 助手面板**（`Ctrl+L`）：流式对话 + 工具调用（构件条目增删改查、合槽编组、
+  六类原则、图集查询、计算与导出等 13 个构件域工具，写操作一律弹确认窗），
+  支持任意 OpenAI 兼容端点（DeepSeek / OpenAI / Ollama / vLLM / 通义…）；
+- **打开旧版工程自动转译**：直接打开 1.0 的 `.stn`，先按 XML 头识别旧格式
+  （`stn_format.looks_like_legacy_file`），把数据转译进临时工作库并弹窗提示；
+  原文件先备份到软件数据目录的 `migration_backup` 再原样保留——转译结果处于
   “尚未保存”的临时状态，首次保存走另存为选新路径，旧文件绝不被覆盖。另有
   `文件 → 导入旧版工程(.stn)…` 向导可指定目标路径，带解析摘要、原则补齐警告与可复制的迁移报告。
-- **撤销 / 重做**（`Ctrl+Z` / `Ctrl+Y`，brackets 同款快照式）：每次修改自动落盘时把整工程
+- **撤销 / 重做**（`Ctrl+Z` / `Ctrl+Y`）：快照式——每次修改自动落盘时把整工程
   快照压进撤销栈（最多 25 步、总 10 MB），撤销/重做即用快照重建工作库并重写文件；
   树选中与表格焦点随快照恢复。界面操作与 AI/MCP 写操作走同一条修改通道，都可撤销。
+- **汇总与导出**：汇总面板两个页签（费用汇总表 = 量×单价=合价，综合单价汇总表 =
+  定额/清单双口径，支持复制 / 导出 / 展开收起）；`工具栏 → 导出 Excel`（`Ctrl+E`）
+  把定额工程量表与清单工程量表按单位工程逐 sheet 写出，可勾选合并多单位工程；
+  单价修改可全项目联动（`set_price_propagate`）。
+- **日志邮件上报**：退出时把本次会话日志压缩发送到监督邮箱（1.0 SendLog 的移植，
+  可配置收件人与「免发邮件主机」名单），配合 minidump 崩溃黑匣子（`core/native_crash.py`）。
 
 新版工程文件扩展名沿用 **`.stn`**：开头是 1.0 风格的 XML 头（老软件误打开时能识别出
 “高版本文件”并提醒，而不是崩溃），其后是 CDATA 包裹的 JSON 数据体（正式数据，
@@ -39,12 +47,12 @@
 | M2 数据层 | `.stn`（1.0 兼容头 + JSON）、自动保存、锁、备份、新建向导、项目树、录入表格（算式求值） | ✅ |
 | M3 原则与图集 | 图集 xlsx 加载查询、构件库、6 个原则编辑器（围护/地基/做法/构件公式/工作面宽度/降水）。多围护/多地基原则引用（按比例）在 2.0.0 后期取消，旧工程迁移时按比例拆条 | ✅ |
 | M4 计算引擎 | 沟槽土方/回填、管道基础、降水、围护与特殊地基公式、表达式记录器、对拍测试 | ✅ |
-| M5 导出与汇总 | 汇总面板（量×单价=合价、单价可编辑、批量载价）、定额/清单双表 Excel 导出（含表达式列） | ⏳ 曾随旧版界面实现，未接入现行界面，已移除待重做 |
+| M5 导出与汇总 | 汇总面板（费用汇总 + 综合单价汇总，量×单价=合价、单价可编辑、批量载价、单价全项目联动）、定额/清单双表 Excel 导出（含表达式列） | ✅ |
 | M6 旧工程迁移 | 旧 `.stn` XML 解析、原则重建、容错报告，全部样例工程批量导入测试 | ✅ |
 | M7 AI 对话 | AI 设置（keyring 存 key）、SSE 流式对话、思考过程折叠 | ✅ |
-| M8 AI 工具 | 构件条目增删改查 4 个工具 + 确认弹窗 + 自动刷新 | ✅ |
+| M8 AI 工具 | 构件条目增删改查 8 个工具 + 合槽编组 5 个工具 + 确认弹窗 + 自动刷新 | ✅ |
 | M9 发布 | 全量回归、PyInstaller 打 Windows 包 | ✅ |
-| M10 MCP 服务 | 全部功能 MCP 化（69 工具）：GUI 内嵌 Streamable HTTP + 独立 CLI（stdio / 桥 / headless 只读） | ✅ |
+| M10 MCP 服务 | 全部功能 MCP 化（75 工具）：GUI 内嵌 Streamable HTTP + 独立 CLI（stdio / 桥 / headless 只读） | ✅ |
 
 ## 技术栈
 
@@ -66,18 +74,23 @@
 ```
 src/app/
 ├── main.py            入口：QApplication、主题、中文翻译、主窗体、启动参数
-├── core/              版本、路径、配置、事件总线、算式求值
+├── core/              版本、路径、配置、事件总线、算式求值、主线程执行器
 │   ├── models/        临时工作库表结构（base.py 管连接与 meta，models.py 管表）
-│   └── calc/          计算引擎：groove / foundation / precipitation / engine / tracer
-├── services/          工程文件读写、图集与构件库、旧档迁移
-│   └── ai/            ai_provider（SSE 流式）、ai_keychain（keyring）
-├── viewmodels/        MVVM 视图模型
-├── views/             主窗体（含无边框标题栏）、三栏面板、对话框、新建/导入向导
+│   ├── calc/          计算引擎：groove / foundation / precipitation / engine / tracer
+│   ├── pipe_dimensions.py / pipe_category.py   管道三直径换算与管材类别
+│   ├── log_mailer.py  退出时日志邮件上报（含免发邮件名单）
+│   └── native_crash.py / window_diag.py        minidump 崩溃黑匣子 / 窗口诊断
+├── services/          工程文件读写（stn_format/stn_codec/project_io）、undo（撤销快照）、
+│                      图集匹配与直取、构件剪贴板、汇总与导出、旧档迁移
+│   └── ai/            ai_provider（SSE 流式）、ai_keychain（keyring）、file_extract
+├── viewmodels/        MVVM 视图模型（unit_vm / project_vm / unit_vm 原则与编组操作）
+├── views/             主窗体（平台原生/自绘标题栏）、三栏面板（树/工作台/明细/汇总/AI）、
+│                      对话框、新建/导入向导、widgets（无边框窗体、平台按钮行、分段控件等）
 ├── agent/             AI 工具调用（tool_registry / agent_loop / confirm_policy / tools）
 ├── mcp_server/        MCP 适配层 / Server / 鉴权 / GUI 生命周期 / CLI（section2-mcp）
 └── resources/         QSS 主题、图集 xlsx、构件库、字体/图标/logo
-tests/                 单元测试（工程文件、算式、计算对拍、旧档迁移）
-docs/                  架构说明
+tests/                 单元测试（工程文件、算式、计算对拍、旧档迁移、界面行为）
+docs/                  架构与设计说明
 ```
 
 ## 运行方式
@@ -103,16 +116,19 @@ py -3.12 -m venv .venv
 # 产物：dist\Section2\Section2.exe
 ```
 
-界面速查（复刻原版 section 1.2.2 的布局与交互）：左栏上半是项目树
+界面速查（布局与交互沿用原版 section 1.2.2）：左栏上半是项目树
 （工程 → 标段 → 单位工程），下半是构件库（类别下拉 + 模板树，双击元素插入主表格）；
 中部工作区上方是原则横条——「沟槽围护 / 地基处理」单选切换、原则名标签
 （双击打开围护/地基原则编辑窗体，右键可编辑/导入/导出/删除原则，「+」直接新建）、
-下方是单位工程工作台（定额工程量 / 清单工程量页签 + 断面图，左下「管材 / 构件参数 /
-工程量」参数面板）；右栏 AI 助手（`Ctrl+L` 折叠）。
+下方是单位工程工作台（定额工程量 / 清单工程量分段切换 + 断面图，左下「管材 / 构件参数 /
+工程量」参数面板）与汇总页签（费用汇总 / 综合单价汇总）；右栏 AI 助手（`Ctrl+L` 折叠）。
+工具栏与文件菜单：导出 Excel `Ctrl+E`。
 编辑菜单：撤销 `Ctrl+Z` / 重做 `Ctrl+Y`。
 `Ctrl+Shift+T` 切换亮/暗主题。
+对话框里的标准按钮（确定/取消/保存/关闭）按平台原生规范排布：
+Windows 确定在左、取消在右；macOS 取消在左、确定在最右（见 `docs/button_standards.md`）。
 
-## 附属构筑物（对齐 section-master）
+## 附属构筑物（旧版已有的计数构件）
 
 （2.0 开发中期取消了旧版的“多围护原则 / 多地基原则”按比例引用功能：一个构件只能
 引用一条围护、一条地基原则；旧工程里的多原则条目在迁移时按比例自动拆成多条独立
@@ -121,7 +137,7 @@ py -3.12 -m venv .venv
   单位“个”。工程量直接来自构件参数表（键本身即“构筑物|垫层|m3”这类定额键，
   值可写算式），并自动按 `井筒方量 = 个数 × max(埋深−井高, 0.4) × 每米方量` 追加
   “构筑物|井筒|m3”；参数行可增删改（“-名称 / -单位”两个键锁定）；
-- **构件库**：已随 section-master 更新到 1.3.2.7 版，新增“附属构筑物”分类
+- **构件库**：版本对齐旧版程序配套的 1.3.2.7 版图集库，新增“附属构筑物”分类
   （24 座检查井 + 单篦/双篦雨水口 + 排放口 + 自定义构筑物，共 27 个模板）；
   （2.0 未发布、无旧文件兼容负担；JSON 数据体结构版本见 `core/version.py` 的 `STN_FILE_VERSION`。）
 
@@ -159,9 +175,11 @@ py -3.12 -m venv .venv
 
 - `AI → AI 设置…`：配置 OpenAI 兼容端点（名称 / base_url / 默认模型 / 温度），
   API key 只写入系统钥匙串（条目 `section2/<名称>`），配置文件里永远没有 key；
-- 一期工具：`list_elements` / `add_element` / `update_element` / `delete_element`，
-  只作用于项目树里当前选中的单位工程；新增、修改、删除都会先弹确认窗，
-  执行后工程量表自动刷新；
+- 构件域工具：`list_elements` / `get_element_detail` / `add_element` / `update_element` /
+  `delete_element` / `move_element` / `duplicate_element` / `insert_element_from_template`，
+  以及合槽编组 5 个工具（`list_trench_groups` / `group_elements` / `update_group` /
+  `dissolve_group` / `group_membership`），只作用于项目树里当前选中的单位工程；
+  新增、修改、删除都会先弹确认窗，执行后工程量表自动刷新；
 - **上传文件**（输入框左下角 📎）：支持 Excel（.xlsx/.xlsm/.xltx）、Word（.docx）、
   CSV / 文本 / JSON / XML / Markdown / `.stn`（PDF 需可选依赖 pypdf）。
   文件在本地提取为文本后挂到输入框上方的附件条（可单个移除）。带附件发送走
@@ -171,7 +189,7 @@ py -3.12 -m venv .venv
 
 ## MCP 服务（M10）
 
-全部功能已注册为 69 个 MCP 工具，外部 AI 客户端（Claude Desktop / Codex / Cursor /
+全部功能已注册为 75 个 MCP 工具，外部 AI 客户端（Claude Desktop / Codex / Cursor /
 Cline / VS Code / WorkBuddy…）可直接操作本软件：
 
 - **主入口（GUI 内嵌）**：`AI → MCP 服务…` 启用，默认 `http://127.0.0.1:8765/mcp`，
@@ -200,14 +218,18 @@ PySide6 的 `Qt6Core.dll` 依赖系统 `icuuc.dll`；如果 PATH 里有 Anaconda
 
 ## 开发进度
 
-里程碑 M1~M4、M6~M9 已完成；M5 的汇总面板与 Excel 导出曾随旧版界面实现，
-未接入现行界面，已移除（git 历史可找回），待重做。
+里程碑 M1~M10 已完成。变更明细见 `CHANGELOG.md`，发布台账见 `RELEASES.md`。
 
 对拍基准见 `tests/baselines/`：拿到旧版软件对同一算例的输出后，把数值填进
 `tests/baselines/对拍工程.json` 即可进行新旧数值对拍（误差 < 0.5%）。
 
-## 参考
+## 文档索引
 
-- 初代源码（只读）：`section/section-master/section/`
-- 技术栈与界面参照（只读）：`../Quotor/`
 - 架构说明：`docs/architecture.md`
+- MCP 使用：`docs/mcp.md`；MCP 二期方案与实施记录：`docs/mcp_development_plan.md`
+- 平台按钮规范：`docs/button_standards.md`
+- 无边框窗体自绘圆角/阴影：`docs/window_chrome.md`
+- 左右分设围护与合槽编组设计：`docs/lr_enclosure_and_trench_group_design.md`
+- 管道图集直径数据梳理（DN/oD/iD 改造底稿）：`docs/管道图集直径数据梳理.md`
+- PySide6 ICU DLL 排查案例：`docs/pyside6_icu_dll_load_failure.md`
+- 初代源码（只读取证）：`section/section-master/section/`

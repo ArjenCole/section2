@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from app.core.config import update_config
 from app.core.version import PROJECT_FILE_FILTER, PROJECT_SUFFIX
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
+from app.views.widgets.platform_buttons import CLOSE_TEXT, DialogButtonSpec, add_dialog_buttons
 from app.core.event_bus import bus
 from app.services import stn_migration
 from app.views.dialogs.new_project_wizard import suggested_dir
@@ -57,7 +58,6 @@ class LegacyImportDialog(FramelessDialog):
         self._btn_target.setEnabled(False)
         self._btn_target.clicked.connect(self._pick_target)
         self._btn_run = QPushButton("3. 开始迁移")
-        self._btn_run.setProperty("primary", "true")
         self._btn_run.setEnabled(False)
         self._btn_run.clicked.connect(self._run)
         row.addWidget(self._btn_pick)
@@ -70,15 +70,18 @@ class LegacyImportDialog(FramelessDialog):
         self._summary.setPlaceholderText("选择旧工程后，这里显示解析摘要；迁移完成后显示报告。")
         layout.addWidget(self._summary, 1)
 
+        # 底部：左侧辅助按钮「复制报告」+ 右对齐标准按钮「关闭」
+        # （顺序、默认按钮按平台规范，见 widgets/platform_buttons.py）
         bottom = QHBoxLayout()
         self._btn_copy = QPushButton("复制报告")
         self._btn_copy.setEnabled(False)
         self._btn_copy.clicked.connect(self._copy_report)
+        bottom.addWidget(self._btn_copy)
         self._btn_close = QPushButton("关闭")
         self._btn_close.clicked.connect(self.close)
-        bottom.addStretch(1)
-        bottom.addWidget(self._btn_copy)
-        bottom.addWidget(self._btn_close)
+        add_dialog_buttons(
+            bottom, [DialogButtonSpec(CLOSE_TEXT, "reject", button=self._btn_close)]
+        )
         layout.addLayout(bottom)
 
     # ------------------------------------------------------------------ 步骤

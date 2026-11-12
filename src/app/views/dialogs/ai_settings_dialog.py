@@ -43,6 +43,12 @@ from app.services.ai.ai_provider import (
     fetch_models,
 )
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
+from app.views.widgets.platform_buttons import (
+    CANCEL_TEXT,
+    OK_TEXT,
+    DialogButtonSpec,
+    add_dialog_buttons,
+)
 
 # Provider 预设模板: display_name / base_url / default_model（Quotor 同款）
 PROVIDER_PRESETS: list[dict[str, str]] = [
@@ -239,11 +245,9 @@ class AiSettingsDialog(FramelessDialog):
 
         list_btn_row = QHBoxLayout()
         self._add_btn = QPushButton("新增...")
-        self._add_btn.setProperty("secondary", "true")
         self._add_btn.clicked.connect(self._on_add)
         list_btn_row.addWidget(self._add_btn)
         self._del_btn = QPushButton("删除")
-        self._del_btn.setProperty("secondary", "true")
         self._del_btn.clicked.connect(self._on_delete)
         list_btn_row.addWidget(self._del_btn)
         left.addLayout(list_btn_row)
@@ -313,7 +317,7 @@ class AiSettingsDialog(FramelessDialog):
 
         layout.addLayout(main_layout, stretch=1)
 
-        # 全局行为: AI 写操作人工确认开关（Quotor 同款，即改即存）
+        # 全局行为: AI 写操作人工确认开关（即改即存）
         self._require_confirm_check = QCheckBox(
             "AI 助手执行操作前需人工确认（取消后内置 AI 助手执行写操作不再弹确认窗）"
         )
@@ -321,16 +325,16 @@ class AiSettingsDialog(FramelessDialog):
         self._require_confirm_check.toggled.connect(self._on_confirm_toggled)
         layout.addWidget(self._require_confirm_check)
 
-        # 底部按钮
+        # 底部标准按钮行（确定/取消）：顺序、默认按钮、对齐按平台规范，
+        # 见 widgets/platform_buttons.py
         btn_row = QHBoxLayout()
-        btn_row.addStretch(1)
-        self._ok_btn = QPushButton("确定")
-        self._ok_btn.setProperty("primary", "true")
-        self._ok_btn.clicked.connect(self._on_ok)
-        btn_row.addWidget(self._ok_btn)
-        self._cancel_btn = QPushButton("取消")
-        self._cancel_btn.clicked.connect(self.reject)
-        btn_row.addWidget(self._cancel_btn)
+        add_dialog_buttons(
+            btn_row,
+            [
+                DialogButtonSpec(CANCEL_TEXT, "reject", on_click=self.reject),
+                DialogButtonSpec(OK_TEXT, "accept", on_click=self._on_ok),
+            ],
+        )
         layout.addLayout(btn_row)
 
     # --- 列表填充 ---

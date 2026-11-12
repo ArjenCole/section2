@@ -74,6 +74,12 @@ from app.core.models.models import (
 from app.services import project_io
 from app.views.widgets.cell_fill_table import CellFillTable
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
+from app.views.widgets.platform_buttons import (
+    CANCEL_TEXT,
+    OK_TEXT,
+    DialogButtonSpec,
+    add_dialog_buttons,
+)
 from app.views.widgets.row_button_column import RowButtonColumn
 from app.views.widgets.table_width import fixed_width_behavior
 
@@ -186,14 +192,13 @@ def precipitation_text(precipitation: PcpPrecipitation, excavation: str | None =
 
 
 class PrincipleSubDialog(FramelessDialog):
-    """原则子编辑对话框的公共骨架：无边框（Quotor 风格）+ 确定 = 生效 / 取消 = 丢弃。
+    """原则子编辑对话框的公共骨架：无边框 + 确定 = 生效 / 取消 = 丢弃。
 
     修改只写共享会话、不落库：落库统一由原则主窗体（EnclosureEditDialog 等）
     在其「确认修改」时 commit，主窗体「取消修改」回滚会话时一并丢弃（与旧版
     FormPE 编辑副本的语义一致）。
 
-    ``with_buttons=False`` 时不加底部按钮行，由子类自建（如多级围护编辑窗体的
-    右侧竖排按钮，旧版 FormEcls 布局）。
+    ``with_buttons=False`` 时不加底部按钮行，由子类自建。
     """
 
     def __init__(self, title: str, parent: QWidget | None = None, *, with_buttons: bool = True) -> None:
@@ -208,12 +213,13 @@ class PrincipleSubDialog(FramelessDialog):
         outer.setSpacing(10)
         outer.addLayout(self._body)
         if with_buttons:
+            # QDialogButtonBox 自带平台自适应：Windows 确定（默认）在左、
+            # 取消在右；macOS 取消在左、确定（默认）在最右
             buttons = QDialogButtonBox(
                 QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
             )
-            buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
-            buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("primary", "true")
-            buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+            buttons.button(QDialogButtonBox.StandardButton.Ok).setText(OK_TEXT)
+            buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(CANCEL_TEXT)
             buttons.accepted.connect(self._accept)
             buttons.rejected.connect(self.reject)
             outer.addWidget(buttons)
@@ -228,7 +234,7 @@ class PrincipleSubDialog(FramelessDialog):
 
 
 class EnclosureWorkDialog(PrincipleSubDialog):
-    """多级围护编辑窗体（旧版 FormEcls）：围护构件分级表 + 右侧竖排确认/取消。
+    """多级围护编辑窗体（旧版 FormEcls）：围护构件分级表 + 底部确定/取消。
 
     布局与交互照抄 FormEcls：固定勾选 ↔ 级高 1 / -1（均分级高只读显示
     “均分高度”）；围护类型下拉按库模板重建级构件；双击“围护形式描述”打开
@@ -263,27 +269,27 @@ class EnclosureWorkDialog(PrincipleSubDialog):
         )
         row.addWidget(self._level_table, 1)
 
-        # 右侧竖排（原版 BTNadd / BTNyes / BTNcancel）
+        # 右侧竖排「+」添加分级（原版 BTNadd）；确认/取消改走底部标准按钮行
+        # （两平台标准按钮都应为单行文字，见 widgets/platform_buttons.py）
         side = QVBoxLayout()
         btn_add = QPushButton("+")
         btn_add.setProperty("role", "icon-btn")
         btn_add.setFixedSize(28, 34)
         btn_add.setToolTip("添加分级（Insert）")
         btn_add.clicked.connect(self._add_level)
-        btn_yes = QPushButton("确认\n修改")
-        btn_yes.setProperty("primary", "true")
-        btn_yes.setFixedSize(76, 52)
-        btn_yes.clicked.connect(self._accept)
-        btn_cancel = QPushButton("取消\n修改")
-        btn_cancel.setFixedSize(76, 52)
-        btn_cancel.clicked.connect(self.reject)
         side.addWidget(btn_add)
-        side.addSpacing(6)
-        side.addWidget(btn_yes)
-        side.addWidget(btn_cancel)
         side.addStretch(1)
         row.addLayout(side)
         self._body.addLayout(row, 1)
+        button_row = QHBoxLayout()
+        add_dialog_buttons(
+            button_row,
+            [
+                DialogButtonSpec(CANCEL_TEXT, "reject", on_click=self.reject),
+                DialogButtonSpec(OK_TEXT, "accept", on_click=self._accept),
+            ],
+        )
+        self._body.addLayout(button_row)
         self._ei_names = project_io.component_library().names("Ei")
 
     def _fill(self) -> None:
@@ -998,18 +1004,15 @@ class WidthEditDialog(FramelessDialog):
         btn_reset = QPushButton("恢复图集默认")
         btn_reset.clicked.connect(self._reset_current)
         button_row.addWidget(btn_reset)
-        button_row.addStretch(1)
-        # Apple HIG：取消在左，确认（默认按钮）在右
-        btn_cancel = QPushButton("取消")
-        btn_cancel.setFixedWidth(76)
-        btn_cancel.clicked.connect(self.reject)
-        btn_yes = QPushButton("确认")
-        btn_yes.setFixedWidth(76)
-        btn_yes.setProperty("primary", "true")
-        btn_yes.setDefault(True)
-        btn_yes.clicked.connect(self._confirm)
-        button_row.addWidget(btn_cancel)
-        button_row.addWidget(btn_yes)
+        # 标准按钮行（确定/取消）：顺序、默认按钮、对齐按平台规范，
+        # 见 widgets/platform_buttons.py
+        add_dialog_buttons(
+            button_row,
+            [
+                DialogButtonSpec(CANCEL_TEXT, "reject", on_click=self.reject),
+                DialogButtonSpec(OK_TEXT, "accept", on_click=self._confirm),
+            ],
+        )
         root.addLayout(button_row)
 
     # ------------------------------------------------------------------ 数据
@@ -1221,18 +1224,15 @@ class PrecipitationEditDialog(FramelessDialog):
         root.addWidget(self._describe)
 
         button_row = QHBoxLayout()
-        button_row.addStretch(1)
-        # Apple HIG：取消在左，确认（默认按钮）在右
-        btn_cancel = QPushButton("取消")
-        btn_cancel.setFixedWidth(76)
-        btn_cancel.clicked.connect(self.reject)
-        btn_yes = QPushButton("确认")
-        btn_yes.setFixedWidth(76)
-        btn_yes.setProperty("primary", "true")
-        btn_yes.setDefault(True)
-        btn_yes.clicked.connect(self._confirm)
-        button_row.addWidget(btn_cancel)
-        button_row.addWidget(btn_yes)
+        # 标准按钮行（确定/取消）：顺序、默认按钮、对齐按平台规范，
+        # 见 widgets/platform_buttons.py
+        add_dialog_buttons(
+            button_row,
+            [
+                DialogButtonSpec(CANCEL_TEXT, "reject", on_click=self.reject),
+                DialogButtonSpec(OK_TEXT, "accept", on_click=self._confirm),
+            ],
+        )
         root.addLayout(button_row)
 
     def _build_excavation_box(self) -> QGroupBox:

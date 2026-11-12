@@ -32,6 +32,11 @@ from app.core.event_bus import bus
 from app.services import project_io, summary
 from app.views.dialogs.new_project_wizard import suggested_dir
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
+from app.views.widgets.platform_buttons import (
+    CLOSE_TEXT,
+    DialogButtonSpec,
+    add_dialog_buttons,
+)
 
 _CHECKABLE_FLAGS = (
     Qt.ItemFlag.ItemIsEnabled
@@ -94,15 +99,22 @@ class ExportExcelDialog(FramelessDialog):
         self._merge_check = QCheckBox("合并所选单位工程（工程量全部加总后输出）")
         layout.addWidget(self._merge_check)
 
+        # 底部标准按钮行（导出/关闭）：顺序、默认按钮、对齐按平台规范，
+        # 见 widgets/platform_buttons.py
         bottom = QHBoxLayout()
         self._btn_export = QPushButton("导出…")
-        self._btn_export.setProperty("primary", "true")
         self._btn_export.clicked.connect(self._export)
         self._btn_close = QPushButton("关闭")
         self._btn_close.clicked.connect(self.close)
-        bottom.addStretch(1)
-        bottom.addWidget(self._btn_export)
-        bottom.addWidget(self._btn_close)
+        add_dialog_buttons(
+            bottom,
+            [
+                DialogButtonSpec("导出…", "accept", button=self._btn_export),
+                DialogButtonSpec(
+                    CLOSE_TEXT, "reject", on_click=self.close, button=self._btn_close
+                ),
+            ],
+        )
         layout.addLayout(bottom)
 
     # ------------------------------------------------------------------ 数据

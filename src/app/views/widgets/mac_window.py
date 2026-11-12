@@ -64,6 +64,42 @@ def _sync_window_appearance(ns_window) -> None:
         pass
 
 
+def apply_mac_app_appearance(app) -> None:
+    """把整个应用的 NSAppearance 同步成当前主题（亮/暗）。
+
+    原生按钮等控件由 QMacStyle 按 NSAppearance 绘制，应用主题切换
+    （Ctrl+Shift+T）时要一起切，否则原生控件与 QSS 面板一亮一暗不搭。
+    非 macOS 或 offscreen 等非 cocoa 后端直接跳过。
+    """
+    if not is_mac():
+        return
+    try:
+        from PySide6.QtGui import QGuiApplication
+
+        if QGuiApplication.platformName() != "cocoa":
+            return
+        from AppKit import (
+            NSApplication,
+            NSAppearance,
+            NSAppearanceNameAqua,
+            NSAppearanceNameDarkAqua,
+        )
+
+        dark = False
+        try:
+            from app.resources.qss.theme import ThemeManager
+
+            dark = ThemeManager.instance().is_dark()
+        except Exception:  # noqa: BLE001 - 主题未就绪时按亮色处理
+            pass
+        name = NSAppearanceNameDarkAqua if dark else NSAppearanceNameAqua
+        NSApplication.sharedApplication().setAppearance_(
+            NSAppearance.appearanceNamed_(name)
+        )
+    except Exception:  # noqa: BLE001 - 外观同步失败不影响功能
+        pass
+
+
 class _MacAppGuard(QObject):
     """mac 应用级兜底修复，两类问题：
 

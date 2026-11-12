@@ -143,8 +143,9 @@ def main(argv: list[str] | None = None) -> int:
     app.setOrganizationName(APP_ORG_NAME)
     app.setOrganizationDomain(APP_ORG_DOMAIN)
     # 不设 Fusion：Fusion 对非可编辑组合框返回 SH_ComboBox_Popup=true，弹出层被按
-    # 菜单渲染（位置带偏移、容器带框和阴影）；系统原生样式（windowsvista）下弹出层
-    # 紧贴输入框、无框无影，与 Quotor / brackets2 的表现一致。外观差异由 QSS 统一。
+    # 菜单渲染（位置带偏移、容器带框和阴影）；系统原生样式（Windows 6.7+ 默认
+    # windows11）下弹出层紧贴输入框、无框无影。标准按钮的外观也交给原生样式
+    # （配色由 QPalette 同步，见 theme.build_palette）。
     if sys.platform == "darwin":
         # mac 原生样式同样把组合框弹层按菜单渲染（层叠在按钮上、宽度收缩）、
         # 页签条整体居中：用薄代理样式只纠正这两点，其余保持原生
@@ -155,6 +156,16 @@ def main(argv: list[str] | None = None) -> int:
     _load_fonts()
     install_translations(app)
     apply_initial_theme(app)
+    if sys.platform == "darwin":
+        # mac 上原生控件（按钮等）按 NSAppearance 绘制：应用主题（亮/暗）
+        # 切换时同步整个应用的 NSAppearance，否则与 QSS 面板一亮一暗不搭
+        from app.resources.qss.theme import ThemeManager
+        from app.views.widgets.mac_window import apply_mac_app_appearance
+
+        apply_mac_app_appearance(app)
+        ThemeManager.instance().theme_changed.connect(
+            lambda _name: apply_mac_app_appearance(app)
+        )
     from app.views.widgets.rounded_window import install_menu_rounding
 
     install_menu_rounding(app)

@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
     QTableWidgetItem,
     QWidget,
 )
@@ -43,6 +42,12 @@ from app.views.dialogs.principle_dialogs import (
 )
 from app.views.widgets.cell_fill_table import CellFillTable
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
+from app.views.widgets.platform_buttons import (
+    CANCEL_TEXT,
+    OK_TEXT,
+    DialogButtonSpec,
+    add_dialog_buttons,
+)
 from app.views.widgets.row_button_column import RowButtonColumn
 from app.views.widgets.table_width import fixed_width_behavior
 
@@ -96,20 +101,16 @@ class EnclosureEditDialog(FramelessDialog):
         self._work_buttons.attach()
         root.addLayout(table_row, 1)
 
-        # 底部「取消 / 确认」（与地基处理原则窗体同款常规按钮；Apple HIG：
-        # 取消在左，确认（默认按钮）在右）
+        # 底部标准按钮行（确定/取消）：顺序、默认按钮、对齐按平台规范，
+        # 见 widgets/platform_buttons.py
         button_row = QHBoxLayout()
-        button_row.addStretch(1)
-        btn_cancel = QPushButton("取消")
-        btn_cancel.setFixedWidth(76)
-        btn_cancel.clicked.connect(self.reject)
-        btn_yes = QPushButton("确认")
-        btn_yes.setFixedWidth(76)
-        btn_yes.setProperty("primary", "true")
-        btn_yes.setDefault(True)
-        btn_yes.clicked.connect(self._confirm)
-        button_row.addWidget(btn_cancel)
-        button_row.addWidget(btn_yes)
+        add_dialog_buttons(
+            button_row,
+            [
+                DialogButtonSpec(CANCEL_TEXT, "reject", on_click=self.reject),
+                DialogButtonSpec(OK_TEXT, "accept", on_click=self._confirm),
+            ],
+        )
         root.addLayout(button_row)
 
     # ------------------------------------------------------------------ 数据
@@ -396,12 +397,6 @@ class EnclosureEditDialog(FramelessDialog):
             bus().tree_structure_changed.emit()
         bus().principle_changed.emit()
         self.accept()
-
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
-        # 原版 FormPE 注释掉了 Esc 取消，此处保持一致
-        if event.key() == Qt.Key.Key_Escape:
-            return
-        super().keyPressEvent(event)
 
 
 class _WorkTable(CellFillTable):

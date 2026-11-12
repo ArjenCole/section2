@@ -25,6 +25,12 @@ from app.core.config import get_config, update_config
 from app.mcp_server.auth import generate_token
 from app.mcp_server.controller import McpServerController
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
+from app.views.widgets.platform_buttons import (
+    CLOSE_TEXT,
+    SAVE_TEXT,
+    DialogButtonSpec,
+    add_dialog_buttons,
+)
 
 
 def _snippets(url: str, token: str) -> str:
@@ -88,11 +94,9 @@ class McpSettingsDialog(FramelessDialog):
         self._token.setEchoMode(QLineEdit.EchoMode.Password)
         token_row.addWidget(self._token, 1)
         btn_generate = QPushButton("生成")
-        btn_generate.setProperty("secondary", "true")
         btn_generate.clicked.connect(self._generate)
         token_row.addWidget(btn_generate)
         btn_show = QPushButton("显示")
-        btn_show.setProperty("secondary", "true")
         btn_show.setCheckable(True)
         btn_show.toggled.connect(
             lambda checked: self._token.setEchoMode(
@@ -116,7 +120,6 @@ class McpSettingsDialog(FramelessDialog):
         self._status.setWordWrap(True)
         status_row.addWidget(self._status, 1)
         self._btn_start = QPushButton("启动服务")
-        self._btn_start.setProperty("primary", "true")
         self._btn_start.clicked.connect(self._start)
         status_row.addWidget(self._btn_start)
         self._btn_stop = QPushButton("停止服务")
@@ -134,21 +137,20 @@ class McpSettingsDialog(FramelessDialog):
         copy_row = QHBoxLayout()
         copy_row.addStretch(1)
         btn_copy = QPushButton("复制配置")
-        btn_copy.setProperty("secondary", "true")
         btn_copy.clicked.connect(self._copy_snippet)
         copy_row.addWidget(btn_copy)
         layout.addLayout(copy_row)
 
-        # 底部
+        # 底部标准按钮行（保存/关闭）：顺序、默认按钮、对齐按平台规范，
+        # 见 widgets/platform_buttons.py
         buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        btn_ok = QPushButton("保存")
-        btn_ok.setProperty("primary", "true")
-        btn_ok.clicked.connect(self._save)
-        buttons.addWidget(btn_ok)
-        btn_cancel = QPushButton("关闭")
-        btn_cancel.clicked.connect(self.reject)
-        buttons.addWidget(btn_cancel)
+        add_dialog_buttons(
+            buttons,
+            [
+                DialogButtonSpec(CLOSE_TEXT, "reject", on_click=self.reject),
+                DialogButtonSpec(SAVE_TEXT, "accept", on_click=self._save),
+            ],
+        )
         layout.addLayout(buttons)
 
     # ------------------------------------------------------------------ 数据

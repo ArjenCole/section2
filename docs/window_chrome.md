@@ -1,7 +1,7 @@
 # 无边框窗体自绘圆角与外阴影实现指南（PySide6 / Windows）
 
 本文记录 Section 2.0 在 Windows 上为无边框窗体实现圆角、描边、外阴影、圆角
-弹出层（菜单与下拉列表）的完整方案，供其他项目参照开发。所有代码可直接复制；本项目落地位置见文末索引。
+弹出层（菜单与下拉列表）的完整方案，可移植到其他 PySide6 项目。所有代码可直接复制；本项目落地位置见文末索引。
 
 - **效果**：窗体（主窗体 + 一切弹窗）四角 8px 抗锯齿圆角、1px 描边、向外渐隐
   36px（下缘 48px）的柔和投影；下拉/右键菜单四角真圆角；外观在 Win10 / Win11
@@ -9,7 +9,7 @@
   macOS 是唯一例外：走原生标题栏 + 系统圆角（NSWindow 自带，无需本文技术）。
 - **平台**：Windows 10/11（Linux X11 理论可用，未充分测试）；**macOS 不要用**
   本文的自绘方案，走原生标题栏 + 系统圆角。
-- **依赖**：PySide6 ≥ 6.6（注意避开 6.12.0，见 §7）。
+- **依赖**：PySide6 ≥ 6.6（实装 6.11.2；注意避开 6.12.0，见 §6 速查表）。
 
 ## 1. 方案总览
 
@@ -425,12 +425,12 @@ QSS 里 QMenu 本身就有 `border-radius` + `border`（本项目 8px + 1px 实�
 QComboBox 的弹出列表（`QComboBoxPrivateContainer` 容器 + 内部 `QListView`）
 **不是 QMenu**，§5.1 的过滤器覆盖不到，问题表现还随上下文不同：
 
-* 主窗体里：容器按应用级 QSS 的 QWidget 背景规则画成不透明底色，圆角卡片
+* 主窗体里：容器被不透明底色整块画出（原生样式或应用级背景规则），圆角卡片
   画在里面，四角露出方角（右下最明显）；
-* QDialog 里：`QDialog QWidget { background: transparent }` 命中弹出容器，
+* QDialog 里：容器若带透明背景（如对话框自身的透明背景规则命中弹出容器），
   不透明窗口上画透明背景，圆角外直接露出**未初始化的黑底**。
 
-修法与菜单同款（过滤器在 Polish 时一并处理 QComboBox）：
+修法与 §5.1 菜单相同（过滤器在 Polish 时一并处理 QComboBox）：
 
 ```python
 def apply_combo_popup_rounding(combo: QComboBox) -> None:
@@ -459,7 +459,7 @@ AI 设置等），无需逐处接入。
 | 关闭按钮悬停背景方角 | 红色悬停块探出窗体圆角 | 贴角的按钮规则同样要 border + 圆角（§3.2），悬停/按下背景才会被裁 |
 | QSS 背景不裁圆角 | 写了 border-radius 仍是方角 | 规则必须带 border（§3.2），1px transparent 即可 |
 | QMainWindow 忽略布局边距 | `layout().setContentsMargins()` 不生效 | 它的内部布局自行排布 menuWidget/central/statusbar；别指望用它缩进内容 |
-| PySide6 6.12.0 QSpinBox 回归 | QSS 带 border/padding 时 spinbox 内嵌编辑区被压成 1px，数字不可见（6.8~6.11 正常） | 依赖钉 `PySide6>=6.6,<6.7`（本项目取 6.6 系列），等 Qt 修复再放开 |
+| PySide6 6.12.0 QSpinBox 回归 | QSS 带 border/padding 时 spinbox 内嵌编辑区被压成 1px，数字不可见（6.8~6.11 正常） | 依赖不设上界（`PySide6>=6.6`，实装 6.11.2）；升级到 6.12+ 前先回归本项 |
 | 顶层不透明窗口的像素测量陷阱 | grab()/截屏判读圆角被窗口表面填充误导 | 测量必须在**透明窗体 + 子控件**的真实结构上做，或直接量屏幕合成结果（见 §7） |
 | 点击被模态禁用的主窗体，弹窗影子丢失 | 主窗体 z 序被抬到弹窗之下、影子之上，无主影子被盖住；弹窗激活态不变，收不到任何可触发 restack 的事件（多层弹窗时只有激活中那层能靠 ActivationChange 自愈，见 §4.5） | 影子窗口继承宿主的 `transientParent`（QWindow.setTransientParent，首次 sync 时先 `winId()` 建原生句柄再设），owned-above-owner 规则保证主窗体永远压不到影子 |
 | 主窗体最大化后弹窗圆角变直角 | 窗体级样式表沿 QObject 父子树作用于全部后代，压平片段的裸后代选择器命中子弹窗的标题栏/body（见 §3.5） | 压平片段只用 `QMainWindow >` 直接子选择器限定主窗体自己的贴角控件，删掉 `QDialog #FramelessDialogBody` / `QWizard` 等泄漏源 |
@@ -508,4 +508,4 @@ AI 设置等），无需逐处接入。
 | 弹出层修整安装 | `src/app/main.py`（`install_menu_rounding(app)`） |
 | 边缘缩放（NCHITTEST） | `src/app/views/main_window.py`（`nativeEvent`） |
 | 回归测试 | `tests/test_rounded_window.py` |
-| 依赖钉版（QSpinBox 回归） | `pyproject.toml`（`PySide6>=6.6,<6.7`） |
+| 依赖（QSpinBox 回归规避） | `pyproject.toml`（`PySide6>=6.6`，requirements 实装 6.11.2） |

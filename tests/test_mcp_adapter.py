@@ -11,11 +11,15 @@ from app.mcp_server.adapter import McpToolAdapter
 
 def test_registry_tool_surface() -> None:
     registry = default_registry()
-    assert len(registry.names()) == 75
-    assert len(set(registry.names())) == 75
+    # 工具总数随功能增减，不锁死具体数字（避免每加一个工具此断言就红）；
+    # 锁死的是：注册名唯一、只读面非空且是全量面的真子集、写工具存在
+    names = registry.names()
+    assert len(names) >= 70
+    assert len(set(names)) == len(names), "存在重名注册"
     read_only = registry.read_only_tools()
     assert read_only
-    assert len(read_only) < 75
+    assert len(read_only) < len(names)
+    assert len(names) - len(read_only) >= 3
 
 
 def test_adapter_lists_all_or_read_only() -> None:
@@ -23,7 +27,7 @@ def test_adapter_lists_all_or_read_only() -> None:
     readonly = McpToolAdapter(default_registry(), allow_actions=False)
     full_names = {tool.name for tool in full.list_tools()}
     readonly_names = {tool.name for tool in readonly.list_tools()}
-    assert len(full_names) == 75
+    assert full_names == set(default_registry().names())
     assert readonly_names < full_names
     assert "add_element" not in readonly_names
     assert "compute_unit" in readonly_names

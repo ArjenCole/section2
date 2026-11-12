@@ -6,6 +6,7 @@ v1→v2 结构迁移（element.source 列）、原则编辑对话框与原则横
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -262,10 +263,13 @@ def test_foundation_dialog_layout(qapp, project) -> None:
         assert picker_layout.stretch(0) == 2 and picker_layout.stretch(1) == 1
         # 描述 Label 在特殊地基框下方（不再属于其表单行）
         assert dialog._describe.parentWidget() is not picker.parentWidget()
-        # 底部按钮：取消在左，确认在右（Apple HIG）
+        # 底部标准按钮行：顺序按平台规范（platform_buttons：Windows 确定在左、
+        # macOS 取消在左），确定是默认按钮
         button_row = dialog._name.parentWidget()
-        buttons = [b for b in dialog.findChildren(QPushButton) if b.text() in ("取消", "确认")]
-        assert [b.text() for b in buttons] == ["取消", "确认"]
+        buttons = [b for b in dialog.findChildren(QPushButton) if b.text() in ("确定", "取消")]
+        expected = ["确定", "取消"] if sys.platform != "darwin" else ["取消", "确定"]
+        assert [b.text() for b in buttons] == expected
+        assert buttons[0 if sys.platform != "darwin" else 1].isDefault()
     finally:
         dialog.close()
 
@@ -298,26 +302,34 @@ def test_precipitation_dialog_columns_per_1_0(qapp, project) -> None:
         dialog.close()
 
 
-def test_dialog_bottom_buttons_cancel_left_confirm_right(qapp, project) -> None:
-    """降水/面宽编辑：底部按钮 取消 在左、确认（primary）在右，文案不带“修改”。"""
+def test_dialog_bottom_buttons_platform_standard(qapp, project) -> None:
+    """降水/面宽编辑：底部标准按钮行（确定/取消）按平台规范排布与默认。"""
+    import sys
+
     from PySide6.QtWidgets import QPushButton
 
     from app.views.dialogs.principle_dialogs import PrecipitationEditDialog, WidthEditDialog
 
     precipitation = PrecipitationEditDialog(project_io.precipitations()[0].id)
     width = WidthEditDialog(project_io.width_principles()[0].id)
+    is_mac = sys.platform == "darwin"
+    expected = ["取消", "确定"] if is_mac else ["确定", "取消"]
     try:
         for dialog in (precipitation, width):
             dialog.show()
             qapp.processEvents()
             buttons = [
                 button for button in dialog.findChildren(QPushButton)
-                if button.text() in ("取消", "确认")
+                if button.text() in ("取消", "确定")
             ]
-            assert [button.text() for button in buttons] == ["取消", "确认"]
-            confirm = buttons[1]
-            assert confirm.property("primary") in (True, "true")
-            assert confirm.x() > buttons[0].x()
+            assert [button.text() for button in buttons] == expected
+            confirm = buttons[expected.index("确定")]
+            assert confirm.isDefault()
+            # 原生按钮：不再挂自定义外观属性
+            assert confirm.property("primary") is None
+            # 右对齐：取消按钮起点在按钮行中线右侧（右侧还有确定按钮）
+            row_mid = dialog.width() / 2
+            assert buttons[0].x() > row_mid - buttons[0].width()
     finally:
         precipitation.close()
         width.close()

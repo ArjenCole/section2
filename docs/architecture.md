@@ -1,6 +1,6 @@
 # 架构说明
 
-Section 2.0 是 PySide6 单窗体桌面应用，分层与 Quotor 一致：
+Section 2.0 是 PySide6 单窗体桌面应用，分四层：
 
 ```
 views/  ──►  viewmodels/  ──►  services/  ──►  core/models/
@@ -35,7 +35,14 @@ views/  ──►  viewmodels/  ──►  services/  ──►  core/models/
 
 AI 工具（M8）走同一条 3~6，因此界面与 AI 改数据不会出现两套逻辑。
 
-## 撤销 / 重做（快照式，brackets 同款）
+**汇总与导出**走同一条只读路径：`services/summary.py` 的 `unit_summary()`
+调用 `compute_unit()` 拿整单位工程的定额行，按 量×单价=合价 组织两个口径
+（费用汇总 / 综合单价汇总），`views/panels/summary_panel.py` 只渲染不重算；
+`export_excel()` 把定额/清单工程量表按单位工程逐 sheet 写出（每表含表达式列）。
+改单价（`set_price` / `set_price_propagate`）是写操作，落库 + `unit_changed`
+广播，与表格编辑共用撤销快照。
+
+## 撤销 / 重做（快照式）
 
 `services/undo.py` 保存**整工程快照**而不是操作反演：`project_io.commit()` 是
 所有修改的唯一漏斗，落盘的同时把 `stn_codec.dump_database()` 的 JSON 数据体
@@ -43,13 +50,13 @@ AI 工具（M8）走同一条 3~6，因此界面与 AI 改数据不会出现两�
 撤销 / 重做就是用快照重建临时工作库（`project_io.restore_snapshot`，期间
 `_restoring_snapshot` 抑制重复记录），再按"提交即落盘"语义重写 `.stn` 文件。
 
-原则（与 brackets2 的 `services/undo.py` 一致）：最多 25 步且快照总字节 ≤ 10 MB
+原则：最多 25 步且快照总字节 ≤ 10 MB
 双上限淘汰最旧；内容未变的重复提交只刷新界面状态、不占步数；新变更清除重做
 分支；写入前先用当前界面状态刷新"变更前"快照（撤销回来时恢复操作时刻的
 选中/焦点）；200ms 时间窗内的连续提交合并为一步（吸收"一次操作内部多次
 commit"的中间态，如改一格候选参数触发重匹配）。
 
-**界面状态的两段式捕获**（与 brackets2 的关键差异）：commit 发生在界面刷新
+**界面状态的两段式捕获**（关键设计差异）：commit 发生在界面刷新
 之前（`unit_changed` → QTimer 延后重装表格），所以 record() 里捕获的选中/焦点
 是"变更前"的视图——撤销用它正好，**重做到栈顶却会指向已删除/已移位的行**。
 因此主窗体订阅 `unit_changed` / `tree_structure_changed` / `principle_changed` /
@@ -70,8 +77,8 @@ commit"的中间态，如改一格候选参数触发重匹配）。
 删除的条目位置——撤销与重做都只落在这一条上（删除方向没有该行，收敛到
 原位置的相邻行）。快照携带的视图选中只作兜底：构件清单无差异（原则 / 单价 /
 工程结构变化）或多个单位工程同时变化（原则保存触发的批量重匹配）时退回
-视图位置。之所以不直接信视图：提交会用"当前视图"刷新"变更前"快照
-（brackets2 语义），操作之间一旦浏览过别的行，视图选中就与步骤脱节，
+视图位置。之所以不直接信视图：提交会用"当前视图"刷新"变更前"快照，
+操作之间一旦浏览过别的行，视图选中就与步骤脱节，
 重做会恢复出错误的条目。新增构件（按钮 / 构件库插入 / AI 共用
 `create_element`）提交后广播 `EventBus.element_focused`，面板选中新行，
 保证插入路径的视图同样跟随每一步。
@@ -109,7 +116,7 @@ JSON 数据结构变更时：改 `services/stn_codec.py`（与涉及的模型）
 `core/version.py` 的 `STN_FILE_VERSION` +1。2.0 未发布，不做旧文件迁移：
 `file_version` 与代码不一致即拒绝打开（高版本提示升级程序，低版本出自内部预览版）。
 
-打开 1.0 旧版文件走自动转译（brackets 同款，`services/stn_migration.py` +
+打开 1.0 旧版文件走自动转译（`services/stn_migration.py` +
 `project_io.open_legacy_project`）：识别（`stn_format.looks_like_legacy_file`）→
 转译进临时工作库（工程处于“尚未保存”的临时状态）→ 原文件备份到软件数据目录
 `migration_backup` → 界面经 `project_io.last_migration_notice()` 弹提示。
@@ -207,7 +214,7 @@ JSON 数据结构变更时：改 `services/stn_codec.py`（与涉及的模型）
   外边线以外）；**不在原图线段上描边、中部也不画波浪折线**。B/H 等没有对应
   面积行的基本参数用断面分段兜底（整个槽底宽、总高、垫层高度等）；管壁厚度
   `t`、内径 `iD`、外径 `oD` 的测量切面取**管中心标高处的水平切线**，引出线从
-  切线与内外圆的交点向下引出（与工作面宽度 a 同款画法；合槽按成员取自己的
+  切线与内外圆的交点向下引出（与工作面宽度 a 的画法相同；合槽按成员取自己的
   管体椭圆，t 取管右侧内圆交点→外圆交点）；
 * **断面图交互**：滚轮以鼠标位置为中心缩放（0.25~8 倍），左键或中键按下拖动
   平移；双击中键 / 右键恢复默认视图；鼠标进入断面区变手形、拖动时变握拳、
@@ -273,11 +280,21 @@ JSON 数据结构变更时：改 `services/stn_codec.py`（与涉及的模型）
 
 这些优化不改变工程量数值、完整表达式和自动保存语义。
 
-## 主题
+## 主题与原生控件
 
-`resources/qss/theme.py` 里是 `ThemeColors` 调色板（light/dark）与由调色板生成的整份 QSS，
-`ThemeManager` 单例负责 `setStyleSheet` 并广播 `theme_changed`（自绘控件据此重取颜色）。
-QSS 用 `string.Template` 的 `$token`，不用 f-string——样式表里大括号太多，转义易错。
+`resources/qss/theme.py` 里是 `ThemeColors` 调色板（light/dark）与由调色板生成的整份 QSS 与 QPalette，
+`ThemeManager` 单例在 `apply()` 里同时 `setPalette` + `setStyleSheet`，并广播 `theme_changed`
+（自绘控件据此重取颜色）。QSS 用 `string.Template` 的 `$token`，不用 f-string——样式表里大括号太多，转义易错。
+
+**通用按钮不走 QSS**：对话框/消息框的标准按钮（确定/取消/保存/关闭…）交还原生样式渲染
+（Windows 用系统样式含默认按钮强调色、macOS 用 QMacStyle accent），顺序、默认按钮、对齐、
+宽度由 `views/widgets/platform_buttons.py` 按平台规范统一安排（详见 `docs/button_standards.md`）。
+原生控件只读 QPalette，所以主题切换时 QPalette 与 QSS 必须同步应用；mac 上另由
+`mac_window.apply_mac_app_appearance()` 同步 NSAppearance。任何 QSS 盒模型属性都会让
+QPushButton 改走样式表渲染，因此全局 `*` 规则不含 `color`/`outline`，自绘控件在各自规则里自理。
+主窗体是无边框半透明窗口：容器底色靠 `.QWidget`（精确类选择器，不命中按钮等子类）
+恢复全局不透明底，QWidget 子类容器（TreePanel/AiPanel 等）在各自 objectName 规则里
+显式写底色；对话框内部用 `QDialog .QWidget` 保持透明（body 自带 bg_dialog）。
 
 ## Windows 上的启动前置：系统 ICU 预加载
 

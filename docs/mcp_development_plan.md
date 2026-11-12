@@ -1,19 +1,18 @@
 # Section 2.0 MCP 服务器 + AI 助手二期开发方案
 
 > 版本：v1.1（2026-10-20）
-> 状态：待开发（本文档即开发任务书，交给实施方按第 10 章分阶段执行）
+> 状态：已实施完毕（实施记录见附录 D，使用文档见 docs/mcp.md）
 > 实施基线：仓库 `section2` master 分支 `085304a`，APP_VERSION 2.0.0.0
 >
-> **v1.0 → v1.1 变更**（对照参照系 Quotor 已验证路线后的修订）：
-> 1. MCP 主路线由「独立无头进程（stdio）为主」改为 **Quotor 同款「GUI 进程内嵌 Streamable
+> **v1.0 → v1.1 变更**：
+> 1. MCP 主路线由「独立无头进程（stdio）为主」改为 **「GUI 进程内嵌 Streamable
 >    HTTP MCP server」为主**，同一套工具注册表同时供内置 AI 面板与外部 MCP 客户端使用；
 >    独立 CLI（stdio / HTTP / stdio 桥 / headless）降为辅助入口；
 > 2. SDK 选型由 FastMCP 1.x 风格改为 **mcp SDK 2.x lowlevel API**（`Server(on_list_tools/
->    on_call_tool)` + `streamable_http_app()`；FastMCP 已在 mcp 2.0 中移除——Quotor 实施记录
->    明确踩过此坑）；
+>    on_call_tool)` + `streamable_http_app()`；FastMCP 已在 mcp 2.0 中移除）；
 > 3. 工具上下文由「全部显式 id」改为 **「显式 id 为主、内嵌模式缺省取 GUI 当前选中」**；
 > 4. 新增 **第 8 章 AI 助手二期开发方案**（工具注册表类化、上下文注入、双通道确认、
->    循环治理、prompt 紧凑格式等，逐项对齐 Quotor `agent/`）。
+>    循环治理、prompt 紧凑格式等）。
 
 ---
 
@@ -28,7 +27,7 @@ Section 2.0 是市政管道工程量计算软件（PySide6 单窗体桌面应用
 1. **MCP 化**：把软件的全部功能做成 MCP 服务器——让任意 MCP 客户端（Codex / Claude Desktop /
    Cursor / Cline / VS Code / WorkBuddy…）里的 AI 助手能直接、完整地操作本软件：建工程、管项目树、
    录入构件、编辑六类原则、查图集、算工程量、迁移旧工程、汇总导出；
-2. **AI 助手二期**：把内置 AI 助手从「4 个工具的演示级循环」升级为 Quotor 同款的生产级
+2. **AI 助手二期**：把内置 AI 助手从「4 个工具的演示级循环」升级为生产级
    Agent 体系（注册表类化、上下文注入、双通道确认、循环治理），并让**内置面板与 MCP 共用
    同一套工具注册表**——工具只写一遍，两个出口。
 
@@ -36,7 +35,7 @@ Section 2.0 是市政管道工程量计算软件（PySide6 单窗体桌面应用
 
 | 交付物 | 说明 |
 |---|---|
-| 统一工具注册表 | `src/app/agent/` 类化改造：`Tool`/`ToolRegistry`/`build_default_registry()`，全量 74 个工具（见第 7 章） |
+| 统一工具注册表 | `src/app/agent/` 类化改造：`Tool`/`ToolRegistry`/`build_default_registry()`，全量 75 个工具（见第 7 章） |
 | MCP 服务器（内嵌主方案） | `src/app/mcp_server/`：GUI 进程内嵌 Streamable HTTP server（127.0.0.1 + Bearer 鉴权），暴露同一注册表 |
 | 独立 CLI（辅助入口） | `section2-mcp`：stdio / http / `--connect` stdio 桥 / `--project` headless 只读，四模式 |
 | AI 助手二期 | 上下文注入、双通道确认（含结构化确认卡与 cancelled 语义）、循环治理、prompt 紧凑格式、reasoning 处理 |
@@ -52,49 +51,43 @@ Section 2.0 是市政管道工程量计算软件（PySide6 单窗体桌面应用
   界面经 EventBus 实时刷新、写确认窗自然弹出），这是内嵌主路线相对独立进程的核心收益；
 - 每个工具的返回是**结构化 JSON**（数值、原始算式、表达式、中间步骤齐全）；
 - 无 GUI 场景（脚本化、CI、远程）由 `section2-mcp --project` headless 只读模式覆盖
-  （section2 数据层全部无 GUI 依赖，headless 可用工具面远大于 Quotor 的 9 个，见 6.4）。
+  （section2 数据层全部无 GUI 依赖，除写操作外的全部工具 headless 可用，见 6.4）。
 
 ### 1.3 非目标（明确不做）
 
-- **不做** MCP 服务器里的 AI 对话/模型调用：MCP 客户端自带模型（对齐 Quotor：`ai_protocol.md`
-  的"客户端直连"原则）；`services/ai/`（ai_provider、ai_keychain）属客户端侧，仅内置面板使用；
+- **不做** MCP 服务器里的 AI 对话/模型调用：MCP 客户端自带模型（客户端直连原则）；
+  `services/ai/`（ai_provider、ai_keychain）属客户端侧，仅内置面板使用；
 - **不做** UI 类功能的 MCP 化：主题切换、窗口装饰、断面示意图实时绘制（PNG 渲染列 v2 可选）；
 - **不改** ORM 表结构与 `SCHEMA_VERSION`（MCP 只是新的调用方，不产生 schema 迁移）；
-- 一期**不做**导航类工具（改 GUI 当前选中：`navigate_to_*`/`select_*`，Quotor 有、section2
-  列 P6 可选——见 11.2）；**不做** LangGraph 重构（列可选研究项，见 8.7）。
+- 一期**不做**导航类工具（改 GUI 当前选中：`navigate_to_*`/`select_*`，列 P6 可选——见
+  11.2）；**不做** LangGraph 重构（列可选研究项，见 8.7）。
 
 ---
 
-## 2. 参照系：Quotor 已验证路线（本方案蓝本）
+## 2. 设计原则
 
-Quotor（`F:\GithubRepos\ArjenCole\Quotor`，只读参照）已把同样的"MCP 化 + Agent 体系"完整落地
-（其 `docs/mcp_plan.md` v1.1 标注 M1~M5 全部实施）。**本方案直接继承其架构与踩坑结论**：
+本方案的机制决策归纳为以下几条，各机制详见对应章节：
 
-| Quotor 已验证结论 | 出处 | section2 采纳方式 |
-|---|---|---|
-| 主方案 = GUI 进程内嵌 Streamable HTTP MCP server（`127.0.0.1:8765/mcp` + Bearer token + 仅回环绑定）；工具操作运行中的 GUI，stdio 子进程里没有 GUI 工具无法工作 | `mcp_plan.md` §3.1/§4.1 | 内嵌为主（第 5 章）；section2 的工程会话由 GUI 持有，结论同样成立 |
-| **mcp SDK 2.x**：`from mcp.server.lowlevel import Server`，`Server(name, version, on_list_tools=…, on_call_tool=…)` + `server.streamable_http_app(streamable_http_path=…, host=…)`；`ClientSession` 必须 `async with` 启动调度器；FastMCP 与 1.x 装饰器风格已移除 | `mcp_server/server.py`、`mcp_plan.md` §15.3 | 第 6 章直接照抄该 API 形态 |
-| 适配层：`Tool.parameters`（JSON Schema）原样透传为 MCP `inputSchema`；执行放 `anyio.to_thread.run_sync`，不阻塞 asyncio 事件循环 | `mcp_server/adapter.py` | 6.1 照抄 |
-| 结果语义契约：`{"error": …}` → `isError=true`；`{"cancelled": true}` → `isError=false`（用户取消确认不是错误，客户端自然停手）；其余 `json.dumps(ensure_ascii=False, default=str)` 文本回传 | `adapter.py::_result_to_call_result` | 全部工具统一 dict 结果契约（8.2） |
-| `READ_ONLY_TOOLS` 白名单（`allow_actions=false` 时只暴露只读）；`HEADLESS_SAFE_TOOLS` + `_gui_available()` 前置守卫（无 GUI 时返回可读错误，防止 QEventLoop 挂死） | `adapter.py` | 6.4/6.5 采纳并按 section2 工具面扩大白名单 |
-| 确认双通道：`ContextVar` `_CHANNEL`（builtin/mcp）+ `channel()/override_channel()`；contextvar 不跨 Qt 信号跳转，marshal 时快照、主线程侧恢复；判定点 `confirmation_suppressed()` 分别读 `[ai]/[mcp] require_confirmation` | `agent/confirm_policy.py` | 8.4 采纳（section2 的快照/恢复点在 ConfirmBridge，见 8.4.2） |
-| 独立 CLI 四模式：`--transport stdio\|http` 本地、`--connect <url>` stdio→HTTP 转发桥、`--project <path>` headless 强制只读 | `mcp_server/__main__.py` | 6.6 照抄 |
-| Agent 体系：`Tool`/`ToolRegistry`（register/get/names/all_tools/execute/to_openai_tools/to_prompt_text）+ `build_default_registry()` 38 工具；上下文三层注入；五类循环治理；紧凑参数格式（token 减半） | `agent/tool_registry.py`、`langgraph_loop.py` | 第 8 章逐项对齐 |
-| GUI 集成：AI 菜单「MCP 服务…」设置对话框（开关/端口/token/allow_actions + 复制客户端配置按钮）、状态栏显示运行状态、启动自动拉起、`closeEvent` 停止 | `mcp_plan.md` §8、§15.2 | 5.5 照抄 |
-| config 新增 `[mcp]` 段（enabled/host/port/token/allow_actions/require_confirmation） | `mcp_plan.md` §5.4 | 5.4 照抄 |
+| 原则 | 说明 |
+|---|---|
+| 注册表单一来源 | 全部工具只在 `ToolRegistry` 注册一次：内置 AI 面板消费 `to_openai_tools()`，MCP 适配层消费 `all_tools()`（`Tool.parameters` 原样透传为 `inputSchema`）——工具只写一遍，两个出口（第 7、8 章） |
+| 内嵌主路线 | 主方案 = GUI 进程内嵌 Streamable HTTP MCP server（仅回环绑定 `127.0.0.1:8765/mcp` + Bearer token）；工具操作运行中的 GUI，内嵌模式下 GUI 与 MCP 共享同一工程会话与锁（第 4、5 章） |
+| 执行模型 | 同步执行器放 `anyio.to_thread.run_sync`，不阻塞 asyncio 事件循环；工具执行统一经 `execute_on_main` 投回 Qt 主线程串行执行（见下） |
+| 双通道确认 | `ContextVar _CHANNEL`（builtin/mcp）+ `channel()/override_channel()`；判定点 `confirmation_suppressed()` 分别读 `[ai]/[mcp] require_confirmation`（4.4、8.4） |
+| 写工具守卫 | `[mcp] allow_actions=false` 时只暴露只读工具；无界面进程的写操作直接返回可读错误（没有确认面，不允许无人值守改数据）；`--project` headless 强制只读（6.4） |
+| SDK 选型 | mcp SDK 2.x lowlevel API：`Server(on_list_tools/on_call_tool)` + `streamable_http_app()`；FastMCP 与 1.x 装饰器风格已在 mcp 2.0 移除，锁定 `mcp>=2.0,<3`（6.2、6.3） |
+| 独立 CLI 辅助入口 | `section2-mcp` 四模式：`--transport stdio\|http` 本地、`--connect <url>` stdio→HTTP 转发桥、`--project <path>` headless 强制只读（4.2、6.5、6.6） |
+| GUI 集成 | AI 菜单「MCP 服务…」设置对话框（开关/端口/token/allow_actions + 复制客户端配置按钮）、启动自动拉起、`closeEvent` 停止（第 5 章） |
 
-**与 Quotor 的两点架构差异**（section2 更简单，实施时不得画蛇添足）：
+**两点执行模型要点**（实施时不得画蛇添足）：
 
-1. **不需要 `AgentActionBridge`**：Quotor 工具执行器直接操作运行中的 ViewModel/Panel/Dialog
-   （`panel._vm`），必须 `execute_on_main`（QEventLoop 阻塞 marshal）到 Qt 主线程；
-   section2 的工具走 `unit_vm`/`project_vm` **模块级纯函数**（不碰 Qt 控件），但数据层是
-   **全局单 SQLAlchemy Session（非线程安全）**，因此工具执行器同样经
-   `app.core.main_thread.execute_on_main` 投递回 Qt 主线程，worker 只负责模型请求；
-   跨线程触点还包括确认窗（经 `ConfirmPolicy` 队列信号到主线程）。工程生命周期操作
-   （新建/打开/另存/关闭）由 `project_io` 的线程守卫强制在主线程执行；
-2. **headless 可用面更大**：Quotor headless 只有 9 个纯查询工具（其余依赖主窗口）；
-   section2 数据层全部无 GUI 依赖，`--project` 模式下**除写操作外的全部工具**（读树/读构件/
-   读原则/计算/图集/迁移 inspect…）都可在无 GUI 进程执行。
+1. **工具执行统一投递回 Qt 主线程**：工具走 `unit_vm`/`project_vm` **模块级纯函数**
+   （不碰 Qt 控件），但数据层是**全局单 SQLAlchemy Session（非线程安全）**，因此工具
+   执行器统一经 `app.core.main_thread.execute_on_main` 投递回 Qt 主线程，worker 只负责
+   模型请求；跨线程触点还包括确认窗（经 `ConfirmPolicy` 队列信号到主线程）。工程生命周期
+   操作（新建/打开/另存/关闭）由 `project_io` 的线程守卫强制在主线程执行；
+2. **headless 可用面大**：数据层全部无 GUI 依赖，`--project` 模式下**除写操作外的全部
+   工具**（读树/读构件/读原则/计算/图集/迁移 inspect…）都可在无 GUI 进程执行。
 
 ---
 
@@ -106,10 +99,10 @@ Quotor（`F:\GithubRepos\ArjenCole\Quotor`，只读参照）已把同样的"MCP 
 |---|---|---|
 | `core/models/`、`core/calc/`、`core/evaluator.py`、`core/paths.py`、`core/config.py` | 无 | 直接 import 即可无头运行 |
 | `services/project_io.py`、`atlas.py`、`element_library.py`、`stn_migration.py` | 无 | 同上；project_io 模块 docstring 明示"刻意不依赖 Qt" |
-| `viewmodels/unit_vm.py`、`project_vm.py` 模块级数据函数 | import PySide6.QtCore（QObject/QTimer/Signal 仅 VM 类与 EventBus 用） | 函数本身纯 SQLAlchemy；无 QApplication 可 import + 调用（Quotor headless 模式已验证同类做法；P0 冒烟复验，失败走 8.9 兜底） |
+| `viewmodels/unit_vm.py`、`project_vm.py` 模块级数据函数 | import PySide6.QtCore（QObject/QTimer/Signal 仅 VM 类与 EventBus 用） | 函数本身纯 SQLAlchemy；无 QApplication 可 import + 调用（P0 冒烟复验，失败走 8.9 兜底） |
 | `core/event_bus.py` | PySide6.QtCore（QObject/Signal） | `bus()` 单例无 QApplication 可创建；Signal emit 无事件循环时为直调 |
 | `views/dialogs/*` 原则编辑器 | Qt | **落库逻辑混在 Qt 槽里，需抽取纯函数**（见 9.2），这是唯一的业务重构 |
-| `agent/`（现状） | 仅 element_crud import unit_vm | 4 工具 + `ToolContext(unit_id, unit_name, confirm)` + `ConfirmBridge` + 手写 8 轮循环——第 8 章升级为注册表类 |
+| `agent/`（现状） | 仅构件 CRUD 模块 import unit_vm | 4 工具 + `ToolContext(unit_id, unit_name, confirm)` + `ConfirmBridge` + 手写 8 轮循环——第 8 章升级为注册表类 |
 
 ### 3.2 功能全景 → MCP 处置总表
 
@@ -119,11 +112,11 @@ Quotor（`F:\GithubRepos\ArjenCole\Quotor`，只读参照）已把同样的"MCP 
 | 2 | 打开/关闭/保存/另存/自动保存/备份/锁 | `project_io`（open/save/save_as/close/commit、acquire/release_lock、create_backup） | ✅ | T02~T06（内嵌模式共享 GUI 会话，仅独立模式真正用锁） | P1 |
 | 3 | 最近工程列表 | `core/config.py` recent_projects | ✅ | T07 | P1 |
 | 4 | 项目树（标段/单位工程增删改/移动/重命名） | `project_vm` + `project_io` | ✅（VM 薄壳） | T08~T13 | P1 |
-| 5 | 构件条目增删改查（8 类别、埋深/数量可写算式、四类原则引用） | `unit_vm` + `agent/tools/element_crud.py`（4 工具已存在） | ✅ | T14~T18（升级为注册表工具，id 缺省取当前选中） | P1 |
+| 5 | 构件条目增删改查（8 类别、埋深/数量可写算式、四类原则引用） | `unit_vm` + `agent/tools/element.py`（已扩至 13 工具，含合槽组） | ✅ | T14~T18（升级为注册表工具，id 缺省取当前选中） | P1 |
 | 6 | 构件明细：管材行（材质/管径/壁厚/含量） | `unit_vm` create/update/delete_pipe | ✅ | T22~T24 | P2 |
 | 7 | 构件明细：构件参数行（含图集参数行锁定语义） | `unit_vm` create/update/delete_param | ✅ | T25~T27 | P2 |
 | 8 | 构件明细：构筑物工程量行（类别/项目/单位/值） | `unit_vm` create/update/delete_quantity | ✅ | T28~T30 | P2 |
-| 9 | 多围护/多地基原则引用（比例加权、主围护原则） | `unit_vm` add/update/remove_principle_ref、set_main_pe | ✅ | T31~T35 | P2 |
+| 9 | 多围护/多地基原则引用（比例加权、主围护原则） | `unit_vm` add/update/remove_principle_ref、set_main_pe | ✅ | T31~T35 已随「多原则引用」功能取消而移除 | — |
 | 10 | 构件库模板插入（407 模板、8 类别）+ 复制粘贴 | `element_library()`、`unit_vm` insert_element_template/element_snapshot | ✅ | T20~T21、T60~T61 | P2/P3 |
 | 11 | 围护原则编辑（土质/坞塝/覆土/基础/做法表/多级/止水） | 对话框 + `project_io` 原语 | ⚠️ 需抽纯函数 | T37~T46、T52~T53 | P2 |
 | 12 | 地基原则编辑（换填层 + 特殊地基构件） | 同上 | ⚠️ 同上 | T37、T39、T42、T47~T48 | P2 |
@@ -136,7 +129,7 @@ Quotor（`F:\GithubRepos\ArjenCole\Quotor`，只读参照）已把同样的"MCP 
 | 19 | 工程量计算（定额键、表达式、中间步骤、多原则加权合并） | `core/calc/engine.py` + `unit_vm.compute_unit` | ✅ | T64~T65 | P3 |
 | 20 | 算式求值器（白名单安全求值） | `core/evaluator.py` | ✅ | T66 | P3 |
 | 21 | 旧 .stn 工程迁移（报告/容错/原则补齐） | `services/stn_migration.py` | ✅ | T67~T68 | P4 |
-| 22 | 汇总（量×单价=合价、单价编辑、批量载价）+ 定额/清单双表 Excel 导出 | M5 **未完成**（曾实现已移除；Price 表已在 models 中） | — | T69~T72（与 M5 协同，见 7.8） | P5 |
+| 22 | 汇总（量×单价=合价、单价编辑、批量载价）+ 定额/清单双表 Excel 导出 | `services/summary.py` + `views/panels/summary_panel.py`、`views/dialogs/export_excel_dialog.py`（M5 已回归） | — | T69~T72（与 M5 共用 service，见 7.8） | P5 |
 | 23 | 「当前选中」上下文（单位工程/构件） | GUI 选中状态 | — | T74 `get_current_context`（内嵌模式） | P1 |
 | 24 | AI 助手面板/设置 | `services/ai/`、`agent/` | — | 第 8 章二期升级 | P1/P6 |
 | 25 | 断面示意图绘制 | `views/panels/section_view.py`（Qt 绘制） | ✗ | v2 可选（渲染 PNG） | — |
@@ -144,7 +137,7 @@ Quotor（`F:\GithubRepos\ArjenCole\Quotor`，只读参照）已把同样的"MCP 
 
 ---
 
-## 4. 总体架构（v1.1：内嵌为主，对齐 Quotor）
+## 4. 总体架构（v1.1：内嵌为主）
 
 ### 4.1 主方案：GUI 进程内嵌 Streamable HTTP MCP server
 
@@ -159,7 +152,7 @@ Quotor（`F:\GithubRepos\ArjenCole\Quotor`，只读参照）已把同样的"MCP 
 │    ┌────────────────────┐    ┌──────────────────────────┐             │
 │    │ 统一工具注册表        │◄───│ 写工具 → ConfirmBridge 弹确认卡 │            │
 │    │ build_default_      │    │  （channel: builtin / mcp 双通道）        │
-│    │ registry() 74 工具   │    └──────────────────────────┘             │
+│    │ registry() 75 工具   │    └──────────────────────────┘             │
 │    │  ├─ 内置 AI 面板出口：to_openai_tools() → agent_loop（现有）          │
 │    │  └─ MCP 出口：McpToolAdapter                                        │
 │    └────────┬───────────┘                                               │
@@ -186,7 +179,7 @@ Quotor（`F:\GithubRepos\ArjenCole\Quotor`，只读参照）已把同样的"MCP 
   非线程安全），界面经 EventBus 实时刷新（这是内嵌路线的核心收益）；
 - **鉴权**：启用时生成 `secrets.token_urlsafe(32)` 存 config；仅回环绑定，禁止 `0.0.0.0`。
 
-### 4.2 辅助入口：独立 CLI `section2-mcp`（四模式，对齐 Quotor）
+### 4.2 辅助入口：独立 CLI `section2-mcp`（四模式）
 
 ```
 ① 本地 stdio：  section2-mcp [--read-only]            # 进程内执行工具（无 GUI 时写工具被守卫拦截）
@@ -198,7 +191,7 @@ Quotor（`F:\GithubRepos\ArjenCole\Quotor`，只读参照）已把同样的"MCP 
 
 - ①②供测试与特殊部署；③是外部 stdio-only 客户端操作**运行中桌面应用**的通道；
   ④供脚本化/CI/无人值守查询计算——section2 数据层全部无 GUI 依赖，④的可用工具面
-  = 全部读工具（见 6.4 白名单），远大于 Quotor 同模式的 9 个；
+  = 全部读工具（见 6.4 白名单）；
 - ④的锁语义：headless 进程自行 `open_project`（抢 `.lock`；与桌面版互斥、先后接管——
   现成机制），退出即释放。
 
@@ -212,24 +205,29 @@ Quotor（`F:\GithubRepos\ArjenCole\Quotor`，只读参照）已把同样的"MCP 
 - 未打开工程时（内嵌模式不可能发生；独立模式可能）：除 E 组图集/构件库查询与 T66/T73 外，
   其余工具返回 `{"error": "当前没有打开的工程，请先 open_project。"}`。
 
-### 4.4 写操作确认（双通道，对齐 Quotor `confirm_policy`）
+### 4.4 写操作确认（双通道）
 
 | 通道 | 调用方 | 配置开关 | 行为 |
 |---|---|---|---|
 | `builtin` | 内置 AI 面板 | `[ai] require_confirmation`（现有） | 默认 true：写工具弹结构化确认卡 |
 | `mcp` | 外部 MCP 客户端 | `[mcp] require_confirmation`（新增） | 默认 true：同一确认卡在 GUI 弹出（用户就在机器旁）；false = 跳过弹窗直接执行（信任客户端自身的批准 UI） |
 
-- 确认卡（对齐 Quotor `AiConfirmDialog` 的 `preview` 结构）：`{action, target, summary, details[]}`
+- 确认卡 `preview` 结构：`{action, target, summary, details[]}`
   ——现有 `ConfirmBridge` 的纯文本 `ask(description)` 升级为结构化卡片；
 - 拒绝返回 `{"cancelled": true, "message": "用户取消了操作"}`（不再是 v1.0 的纯文本
   "用户拒绝执行该操作。"），且 **agent_loop 收到 cancelled 立即终止本轮循环**（防止模型
-  反复重调同一工具反复弹窗——Quotor 已验证的治理点）；
+  反复重调同一工具反复弹窗）；
 - channel 经 `ContextVar` 传播：工具在 worker 线程执行、确认卡经 Qt 信号投递主线程，
   contextvar 不跨信号跳转 → `ConfirmBridge` 发射前快照 `current_channel()`、主线程侧
-  `override_channel()` 恢复（对齐 Quotor 在 ActionBridge 上的做法，作用点移到 ConfirmBridge）；
+  `override_channel()` 恢复；
 - 独立 stdio/HTTP/headless 模式下写工具：`--read-only` 与 `[mcp] allow_actions=false`
   走 `READ_ONLY_TOOLS` 白名单直接过滤；未过滤的写工具在无 GUI 时被 `HEADLESS_SAFE_TOOLS`
-  守卫拦截（返回可读错误而非挂死，对齐 Quotor）。
+  守卫拦截（返回可读错误而非挂死）。
+
+> 实施记录：确认判定改为在 worker 线程内完成——`ask_confirm` 先在同线程调
+> `confirmation_suppressed()` 读取当前通道开关，再经全局确认中继
+> （`install_confirm_handler` 安装的处理器）把确认卡队列投递到界面线程，
+> 无需跨线程快照/恢复（见附录 D）。
 
 ### 4.5 安全边界
 
@@ -242,7 +240,7 @@ Quotor（`F:\GithubRepos\ArjenCole\Quotor`，只读参照）已把同样的"MCP 
 | 求值安全 | `evaluate_expression` 只暴露 simpleeval 白名单（已禁任意函数调用/属性访问，无注入面） |
 | 数据兜底 | 每次写 commit 落盘 + 首次修改自动备份 `Backup\`（保留 20 份，现成机制）——AI 误操作可人工恢复 |
 
-### 4.6 返回值与错误约定（所有工具统一，对齐 Quotor 契约）
+### 4.6 返回值与错误约定（所有工具统一）
 
 ```jsonc
 // 工具执行器一律返回 dict（注册表级异常包装：未捕获异常 → {"error": "工具执行失败: …"}）
@@ -254,15 +252,15 @@ Quotor（`F:\GithubRepos\ArjenCole\Quotor`，只读参照）已把同样的"MCP 
 { "cancelled": true, "message": "用户取消了操作" }
 ```
 
-- 适配层映射（照抄 Quotor `adapter.py`）：`error` 非空 → `isError=true`；`cancelled` →
+- 适配层映射：`error` 非空 → `isError=true`；`cancelled` →
   `isError=false`；其余正常 JSON 文本回传；
-- 错误文案沿用 `element_crud.py` 风格：中文 + 可用值清单 + 建议的下一步工具；
+- 错误文案沿用 `tools/element.py` 风格：中文 + 可用值清单 + 建议的下一步工具；
 - 数值一律 `format_number`（4 位小数，与界面一致）；**算式字段保留用户原文**（埋深/数量/
   参数值/含量列可写算式，AI 读写均以字符串原文为准，另给 `*_value` 数值字段）。
 
 ---
 
-## 5. 内嵌集成与配置（对齐 Quotor GUI 集成）
+## 5. 内嵌集成与配置
 
 ### 5.1 `[mcp]` 配置段（`core/config.py` 的 `DEFAULT_CONFIG` 新增）
 
@@ -296,7 +294,7 @@ uvicorn）、`stop()`、`status() -> {running, url, token, port}`；启动失败
 
 ---
 
-## 6. MCP 服务器模块设计（mcp SDK 2.x，对齐 Quotor `mcp_server/`）
+## 6. MCP 服务器模块设计（mcp SDK 2.x lowlevel）
 
 ### 6.1 新增模块结构
 
@@ -317,9 +315,9 @@ src/app/mcp_server/
 ```
 src/app/agent/
 ├── tool_registry.py    # Tool dataclass + ToolRegistry 类 + all_tools()（类化重写）
-├── tools/              # build_default_registry() 全量 74 工具（element_crud 迁入并扩容）
-│   ├── project.py / tree.py / element.py / principle.py / reference.py /
-│   ├── compute.py / migrate.py / summary.py
+├── tools/              # build_default_registry() 全量 75 工具（一期构件 CRUD 迁入并扩容）
+│   ├── project.py / tree.py / element.py / element_parts.py / principle.py /
+│   ├── reference.py / compute.py / migrate.py / summary.py / meta.py
 ├── confirm_policy.py   # 双通道 CHANNEL_BUILTIN/CHANNEL_MCP + ContextVar + override（升级重写）
 ├── confirm_policy_bridge = 现有 ConfirmBridge 升级（结构化确认卡 + cancelled + channel 快照）
 └── agent_loop.py       # 现有循环保留主线 + 治理升级（第 8 章）
@@ -335,10 +333,10 @@ section2 = "app.main:main"
 section2-mcp = "app.mcp_server.__main__:main"
 ```
 
-### 6.2 适配层核心（照抄 Quotor `adapter.py` 形态，适配 section2 差异）
+### 6.2 适配层核心
 
 ```python
-# adapter.py 关键骨架（完整语义见 Quotor 同名文件）
+# adapter.py 关键骨架
 class McpToolAdapter:
     def __init__(self, registry: ToolRegistry, *, allow_actions: bool = True): ...
 
@@ -348,8 +346,8 @@ class McpToolAdapter:
     def execute_sync(self, name: str, arguments: dict) -> CallToolResult:
         # 1) 未注册工具 / allow_actions=false 拒写 → isError=true
         # 2) name not in HEADLESS_SAFE_TOOLS and not _gui_available() → 可读错误
-        #    （section2 的 _gui_available = QCoreApplication 存在（判定确认卡可弹）；
-        #     工具本身不碰 Qt，无需 Quotor 的 main_window 注册判定）
+        #    （section2 的 _gui_available = QCoreApplication 存在且已安装确认处理器
+        #     （判定确认卡可弹）；工具本身不碰 Qt，无需主窗口注册判定）
         # 3) with channel(CHANNEL_MCP): registry.execute(name, arguments)
         # 4) 结果 dict → isError 分类（error=true / cancelled=false / 其余正常）
 
@@ -357,7 +355,7 @@ class McpToolAdapter:
         return await anyio.to_thread.run_sync(self.execute_sync, name, arguments)
 ```
 
-### 6.3 server 组装（照抄 Quotor `server.py`）
+### 6.3 server 组装
 
 ```python
 def build_mcp_server(adapter) -> Server:
@@ -371,47 +369,52 @@ def build_http_app(adapter, token=None, path="/mcp"):
     return BearerAuthMiddleware(app, token) if token else app
 ```
 
-> SDK 踩坑备忘（Quotor 实施记录 §15.3，直接适用）：mcp 2.0 移除 FastMCP 与 1.x 装饰器；
+> SDK 踩坑备忘：mcp 2.0 移除 FastMCP 与 1.x 装饰器；
 > `ClientSession` 必须 `async with` 启动消息调度器；HTTP transport API 跨版本变动大，
 > **锁定 `mcp>=2.0,<3` 并 pin 精确版本**。
 
 ### 6.4 只读白名单与 headless 守卫
 
 ```python
-READ_ONLY_TOOLS = {  # [mcp] allow_actions=false 时仅暴露这些
+READ_ONLY_TOOLS = {  # [mcp] allow_actions=false 时仅暴露这些（共 24 个只读工具）
     # A 组读：get_project_info, list_recent_projects
     # B 组读：get_project_tree
-    # C 组读：list_elements, get_element_detail, list_principle_refs
+    # C 组读：list_elements, get_element_detail, list_trench_groups
     # D 组读：list_principles, get_principle_detail, get_component_detail
     # E 组全：resolve_atlas, list_atlas_tables, query_atlas_table,
     #         get_default_width_tables, list_library_templates,
     #         get_library_template, list_component_templates, get_component_template
     # F 组全：compute_unit, compute_element, evaluate_expression
     # G 组读：inspect_legacy_project
+    # H 组读：get_unit_summary
     # I 组：get_conventions, get_current_context
 }
-HEADLESS_SAFE_TOOLS = READ_ONLY_TOOLS  # section2 全部读工具无 GUI 可用（与 Quotor 的差异点）
+HEADLESS_SAFE_TOOLS = READ_ONLY_TOOLS  # section2 全部读工具无 GUI 可用
 ```
 
-- `--project` headless 模式强制 `allow_actions=false`（无确认面，对齐 Quotor「headless 强制只读」）；
+> 实施记录：只读判定以 `Tool.read_only` 元数据落在各工具定义上（各 `tools/` 模块声明、
+> 注册表 `read_only_tools()` 汇总），无界面进程的写操作由适配层 `_gui_available()` 守卫
+> 直接拒绝（见附录 D）。
+
+- `--project` headless 模式强制 `allow_actions=false`（无确认面，headless 强制只读）；
 - 本地 stdio/http 模式（①②）默认 `--read-only` 关闭时：写工具依赖确认卡，无 GUI 进程时被
   `_gui_available()` 守卫拦截并提示「请在运行中的 Section2 应用里启用 MCP 服务，或用
   `--connect` 桥接入」。
 
-### 6.5 stdio 桥（`--connect`，照抄 Quotor `__main__.py::_run_bridge`）
+### 6.5 stdio 桥（`--connect`）
 
 stdio 端 `Server(on_list_tools/on_call_tool)` → 内部用 `mcp.client.streamable_http.
 streamable_http_client` + `ClientSession`（`async with`）连接运行中桌面应用的 HTTP 端点，
 透传 `list_tools/call_tool`。
 
-### 6.6 CLI（`section2-mcp`，参数对齐 Quotor）
+### 6.6 CLI（`section2-mcp`）
 
 `--transport {stdio,http}`、`--host`（仅回环）、`--port`、`--token`、`--read-only`、
 `--connect <url>`、`--project <path.stn>`；`--project` 成功打开后强制只读。
 
 ---
 
-## 7. MCP 能力清单（74 工具全量规格 = 统一注册表内容）
+## 7. MCP 能力清单（75 工具全量规格 = 统一注册表内容）
 
 > 通用约定：
 > - "写操作" = 修改 `.stn` 或文件系统，均即时 commit 落盘（自动保存语义）；
@@ -446,20 +449,20 @@ streamable_http_client` + `ClientSession`（`async with`）连接运行中桌面
 | T12 | `delete_node` | 写 | `kind*`、`id*` | `{}`；返回级联删除数量（**必须提示**） | `project_vm.delete`（CASCADE） |
 | T13 | `move_node` | 写 | `kind*`、`id*`、`target_segment_id`（unit 用）、`index` | `{}` | `project_io.move_segment/move_unit` |
 
-### 7.3 C 组：构件条目与子行（T14~T35）
+### 7.3 C 组：构件条目与子行（T14~T30）
 
-**P1 核心（T14~T18 + T74）**——现有 `element_crud.py` 四工具迁入注册表并升级：
+**P1 核心（T14~T18 + T74）**——一期构件 CRUD 工具（现 `tools/element.py`）迁入注册表并扩容：
 
 | ID | 工具 | 读写 | 关键参数 | 返回 data | 复用 |
 |---|---|---|---|---|---|
 | T14 | `list_elements` | 读 | `unit_id`（缺省取选中）、`verbose`(默认 false) | `[{id,name,category,spec,depth,depth_value,amount,amount_value,pe_name,pf_name,pp_name,pw_name,source}]` | `unit_vm.element_rows` |
 | T15 | `get_element_detail` | 读 | `element_id`（缺省取选中行） | element 全字段 + `pipes[]` + `params[]`（含锁定标记）+ `quantities[]` + `principle_refs{pe[],pf[]}`（含 ratio/is_main）+ `auto:{atlas_params,pipe_thicknesses}`（自动值预览） | `element_snapshot`/`pipe_rows`/`param_rows`/`quantity_rows`/`principle_ref_rows`/`auto_atlas_params`/`auto_pipe_thicknesses` |
-| T16 | `add_element` | 写 | `unit_id`（缺省）、`name*`、`category`、`depth`、`amount`、`pe_name/pf_name/pp_name/pw_name`、`pipe{mat,dn,t?,content}`、`pipes[]`、`params[{key,unit,value}]`、`quantities[]`、`pe_refs[{name,ratio}]`、`pf_refs[]`、`main_pe_name`、`seed_atlas_defaults`(默认 true) | `{element_id}` + 摘要 | `unit_vm.create_element`（全参数版）；原则名校验照抄 element_crud |
+| T16 | `add_element` | 写 | `unit_id`（缺省）、`name*`、`category`、`depth`、`amount`、`pe_name/pf_name/pp_name/pw_name`、`pipe{mat,dn,t?,content}`、`pipes[]`、`params[{key,unit,value}]`、`quantities[]`、`pe_refs[{name,ratio}]`、`pf_refs[]`、`main_pe_name`、`seed_atlas_defaults`(默认 true) | `{element_id}` + 摘要 | `unit_vm.create_element`（全参数版）；原则名校验沿用既有工具风格 |
 | T17 | `update_element` | 写 | `element_id`（缺省取选中行，或 `unit_id`+`name` 定位）、可改字段 = T16 除 unit 外全部 | `{}` + 变更摘要 | `unit_vm.update_element` + 引用重置语义 |
 | T18 | `delete_element` | 写 | `element_id`（缺省取选中行，或定位参数） | `{}`（级联删子行） | `unit_vm.delete_element` |
-| T74 | `get_current_context` | 读 | — | `{unit:{id,name}, element:{id,name,category}?, source:"gui"}`；独立模式 `source:"headless"` 并提示需显式 id | 读取 GUI 选中（EventBus/VM 现状）；对齐 Quotor `get_current_workbench` |
+| T74 | `get_current_context` | 读 | — | `{unit:{id,name}, element:{id,name,category}?, source:"gui"}`；独立模式 `source:"headless"` 并提示需显式 id | 读取 GUI 选中（EventBus/VM 现状） |
 
-**P2 扩展（T19~T35）**：
+**P2 扩展（T19~T30）**：
 
 | ID | 工具 | 读写 | 关键参数 | 说明 |
 |---|---|---|---|---|
@@ -469,11 +472,10 @@ streamable_http_client` + `ClientSession`（`async with`）连接运行中桌面
 | T22~T24 | `add_pipe` / `update_pipe` / `delete_pipe` | 写 | `element_id`（add，缺省）/`pipe_id*`；`mat`、`dn`(mm)、`content`(算式原文)、`t`(mm，**null=自动按图集**) | `unit_vm.create/update/delete_pipe` |
 | T25~T27 | `add_param` / `update_param` / `delete_param` | 写 | `element_id`（add，缺省）；`param_id*` 或 `element_id+key`；`key`、`unit`、`value` | 图集参数行（工作面加宽/垫层厚/基础厚，按类别 3/2/0 行）与构筑物名称行**锁定不可删**（现成语义） |
 | T28~T30 | `add_quantity` / `update_quantity` / `delete_quantity` | 写 | `element_id`（add，缺省）；`quantity_id*`；`category`、`item`、`unit`、`value` | 构筑物（cat7）工程量行 |
-| T31 | `list_principle_refs` | 读 | `element_id`（缺省） | `{pe:[{ref_id,name,ratio,order_no,is_main}],pf:[…]}` |
-| T32 | `add_principle_ref` | 写 | `element_id`（缺省）、`kind*`("pe"/"pf")、`name*`、`ratio`(默认 1.0) | 比例无归一化约束（引擎按比例加权） |
-| T33 | `update_principle_ref` | 写 | `ref_id*`、`name?`、`ratio?` | |
-| T34 | `remove_principle_ref` | 写 | `ref_id*` | **至少保留 1 条**（现成语义） |
-| T35 | `set_main_pe` | 写 | `element_id`（缺省）、`name*` | 主围护原则（支撑 Z 量按主原则算） |
+
+> 多原则引用 5 个工具（T31~T35：`list_principle_refs`/`add_principle_ref`/
+> `update_principle_ref`/`remove_principle_ref`/`set_main_pe`）已随「多原则引用」
+> 功能取消而移除。
 
 ### 7.4 D 组：六类原则（T36~T55，P2）
 
@@ -577,16 +579,17 @@ streamable_http_client` + `ClientSession`（`async with`）连接运行中桌面
 
 ### 7.8 H 组：汇总与导出（T69~T72，P5，**与 M5 协同**）
 
-> 现状：M5（汇总面板 + 定额/清单双表 Excel 导出）曾实现后移除待重做；`Price` 表已在
-> `core/models/models.py` 保留。**开发顺序约定**：P5 先落地无头 `services/summary.py`
-> （汇总计算 + Excel 导出纯函数），桌面 M5 重做与工具**共用**该 service——避免两套逻辑。
+> 现状：M5 汇总面板与 Excel 导出已回归（`views/panels/summary_panel.py`、
+> `views/dialogs/export_excel_dialog.py`、工具栏「导出 Excel」Ctrl+E）；无头侧为
+> `services/summary.py`（汇总计算 + Excel 导出纯函数），桌面面板与工具**共用**该
+> service——避免两套逻辑。`Price` 表在 `core/models/models.py`。
 
 | ID | 工具 | 读写 | 关键参数 | 返回 | 依赖 |
 |---|---|---|---|---|---|
-| T69 | `get_unit_summary` | 读 | `unit_id`（缺省） | `[{key, 项目, 单位, 工程量, 单价, 合价}]` | 新 `services/summary.py` |
+| T69 | `get_unit_summary` | 读 | `unit_id`（缺省） | `[{key, 项目, 单位, 工程量, 单价, 合价}]` | `services/summary.py`（工具在 `agent/tools/summary.py`） |
 | T70 | `set_price` | 写 | `key*`、`value*` | `{}` | Price 表 |
-| T71 | `batch_import_prices` | 写 | `path*`（xlsx/CSV 两列） | `{imported, skipped}` | 新 service |
-| T72 | `export_excel` | 写(文件) | `unit_id?`（空=全工程）、`kind*`("定额"/"清单")、`path*` | `{path, rows}`；**含表达式列** | 新 service（openpyxl 已是依赖） |
+| T71 | `batch_import_prices` | 写 | `path*`（xlsx/CSV 两列） | `{imported, skipped}` | `services/summary.py` |
+| T72 | `export_excel` | 写(文件) | `unit_id?`（空=全工程）、`kind*`("定额"/"清单")、`path*` | `{path, rows}`；**含表达式列** | `services/summary.py`（openpyxl 已是依赖） |
 
 ### 7.9 I 组：约定与上下文（T73~T74，P1）
 
@@ -605,19 +608,18 @@ streamable_http_client` + `ClientSession`（`async with`）连接运行中桌面
 
 ---
 
-## 8. AI 助手二期开发方案（对齐 Quotor `agent/`）
+## 8. AI 助手二期开发方案
 
 > 原则：**同一套工具注册表、同一个执行器、同一个确认策略，两个出口**（内置面板
-> `to_openai_tools()` / MCP 适配层）。本章是把现有 M7/M8 的演示级实现升级为 Quotor
-> 生产级体系的任务书。Quotor 现状参照：38 工具注册表、三层上下文注入、五类循环治理、
-> 双通道确认、紧凑 prompt 格式（token 减半以上）。
+> `to_openai_tools()` / MCP 适配层）。本章把 M7/M8 的演示级实现升级为生产级体系：
+> 注册表类化、三层上下文注入、五类循环治理、双通道确认、紧凑 prompt 格式。
 
 ### 8.1 工具注册表类化（P0~P1，一切的地基）
 
-现状：`tool_registry.py` 是 30 行薄壳（`openai_tools()/is_write()/execute()` 全部转发
-`element_crud.TOOL_SPECS`），无类、无统一结果契约、无遍历接口。
+现状（一期 M7/M8）：`tool_registry.py` 是 30 行薄壳（`openai_tools()/is_write()/execute()`
+全部转发构件 CRUD 工具文件的 `TOOL_SPECS`），无类、无统一结果契约、无遍历接口。
 
-改造（照抄 Quotor `tool_registry.py`）：
+改造：
 
 ```python
 @dataclass
@@ -631,15 +633,15 @@ class ToolRegistry:
     def register(self, tool: Tool) -> None: ...        # 重名覆盖
     def get(self, name) -> Tool | None: ...
     def names(self) -> list[str]: ...
-    def all_tools(self) -> list[Tool]: ...             # MCP 适配层读取口（Quotor 为此加的唯一方法）
+    def all_tools(self) -> list[Tool]: ...             # MCP 适配层读取口
     def execute(self, name, arguments) -> dict: ...    # 未注册/异常统一 → {"error": ...}
     def to_openai_tools(self) -> list[dict]: ...       # 内置面板出口（现有 agent_loop 继续用）
     def read_only_tools(self) -> list[Tool]: ...       # READ_ONLY 白名单来源（MCP allow_actions 用）
 
-def build_default_registry() -> ToolRegistry: ...      # 注册全部 74 工具（tools/ 子包分文件）
+def build_default_registry() -> ToolRegistry: ...      # 注册全部 75 工具（tools/ 子包分文件）
 ```
 
-- `agent/tools/element_crud.py` 四工具迁入 `tools/element.py`，执行器改返回 dict 契约
+- 一期构件 CRUD 四工具迁入 `tools/element.py`，执行器改返回 dict 契约
   （4.6）；校验与错误文案风格保留；
 - `agent_loop.py` 的 `tool_registry.execute/openai_tools` 调用点改走新类（外部行为不变，
   现有 `tests/` 保绿即验收）；
@@ -654,7 +656,7 @@ def build_default_registry() -> ToolRegistry: ...      # 注册全部 74 工具�
   `json.dumps(ensure_ascii=False, default=str)` 统一出口；
 - **steps 拼接不变式**写入测试：`"".join(step.expr) == expression`、`Dim.e` 重算 == `Dim.v`。
 
-### 8.3 上下文注入（P1，三层，对齐 Quotor）
+### 8.3 上下文注入（P1，三层）
 
 现状：`ToolContext(unit_id, unit_name, confirm)` 是单层静态快照（面板发起对话时构造一次）。
 
@@ -663,11 +665,11 @@ def build_default_registry() -> ToolRegistry: ...      # 注册全部 74 工具�
 | 层 | 机制 | 内容 |
 |---|---|---|
 | ① 事件层 | EventBus 新增 `ai_context_changed = Signal(object)`；`tree_panel`（选中单位工程）、`unit_panel`（选中构件/当前行）选中变化时 emit | `{unit_id, unit_name, element_id?, element_name?}` |
-| ② prompt 层 | `AiPanel` 持 `_current_context`，每轮请求组装 system 消息时经注册表新方法 `to_rules_for_context(context)` 动态追加规则段（"当前选中单位工程 X（unit_id=…），可直接调 list_elements / add_element…"；无选中时提示先 get_project_tree） | 按上下文追加规则（Quotor `to_prompt_text(context)` 的对应物） |
-| ③ 运行时层 | T74 `get_current_context` 工具读实时选中（Quotor `get_current_workbench` 的对应物） | 工具可自查 |
+| ② prompt 层 | `AiPanel` 持 `_current_context`，每轮请求组装 system 消息时经注册表新方法 `to_rules_for_context(context)` 动态追加规则段（"当前选中单位工程 X（unit_id=…），可直接调 list_elements / add_element…"；无选中时提示先 get_project_tree） | 按上下文追加规则 |
+| ③ 运行时层 | T74 `get_current_context` 工具读实时选中 | 工具可自查 |
 
 - 工具执行器的 id 缺省解析（4.3）共享同一上下文源；
-- ②注意：Quotor 的 `_format_params_compact` 紧凑参数格式与"核心约束/任务速查"分层
+- ②注意：`_format_params_compact` 紧凑参数格式与"核心约束/任务速查"分层
   system prompt 一并引入（见 8.6）。
 
 ### 8.4 确认策略升级（P1，双通道 + 结构化卡 + cancelled）
@@ -677,32 +679,32 @@ def build_default_registry() -> ToolRegistry: ...      # 注册全部 74 工具�
 
 升级三步：
 
-1. **双通道**（照抄 Quotor `confirm_policy.py`）：`ContextVar _CHANNEL`
+1. **双通道**：`ContextVar _CHANNEL`
    （`CHANNEL_BUILTIN`/`CHANNEL_MCP`）+ `channel()/override_channel()` +
    `confirmation_suppressed()`（分别读 `[ai]/[mcp] require_confirmation`）；
    MCP 适配层执行时 `with channel(CHANNEL_MCP): registry.execute(...)`；
 2. **结构化确认卡**：`ConfirmBridge.ask(preview: dict) -> dict`，preview =
-   `{action, target, summary, details[]}`（对齐 Quotor `AiConfirmDialog`）；
+   `{action, target, summary, details[]}`；
    现有确认对话框 UI 升级为卡片渲染（action/summary 标题 + details 明细列表）；
    返回 `{"cancelled": true, "message": …}` 或执行结果；
 3. **快照/恢复**（section2 版）：worker 线程 → ConfirmBridge 队列信号 → 主线程弹窗，
    contextvar 不跨 Qt 信号跳转 → `ConfirmBridge.request` 发射前快照
    `current_channel()`，主线程槽 `override_channel()` 包裹弹窗判定
-   （对齐 Quotor 在 `AgentActionBridge.execute_on_main` 的做法，作用点移到 ConfirmBridge）。
+   （实施时改为同线程判定，见 4.4 实施记录与附录 D）。
 
 配套（agent_loop 治理联动）：
 
 - **cancelled 即终止**：循环收到 `{"cancelled": true}` 时把该结果回传模型并注入收尾
   指令（"用户已取消该操作，不要重试同一工具，向用户说明并询问下一步"），不再继续
-  循环工具调用（Quotor 已验证：防模型反复弹窗骚扰用户）。
+  循环工具调用（防模型反复弹窗骚扰用户）。
 
-### 8.5 agent_loop 治理升级（P6，五类机制，对齐 Quotor `langgraph_loop.py`）
+### 8.5 agent_loop 治理升级（P6，五类机制）
 
 现状：手写 for 循环 `MAX_TOOL_ROUNDS=8`，无任何治理。现有原生 tool_calls 流式循环
 **保留为主线**（section2 端点都是 OpenAI 兼容、原生 tools 支持；不引入 LangGraph，见 8.7），
-在其上移植 Quotor 五类治理（独立函数、可单测）：
+在其上补齐五类治理（独立函数、可单测）：
 
-| # | 机制 | 规格（对齐 Quotor 数值） | 说明 |
+| # | 机制 | 规格 | 说明 |
 |---|---|---|---|
 | ① | 预算软着陆 | 时间预算 600s / 字符预算 25 万 / 轮数 40，超限注入 `WRAP_UP_PROMPT` 收尾 + 8 轮宽限后强制终止 | 防失控长跑 |
 | ② | 停滞检测 | 滑动窗口 5 次调用内同签名工具 ≥3 次 → 注入 `_REPEAT_NUDGE_PROMPT` 纠偏，最多 2 次 | 防原地打转 |
@@ -711,13 +713,13 @@ def build_default_registry() -> ToolRegistry: ...      # 注册全部 74 工具�
 | ⑤ | 瞬时错误退避 | 429/5xx 按 3/6/12/24s 退避、尊重 `Retry-After`、5 次上限；用户取消即终止 | `ai_provider.stream_chat` 侧实现 |
 | — | 硬保险丝 | `MAX_TOOL_ROUNDS` 8 → 40（随预算软着陆放开） | 兜底 |
 
-### 8.6 prompt 组织升级（P6，对齐 Quotor）
+### 8.6 prompt 组织升级（P6）
 
 - **紧凑参数格式** `_format_params_compact`：把 JSON Schema 压成单行
   （`keyword*(str): 搜索关键词; limit(int)=20: 数量上限`；`*` 必填、enum 渲染
-  `a|b|c`、数组 `type[item]`）——74 工具全量 Schema 直塞 system prompt 会爆炸，
-  紧凑格式 token 减半以上（Quotor 实测结论：31 个工具的样板字段曾是其 prompt 膨胀主因）；
-- **分层 system prompt**（注册表新方法，对齐 Quotor `to_base_prompt/to_rules_for_context/
+  `a|b|c`、数组 `type[item]`）——75 工具全量 Schema 直塞 system prompt 会爆炸，
+  紧凑格式可把 token 占用减半以上；
+- **分层 system prompt**（注册表新方法 `to_base_prompt/to_rules_for_context/
   to_prompt_text`）：`基础层`（工具清单紧凑格式 + 调用格式 + 核心约束：*禁止编造
   id/原则名，必须来自工具结果或上下文；写操作前先查询拿真实 id* + 任务→工具速查表：
   *"录一条 D600 雨水管：list_library_templates→add_element"、"算这个单位工程：
@@ -728,17 +730,17 @@ def build_default_registry() -> ToolRegistry: ...      # 注册全部 74 工具�
 
 ### 8.7 LangGraph 重构（可选研究项，不进硬范围）
 
-Quotor 生产路径是 `AgentLoop(QThread) 壳 → langgraph_loop.build_agent_graph()`
+LangGraph 重构即把循环改为 `build_agent_graph()`
 （StateGraph：call_model→条件边→execute_tool），动机包括为不支持 function calling 的
 端点提供 `<<tool_call>>` 标签文本协议。section2 现有原生 tool_calls 流式循环工作正常、
 端点均支持 tools，**一期不引入**；治理机制（8.5）设计为循环无关的独立函数，未来若
 切换 LangGraph 可平移。标签文本协议（无 function calling 端点兼容）列为同项研究的
 一部分（如确有局域网小模型需求再立项）。
 
-### 8.8 reasoning 处理（P6，对齐 Quotor `provider_adapter`）
+### 8.8 reasoning 处理（P6）
 
 现状：`ai_provider` 有 `on_reasoning`（DeepSeek `reasoning_content` 增量）。
-补齐（Quotor 已验证三点）：
+补齐三点：
 
 1. **content 为空时从 reasoning_content 回退解析工具调用**（部分端点把 tool_call 相关
    内容放进 reasoning 流）；
@@ -749,8 +751,7 @@ Quotor 生产路径是 `AgentLoop(QThread) 壳 → langgraph_loop.build_agent_gr
 
 无 QApplication 环境 import `app.viewmodels.unit_vm` + `bus()` 冒烟失败时：
 `core/event_bus.py` 改为可选 Qt（`try: from PySide6…`，无 Qt 时同接口纯 Python 占位，
-emit 直调订阅者）。正常情况下**不做**此改造（内嵌模式必然有 QApplication；Quotor headless
-已证明同类架构可行）。
+emit 直调订阅者）。正常情况下**不做**此改造（内嵌模式必然有 QApplication）。
 
 ---
 
@@ -761,7 +762,7 @@ emit 直调订阅者）。正常情况下**不做**此改造（内嵌模式必�
 | 模块 | 内容 |
 |---|---|
 | `src/app/mcp_server/`（5 文件） | 6.1：adapter / server / auth / controller / __main__ |
-| `src/app/agent/tools/`（8 文件） | 74 工具分文件（project/tree/element/principle/reference/compute/migrate/summary）+ `__init__.py` 的 `build_default_registry()` |
+| `src/app/agent/tools/`（10 模块 + `_common.py`） | 75 工具分文件（project/tree/element/element_parts/principle/reference/compute/migrate/summary/meta）+ `__init__.py` 的 `build_default_registry()` |
 | `src/app/agent/serializers.py` | 8.2 序列化 |
 | `src/app/agent/conventions.py` | 领域约定单一来源（T73/prompt 基础层共用） |
 | `src/app/agent/governance.py` | 8.5 五类治理（独立函数，循环无关） |
@@ -789,7 +790,7 @@ emit 直调订阅者）。正常情况下**不做**此改造（内嵌模式必�
 | 文件 | 改动 |
 |---|---|
 | `agent/tool_registry.py` | 类化重写（8.1） |
-| `agent/tools/element_crud.py` | 迁入 `tools/element.py` 并扩容（`ToolContext` 语义并入 id 缺省解析） |
+| `agent/tools/element.py` | 一期构件 CRUD 迁入并扩容（`ToolContext` 语义并入 id 缺省解析） |
 | `agent/confirm_policy.py` | 双通道 + ContextVar（8.4） |
 | `agent/agent_loop.py` | 走新注册表 + cancelled 终止 + 治理挂点（8.5） |
 | `services/ai/ai_provider.py` | reasoning 三点补齐（8.8） |
@@ -802,7 +803,7 @@ emit 直调订阅者）。正常情况下**不做**此改造（内嵌模式必�
 
 ### 9.4 明确不改
 
-- `core/models/`（表结构、SCHEMA_VERSION=7、迁移链）；
+- `core/models/`（表结构、`core/version.py` 的 SCHEMA_VERSION=1、迁移链）；
 - `viewmodels/unit_vm.py`、`project_vm.py` 现有函数签名与行为（工具直接调用）；
 - `services/atlas.py`、`element_library.py`、`stn_migration.py`、`project_io.py` 现有函数
   （原则编辑抽取是**新增**纯函数，对话框与工具都改为调用它们）；
@@ -816,16 +817,16 @@ emit 直调订阅者）。正常情况下**不做**此改造（内嵌模式必�
 > 每阶段 = 可独立合并的 PR；验收 = 该阶段测试全绿 **且** 全量回归
 > （`.venv/Scripts/python.exe -m pytest`）不回退。
 > 建议在 `feature/mcp-server` 分支开发，每阶段完成后 rebase 合并。
-> 节奏对齐 Quotor M1~M5：先 stdio 自检（MCP Inspector 验证），再上内嵌 HTTP + GUI 集成。
+> 节奏：先 stdio 自检（MCP Inspector 验证），再上内嵌 HTTP + GUI 集成。
 
 ### P0 骨架 + 注册表类化（~1 人日）
 
 | 任务 | 说明 |
 |---|---|
 | P0-1 | pyproject 加 `[mcp]` extra（`mcp>=2.0,<3` pin 精确版）与 `section2-mcp` 入口；`.venv` 安装 |
-| P0-2 | `agent/tool_registry.py` 类化重写（8.1）；element_crud 四工具迁入 `tools/element.py` 改 dict 契约；`agent_loop` 调用点切换——**外部行为不变**，现有测试保绿 |
-| P0-3 | `mcp_server/` 五文件骨架（6.2/6.3 照抄 Quotor 形态）；`--transport stdio` 本地模式先跑通 |
-| P0-4 | **无头冒烟** `tests/test_mcp_headless.py`：不建 QApplication，import + 临时 `new_project`（直接调 service 层）→ 只读工具（list_library_templates / evaluate_expression）经适配层执行成功；写工具被守卫拦截返回可读错误。失败则执行 8.9 兜底后重测 |
+| P0-2 | `agent/tool_registry.py` 类化重写（8.1）；一期构件 CRUD 四工具迁入 `tools/element.py` 改 dict 契约；`agent_loop` 调用点切换——**外部行为不变**，现有测试保绿 |
+| P0-3 | `mcp_server/` 五文件骨架（6.2/6.3）；`--transport stdio` 本地模式先跑通 |
+| P0-4 | **无头冒烟** `tests/test_mcp_tools.py`：不建 QApplication，import + 临时 `new_project`（直接调 service 层）→ 只读工具（list_library_templates / evaluate_expression）经适配层执行成功；写工具被守卫拦截返回可读错误。失败则执行 8.9 兜底后重测 |
 | P0-5 | MCP Inspector 连接 `section2-mcp --transport stdio`，list_tools 正常 |
 
 **验收**：类化后现有测试全绿；Inspector 可列工具；adapter 单测（工具数/字段/未知工具
@@ -852,10 +853,10 @@ token → 401；对 token → 200；仅回环可达）；E2E：临时工程 → 
 ### P2 构件子行扩展 + 六类原则全套（~3 人日，工作量最大）
 
 - 前置：完成 9.2 的原则编辑抽取重构（`test_principle_ui*` 保绿）；
-- 工具：T19~T55（37 个）+ serializers 原则四 kind；
+- 工具：T19~T30、T36~T55（32 个；T31~T35 已随「多原则引用」功能取消移除）+
+  serializers 原则四 kind；
 - 测试：原则建改删对拍（新建围护含多级+止水 → get_principle_detail 深度断言；降水五井型
-  往返；面宽矩阵 set/reset；delete 并入语义；最后一条拒删；spcp 导出→删除→导入还原）；
-  `test_multi_principle.py` 语义在工具路径重放。
+  往返；面宽矩阵 set/reset；delete 并入语义；最后一条拒删；spcp 导出→删除→导入还原）。
 
 **验收**：D 组契约测试绿；用工具从零建出与 `tests/baselines/对拍工程.json` 等价的
 工程（数据面）。
@@ -875,7 +876,7 @@ token → 401；对 token → 200；仅回环可达）；E2E：临时工程 → 
 
 - 先写 `services/summary.py`（无头汇总 + Excel 导出，openpyxl）+ 对拍测试
   （与旧版导出数值一致，误差规则同对拍 0.5%）；
-- 工具 T69~T72；桌面 M5 重做时直接复用该 service（界面工作另行立项，不阻塞）。
+- 工具 T69~T72；桌面 M5（汇总面板 + 导出 Excel 对话框，已回归）复用该 service。
 
 ### P6 AI 助手治理 + CLI 四模式 + 加固 + 文档（~2 人日）
 
@@ -900,20 +901,20 @@ token → 401；对 token → 200；仅回环可达）；E2E：临时工程 → 
 
 | 风险 | 缓解 |
 |---|---|
-| mcp 2.x API 跨版本变动（Quotor 已踩坑：FastMCP 移除、ClientSession 需 async with） | pin `mcp>=2.0,<3` 精确版本；升级独立小 PR；P0 用 stdio 先跑通，HTTP 单独迭代 |
+| mcp 2.x API 跨版本变动（FastMCP 已移除、ClientSession 需 async with） | pin `mcp>=2.0,<3` 精确版本；升级独立小 PR；P0 用 stdio 先跑通，HTTP 单独迭代 |
 | 本机 HTTP 暴露被滥用 | 仅回环绑定 + Bearer token + `allow_actions` 开关（4.5） |
 | 写操作确认在无人值守场景卡住 | `[mcp] require_confirmation=false` 跳过弹窗（信任客户端批准）；`allow_actions=false` 干脆不暴露写工具；文档写明默认行为 |
 | 无 QApplication 下 PySide6.QtCore/EventBus 行为异常 | P0-4 冒烟先行；兜底 = event_bus 可选 Qt 改造（8.9）；内嵌模式（主路线）必然有 QApplication，风险只在辅助入口 |
 | `compute_unit` 返回过大（token 爆炸） | include_steps 默认关（compute_unit）；紧凑 prompt 格式（8.6）；per_element 分页列 v2 |
 | 全局单会话被并发写破坏（HTTP 多客户端） | **工具执行统一经 `execute_on_main` 回到 Qt 主线程串行**（`ToolRegistry.execute` 内实现，ContextVar 随调用复制）；适配层另加 `threading.Lock` 串行 MCP 调用；`project_io`/ORM 加主线程守卫，worker 直接访问会立即报错而不是偶发 `prepared` 竞态 |
 | 原则抽取重构碰坏 GUI 对话框 | 对话框行为不变原则；`test_principle_ui*` + 手工过一遍六类编辑器 |
-| 74 工具 system prompt 膨胀 | 紧凑参数格式（Quotor 实测 token 减半以上）+ 上下文层动态注入 |
+| 75 工具 system prompt 膨胀 | 紧凑参数格式（token 减半以上）+ 上下文层动态注入 |
 | AI 误操作（写文件/删数据） | 双通道确认 + readonly + 路径白名单 + 备份兜底（Backup 20 份可人工恢复） |
 
 ### 11.2 开放问题（需产品决策，不阻塞 P0~P5）
 
-1. **导航类工具**（`navigate_to_unit`/`select_element`：让 GUI 跳转选中，Quotor 有）
-   ——需主线程 marshal（碰 Qt 控件），section2 需引入 Quotor 式 ActionBridge 或经
+1. **导航类工具**（`navigate_to_unit`/`select_element`：让 GUI 跳转选中）
+   ——需主线程 marshal（碰 Qt 控件），需引入 ActionBridge 式的主线程投递或经
    EventBus 信号实现；收益是"AI 操作用户看得见"，列 P7 候选；
 2. **LangGraph 重构 + `<<tool_call>>` 标签协议**（8.7）：仅当局域网小模型
    （无 function calling 端点）成为真实需求才立项；
@@ -963,7 +964,7 @@ headers = { Authorization = "Bearer <MCP 设置对话框生成的 token>" }
 原则：`principle_enclosure`(+`enclosure_cushion`+`enclosure_work`→`enclosure_level`→`component`) /
 `principle_foundation`(+`foundation_replacement`+`component`) /
 `principle_precipitation`(5 井型字符串) / `principle_width`(+`principle_width_item`) /
-`component_param`(key, value="显示名|表达式")；`price`(key,value)；`meta`(schema_version=7…)。
+`component_param`(key, value="显示名|表达式")；`price`(key,value)；`meta`(schema_version=1…)。
 
 ### C. 领域约定速查（conventions.py 必须完整收录，工具 description 与 prompt 基础层引用）
 
@@ -979,7 +980,8 @@ headers = { Authorization = "Bearer <MCP 设置对话框生成的 token>" }
 ### D. 实施记录（v1.2，已落地）
 
 > 实施日期：2026-10-20；基线提交 `085304a`；测试结果 **182 passed**
-> （原有 152 + 新增 30）。
+> （原有 152 + 新增 30）。**注：本附录为历史实施记录，实施时为 74 个工具，
+> 后续随汇总导出等功能增至 75 个。**
 
 **已交付**
 
@@ -1003,7 +1005,7 @@ headers = { Authorization = "Bearer <MCP 设置对话框生成的 token>" }
    一致；构件库插入走 `insert_element_from_template` 时由 unit_vm 自己预填）。
 2. 确认卡由主窗体安装的**全局处理器**统一渲染（`install_confirm_handler` /
    关闭时 `uninstall_confirm_handler`），内置面板与外部 MCP 共用；MCP 通道判定
-   在 worker 线程完成，因此不需要 Quotor 的 contextvar 快照/恢复。
+   在 worker 线程完成，因此无需跨线程的 contextvar 快照/恢复。
 3. 写操作在无界面进程直接返回可读错误（不再弹无人应答的确认框）；只读工具
    全部 headless 可用。
 4. 原则对话框保留原有增量落库逻辑（复用 `project_io` 原语）；`principle_edit`

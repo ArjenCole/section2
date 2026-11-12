@@ -269,7 +269,7 @@ def test_foundation_precipitation_width(project) -> None:
     assert detail["work"]
 
 
-def test_spcp_roundtrip(project, tmp_path: Path) -> None:
+def test_spcp_roundtrip_via_mcp(project, tmp_path: Path) -> None:
     path = tmp_path / "围护.spcp"
     result = REG.execute(
         "export_principle", {"kind": "enclosure", "name": "默认围护原则", "path": str(path)}

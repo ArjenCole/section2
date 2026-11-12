@@ -1,10 +1,18 @@
 """主题与全局样式表。
 
-思路照搬 Quotor：一套 ThemeColors 调色板 + 由调色板生成整份 QSS + ThemeManager 单例，
-切换主题时重新生成并 setStyleSheet，同时发出 theme_changed 供自绘控件重绘。
+一套 ThemeColors 调色板 + 由调色板生成整份 QSS 与 QPalette + ThemeManager 单例，
+切换主题时重新生成并 setStyleSheet / setPalette，同时发出 theme_changed 供
+自绘控件重绘。
 
 QSS 用 string.Template（$token）而不是 f-string：样式表里 {} 太多，
 f-string 需要把每个大括号都转义成 {{}}，极易出错。
+
+通用按钮（对话框/消息框里的标准按钮）不再由 QSS 着色：颜色、悬停、按下、
+默认态全部交还原生样式（Windows 走系统样式、macOS 走 QMacStyle），布局与
+顺序见 app/views/widgets/platform_buttons.py。任何 QSS 背景/边框都会让
+QPushButton 改走样式表渲染、丢失原生观感，所以全局通配的背景/文字色规则
+也一并移除，改由 build_palette 生成的 QPalette 承担（自绘功能性控件除外，
+它们各有专属规则）。
 """
 
 from __future__ import annotations
@@ -13,6 +21,7 @@ from dataclasses import dataclass
 from string import Template
 
 from PySide6.QtCore import QObject, Signal
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtSvg import QSvgRenderer
 
 from app.core.paths import ensure_app_data_dir
@@ -126,7 +135,7 @@ def _write_svg(name: str, color: str, body: str, view_box: str = "0 0 24 24") ->
     """把随主题变色的极简 SVG 写到用户数据目录并返回 QSS 可用的路径。
 
     组合框箭头、复选框对勾用 QSS 的 border 画在高分屏上会变成小圆点，
-    所以照 Quotor 的做法落成 svg 文件。``view_box`` 可裁掉 glyph 周围的
+    所以落成 svg 文件由 QSS image 引用。``view_box`` 可裁掉 glyph 周围的
     空白（如下拉箭头只占 24 视图框的中间部分），让 12px 图像里箭头贴满。
     """
     path = ensure_app_data_dir() / f"section2-{name}-{color.lstrip('#')}-{view_box.replace(' ', '')}.svg"
@@ -143,14 +152,22 @@ def _write_svg(name: str, color: str, body: str, view_box: str = "0 0 24 24") ->
 _QSS = Template(
     """
 /* ===================== 全局 ===================== */
+/* 不设全局 color / outline：文字色由 build_palette 同步进 QPalette，键盘
+   焦点指示交还原生样式（Windows 焦点框 / macOS 键盘焦点环）。需要抹掉
+   焦点框的自绘控件在各自规则里单独写 outline: none。
+   主窗体是无边框半透明窗口（rounded_window），普通 QWidget 容器必须有
+   不透明底色，否则整块透明透出桌面——用 .QWidget（精确类选择器，只命中
+   QWidget 本身、不命中 QPushButton 等子类）恢复全局底色，标准按钮保持
+   原生渲染不受影响。 */
 * {
     font-family: $font_family;
     font-size: 13px;
-    color: $text_primary;
-    outline: none;
 }
-QWidget { background-color: $bg_window; }
+.QWidget { background-color: $bg_window; }
 QMainWindow, QDialog { background-color: $bg_window; }
+/* 对话框内部保持透明（对话框 body 是 bg_dialog，容器不再垫 bg_window）；
+   .QWidget 的特异性高于 QDialog QWidget 类型选择器，必须用 QDialog .QWidget */
+QDialog .QWidget { background: transparent; }
 QWidget[role="panel"] { background-color: $bg_card; }
 /* 白底页面里的辅助行/容器：让页面底色透出来（否则全局 QWidget 灰底显成灰条） */
 QWidget[role="ghost"] { background: transparent; }
@@ -239,6 +256,7 @@ QToolButton {
     border-radius: 6px;
     padding: 6px 10px;
     color: $text_primary;
+    outline: none;
 }
 QToolButton:hover { background-color: $bg_hover; }
 QToolButton:pressed { background-color: $bg_pressed; }
@@ -252,6 +270,7 @@ QPushButton[role="toggle-bar"] {
     border-radius: 0;
     padding: 0;
     margin: 0;
+    outline: none;
 }
 
 /* ===================== 状态提示浮层 / 窗体底部圆角 ===================== */
@@ -269,15 +288,19 @@ QLabel#StatusToast {
    border 必须填成面板自身的底色，不能写 transparent —— 无边框窗体的
    背景是透明的，透明 border 那 1px 会直接透出窗体后方，形成一条缝隙。 */
 QSplitter#MainSplitter {
+    background-color: $bg_window;
     border: 1px solid $bg_window;
     border-bottom-left-radius: 8px;
     border-bottom-right-radius: 8px;
 }
+/* 左右两栏是 TreePanel / AiPanel 子类（.QWidget 命不中），显式给底色 */
 QWidget#TreePanelColumn {
+    background-color: $bg_window;
     border: 1px solid $bg_window;
     border-bottom-left-radius: 8px;
 }
 QWidget#AiPanelColumn, QWidget#AiColumnContainer {
+    background-color: $bg_window;
     border: 1px solid $bg_window;
     border-bottom-right-radius: 8px;
 }
@@ -304,6 +327,8 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDateEdit, QTimeEdit, QPlainText
     padding: 6px 10px;
     selection-background-color: $primary;
     selection-color: $text_inverse;
+    /* 焦点指示由 :focus 的 border_focus 边框表达，不再叠加原生焦点框 */
+    outline: none;
 }
 QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover, QPlainTextEdit:hover, QTextEdit:hover {
     border-color: $border_strong;
@@ -349,32 +374,29 @@ QComboBox QAbstractItemView::item:selected {
 }
 
 /* ===================== 按钮 ===================== */
-QPushButton {
+/* 通用 QPushButton 不写任何规则：标准按钮（对话框/消息框的确定、取消等）
+   交还原生样式渲染——Windows 用系统样式（默认按钮带系统强调色）、macOS 用
+   QMacStyle（默认按钮 accent 蓝底），键盘焦点框同样由原生样式负责。
+   顺序/默认按钮/对齐/宽度由 widgets/platform_buttons.py 统一安排。
+   只有自绘功能性控件（+/- 小方块、分段控件、AI 发送等）保留 QSS。 */
+/* 固定尺寸的小方块按钮（+、↑、↓ 等）：不套通用按钮规则后自带完整盒子，
+   默认内边距会把单字符裁掉 */
+QPushButton[role="icon-btn"] {
     background-color: $bg_card;
     border: 1px solid $border_strong;
     border-radius: 6px;
-    padding: 5px 14px;
+    padding: 2px;
+    font-size: 18px;
     color: $text_primary;
+    outline: none;
 }
-QPushButton:hover { background-color: $bg_hover; }
-QPushButton:pressed { background-color: $bg_pressed; }
-QPushButton:disabled { color: $text_disabled; border-color: $border; background-color: $bg_hover; }
-QPushButton[primary="true"] {
-    background-color: $primary;
-    border-color: $primary;
-    color: $text_inverse;
-    font-weight: 600;
+QPushButton[role="icon-btn"]:hover { background-color: $bg_hover; }
+QPushButton[role="icon-btn"]:pressed { background-color: $bg_pressed; }
+QPushButton[role="icon-btn"]:disabled {
+    color: $text_disabled;
+    border-color: $border;
+    background-color: $bg_hover;
 }
-QPushButton[primary="true"]:hover { background-color: $primary_hover; border-color: $primary_hover; }
-QPushButton[primary="true"]:pressed { background-color: $primary_pressed; border-color: $primary_pressed; }
-QPushButton[danger="true"] { color: $danger; border-color: $danger; background-color: transparent; }
-QPushButton[danger="true"]:hover { background-color: $danger; color: $text_inverse; }
-QPushButton[flat="true"] { border-color: transparent; background: transparent; }
-QPushButton[flat="true"]:hover { background-color: $bg_hover; }
-QPushButton[secondary="true"] { background: transparent; color: $text_secondary; }
-QPushButton[secondary="true"]:hover { background-color: $bg_hover; color: $text_primary; }
-/* 固定尺寸的小方块按钮（+、↑、↓ 等）：默认内边距会把单字符裁掉 */
-QPushButton[role="icon-btn"] { padding: 2px; font-size: 18px; }
 /* 工程量明细表表头右侧的表格动作按钮（SVG 图标 + 文字）：常态透明，
    与同排分段控件的未选中态同色，悬停才浮起一层浅底 */
 QToolButton[role="table-action"] {
@@ -383,6 +405,7 @@ QToolButton[role="table-action"] {
     border-radius: 6px;
     padding: 4px 10px;
     color: $text_secondary;
+    outline: none;
 }
 QToolButton[role="table-action"]:hover {
     background-color: $bg_hover;
@@ -432,7 +455,7 @@ QTabWidget::pane {
     border-radius: 8px;
     top: -1px;
 }
-QTabBar { background: transparent; }
+QTabBar { background: transparent; outline: none; }
 QTabBar::tab {
     background: transparent;
     border: 1px solid transparent;
@@ -465,6 +488,7 @@ QPushButton[role="segment-btn"] {
     border-radius: 6px;
     padding: 3px 16px;
     color: $text_secondary;
+    outline: none;
 }
 QPushButton[role="segment-btn"]:hover { color: $text_primary; }
 QPushButton[role="segment-btn"]:checked {
@@ -496,6 +520,7 @@ QTableWidget, QTableView {
     gridline-color: $table_grid;
     selection-background-color: $table_selected_bg;
     selection-color: $text_primary;
+    outline: none;
 }
 /* ::indicator 有 QSS 规则而 item 无背景规则时，QStyleSheetStyle 画完 QSS 指示器
    后再用 baseStyle 画单元格并裁掉指示器区（qstylesheetstyle.cpp CE_ItemViewItem）；
@@ -544,6 +569,7 @@ QListView {
     border: 1px solid $border;
     border-radius: 6px;
     padding: 4px;
+    outline: none;
 }
 QListView::item { padding: 5px 6px; border-radius: 4px; }
 QListView::item:hover { background-color: $item_hover; }
@@ -577,9 +603,6 @@ QToolTip {
 }
 QFrame[role="hline"] { background-color: $border; max-height: 1px; border: none; }
 QFrame[role="vline"] { background-color: $border; max-width: 1px; border: none; }
-QMessageBox { background-color: $bg_dialog; }
-QMessageBox QLabel { color: $text_primary; }
-QMessageBox QPushButton { min-width: 72px; padding: 6px 16px; }
 
 /* ===================== 无边框对话框 / 统一消息框 ===================== */
 /* QDialog QWidget 透明会让对话框里的表格丢背景，这里恢复输入类控件的原色 */
@@ -624,6 +647,7 @@ QPushButton#aiSendBtn {
     margin: 0;
     background-color: $primary;
     color: $text_inverse;
+    outline: none;
 }
 QPushButton#aiSendBtn:hover { background-color: $primary_hover; }
 QPushButton#aiSendBtn:pressed { background-color: $primary_pressed; }
@@ -639,6 +663,7 @@ QPushButton#aiSourceBtn {
     color: $text_secondary;
     font-size: 12px;
     text-align: left;
+    outline: none;
 }
 QPushButton#aiSourceBtn:hover { background-color: $bg_hover; color: $text_primary; }
 QPushButton#aiSourceBtn:pressed { background-color: $bg_pressed; }
@@ -659,7 +684,6 @@ QTreeView::indicator:checked, QListView::indicator:checked {
     image: url($check_mark);
 }
 QTableView::indicator:disabled, QTableWidget::indicator:disabled { background-color: $bg_hover; border-color: $border; }
-QDialog QWidget { background-color: transparent; }
 QDialog QMenu { background-color: $bg_card; }
 QDialog QComboBox QAbstractItemView { background-color: $bg_card; }
 """
@@ -703,6 +727,37 @@ def build_stylesheet(colors: ThemeColors) -> str:
     )
 
 
+def build_palette(colors: ThemeColors) -> QPalette:
+    """由 ThemeColors 生成 QPalette，与 QSS 同步应用。
+
+    通用按钮不写 QSS（见模块 docstring），原生样式只读调色板不读样式表；
+    把主题的窗口/文字/按钮/高亮色同步进 QPalette，浅色、深色两套主题下的
+    原生控件才能与 QSS 面板观感一致。
+    """
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor(colors.bg_window))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(colors.text_primary))
+    palette.setColor(QPalette.ColorRole.Base, QColor(colors.bg_card))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(colors.table_alt_row))
+    palette.setColor(QPalette.ColorRole.Text, QColor(colors.text_primary))
+    palette.setColor(QPalette.ColorRole.Button, QColor(colors.bg_card))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(colors.text_primary))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(colors.bg_card))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(colors.text_primary))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(colors.table_selected_bg))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(colors.text_primary))
+    palette.setColor(QPalette.ColorRole.BrightText, QColor(colors.text_inverse))
+    palette.setColor(QPalette.ColorRole.Link, QColor(colors.primary))
+    palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(colors.text_disabled))
+    for role in (
+        QPalette.ColorRole.WindowText,
+        QPalette.ColorRole.Text,
+        QPalette.ColorRole.ButtonText,
+    ):
+        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(colors.text_disabled))
+    return palette
+
+
 class ThemeManager(QObject):
     """全局主题单例：apply / toggle 后所有窗口立即换肤。"""
 
@@ -732,6 +787,7 @@ class ThemeManager(QObject):
         if colors is self._colors and self._applied:
             return
         self._colors = colors
+        app.setPalette(build_palette(colors))
         app.setStyleSheet(build_stylesheet(colors))
         self._applied = True
         self.theme_changed.emit(colors.name)

@@ -11,55 +11,13 @@
 
 import pytest
 
-
-# --------------------------------------------------------------------------- #
-# 搭建助手
-# --------------------------------------------------------------------------- #
-def _first_unit_id():
-    from sqlalchemy import select
-
-    from app.core.models import base as orm
-    from app.core.models.models import Unit
-
-    return orm.session().scalar(select(Unit.id))
-
-
-def _make_enclosure(name: str, category: str, slope: float | None = None):
-    """按库模板建一条围护原则（单一做法）；slope 非空时把放坡系数设为该值。"""
-    from app.core.models import base as orm
-    from app.core.models.models import PcpEnclosure
-    from app.services import project_io
-
-    session = orm.session()
-    pe = PcpEnclosure(name=name, order_no=90 + len(project_io.enclosures()))
-    session.add(pe)
-    session.flush()
-    project_io.new_enclosure_work(
-        session, pe, project_io.component_library(), order_no=0, level_name=category
-    )
-    if slope is not None:
-        for param in pe.works_sorted()[0].levels[0].components[0].params:
-            if param.key == "A":
-                param.value = f"放坡系数 1:X|{slope}"
-    project_io.commit()
-    return pe
-
-
-def _element(name: str, *, dn=600, depth="3", amount="120", pe_name=None):
-    from app.viewmodels import unit_vm
-
-    element = unit_vm.create_element(
-        _first_unit_id(),
-        category=1,
-        name=name,
-        depth=depth,
-        amount=amount,
-        pipes=[("Ⅱ级混凝土管", dn, "1")],
-        pe_name=pe_name,
-        seed_atlas_defaults=True,
-    )
-    assert element is not None
-    return element.id
+# 搭建助手与 test_lr_enclosure 共用，收拢在 conftest（保留原下划线
+# 别名，调用点不动）
+from conftest import (
+    first_unit_id as _first_unit_id,
+    make_element as _element,
+    make_enclosure as _make_enclosure,
+)
 
 
 def _group(depths, *, amount="120", dn=600, prefix="构件"):
