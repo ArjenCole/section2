@@ -174,6 +174,113 @@ def test_group_keeps_terms_separate_across_slope_breakpoint(project) -> None:
     assert len(shallow_dig.terms) == 1
 
 
+def test_group_falls_back_to_unmerged_when_merged_calc_has_no_positive_terms(
+    project, monkeypatch
+) -> None:
+    """合并路径异常 / 只剩扣除项时，自动回退逐段计算，不能丢掉正量。"""
+    from app.core.calc import trench_group
+
+    group, (e1, e2) = _group_with_slope(project)
+    original = trench_group._member_dig_fill
+    calls: list[bool] = []
+
+    def fake(member, out, bands, *, merge: bool = True):
+        calls.append(merge)
+        if merge:
+            # 模拟合并路径没有产出任何正量（只剩后面的基础 / 管位扣除）
+            return False
+        return original(member, out, bands, merge=False)
+
+    monkeypatch.setattr(trench_group, "_member_dig_fill", fake)
+    results, errors = _group_results(group)
+    assert True in calls and False in calls
+    for element_id in (e1, e2):
+        dig = results[element_id].get(_dig_key(results[element_id]))
+        assert dig is not None
+        assert any(term.value > 0 for term in dig.terms)
+        fills = [
+            quantity
+            for quantity in results[element_id].items()
+            if quantity.key.startswith(("垫层|", "回填|"))
+        ]
+        assert any(term.value > 0 for quantity in fills for term in quantity.terms)
+    assert not any("未生成工程量" in message for message in errors.values())
+
+
+def test_group_falls_back_to_unmerged_when_merged_calc_raises(
+    project, monkeypatch
+) -> None:
+    """合并路径抛记法异常时，自动回退逐段计算，不能只剩扣除项。"""
+    from app.core.calc import trench_group
+
+    group, (e1, e2) = _group_with_slope(project)
+    original = trench_group._member_dig_fill
+    calls: list[bool] = []
+
+    def fake(member, out, bands, *, merge: bool = True):
+        calls.append(merge)
+        if merge:
+            raise AssertionError("模拟合并路径记法异常")
+        return original(member, out, bands, merge=False)
+
+    monkeypatch.setattr(trench_group, "_member_dig_fill", fake)
+    results, errors = _group_results(group)
+    assert True in calls and False in calls
+    for element_id in (e1, e2):
+        dig = results[element_id].get(_dig_key(results[element_id]))
+        assert dig is not None
+        assert any(term.value > 0 for term in dig.terms)
+    assert not any("未生成工程量" in message for message in errors.values())
+
+
+def test_group_keeps_partial_positive_terms_when_both_paths_raise(
+    project, monkeypatch
+) -> None:
+    """两条路径都异常时，异常前已生成的正量也不能被丢掉（不能只剩扣除项）。"""
+    from app.core.calc import trench_group
+
+    group, (e1, _e2) = _group_with_slope(project)
+
+    def fake(member, out, bands, *, merge: bool = True):
+        if merge:
+            out.add("回填|中粗砂|m3", 1.0, "1", "异常前正量")
+        raise AssertionError("模拟记法异常")
+
+    monkeypatch.setattr(trench_group, "_member_dig_fill", fake)
+    results, errors = _group_results(group)
+    quantity = results[e1].get("回填|中粗砂|m3")
+    assert quantity is not None
+    assert any(term.value > 0 for term in quantity.terms)
+    assert "未生成工程量" in errors[e1]
+
+
+def test_group_falls_back_when_merged_path_misses_excavation(
+    project, monkeypatch
+) -> None:
+    """合并路径只出了回填、没出挖方时，也要回退逐段重算，补齐挖方正量。"""
+    from app.core.calc import trench_group
+
+    group, (e1, e2) = _group_with_slope(project)
+    original = trench_group._member_dig_fill
+    calls: list[bool] = []
+
+    def fake(member, out, bands, *, merge: bool = True):
+        calls.append(merge)
+        if merge:
+            out.add("回填|中粗砂|m3", 1.0, "1", "只有回填")
+            return False
+        return original(member, out, bands, merge=False)
+
+    monkeypatch.setattr(trench_group, "_member_dig_fill", fake)
+    results, errors = _group_results(group)
+    assert True in calls and False in calls
+    for element_id in (e1, e2):
+        dig = results[element_id].get(_dig_key(results[element_id]))
+        assert dig is not None
+        assert any(term.value > 0 for term in dig.terms)
+    assert not any("未生成工程量" in message for message in errors.values())
+
+
 # --------------------------------------------------------------------------- #
 # 基础占位 / 管位切片：直接测切片合并
 # --------------------------------------------------------------------------- #

@@ -23,6 +23,7 @@ from app.core.calc.tracer import (
     dim,
     dim_min,
     dim_sum,
+    mm,
     needs_parens,
     needs_parens_tight,
     raw_dim,
@@ -149,6 +150,14 @@ def test_dim_sum_and_min_skip_empty_parts() -> None:
 
 def test_dim_division_by_one_keeps_expression() -> None:
     assert (dim(2.5) / 1).e == "2.5"
+    # 除数是带记法指数的 1（如 1m）时不能走 ÷1 捷径：商要降指数并保留算式，
+    # 否则 500mm/1000mm 会被当成 500mm，再乘高度就错成面积（10^6 vs 10^3）。
+    one_length = mm(1000)
+    quotient = mm(500) / one_length
+    assert quotient.v == pytest.approx(0.5)
+    assert quotient.s == 0
+    assert quotient.e == "500/1000"
+    assert (quotient * mm(1000)).s == 3
 
 
 # --------------------------------------------------------------------------- #

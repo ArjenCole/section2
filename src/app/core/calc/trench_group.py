@@ -39,6 +39,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from app.core.calc import foundation, precipitation
@@ -83,6 +84,8 @@ from app.core.models.models import (
     TrenchGroup,
 )
 from app.services.atlas import resolve_atlas
+
+_logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
@@ -953,6 +956,37 @@ def group_distance_limits(
     return radius_sum, _member_label(neighbor)
 
 
+def _positive_section_flags(out: QDict, member: "_Member") -> tuple[bool, bool]:
+    """该成员是否已生成正的挖方 / 回填分项：返回 ``(挖方正量, 回填正量)``。
+
+    挖方与回填是两套独立的分层积分；只出现其中一套、另一套只剩扣除项时，
+    同样视为异常，交给逐段回退路径重算。
+    """
+    dig_key = (
+        f"开挖|{member.info.pp.excvt}|m3" if member.info.pp is not None else ""
+    )
+    dig_positive = False
+    if dig_key:
+        quantity = out.get(dig_key)
+        dig_positive = bool(
+            quantity is not None
+            and any(term.value > 0 for term in quantity.terms)
+        )
+    fill_positive = False
+    for key in {band[0] for band in member.bands}:
+        quantity = out.get(key)
+        if quantity is not None and any(term.value > 0 for term in quantity.terms):
+            fill_positive = True
+            break
+    return dig_positive, fill_positive
+
+
+def _has_positive_section(out: QDict, member: "_Member") -> bool:
+    """挖方与回填都已有正量（合并路径是否完整产出的判据）。"""
+    dig_positive, fill_positive = _positive_section_flags(out, member)
+    return dig_positive and fill_positive
+
+
 def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]:
     """计算一个合槽组：返回 (构件 id → 工程量, 构件 id → 错误说明)。
 
@@ -1176,14 +1210,45 @@ def compute_group(group: TrenchGroup) -> tuple[dict[int, QDict], dict[int, str]]
     filled: set[int] = set()
     for member in snapshots:
         out = QDict()
+        produced = False
+        merged_out = out
         try:
             produced = _member_dig_fill(member, out, member.bands)
         except AssertionError as error:
-            # 记法链被污染（如面积量纲混进标高链）只影响该成员的分层积分，
-            # 断言全文（两侧算式与记法指数）转逐构件错误展示，其余成员照常
-            errors[member.element.id] = f"分层几何记法异常，未生成工程量（{error}）。"
-            continue
-        if produced:
+            # 记法链被污染（如面积量纲混进标高链）只影响该成员的分层积分；
+            # 保留异常前已生成的正量，并回退到逐段（不合并）路径再试一次。
+            merged_out = out
+            out = QDict()
+            _logger.warning(
+                "合槽成员 %s 合并分层积分异常，回退逐段计算：%s",
+                member.element.id,
+                error,
+            )
+        if not _has_positive_section(out, member):
+            fallback = QDict()
+            try:
+                fallback_produced = _member_dig_fill(
+                    member, fallback, member.bands, merge=False
+                )
+            except AssertionError as error:
+                errors[member.element.id] = (
+                    f"分层几何记法异常，未生成工程量（{error}）。"
+                )
+                results[member.element.id] = merged_out
+                continue
+            if _has_positive_section(fallback, member):
+                _logger.warning(
+                    "合槽成员 %s 合并分层积分未产出正量，已回退逐段计算",
+                    member.element.id,
+                )
+                out = fallback
+                produced = True
+            else:
+                # 两种路径都没有正量：保留回退结果（可能有负项 / 零项），
+                # 下面按“覆土不足或分层无效”报错，不再丢掉已有分项。
+                out = fallback
+                produced = fallback_produced
+        if produced or any(_positive_section_flags(out, member)):
             filled.add(member.element.id)
         else:
             errors[member.element.id] = errors.get(member.element.id) or "覆土不足或分层无效，未生成工程量。"
@@ -1532,15 +1597,17 @@ def _piece_note(notes: list[str]) -> str:
 
 
 def _section_runs(
-    pieces: list[_SectionPiece], *, same_key: bool
+    pieces: list[_SectionPiece], *, same_key: bool, merge: bool = True
 ) -> list[list[_SectionPiece]]:
     """把相邻小段合并成若干条等坡断面。
 
     ``same_key=True`` 用于回填：只有同一定额键（同材质）的相邻段才合并；
     ``same_key=False`` 用于挖方：跨材质层合并，整槽同坡时得到一条大梯形。
     合并还要求上下标高相接、左右两侧宽度各自连续且坡度各自相同（并集左右
-    仍是直线）。
+    仍是直线）。``merge=False`` 时每段单独成一条，供异常时的回退路径使用。
     """
+    if not merge:
+        return [[piece] for piece in pieces]
     runs: list[list[_SectionPiece]] = []
     current: list[_SectionPiece] = []
     for piece in pieces:
@@ -1609,7 +1676,11 @@ def _run_area(
 
 
 def _member_dig_fill(
-    member: _Member, out: QDict, bands: list[tuple[str, Dim, Dim, Dim, str]]
+    member: _Member,
+    out: QDict,
+    bands: list[tuple[str, Dim, Dim, Dim, str]],
+    *,
+    merge: bool = True,
 ) -> bool:
     """构件宽度剖面的挖方 / 分层回填（按标高分层、每层梯形，结果写入 ``out``）。
 
@@ -1691,7 +1762,7 @@ def _member_dig_fill(
         return False
 
     # 回填：同一定额键的相邻等坡段合并成一条梯形（不同材质仍分段）
-    for run in _section_runs(pieces, same_key=True):
+    for run in _section_runs(pieces, same_key=True, merge=merge):
         area, geometry = _run_area(member, run)
         if area.v == 0:
             continue
@@ -1710,7 +1781,7 @@ def _member_dig_fill(
     dig.terms.clear()
     dig.value = 0.0
     produced = False
-    for run in _section_runs(pieces, same_key=False):
+    for run in _section_runs(pieces, same_key=False, merge=merge):
         area, geometry = _run_area(member, run)
         if area.v == 0:
             continue
