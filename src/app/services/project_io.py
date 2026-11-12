@@ -789,6 +789,11 @@ def create_foundation(name: str = "新地基原则") -> PcpFoundation | None:
     return foundation
 
 
+#: 构件上引用围护原则名的全部字段：普通构件 ``pe_name`` + 左右分设 / 合槽组员
+#: 的 ``pe_left_name`` / ``pe_right_name``（改名与删除并入时三者一起跟随）
+_ENCLOSURE_REF_FIELDS = ("pe_name", "pe_left_name", "pe_right_name")
+
+
 def rename_enclosure(enclosure_id: int, name: str) -> None:
     enclosure = orm.session().get(PcpEnclosure, enclosure_id)
     if enclosure is None or not name.strip() or enclosure.name == name.strip():
@@ -796,7 +801,7 @@ def rename_enclosure(enclosure_id: int, name: str) -> None:
     old = enclosure.name
     new = name.strip()
     enclosure.name = new
-    _rename_principle_reference(orm.session(), "pe_name", old, new)
+    _rename_principle_reference(orm.session(), _ENCLOSURE_REF_FIELDS, old, new)
     commit()
 
 
@@ -833,11 +838,19 @@ def rename_width(width_id: int, name: str) -> None:
     commit()
 
 
-def _rename_principle_reference(session, field: str, old: str, new: str) -> None:
+def _rename_principle_reference(session, field: str | tuple[str, ...], old: str, new: str) -> None:
+    """把构件上引用 ``old`` 的原则名改成 ``new``。
+
+    ``field`` 可以是单个字段名，也可以是字段组——围护原则除了普通构件的
+    ``pe_name``，还被左右分设构件 / 合槽组员的 ``pe_left_name`` /
+    ``pe_right_name`` 按名引用（改名、删除并入时这些引用必须一起跟随，
+    否则它们会悬空、计算时静默回退到库中第一条原则）。
+    """
     from app.core.models.models import Element
 
-    for element in session.scalars(select(Element).where(getattr(Element, field) == old)):
-        setattr(element, field, new)
+    for name in (field,) if isinstance(field, str) else field:
+        for element in session.scalars(select(Element).where(getattr(Element, name) == old)):
+            setattr(element, name, new)
 
 
 def merge_target_enclosure(name: str) -> str | None:
@@ -887,7 +900,7 @@ def delete_enclosure(enclosure_id: int, replacement: str | None = None) -> str |
     target = replacement or merge_target_enclosure(enclosure.name)
     if not target or target == enclosure.name:
         return "找不到可替代引用的围护原则。"
-    _rename_principle_reference(orm.session(), "pe_name", enclosure.name, target)
+    _rename_principle_reference(orm.session(), _ENCLOSURE_REF_FIELDS, enclosure.name, target)
     orm.session().delete(enclosure)
     commit()
     return None

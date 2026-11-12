@@ -290,9 +290,10 @@ class PrincipleBar(QWidget):
         answer = FramelessMessageBox.question(
             self, "提示",
             f"删除后该原则的引用将被<{target}>替代,确认删除?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            FramelessMessageBox.StandardButton.Yes | FramelessMessageBox.StandardButton.No,
+            FramelessMessageBox.StandardButton.No,
         )
-        if answer != QMessageBox.StandardButton.Yes:
+        if answer != FramelessMessageBox.StandardButton.Yes:
             return
         deleters = {
             _KIND_ENCLOSURE: lambda: project_io.delete_enclosure(found.id, target),
