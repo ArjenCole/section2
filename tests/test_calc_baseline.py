@@ -422,6 +422,49 @@ def test_detail_dialog_centers_on_parent(project, qapp) -> None:
     parent.close()
 
 
+def test_detail_dialog_construction_shows_no_extra_window(project, qapp) -> None:
+    """构造表达式详情窗体时不能有额外顶层窗口被显示出来（闪烁回归）。
+
+    背景：``_fit_tab_height()`` 在中间符号 QTabWidget 加入 body 布局之前就
+    调 ``setVisible(True)``；无父 QWidget 一旦 setVisible(True) 就变成顶层
+    窗口，于是双击工程量表的表达式列时，先闪一个 260×220 左右的空白小窗体
+    （标签页），再弹出详情窗体。控件必须在创建时就挂到对话框上。
+    """
+    from PySide6.QtCore import QEvent, QObject
+    from PySide6.QtWidgets import QWidget
+
+    from app.views.dialogs.expression_detail_dialog import ExpressionDetailDialog
+
+    unit = project
+    elements = {element.name: element for element in _elements(unit)}
+    backfill = _results(unit)[elements["混凝土管"].id].get("回填|中粗砂|m3")
+
+    shown: list[str] = []
+
+    class _TopLevelShowWatcher(QObject):
+        def eventFilter(self, obj, event):  # noqa: N802 - Qt 命名
+            if (
+                event.type() == QEvent.Type.Show
+                and isinstance(obj, QWidget)
+                and obj.isWindow()
+            ):
+                shown.append(type(obj).__name__)
+            return False
+
+    watcher = _TopLevelShowWatcher()
+    qapp.installEventFilter(watcher)
+    try:
+        dialog = ExpressionDetailDialog(
+            None, backfill, ("element", elements["混凝土管"].id, None)
+        )
+    finally:
+        qapp.removeEventFilter(watcher)
+
+    # 构造期（尚未 show）不应显示任何顶层窗口：有就说明某个控件被当成窗口弹出来了
+    assert shown == [], f"构造期弹出了额外的顶层窗口：{shown}"
+    dialog.close()
+
+
 def test_bow_and_half_circle_highlights_use_arc_polygons(project) -> None:
     """弓形 / 半圆扣减的高亮几何是弧线多边形，不再退化成外包矩形。"""
     unit = project

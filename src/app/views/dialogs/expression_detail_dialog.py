@@ -393,8 +393,14 @@ class ExpressionDetailDialog(FramelessDialog):
         )
         body.addWidget(self._formula_label)
 
-        self._term_table = self._make_table(["符号", "说明", "算式", "计算结果"])
-        self._inter_tabs = QTabWidget()
+        # 必须先给父对象再填内容：下面 _fill_single / _fill_merged 会在把控件
+        # 加入 body 布局之前调 _fit_tab_height，里面 setVisible(True)。无父的
+        # QWidget 一旦 setVisible(True) 就变成顶层窗口——双击表达式时会先闪
+        # 一个 260×220 左右的空白小窗体（QTabWidget）再弹出本窗体（实测）。
+        self._term_table = self._make_table(
+            ["符号", "说明", "算式", "计算结果"], parent=self
+        )
+        self._inter_tabs = QTabWidget(self)
         self._inter_tabs.setDocumentMode(True)
         self._inter_tabs.currentChanged.connect(self._on_inter_tab_changed)
         self._inter_tables: list[QTableWidget] = []
@@ -613,8 +619,10 @@ class ExpressionDetailDialog(FramelessDialog):
 
     # ------------------------------------------------------------------ 表格
     @staticmethod
-    def _make_table(headers: list[str]) -> QTableWidget:
-        table = QTableWidget(0, len(headers))
+    def _make_table(
+        headers: list[str], *, parent: QWidget | None = None
+    ) -> QTableWidget:
+        table = QTableWidget(0, len(headers), parent)
         table.setHorizontalHeaderLabels(headers)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -681,7 +689,9 @@ class ExpressionDetailDialog(FramelessDialog):
         ``definitions`` 里每项可以是 ``ExpressionDefinition``，也可以是
         ``(ExpressionDefinition, member_id)``（合并行按成员区分断面位置）。
         """
-        table = self._make_table(["符号", "含义", "代入式", "计算结果", "来源"])
+        table = self._make_table(
+            ["符号", "含义", "代入式", "计算结果", "来源"], parent=self._inter_tabs
+        )
         for entry in definitions:
             if isinstance(entry, tuple):
                 item, item_member = entry
