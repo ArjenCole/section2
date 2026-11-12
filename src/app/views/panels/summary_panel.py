@@ -5,7 +5,7 @@
 :attr:`SummaryPanel.cost_page` / :attr:`SummaryPanel.price_page`）；
 单位工程则显示构件列表 / 工程量明细表。右侧 AI 面板不受影响。
 
-* 费用汇总表 —— 项目结构每个节点一行（合槽构件同款树状表格：父行
+* 费用汇总表 —— 项目结构每个节点一行（合槽构件同款树状表格：序号列左侧
   +/- 展开方框、子行缩进竖线、父行浅色底），合价 = 该节点下所有工程量项
   合价的合计（叶子节点取自身，父节点取子节点合计）；
 * 综合单价汇总表 —— 选中节点及其下属节点所有条目的工程量按键合并
@@ -36,7 +36,7 @@ from app.viewmodels.project_vm import KIND_PROJECT, KIND_SEGMENT, KIND_UNIT, Tre
 from app.viewmodels.unit_vm import compute_unit
 from app.views.widgets.table_width import fixed_width_behavior
 
-# 合槽构件同款的名称列树形委托与角色（见 unit_panel）
+# 合槽构件同款的树形列委托与角色（见 unit_panel）
 from app.views.panels.unit_panel import (
     _FOCUS_OWNER_ATTR,
     _TREE_ROLE,
@@ -45,7 +45,9 @@ from app.views.panels.unit_panel import (
 
 _COST_HEADERS = ["序号", "名称", "合价"]
 _COST_COL_SEQ, _COST_COL_NAME, _COST_COL_TOTAL = range(3)
-_COST_WIDTHS = [90, 360, 140]
+#: 序号列兼作树形列：左侧留给 +/- 方框与缩进槽位，最深层级（单位工程）的
+#: 编号（如 1.1.1）仍要整段显示。这里只是默认宽度，装填时按实际字宽兜底加宽
+_COST_WIDTHS = [110, 340, 140]
 
 _PRICE_HEADERS = ["编号", "类别", "项目", "单位", "工程量", "单价", "合价"]
 _PCOL_NO, _PCOL_CAT, _PCOL_ITEM, _PCOL_UNIT, _PCOL_AMOUNT, _PCOL_PRICE, _PCOL_TOTAL = range(7)
@@ -116,9 +118,13 @@ class SummaryPanel(QObject):
         self._cost_table = self._make_table(_COST_HEADERS)
         for index, width in enumerate(_COST_WIDTHS):
             self._cost_table.setColumnWidth(index, width)
-        # 名称列树形委托：父行 +/- 展开方框（点击切换），子行缩进竖线
+        # 序号列树形委托：父行 +/- 展开方框（点击切换），子行缩进竖线。
+        # 表格开着交替行底色，委托自绘的序号列要跟着铺条纹色
         self._cost_table.setItemDelegateForColumn(
-            _COST_COL_NAME, _ElementNameDelegate(self._cost_table, self._on_node_toggle_requested)
+            _COST_COL_SEQ,
+            _ElementNameDelegate(
+                self._cost_table, self._on_node_toggle_requested, alt_rows=True
+            ),
         )
         page_layout.addWidget(self._cost_table, 1)
         return page
@@ -388,39 +394,60 @@ class SummaryPanel(QObject):
             seq_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             seq_item.setFlags(seq_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             seq_item.setForeground(QBrush(self._secondary_color()))
+            # 序号列是树形列：+/- 方框画在编号左侧，子行按层级缩进（委托自绘）
+            seq_item.setData(
+                _TREE_ROLE,
+                {
+                    "indent": node.indent,
+                    "has_children": node.has_children,
+                    "expanded": node.key not in self._collapsed_keys,
+                },
+            )
+            seq_item.setData(_NODE_KEY_ROLE, node.key)
+            if node.has_children:
+                seq_item.setToolTip("点击 +/- 展开或收起下级节点。")
 
             name_item = QTableWidgetItem(node.name)
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            if node.has_children:
-                name_item.setData(
-                    _TREE_ROLE,
-                    {
-                        "indent": node.indent,
-                        "has_children": True,
-                        "expanded": node.key not in self._collapsed_keys,
-                    },
-                )
-                name_item.setToolTip("点击 +/- 展开或收起下级节点。")
-            elif node.indent:
-                name_item.setData(
-                    _TREE_ROLE, {"indent": node.indent, "has_children": False, "expanded": False}
-                )
-            name_item.setData(_NODE_KEY_ROLE, node.key)
 
             total_item = QTableWidgetItem(fmt(node.total))
             total_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             total_item.setFlags(total_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             if node.has_children:
-                # 父行浅色底（合槽父行同款；名称列底色由委托自绘）
+                # 父行浅色底（合槽父行同款；序号列底色由委托自绘）
                 for item in (seq_item, name_item, total_item):
                     item.setBackground(highlight)
             table.setItem(row_index, _COST_COL_SEQ, seq_item)
             table.setItem(row_index, _COST_COL_NAME, name_item)
             table.setItem(row_index, _COST_COL_TOTAL, total_item)
+        self._fit_cost_seq_column(flat)
+
+    def _fit_cost_seq_column(self, flat: list[_CostNode]) -> None:
+        """序号列兼树形列：按最深层级编号的实际字宽兜底加宽，避免缩进后裁字。
+
+        只加宽不缩窄——用户手动拖宽的列宽保持不动。
+        """
+        delegate_cls = _ElementNameDelegate
+        self._cost_table.ensurePolished()  # 先刷上 QSS 的 13px 字体再量字宽
+        metrics = self._cost_table.fontMetrics()
+        needed = max(
+            (
+                delegate_cls.LEFT_PADDING
+                + delegate_cls.INDENT_UNIT * node.indent
+                + delegate_cls.ICON_SIZE
+                + delegate_cls.TEXT_MARGIN
+                + metrics.horizontalAdvance(node.seq)
+                + delegate_cls.LEFT_PADDING
+                for node in flat
+            ),
+            default=0,
+        )
+        if needed > self._cost_table.columnWidth(_COST_COL_SEQ):
+            self._cost_table.setColumnWidth(_COST_COL_SEQ, needed)
 
     def _on_node_toggle_requested(self, row_index: int) -> None:
         """点击父行 +/- 方框：切换展开 / 收起并重排费用表。"""
-        item = self._cost_table.item(row_index, _COST_COL_NAME)
+        item = self._cost_table.item(row_index, _COST_COL_SEQ)
         if item is None:
             return
         meta = item.data(_TREE_ROLE)

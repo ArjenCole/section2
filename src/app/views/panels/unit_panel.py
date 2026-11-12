@@ -79,7 +79,8 @@ from app.views.widgets.table_width import fixed_width_behavior, header_fit_width
 
 _ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
 
-#: 名称列树形元数据（Quotor ResourceSeqDelegate 同款）：合槽父行 / 子行挂
+#: 树形列元数据（Quotor ResourceSeqDelegate 同款）：构件表挂在名称列、
+#: 费用汇总表挂在序号列；父行 / 子行挂
 #: {"indent": int, "has_children": bool, "expanded": bool}，普通行不挂
 _TREE_ROLE = Qt.ItemDataRole.UserRole + 2
 #: 合槽父节点行的标记（name item 的 UserRole 数据 = ("group", 组 id)）
@@ -303,11 +304,15 @@ class _FocusCellDelegate(TableEditDelegate):
 
 
 class _ElementNameDelegate(_FocusCellDelegate):
-    """构件表名称列委托：合槽父行画 +/- 展开方框，成员行画缩进竖线（Quotor
+    """树形列委托：父行画 +/- 展开方框，成员行画缩进竖线（Quotor
     ResourceSeqDelegate 同款视觉语言）。
 
-    树形元数据存于名称条目的 _TREE_ROLE（dict），普通行不带该角色、按
+    构件表用在名称列（合槽父行），费用汇总表用在序号列（项目结构节点）。
+    树形元数据存于该列条目的 _TREE_ROLE（dict），普通行不带该角色、按
     基类原样绘制。点击父行的 +/- 方框区域触发 toggle_callback 切换展开。
+
+    ``alt_rows``：所在表格开了交替行底色时置 True。本委托自绘单元格底色，
+    奇数行必须跟着铺 table_alt_row，否则自绘列会成一条纯色竖带。
     """
 
     INDENT_UNIT = 18      # 每级缩进像素
@@ -317,9 +322,12 @@ class _ElementNameDelegate(_FocusCellDelegate):
     LEFT_PADDING = 8      # 与 QSS ::item 的 8px 左内边距对齐
     LINE_INSET = 3        # +/- 线条距方框边缘的缩进
 
-    def __init__(self, parent: QWidget | None = None, toggle_callback=None) -> None:
+    def __init__(
+        self, parent: QWidget | None = None, toggle_callback=None, *, alt_rows: bool = False
+    ) -> None:
         super().__init__(parent)
         self._toggle_callback = toggle_callback
+        self._alt_rows = alt_rows
 
     def _icon_slot_x(self, rect, indent_level: int) -> float:
         return rect.x() + self.LEFT_PADDING + self.INDENT_UNIT * indent_level
@@ -351,12 +359,15 @@ class _ElementNameDelegate(_FocusCellDelegate):
 
         painter.save()
         # 底色自绘（Quotor ResourceSeqDelegate 同款）：选中行 = QSS ::item:selected
-        # 的 table_selected_bg；未选中行统一 = 表背景 bg_card（主表格不画交替行条纹）
+        # 的 table_selected_bg；未选中行统一 = 表背景 bg_card（构件表不画交替行
+        # 条纹），所在表格开了交替行底色时奇数行跟铺 table_alt_row
         theme = ThemeManager.instance().current()
         if option.state & QStyle.StateFlag.State_Selected:
             painter.fillRect(option.rect, QColor(theme.table_selected_bg))
+        elif self._alt_rows and index.row() % 2 == 1:
+            painter.fillRect(option.rect, QColor(theme.table_alt_row))
         else:
-            # 主表格不使用交替行底色：未选中行统一取两种条纹色中更浅的 bg_card
+            # 构件表不使用交替行底色：未选中行统一取两种条纹色中更浅的 bg_card
             painter.fillRect(option.rect, QColor(theme.bg_card))
 
         rect = option.rect
@@ -369,7 +380,7 @@ class _ElementNameDelegate(_FocusCellDelegate):
                 QPointF(line_x, rect.bottom() - 0.5),
             )
 
-        # +/- 方框（仅合槽父行）：展开 = 「−」，收起 = 「+」
+        # +/- 方框（仅父行）：展开 = 「−」，收起 = 「+」
         if has_children:
             icon_y = rect.center().y() - self.ICON_SIZE / 2.0
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -397,7 +408,12 @@ class _ElementNameDelegate(_FocusCellDelegate):
 
         # 名称文本（从图标槽位之后统一 x 起始，同级对齐）
         text_x = self._text_x(rect, indent)
-        painter.setPen(QPen(QColor(theme.text_primary)))
+        # 文字色取条目自身的 ForegroundRole（序号列是次要文字色），未设则用正文色
+        foreground = index.data(Qt.ItemDataRole.ForegroundRole)
+        text_color = (
+            foreground.color() if isinstance(foreground, QBrush) else QColor(theme.text_primary)
+        )
+        painter.setPen(QPen(text_color))
         text_rect = QRect(
             int(text_x), rect.y(), rect.right() - int(text_x) - self.LEFT_PADDING,
             rect.height(),
