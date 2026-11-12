@@ -1445,7 +1445,11 @@ class _SectionPiece:
 
     ``lo`` / ``hi`` 为自槽底起的标高区间，``height`` 为这一小段的高（整层
     未被切开时直接沿用分层厚度的算式，否则用 ``hi - lo``），``key`` 为回填
-    定额键、``note`` 为分层说明。合并只改变列式方式，不改变任何数值。
+    定额键、``note`` 为分层说明。``low`` 为该段下沿总宽、``slope_terms`` 为
+    该段总宽的坡高项（``ΣH*s``）；``left_lo`` / ``left_hi`` / ``right_lo`` /
+    ``right_hi`` 为该段左右侧外扩宽的下沿 / 上沿（相对本体中心，m），合并时
+    用它判断左右两侧是否各自连续且坡度相同。合并只改变列式方式，不改变
+    任何数值。
     """
 
     key: str
@@ -1453,29 +1457,41 @@ class _SectionPiece:
     hi: Dim
     height: Dim
     note: str
+    low: Dim
+    slope_terms: Dim
+    left_lo: float
+    left_hi: float
+    right_lo: float
+    right_hi: float
 
 
-def _profiles_linear_between(member: "_Member", lo: Dim, hi: Dim) -> bool:
-    """[lo, hi] 内各侧宽度剖面是否都是同一条直线（没有分级 / 平台折点）。
+def _can_merge_pieces(left: _SectionPiece, right: _SectionPiece) -> bool:
+    """相邻两小段能否并成一条等坡断面。
 
-    合并相邻分层的前提：并集内每一侧都只有一段等坡线，合并后仍是一个
-    梯形 / 矩形 / 三角形；跨过分级或平台折点时并集不是单一形状，不能合并。
-
-    剖面可以只覆盖区间的一部分——例如异深相邻侧的工作面 / 放坡段止于浅槽底，
-    浅槽底以上由另一条竖直段接续：只要该剖面整体在区间下方（宽度恒 0）或
-    整体在区间上方（尚未开始），它就不影响并集的线性。
+    判据看**左右两侧各自的宽度函数**：上一段顶边 = 下一段底边（两侧都连续），
+    且两段左右侧的坡度各自相同（并集仍是左右各一条直线）。不按单条宽度
+    剖面判断——同一条剖面在相邻构件槽底处可能由“工作面矩形”换成“竖直
+    条带”，宽度和坡度都没变；按剖面会把它误判成折点，把本来完整的矩形 /
+    梯形拆开。左右两侧分开判断也避免“一侧上折、另一侧下折、总宽恰好抵消”
+    时把带折点的断面误并成一条直线。
     """
-    for profile in member.profiles:
-        if not profile:
-            continue
-        if _segment_for_interval(profile, lo, hi) is not None:
-            continue
-        if max(segment.t2.v for segment in profile) <= lo.v + 1e-9:
-            continue  # 整条剖面止于区间下沿：区间内宽度恒 0
-        if min(segment.t1.v for segment in profile) >= hi.v - 1e-9:
-            continue  # 整条剖面起于区间上沿：区间内尚未出现
+    if abs(left.hi.v - right.lo.v) > 1e-9:
         return False
-    return True
+    # 左右两侧宽度连续
+    if abs(left.left_hi - right.left_lo) > 1e-9:
+        return False
+    if abs(left.right_hi - right.right_lo) > 1e-9:
+        return False
+    # 左右两侧坡度各自相同（并集左右仍是直线）
+    if left.height.v <= 0 or right.height.v <= 0:
+        return False
+    left_slope_l = (left.left_hi - left.left_lo) / left.height.v
+    right_slope_l = (right.left_hi - right.left_lo) / right.height.v
+    if abs(left_slope_l - right_slope_l) > 1e-9:
+        return False
+    left_slope_r = (left.right_hi - left.right_lo) / left.height.v
+    right_slope_r = (right.right_hi - right.right_lo) / right.height.v
+    return abs(left_slope_r - right_slope_r) <= 1e-9
 
 
 def _interval_area(low: Dim, slope_terms: Dim, height: Dim) -> Dim:
@@ -1516,13 +1532,14 @@ def _piece_note(notes: list[str]) -> str:
 
 
 def _section_runs(
-    pieces: list[_SectionPiece], member: "_Member", *, same_key: bool
+    pieces: list[_SectionPiece], *, same_key: bool
 ) -> list[list[_SectionPiece]]:
     """把相邻小段合并成若干条等坡断面。
 
     ``same_key=True`` 用于回填：只有同一定额键（同材质）的相邻段才合并；
     ``same_key=False`` 用于挖方：跨材质层合并，整槽同坡时得到一条大梯形。
-    合并还要求上下标高相接、并集内各侧剖面保持同一条直线。
+    合并还要求上下标高相接、左右两侧宽度各自连续且坡度各自相同（并集左右
+    仍是直线）。
     """
     runs: list[list[_SectionPiece]] = []
     current: list[_SectionPiece] = []
@@ -1531,9 +1548,8 @@ def _section_runs(
             first = current[0]
             last = current[-1]
             if (
-                abs(last.hi.v - piece.lo.v) <= 1e-9
-                and (not same_key or piece.key == first.key)
-                and _profiles_linear_between(member, first.lo, piece.hi)
+                (not same_key or piece.key == first.key)
+                and _can_merge_pieces(last, piece)
             ):
                 current.append(piece)
                 continue
@@ -1544,6 +1560,30 @@ def _section_runs(
     return runs
 
 
+def _run_geometry(
+    member: "_Member", run: list[_SectionPiece]
+) -> tuple[float, float, float, float, float, float]:
+    """合并段的断面范围：首段下沿 / 末段上沿的左右缘。
+
+    单段仍走 :func:`_member_geometry`（与分层积分同口径）。合并段可能跨过
+    侧剖面的“换表示”点（工作面矩形 → 竖直条带等），此时没有单条剖面段覆盖
+    整段，不能再调 :func:`_side_extension_interval`——它找不到覆盖整段的段，
+    会把该侧宽度当成 0，断面高亮/标注就会少掉一段工作面。直接取各小段已经
+    算好的左右侧宽度：首段下沿给底边、末段上沿给顶边。
+    """
+    if len(run) == 1:
+        return _member_geometry(member, run[0].lo, run[0].hi)
+    first, last = run[0], run[-1]
+    return (
+        first.lo.v,
+        last.hi.v,
+        -(member.half_left.v + first.left_lo),
+        member.half_right.v + first.right_lo,
+        -(member.half_left.v + last.left_hi),
+        member.half_right.v + last.right_hi,
+    )
+
+
 def _run_area(
     member: "_Member", run: list[_SectionPiece]
 ) -> tuple[Dim, tuple[float, float, float, float, float, float]]:
@@ -1551,6 +1591,8 @@ def _run_area(
 
     并集铺满整个槽深时总高直接取 ``member.depth``（与单构件挖方合并同口径）；
     否则总高取各小段高度之和（整层段保留层厚算式，切开段保留区间差）。
+    下底宽取首段下沿总宽，坡项取各段坡项之和——相邻段宽度连续、左右坡度
+    各自相同，所以并集左右仍是直线，逐段坡项相加就是整段的坡高。
     """
     lo, hi = run[0].lo, run[-1].hi
     if abs(lo.v) <= 1e-9 and abs(hi.v - member.depth.v) <= 1e-9:
@@ -1559,10 +1601,11 @@ def _run_area(
         height = run[0].height
         for piece in run[1:]:
             height = height + piece.height
-    low, slope_terms = _width_and_slope_for_interval(
-        member.profiles, lo, hi, height
-    )
-    return _interval_area(low, slope_terms, height), _member_geometry(member, lo, hi)
+    low = run[0].low
+    slope_terms = run[0].slope_terms
+    for piece in run[1:]:
+        slope_terms = slope_terms + piece.slope_terms
+    return _interval_area(low, slope_terms, height), _run_geometry(member, run)
 
 
 def _member_dig_fill(
@@ -1577,7 +1620,9 @@ def _member_dig_fill(
 
     列式时再把**同一工程量内上下相邻、且并集仍是单一等坡断面**的小段合并：
     挖方跨材质层合并（整槽同坡时就是一条大梯形），回填只在同定额键内合并
-    （相邻层材质相同才合并）；跨分级 / 平台折点时并集不是单一梯形，保持分段。
+    （相邻层材质相同才合并）；判据看左右两侧宽度是否各自连续、坡度是否各自
+    相同——相邻构件槽底标高若只是把同一条直线切成两段（如内侧竖直桩），照样
+    合并；只有任一侧真的出现折点（分级 / 平台 / 内侧由放坡转竖直）才保持分段。
     合并只减少算式项数，数值与断面几何逐段求和完全一致。
     """
     info = member.info
@@ -1622,12 +1667,31 @@ def _member_dig_fill(
             height = layer
         else:
             height = hi - lo
-        pieces.append(_SectionPiece(key=key, lo=lo, hi=hi, height=height, note=note))
+        low, slope_terms = _width_and_slope_for_interval(
+            member.profiles, lo, hi, height
+        )
+        left_lo, left_hi = _side_extension_interval(member.profiles_left, lo, hi)
+        right_lo, right_hi = _side_extension_interval(member.profiles_right, lo, hi)
+        pieces.append(
+            _SectionPiece(
+                key=key,
+                lo=lo,
+                hi=hi,
+                height=height,
+                note=note,
+                low=low,
+                slope_terms=slope_terms,
+                left_lo=left_lo,
+                left_hi=left_hi,
+                right_lo=right_lo,
+                right_hi=right_hi,
+            )
+        )
     if not pieces:
         return False
 
     # 回填：同一定额键的相邻等坡段合并成一条梯形（不同材质仍分段）
-    for run in _section_runs(pieces, member, same_key=True):
+    for run in _section_runs(pieces, same_key=True):
         area, geometry = _run_area(member, run)
         if area.v == 0:
             continue
@@ -1646,7 +1710,7 @@ def _member_dig_fill(
     dig.terms.clear()
     dig.value = 0.0
     produced = False
-    for run in _section_runs(pieces, member, same_key=False):
+    for run in _section_runs(pieces, same_key=False):
         area, geometry = _run_area(member, run)
         if area.v == 0:
             continue

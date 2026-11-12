@@ -79,6 +79,42 @@ def test_group_merges_constant_width_dig_into_one_rectangle(project) -> None:
     assert evaluate(dig.expression) == pytest.approx(dig.value, rel=1e-9)
 
 
+def test_group_merges_across_neighbor_bottom_when_internal_side_is_vertical(project) -> None:
+    """相邻构件槽底标高不应切段：深侧内侧是竖直桩时，总宽仍是一条直线。
+
+    深构件右侧相邻面用钢板桩（内侧竖直），左侧放坡；浅构件的槽底标高会进
+    标高事件集，但深构件总宽在浅槽底处没有折点，仍应并成一条大梯形。
+    """
+    from app.viewmodels import unit_vm
+
+    slope = make_enclosure("邻底外坡", "放坡", slope=0.5)
+    pile = make_enclosure("邻底内桩", "钢板桩")
+    e1 = make_element("邻底深左", depth="4", amount="100", pe_name=slope.name)
+    e2 = make_element("邻底浅右", depth="3", amount="100", pe_name=pile.name)
+    group, error = unit_vm.create_trench_group([e1, e2])
+    assert group is not None and error is None
+    # 编组会把内侧原则重置为库中第一条；编组后再指定深侧内侧为竖直桩
+    unit_vm.update_element(e1, pe_left_name=slope.name, pe_right_name=pile.name)
+    unit_vm.update_element(e2, pe_left_name=pile.name, pe_right_name=pile.name)
+
+    results, errors = _group_results(group)
+    assert not errors, errors
+    deep_dig = results[e1].get(_dig_key(results[e1]))
+    assert deep_dig is not None
+    assert len(deep_dig.terms) == 1, [term.note for term in deep_dig.terms]
+    term = deep_dig.terms[0]
+    assert term.area is not None and term.area.kind == "trapezoid"
+    assert term.geometry[0] == pytest.approx(0.0)
+    assert term.geometry[1] > 3.0
+    # 高亮几何的底宽 / 顶宽必须与面积行的 u / v 一致：合并段跨过
+    # “工作面矩形 → 竖直条带”的换表示点时，不能把整侧工作面丢掉
+    _h0, _h1, l0, r0, l1, r1 = term.geometry
+    assert (r0 - l0) == pytest.approx(term.area.u.v, rel=1e-9)
+    assert (r1 - l1) == pytest.approx(term.area.v.v, rel=1e-9)
+    assert r0 > 0.9  # 右侧工作面仍在
+    assert evaluate(deep_dig.expression) == pytest.approx(deep_dig.value, rel=1e-9)
+
+
 def test_group_merges_same_material_backfill_layers(project) -> None:
     """同材质回填层合并成一条梯形；不同材质（覆土）仍单独一段。"""
     group, (e1, _e2) = _group_with_slope(project)
