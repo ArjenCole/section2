@@ -762,8 +762,9 @@ def test_group_center_split_conserves_and_transfers(project) -> None:
 def test_group_unified_backfill_slices_pipe_deduction(project) -> None:
     """统一回填标高 + 管中心分隔：管位扣减按实际分层标高切片。
 
-    深构件的统一垫层带被浅构件层顶抬高，管位落在带内：扣减以弓形/半圆
-    分片落到该带（多边形几何，每片不超过半圆），切片公式求值与项值一致。
+    深构件的统一垫层带被浅构件层顶抬高，管位落在带内：扣减以弓形/半圆/整圆
+    分片落到该带（多边形几何；同材质层的相邻切片合并后一片最多覆盖整圆），
+    切片公式求值与项值一致。
     """
     import math
 
@@ -800,14 +801,15 @@ def test_group_unified_backfill_slices_pipe_deduction(project) -> None:
     ]
     assert slices, "管位切片扣减应存在"
     for term in slices:
-        # 多边形几何（弓形/半圆，弦线+弧线采样）
+        # 多边形几何（弓形/半圆/整圆，弦线 + 弧线采样）
         assert term.geometry and not (
             len(term.geometry) == 6 and isinstance(term.geometry[0], (int, float))
         ), "管位切片几何应为多边形"
         # 切片公式求值 = 项值（符号相反：负项；长表达式浮点累加容差）
         assert abs(abs(evaluate(term.expr)) - abs(term.value)) <= max(abs(term.value) * 1e-7, 1e-6)
-        # 每片不超过半圆（R = 0.365，每延米 m²；项值含 L_组 = 100 缩放）
-        assert abs(term.value) <= math.pi * 0.365 ** 2 / 2 * 100 + 1e-9
+        # 同材质层的相邻切片已合并：一片最多覆盖整个管圆（R = 0.365，
+        # 每延米 m²；项值含 L_组 = 100 缩放）
+        assert abs(term.value) <= math.pi * 0.365 ** 2 * 100 + 1e-9
 
 
 def test_group_center_split_wedge_to_shallow_cushion(project) -> None:

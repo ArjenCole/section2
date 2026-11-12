@@ -1439,6 +1439,132 @@ def _member_geometry(
     )
 
 
+@dataclass
+class _SectionPiece:
+    """分层积分得到的一个等坡小段（合并相邻同类断面的基本单位）。
+
+    ``lo`` / ``hi`` 为自槽底起的标高区间，``height`` 为这一小段的高（整层
+    未被切开时直接沿用分层厚度的算式，否则用 ``hi - lo``），``key`` 为回填
+    定额键、``note`` 为分层说明。合并只改变列式方式，不改变任何数值。
+    """
+
+    key: str
+    lo: Dim
+    hi: Dim
+    height: Dim
+    note: str
+
+
+def _profiles_linear_between(member: "_Member", lo: Dim, hi: Dim) -> bool:
+    """[lo, hi] 内各侧宽度剖面是否都是同一条直线（没有分级 / 平台折点）。
+
+    合并相邻分层的前提：并集内每一侧都只有一段等坡线，合并后仍是一个
+    梯形 / 矩形 / 三角形；跨过分级或平台折点时并集不是单一形状，不能合并。
+
+    剖面可以只覆盖区间的一部分——例如异深相邻侧的工作面 / 放坡段止于浅槽底，
+    浅槽底以上由另一条竖直段接续：只要该剖面整体在区间下方（宽度恒 0）或
+    整体在区间上方（尚未开始），它就不影响并集的线性。
+    """
+    for profile in member.profiles:
+        if not profile:
+            continue
+        if _segment_for_interval(profile, lo, hi) is not None:
+            continue
+        if max(segment.t2.v for segment in profile) <= lo.v + 1e-9:
+            continue  # 整条剖面止于区间下沿：区间内宽度恒 0
+        if min(segment.t1.v for segment in profile) >= hi.v - 1e-9:
+            continue  # 整条剖面起于区间上沿：区间内尚未出现
+        return False
+    return True
+
+
+def _interval_area(low: Dim, slope_terms: Dim, height: Dim) -> Dim:
+    """区间面积：恒宽为矩形，否则 ``(2*W_下+Σ(H*s))*H/2``（下底只出现一次）。"""
+    if slope_terms.v == 0:
+        rect = low * height
+        return Dim(
+            rect.v,
+            rect.e,
+            rect.tags,
+            rect.s,
+            AreaParts("rectangle", low, None, height),
+        )
+    doubled = Dim(2 * low.v, f"2*{wrap(low.e)}", low.tags, low.s)
+    inner = doubled + slope_terms
+    parts = (
+        AreaParts("triangle", None, low + slope_terms, height)
+        if low.v == 0
+        else AreaParts("trapezoid", low, low + slope_terms, height)
+    )
+    return Dim(
+        inner.v * height.v / 2.0,
+        f"({inner.e})*{wrap(height.e)}/2",
+        inner.tags + height.tags,
+        inner.s + height.s,
+        parts,
+    )
+
+
+def _piece_note(notes: list[str]) -> str:
+    """合并段的说明：``垫层~坞膀上半``（只覆盖一层时就是该层名）。"""
+    values = [note for note in notes if note]
+    if not values:
+        return ""
+    if len(values) == 1 or values[0] == values[-1]:
+        return values[0]
+    return f"{values[0]}~{values[-1]}"
+
+
+def _section_runs(
+    pieces: list[_SectionPiece], member: "_Member", *, same_key: bool
+) -> list[list[_SectionPiece]]:
+    """把相邻小段合并成若干条等坡断面。
+
+    ``same_key=True`` 用于回填：只有同一定额键（同材质）的相邻段才合并；
+    ``same_key=False`` 用于挖方：跨材质层合并，整槽同坡时得到一条大梯形。
+    合并还要求上下标高相接、并集内各侧剖面保持同一条直线。
+    """
+    runs: list[list[_SectionPiece]] = []
+    current: list[_SectionPiece] = []
+    for piece in pieces:
+        if current:
+            first = current[0]
+            last = current[-1]
+            if (
+                abs(last.hi.v - piece.lo.v) <= 1e-9
+                and (not same_key or piece.key == first.key)
+                and _profiles_linear_between(member, first.lo, piece.hi)
+            ):
+                current.append(piece)
+                continue
+            runs.append(current)
+        current = [piece]
+    if current:
+        runs.append(current)
+    return runs
+
+
+def _run_area(
+    member: "_Member", run: list[_SectionPiece]
+) -> tuple[Dim, tuple[float, float, float, float, float, float]]:
+    """合并段的面积与断面范围：按并集的下底宽、总高与坡项重新列式。
+
+    并集铺满整个槽深时总高直接取 ``member.depth``（与单构件挖方合并同口径）；
+    否则总高取各小段高度之和（整层段保留层厚算式，切开段保留区间差）。
+    """
+    lo, hi = run[0].lo, run[-1].hi
+    if abs(lo.v) <= 1e-9 and abs(hi.v - member.depth.v) <= 1e-9:
+        height = member.depth
+    else:
+        height = run[0].height
+        for piece in run[1:]:
+            height = height + piece.height
+    low, slope_terms = _width_and_slope_for_interval(
+        member.profiles, lo, hi, height
+    )
+    return _interval_area(low, slope_terms, height), _member_geometry(member, lo, hi)
+
+
 def _member_dig_fill(
     member: _Member, out: QDict, bands: list[tuple[str, Dim, Dim, Dim, str]]
 ) -> bool:
@@ -1447,7 +1573,12 @@ def _member_dig_fill(
     ``bands`` 为该构件的回填分层带（独立 / 统一回填标高口径由调用方决定）。
     标高事件集 = 回填分层界面 + 各侧放坡剖面的全部分级 / 平台折点（含相邻
     构件槽底标高）。事件之间宽度线性，单层面积用梯形 ``(w_下+w_上)/2*Δh``
-    精确计算；每层按它所属的回填分层归类，挖方按层合并 term（说明 = 层名）。
+    精确计算；每层按它所属的回填分层归类。
+
+    列式时再把**同一工程量内上下相邻、且并集仍是单一等坡断面**的小段合并：
+    挖方跨材质层合并（整槽同坡时就是一条大梯形），回填只在同定额键内合并
+    （相邻层材质相同才合并）；跨分级 / 平台折点时并集不是单一梯形，保持分段。
+    合并只减少算式项数，数值与断面几何逐段求和完全一致。
     """
     info = member.info
     pp = info.pp
@@ -1470,11 +1601,8 @@ def _member_dig_fill(
         if -1e-9 <= value.v <= total.v + 1e-9
     ]
 
-    dig_key = f"开挖|{pp.excvt}|m3"
-    dig = out.add(dig_key, 0.0)
-    dig.terms.clear()
-    dig.value = 0.0
-    produced = False
+    # 先把各标高区间积成小段，再按“同键 / 同坡 / 上下相接”合并
+    pieces: list[_SectionPiece] = []
     for lo, hi in zip(edges, edges[1:]):
         if hi.v - lo.v <= 1e-9:
             continue
@@ -1494,44 +1622,43 @@ def _member_dig_fill(
             height = layer
         else:
             height = hi - lo
-        low, slope_terms = _width_and_slope_for_interval(
-            member.profiles, lo, hi, height
+        pieces.append(_SectionPiece(key=key, lo=lo, hi=hi, height=height, note=note))
+    if not pieces:
+        return False
+
+    # 回填：同一定额键的相邻等坡段合并成一条梯形（不同材质仍分段）
+    for run in _section_runs(pieces, member, same_key=True):
+        area, geometry = _run_area(member, run)
+        if area.v == 0:
+            continue
+        out.add(
+            run[0].key,
+            area.v,
+            area,
+            _piece_note([piece.note for piece in run]),
+            tags=area.tags,
+            geometry=geometry,
         )
-        if slope_terms.v == 0:
-            # 恒宽层：矩形面积 = 宽 × 高
-            rect = low * height
-            area = Dim(
-                rect.v,
-                rect.e,
-                rect.tags,
-                rect.s,
-                AreaParts("rectangle", low, None, height),
-            )
-        else:
-            # (2*W_下 + Σ(H*s))*H/2：下底只出现一次，与非合槽构件同形
-            doubled = Dim(2 * low.v, f"2*{wrap(low.e)}", low.tags, low.s)
-            inner = doubled + slope_terms
-            parts = (
-                AreaParts("triangle", None, low + slope_terms, height)
-                if low.v == 0
-                else AreaParts("trapezoid", low, low + slope_terms, height)
-            )
-            area = Dim(
-                inner.v * height.v / 2.0,
-                f"({inner.e})*{wrap(height.e)}/2",
-                inner.tags + height.tags,
-                inner.s + height.s,
-                parts,
-            )
+
+    # 挖方：跨材质层合并；整槽同坡时就是一条大梯形
+    dig_key = f"开挖|{pp.excvt}|m3"
+    dig = out.add(dig_key, 0.0)
+    dig.terms.clear()
+    dig.value = 0.0
+    produced = False
+    for run in _section_runs(pieces, member, same_key=False):
+        area, geometry = _run_area(member, run)
         if area.v == 0:
             continue
         produced = True
-        geometry = _member_geometry(member, lo, hi)
-        out.add(key, area.v, area, note, tags=area.tags, geometry=geometry)
-        dig.add_term(area.v, area, note, tags=area.tags, geometry=geometry)
-    if not produced:
+        dig.add_term(
+            area.v,
+            area,
+            _piece_note([piece.note for piece in run]),
+            tags=area.tags,
+            geometry=geometry,
+        )
+    if not produced or not dig.terms:
         out.discard(dig_key)
         return False
-    if not dig.terms:
-        out.discard(dig_key)
     return True

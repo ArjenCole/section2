@@ -85,19 +85,63 @@ def _circle_area_between(h_lo: Dim, h_hi: Dim, r: Dim) -> Dim:
     return _circle_area_below(h_hi, r) - _circle_area_below(h_lo, r)
 
 
+def _circle_slice_area(h_lo: Dim, h_hi: Dim, r: Dim) -> Dim:
+    """圆管 [h_lo, h_hi] 区间的截面面积，半圆 / 整圆直接写短式。
+
+    管位扣减在合槽里按分层标高切片，合并后最常见的是下半圆 / 上半圆
+    （``PI()*r^2/2``）；若仍用 ``below(hi)-below(lo)``，半圆会展开成两条
+    长 ACOS 式。这里对边界情况写短式，一般弓形仍走原公式，数值口径不变。
+    """
+    full = 2.0 * r.v
+    radius_sq = f"{wrap(r.e, tight=True)}^2"
+    half_area = math.pi * r.v * r.v / 2.0
+    half_expr = f"PI()*{radius_sq}/2"
+    if abs(h_lo.v) <= 1e-9 and abs(h_hi.v - r.v) <= 1e-9:
+        # 下半圆
+        return Dim(half_area, half_expr, h_lo.tags + h_hi.tags + r.tags, r.s * 2)
+    if abs(h_lo.v - r.v) <= 1e-9 and abs(h_hi.v - full) <= 1e-9:
+        # 上半圆
+        return Dim(half_area, half_expr, h_lo.tags + h_hi.tags + r.tags, r.s * 2)
+    if abs(h_lo.v) <= 1e-9 and abs(h_hi.v - full) <= 1e-9:
+        # 整圆（跨管中心合并时才出现，保留短式）
+        return Dim(
+            math.pi * r.v * r.v,
+            f"PI()*{radius_sq}",
+            h_lo.tags + h_hi.tags + r.tags,
+            r.s * 2,
+        )
+    if abs(h_lo.v) <= 1e-9:
+        return _circle_area_below(h_hi, r)
+    if abs(h_hi.v - full) <= 1e-9:
+        full_circle = Dim(
+            math.pi * r.v * r.v,
+            f"PI()*{radius_sq}",
+            r.tags,
+            r.s * 2,
+        )
+        return full_circle - _circle_area_below(h_lo, r)
+    return _circle_area_between(h_lo, h_hi, r)
+
+
 def _emit_footprint_slices(out: QDict, bands, found_h: Dim, width: Dim) -> None:
     """基础占位按实际分层标高切片：每个重叠分层一条矩形扣减（负项）。
 
     统一回填标高下分层界面会移动，占位必须落到几何上真正覆盖它的分层里。
+    相邻分层若定额键相同（同一回填材质），把矩形扣减合并成一条：
+    面积 = 合并后的总高 × 基础宽，断面几何仍取首层底到末层顶。
     """
+    pieces: list[tuple[str, Dim, Dim]] = []
     for b_key, b_lo, b_hi, _layer, _b_note in bands:
         lo_dim = dim_max(b_lo, dim(0.0))
         hi_dim = dim_min(b_hi, found_h)
         if hi_dim.v - lo_dim.v <= 1e-9:
             continue
+        pieces.append((b_key, lo_dim, hi_dim))
+    for run in _merge_runs(pieces):
+        lo_dim, hi_dim = run[0][1], run[-1][2]
         area = (hi_dim - lo_dim) * width
         out.add(
-            b_key,
+            run[0][0],
             -area.v,
             area,
             "扣基础占位",
@@ -107,34 +151,69 @@ def _emit_footprint_slices(out: QDict, bands, found_h: Dim, width: Dim) -> None:
 
 
 def _emit_pipe_slices(out: QDict, bands, z_bottom: Dim, outside: Dim, z_floor: Dim) -> None:
-    """管位占用按实际分层标高切片：每个重叠分层一条弓形 / 半圆扣减（负项）。
+    """管位占用按实际分层标高切片：每个重叠分层一条弓形 / 半圆 / 整圆扣减（负项）。
 
     圆管自 ``z_bottom``（垫层顶）到管顶；只扣 ``z_floor``（基础顶，基础混凝土
-    已扣自己范围内的管位）以上的部分；管中心必为切点，每片不超过半圆。
+    已扣自己范围内的管位）以上的部分。
+
+    相邻分层若定额键相同，把切片合并成一条：下半个管位 + 上半个管位就是
+    整圆，中间被分层线切开的弓形也重新合成一条完整弓形——不再逐层列一串
+    ACOS 长式。不同材质键（分层线两侧材质不同）仍按分层各扣各的。
     """
     r = outside / 2
-    z_center = z_bottom + r
+    pieces: list[tuple[str, Dim, Dim]] = []
     for b_key, b_lo, b_hi, _layer, _b_note in bands:
         lo_dim = dim_max(b_lo, z_bottom, z_floor)
         hi_dim = dim_min(b_hi, z_bottom + outside)
         if hi_dim.v - lo_dim.v <= 1e-9:
             continue
-        if lo_dim.v < z_center.v < hi_dim.v:
-            pieces = [(lo_dim, z_center), (z_center, hi_dim)]
+        pieces.append((b_key, lo_dim - z_bottom, hi_dim - z_bottom))
+    for run in _merge_runs(pieces):
+        b_key, h_lo, _h_hi = run[0]
+        h_hi = run[-1][2]
+        area = _circle_slice_area(h_lo, h_hi, r)
+        if abs(h_lo.v) <= 1e-9 and abs(h_hi.v - 2.0 * r.v) <= 1e-9:
+            note = "扣管位·圆形"
+        elif (
+            abs(h_lo.v) <= 1e-9 and abs(h_hi.v - r.v) <= 1e-9
+        ) or (
+            abs(h_lo.v - r.v) <= 1e-9 and abs(h_hi.v - 2.0 * r.v) <= 1e-9
+        ):
+            note = "扣管位·半圆"
         else:
-            pieces = [(lo_dim, hi_dim)]
-        for h_lo, h_hi in pieces:
-            height_lo, height_hi = h_lo - z_bottom, h_hi - z_bottom
-            area = _circle_area_between(height_lo, height_hi, r)
-            is_half = abs(height_lo.v - r.v) < 1e-9 and abs(height_hi.v - 2.0 * r.v) < 1e-9
-            out.add(
-                b_key,
-                -area.v,
-                area,
-                f"扣管位·{'半圆' if is_half else '弓形'}",
-                tags=area.tags,
-                geometry=_segment_polygon(z_bottom.v, r.v, height_lo.v, height_hi.v),
-            )
+            note = "扣管位·弓形"
+        out.add(
+            b_key,
+            -area.v,
+            area,
+            note,
+            tags=area.tags,
+            geometry=_segment_polygon(z_bottom.v, r.v, h_lo.v, h_hi.v),
+        )
+
+
+def _merge_runs(pieces: list[tuple]) -> list[list[tuple]]:
+    """按定额键 + 上下相接合并相邻切片；元组第 1 项为键、第 2/3 项为下/上界。
+
+    基础占位切片为 ``(key, lo, hi)``，管位切片为 ``(key, h_lo, h_hi)``；
+    同键、上一片的上界 = 下一片的下界才合并。
+    """
+    runs: list[list[tuple]] = []
+    current: list[tuple] = []
+    for piece in pieces:
+        if current:
+            last = current[-1]
+            if (
+                piece[0] == current[0][0]
+                and abs(last[2].v - piece[1].v) <= 1e-9
+            ):
+                current.append(piece)
+                continue
+            runs.append(current)
+        current = [piece]
+    if current:
+        runs.append(current)
+    return runs
 
 
 def add_dim(out: QDict, key: str, quantity: Dim, note: str = "", geometry=None) -> None:
