@@ -43,7 +43,17 @@ def _dispose_top_level_widgets() -> None:
     application = QApplication.instance()
     if application is None:
         return
-    leftovers = [widget for widget in QApplication.allWidgets() if widget.parent() is None]
+    from shiboken6 import isValid
+
+    # ``isValid`` 不是可选的保险：无边框对话框（FramelessDialog 子类）里放了
+    # QComboBox、又从未 show 就 close()（→ done() 排期 deleteLater）时，Qt 拆除
+    # 阶段会留下已析构控件的 Python 包装，``allWidgets()`` 仍把它列出来，直接
+    # ``widget.parent()`` 就是 access violation（进程级崩溃，不是异常）。
+    leftovers = [
+        widget
+        for widget in QApplication.allWidgets()
+        if isValid(widget) and widget.parent() is None
+    ]
     if not leftovers:
         return
     for widget in leftovers:

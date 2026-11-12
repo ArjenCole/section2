@@ -12,7 +12,8 @@ RBmPE / RBmPF 上下排列，v4 起降水与面宽独立成原则，v10 起降�
 * 右键标签 → 菜单：编辑原则 / 导入原则 / 导出原则 / 删除原则 /
   添加各类原则（导入导出为 *.spcp）；
 * 「+」→ 按当前单选直接新建（默认名重名自动加后缀，不弹输入框）；
-* 删除 → 只剩一条时提示「至少需要一种…」；否则确认后引用并入另一条原则。
+* 删除 → 只剩一条时提示「至少需要一种…」；否则弹确认框（可下拉改选替代
+  原则），确认后引用并入所选原则。
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import (
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -35,6 +37,7 @@ from PySide6.QtWidgets import (
 from app.core import window_diag
 from app.core.event_bus import bus, connect_weak
 from app.services import project_io
+from app.views.dialogs.delete_principle_dialog import DeletePrincipleDialog
 from app.views.dialogs.enclosure_edit_dialog import EnclosureEditDialog
 from app.views.dialogs.foundation_edit_dialog import FoundationEditDialog
 from app.views.dialogs.principle_dialogs import PrecipitationEditDialog, WidthEditDialog
@@ -287,14 +290,14 @@ class PrincipleBar(QWidget):
         if target is None:
             FramelessMessageBox.information(self, "提示", _KIND_MIN_TEXT[kind])
             return
-        answer = FramelessMessageBox.question(
-            self, "提示",
-            f"删除后该原则的引用将被<{target}>替代,确认删除?",
-            FramelessMessageBox.StandardButton.Yes | FramelessMessageBox.StandardButton.No,
-            FramelessMessageBox.StandardButton.No,
+        # 确认框里可改选替代原则：候选 = 同类原则里除被删这条以外的全部
+        candidates = [item for item in self._principle_names(kind) if item != name]
+        dialog = DeletePrincipleDialog(
+            self, principle_name=name, candidates=candidates, target=target
         )
-        if answer != FramelessMessageBox.StandardButton.Yes:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        target = dialog.replacement()
         deleters = {
             _KIND_ENCLOSURE: lambda: project_io.delete_enclosure(found.id, target),
             _KIND_FOUNDATION: lambda: project_io.delete_foundation(found.id, target),
