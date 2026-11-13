@@ -38,6 +38,7 @@ from app.viewmodels.project_vm import (
     KIND_UNIT,
     ProjectViewModel,
     TreeNode,
+    build_tree,
 )
 from app.views.panels.element_library_panel import ElementLibraryPanel
 from app.views.widgets.frameless_dialog import FramelessInputDialog, load_icon
@@ -56,6 +57,26 @@ _NODE_ICONS = {
 def _node_icon(node: TreeNode):
     color = ThemeManager.instance().current().text_secondary
     return load_icon(_NODE_ICONS.get(node.kind, "folder"), color=color, size=18)
+
+
+def _structure_signature(root: TreeNode | None) -> tuple[tuple[str, int | None, str], ...]:
+    """树的结构指纹：按显示次序展开的 ``(kind, id, 名称)`` 序列。
+
+    ``tree_structure_changed`` 是全局的“数据变了”广播（原则增删改名也会发），
+    而重建树会 ``expandAll()`` 并重新广播 ``node_selected``（主面板 tab 会跳回
+    第一个）。用它比对，只在标段 / 单位工程真的增删改名或换序时才重建。
+    """
+    if root is None:
+        return ()
+    flat: list[tuple[str, int | None, str]] = []
+
+    def walk(node: TreeNode) -> None:
+        flat.append((node.kind, node.id, node.name))
+        for child in node.children:
+            walk(child)
+
+    walk(root)
+    return tuple(flat)
 
 
 class _ProjectTree(QTreeWidget):
@@ -204,6 +225,8 @@ class TreePanel(QWidget):
         self.setMinimumWidth(200)
         self._vm = ProjectViewModel()
         self._selected_key: tuple[str, int | None] | None = None
+        #: 最近一次装进控件的结构指纹（见 _structure_signature）
+        self._signature: tuple[tuple[str, int | None, str], ...] = ()
         self._build_ui()
         self._connect()
         self._update_actions()
@@ -331,6 +354,9 @@ class TreePanel(QWidget):
         self._tree.drop_rejected.connect(lambda message: bus().status_message.emit(message, 5000))
         connect_weak(bus().project_opened, self._vm, "load")
         bus().project_closed.connect(self._on_project_closed)
+        # 标段 / 单位工程增删改名：AI 助手与 MCP 工具直接写库后只发这个信号
+        # （见 app.agent.tools.tree），树面板必须自己订阅，否则要重开工程才看得到
+        connect_weak(bus().tree_structure_changed, self, "_on_structure_changed")
         ThemeManager.instance().theme_changed.connect(self._refresh_icons)
 
     # ------------------------------------------------------------------ 拖拽移动
@@ -344,7 +370,19 @@ class TreePanel(QWidget):
         self._vm.load()
         self._vm.select(None)
 
+    def _on_structure_changed(self) -> None:
+        """结构广播：标段 / 单位工程真变了才重建树。
+
+        界面上的增删改由 :meth:`ProjectViewModel._after_change` 自己 load 过
+        （广播时指纹已经是最新的），这里比对后跳过，避免重建两次；
+        AI / MCP 工具只广播不 load，指纹不同 → 在这里补一次重建。
+        """
+        if _structure_signature(build_tree()) == self._signature:
+            return
+        self._vm.load()
+
     def _on_tree_loaded(self, root: TreeNode | None) -> None:
+        self._signature = _structure_signature(root)
         self._tree.blockSignals(True)
         self._tree.clear()
         if root is None:
@@ -356,8 +394,12 @@ class TreePanel(QWidget):
         self._tree.addTopLevelItem(root_item)
         self._tree.expandAll()
         self._stack.setCurrentIndex(1)
-        item = self._find_item(self._selected_key) or root_item
-        self._tree.setCurrentItem(item)
+        item = self._find_item(self._selected_key)
+        if item is None:
+            # 选中节点在重建后已不存在（AI / MCP 工具从外部删掉）：退到它原来的
+            # 父节点，与界面删除时的选中回落一致；父节点也没了就回工程根
+            item = self._find_item(self._fallback_key())
+        self._tree.setCurrentItem(root_item if item is None else item)
         self._tree.blockSignals(False)
         self._on_selection_changed()
 
@@ -518,6 +560,13 @@ class TreePanel(QWidget):
         if node.is_unit:
             return (KIND_SEGMENT, node.parent_id)
         return (KIND_PROJECT, None)
+
+    def _fallback_key(self) -> tuple[str, int | None] | None:
+        """选中节点消失后的回落目标：原单位工程所属的标段（没有则 None）。"""
+        previous = self._vm.current()
+        if previous is not None and previous.is_unit and previous.parent_id is not None:
+            return (KIND_SEGMENT, previous.parent_id)
+        return None
 
     def _update_actions(self) -> None:
         node = self._current_node()
