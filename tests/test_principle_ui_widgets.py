@@ -223,6 +223,42 @@ def test_main_window_replica_layout(qapp, project):
         window.close()
 
 
+def test_principle_bar_sits_above_main_tabs(qapp, project):
+    """原则横条在主面板 tab 之外、所有 tab 上方：切节点 / 切页签都不影响可见性。"""
+    from app.core.event_bus import bus
+    from app.views.main_window import MainWindow
+
+    window = MainWindow()
+    try:
+        bus().project_opened.emit(str(project))
+        window._tree_panel.vm.load()
+        qapp.processEvents()
+
+        bar = window._principle_bar
+        tabs = window._main_tabs
+        center = tabs.parentWidget()
+        # 层级：横条与 tab 是兄弟控件，横条不在任何 tab 页里
+        assert bar.parentWidget() is center
+        assert tabs.indexOf(bar) == -1
+        layout = center.layout()
+        assert layout.indexOf(bar) < layout.indexOf(tabs)
+
+        # 选中单位工程 → 构件列表 / 工程量明细 tab，横条可见
+        root = window._tree_panel._tree.topLevelItem(0)
+        window._tree_panel._tree.setCurrentItem(root.child(0).child(0))
+        qapp.processEvents()
+        assert tabs.currentIndex() == 1
+        assert bar.isVisibleTo(center)
+
+        # 选中工程根 → 费用汇总 / 综合单价汇总 tab，横条仍可见可编辑
+        window._tree_panel._tree.setCurrentItem(root)
+        qapp.processEvents()
+        assert tabs.currentIndex() == 3
+        assert bar.isVisibleTo(center)
+    finally:
+        window.close()
+
+
 def test_insert_template_after_selected_row(qapp, project):
     """构件库双击：新条目插到当前选中行的下一行并自动选中；选中末行则追加到末尾。"""
     from app.core.event_bus import bus

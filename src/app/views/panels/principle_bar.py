@@ -136,7 +136,7 @@ class PrincipleBar(QWidget):
 
     # ------------------------------------------------------------------ 刷新
     def reload(self) -> None:
-        """FlashPrincpleTab：按当前工程重建标签（横条在构件列表 tab 内，仅工程打开时显示）。"""
+        """FlashPrincpleTab：按当前工程重建标签（横条在所有主面板 tab 上方，仅工程打开时显示）。"""
         visible = project_io.is_open()
         self.setVisible(visible)
         if not visible:

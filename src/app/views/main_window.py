@@ -498,16 +498,13 @@ class MainWindow(QMainWindow):
         placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._main_tabs.addTab(placeholder, "")
 
-        # 构件列表页：原则横条 + 单位工程工作台（原中部工作区全部内容）
-        workbench = QWidget()
-        workbench_layout = QVBoxLayout(workbench)
-        workbench_layout.setContentsMargins(0, 0, 0, 0)
-        workbench_layout.setSpacing(0)
+        # 原则横条挂在主面板 tab 之外、所有 tab 的上方：无论左侧选中哪个节点、
+        # 主面板停在哪个页签，都保持可见可编辑（仅随工程开关显隐，见 PrincipleBar.reload）。
         self._principle_bar = PrincipleBar()
         self._principle_bar.setVisible(False)
-        workbench_layout.addWidget(self._principle_bar)
-        workbench_layout.addWidget(self._unit_panel, 1)
-        self._main_tabs.addTab(workbench, "构件列表")
+
+        # 构件列表页：单位工程工作台（原中部工作区全部内容）
+        self._main_tabs.addTab(self._unit_panel, "构件列表")
 
         self._quantity_detail = QuantityDetailPanel()
         self._main_tabs.addTab(self._quantity_detail, "工程量明细表")
@@ -525,6 +522,7 @@ class MainWindow(QMainWindow):
         center_layout = QVBoxLayout(center_page)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(0)
+        center_layout.addWidget(self._principle_bar)
         center_layout.addWidget(self._main_tabs, 1)
 
         ai_container = QWidget()
