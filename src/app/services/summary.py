@@ -1,6 +1,7 @@
 """汇总与 Excel 导出（无头服务，MCP 工具与桌面 M5 重做共用）。
 
-汇总口径：工程量（QDict 合并后） × 单价（price 表，key = 类别|项目|单位）。
+汇总口径：工程量（QDict 合并后） × 单价（price 表，key = 类别|项目|单位；
+单价联动与回落都按“类别 + 项目”判断是否同一工程量，见 :func:`resolve_price`）。
 Excel 导出：定额 / 清单两张表，含“计算表达式”列（产品核心数据）。
 
 桌面 M5（汇总面板 / 批量载价）重做时直接复用本模块，避免两套逻辑。
@@ -58,34 +59,59 @@ def set_price(key: str, value: float) -> None:
     project_io.commit()
 
 
-def price_maps() -> tuple[dict[str, float], dict[str, float]]:
-    """单价索引：``(key → 单价, 项目名 → 单价)``。
+def price_scope(key: str) -> tuple[str, str]:
+    """单价联动口径：``(类别, 项目)``。
 
-    综合单价汇总页的单价按“项目”列全局联动：工程量 key 没有显式记录时
-    回落到同项目名任意一条记录的单价（每名取第一条）。
+    单价 key 是 ``类别|项目|单位``。判断两条工程量是否同一工程量时，项目名
+    必须连同类别一起看：``垫层|中粗砂`` 与 ``回填|中粗砂`` 是两种工程量，
+    不能因为项目名都叫“中粗砂”就联动。
+    """
+    parts = str(key or "").split("|")
+    category = parts[0] if parts else ""
+    item = parts[1] if len(parts) > 1 else ""
+    return category, item
+
+
+def price_maps() -> tuple[dict[str, float], dict[tuple[str, str], float]]:
+    """单价索引：``(key → 单价, (类别, 项目) → 单价)``。
+
+    综合单价汇总页的单价按“类别 + 项目”联动：工程量 key 没有显式记录时
+    回落到同类别同项目任意一条记录的单价（每组取第一条）。只看项目名会把
+    “垫层|中粗砂”和“回填|中粗砂”错当成同一工程量，因此回落键必须带类别。
     """
     if not orm.is_open():
         return {}, {}
     by_key: dict[str, float] = {}
-    by_item: dict[str, float] = {}
+    by_scope: dict[tuple[str, str], float] = {}
     for row in orm.session().scalars(select(Price)):
         by_key[row.key] = float(row.value)
-        parts = row.key.split("|")
-        item = parts[1] if len(parts) > 1 else ""
-        if item and item not in by_item:
-            by_item[item] = float(row.value)
-    return by_key, by_item
+        category, item = price_scope(row.key)
+        if item and (category, item) not in by_scope:
+            by_scope[(category, item)] = float(row.value)
+    return by_key, by_scope
+
+
+def resolve_price(
+    key: str,
+    by_key: dict[str, float],
+    by_scope: dict[tuple[str, str], float],
+) -> float:
+    """解析一条工程量的单价：key 显式记录优先，否则回落同（类别, 项目）。"""
+    price = by_key.get(key)
+    if price is not None:
+        return price
+    return by_scope.get(price_scope(key), 0.0)
 
 
 def set_price_propagate(key: str, value: float) -> None:
-    """设置单价并按“项目”名联动：同项目名的所有已有记录同步为同一单价。
+    """设置单价并按“类别 + 项目”联动：同类别同项目的已有记录同步。
 
-    在综合单价汇总页改某一行的单价（如标段 1 的“中粗砂”改为 350）后，
-    全项目所有“项目”名相同的记录（含其他标段）都变成同一单价。
+    在综合单价汇总页改某一行的单价（如标段 1 的“回填|中粗砂”改为 350）后，
+    全项目所有类别、项目名都相同的记录（含其他标段）都变成同一单价；
+    类别不同（如“垫层|中粗砂”）互不影响。
     """
     set_price(key, value)
-    parts = key.split("|")
-    item = parts[1] if len(parts) > 1 else ""
+    category, item = price_scope(key)
     if not item:
         return
     from app.services import project_io
@@ -93,10 +119,10 @@ def set_price_propagate(key: str, value: float) -> None:
     session = orm.session()
     changed = False
     for row in session.scalars(select(Price)):
-        row_parts = row.key.split("|")
+        row_category, row_item = price_scope(row.key)
         if (
-            len(row_parts) > 1
-            and row_parts[1] == item
+            row_category == category
+            and row_item == item
             and row.key != key
             and row.value != float(value)
         ):
@@ -165,11 +191,11 @@ def unit_summary(unit_id: int) -> list[dict]:
     from app.viewmodels.unit_vm import compute_unit
 
     summary, _detail = compute_unit(unit_id)
-    price_map = prices()
+    by_key, by_scope = price_maps()
     rows: list[dict] = []
     for quantity in sorted_items(summary):
         parts = quantity.key.split("|")
-        price = price_map.get(quantity.key, 0.0)
+        price = resolve_price(quantity.key, by_key, by_scope)
         rows.append(
             {
                 "key": quantity.key,
@@ -207,7 +233,7 @@ def export_excel(
     if target.suffix.lower() != ".xlsx":
         target = target.with_suffix(".xlsx")
     units = _unit_ids(unit_id)
-    price_map = prices()
+    by_key, by_scope = price_maps()
 
     workbook = openpyxl.Workbook()
     sheet = workbook.active
@@ -236,7 +262,7 @@ def export_excel(
         if kind == "定额":
             for quantity in sorted_items(summary):
                 parts = quantity.key.split("|")
-                price = price_map.get(quantity.key, 0.0)
+                price = resolve_price(quantity.key, by_key, by_scope)
                 row = [
                     parts[0] if parts else "",
                     parts[1] if len(parts) > 1 else "",
@@ -268,7 +294,7 @@ def export_excel(
                 exported_rows += 1
                 for quantity in sorted_items(qdict):
                     parts = quantity.key.split("|")
-                    price = price_map.get(quantity.key, 0.0)
+                    price = resolve_price(quantity.key, by_key, by_scope)
                     row = [
                         parts[0] if parts else "",
                         parts[1] if len(parts) > 1 else "",

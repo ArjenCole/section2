@@ -213,3 +213,50 @@ def test_collapse_does_not_affect_toolbar_export(qapp, tmp_path) -> None:
     headers = [cell.value for cell in sheet[1]]
     assert headers[-2:] == ["表达式", "算式"]
     assert sheet.max_row == 1 + 4  # 表头 + 清单项目行 + 工程量行，未受收起影响
+
+
+# --------------------------------------------------------------------------- #
+# 单价联动口径
+# --------------------------------------------------------------------------- #
+def test_price_edit_does_not_link_across_categories(qapp, tmp_path) -> None:
+    """改“回填|中粗砂”的单价，不带动项目名相同但类别不同的“垫层|中粗砂”。"""
+    project_io.new_project(
+        NewProjectSpec(path=tmp_path / "单价口径.stn", unit_names=["雨水工程"])
+    )
+    segment = project_io.segments()[0]
+    unit = project_io.units(segment.id)[0]
+    assert unit_vm.create_element(
+        unit.id,
+        category=CATEGORY_STRUCTURE,
+        name="测试井",
+        depth="3.2",
+        amount="1",
+        params=[("名称", "", "测试井"), ("单位", "", "座")],
+        quantities=[
+            ("回填", "中粗砂", "m3", "2.0"),
+            ("垫层", "中粗砂", "m3", "1.0"),
+        ],
+    ) is not None
+
+    panel = _make_panel(unit, qapp)
+    table = panel._quota_table
+    rows = {
+        (table.item(row, 1).text(), table.item(row, 2).text()): row
+        for row in range(table.rowCount())
+    }
+    assert ("回填", "中粗砂") in rows
+    assert ("垫层", "中粗砂") in rows
+
+    backfill_row = rows[("回填", "中粗砂")]
+    cushion_row = rows[("垫层", "中粗砂")]
+    table.item(backfill_row, 5).setText("100")
+    qapp.processEvents()
+
+    # 回填中粗砂按新单价重乘；垫层中粗砂项目名相同但类别不同，保持 0
+    assert table.item(backfill_row, 5).text() == "100"
+    assert table.item(backfill_row, 6).text() == "200"
+    assert table.item(cushion_row, 5).text() == "0"
+    assert table.item(cushion_row, 6).text() == "0"
+    prices = summary.prices()
+    assert prices["回填|中粗砂|m3"] == 100
+    assert "垫层|中粗砂|m3" not in prices

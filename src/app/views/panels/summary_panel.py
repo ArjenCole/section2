@@ -10,8 +10,8 @@
   合价的合计（叶子节点取自身，父节点取子节点合计）；
 * 综合单价汇总表 —— 选中节点及其下属节点所有条目的工程量按键合并
   （相同条目累加），列：编号 / 类别 / 项目 / 单位 / 工程量 / 单价 / 合价；
-  仅单价可编辑，合价 = 工程量 × 单价自动刷新；单价按“项目”名全项目联动
-  （改一处，其他标段同名条目同步，见 ``summary.set_price_propagate``）。
+  仅单价可编辑，合价 = 工程量 × 单价自动刷新；单价按“类别 + 项目”联动
+  （改一处，同类别同项目的其他条目同步，见 ``summary.set_price_propagate``）。
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ class SummaryPanel(QObject):
         self._price_rows: list[dict] = []
         #: 单价索引（summary.price_maps 的快照，改单价后局部刷新）
         self._by_key: dict[str, float] = {}
-        self._by_item: dict[str, float] = {}
+        self._by_scope: dict[tuple[str, str], float] = {}
         self._reload_timer = QTimer(self)
         self._reload_timer.setSingleShot(True)
         self._reload_timer.setInterval(_RELOAD_DELAY_MS)
@@ -261,21 +261,18 @@ class SummaryPanel(QObject):
                     "amount": quantity.value,
                 }
             )
-        self._by_key, self._by_item = summary_service.price_maps()
+        self._by_key, self._by_scope = summary_service.price_maps()
 
     # ------------------------------------------------------------------ 单价
-    def _resolve_price(self, key: str, item: str) -> float:
-        """key 显式记录优先，无记录回落到同“项目”名单价（按项目名全局联动）。"""
-        price = self._by_key.get(key)
-        if price is not None:
-            return price
-        return self._by_item.get(item, 0.0)
+    def _resolve_price(self, key: str) -> float:
+        """单价解析：key 显式记录优先，否则回落同（类别, 项目）单价。"""
+        return summary_service.resolve_price(key, self._by_key, self._by_scope)
 
     def _fill_price_table(self) -> None:
         table = self._price_table
         table.setRowCount(len(self._price_rows))
         for row_index, row in enumerate(self._price_rows):
-            price = self._resolve_price(row["key"], row["item"])
+            price = self._resolve_price(row["key"])
             cells = {
                 _PCOL_NO: (str(row_index + 1), Qt.AlignmentFlag.AlignCenter),
                 _PCOL_CAT: (row["category"], Qt.AlignmentFlag.AlignLeft),
@@ -294,7 +291,7 @@ class SummaryPanel(QObject):
                 table.setItem(row_index, column, item)
 
     def _on_price_item_changed(self, item: QTableWidgetItem) -> None:
-        """单价编辑落定：按“项目”名联动写库，全表单价 / 合价与费用表合计同步刷新。"""
+        """单价编辑落定：按“类别 + 项目”联动写库，全表单价 / 合价与费用表合计同步刷新。"""
         if self._loading or item.column() != _PCOL_PRICE:
             return
         row_index = item.row()
@@ -308,17 +305,17 @@ class SummaryPanel(QObject):
             bus().status_message.emit(f"单价“{text}”不是有效数字。", 4000)
             self._loading = True
             try:
-                item.setText(fmt(self._resolve_price(row["key"], row["item"])))
+                item.setText(fmt(self._resolve_price(row["key"])))
             finally:
                 self._loading = False
             return
         summary_service.set_price_propagate(row["key"], value)
-        # 单价按项目名联动后重建索引，两块表格一起刷（改单价只重乘，不重算工程量）
+        # 单价按类别 + 项目联动后重建索引，两块表格一起刷（只重乘，不重算工程量）
         self._loading = True
         try:
-            self._by_key, self._by_item = summary_service.price_maps()
+            self._by_key, self._by_scope = summary_service.price_maps()
             for index, entry in enumerate(self._price_rows):
-                price = self._resolve_price(entry["key"], entry["item"])
+                price = self._resolve_price(entry["key"])
                 self._price_table.item(index, _PCOL_PRICE).setText(fmt(price))
                 self._price_table.item(index, _PCOL_TOTAL).setText(
                     fmt(entry["amount"] * price)
@@ -334,7 +331,7 @@ class SummaryPanel(QObject):
         if summary is None:
             return 0.0
         return sum(
-            quantity.value * self._resolve_price(quantity.key, quantity.key.split("|")[1] if len(quantity.key.split("|")) > 1 else "")
+            quantity.value * self._resolve_price(quantity.key)
             for quantity in summary.items()
         )
 

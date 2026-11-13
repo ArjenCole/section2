@@ -4,7 +4,7 @@
 带“编号”列（内容与构件列表详情面板 定额 / 清单工程量 tab 首列一致：清单
 项目行填“清单项目”、定额拆分行留空），列见 :data:`_HEADERS`（编号 / 类别 /
 名称 / 单位 / 数量 / 单价 / 合价），清单项目行按导出规则整行浅蓝底色。
-单价列参照综合单价汇总表交互：可编辑，按“项目”名全项目联动写库（见
+单价列参照综合单价汇总表交互：可编辑，按“类别 + 项目”联动写库（见
 ``summary.set_price_propagate``）；合价 = 数量 × 单价自动算出，不可编辑。
 清单项目行（清单表）的单价 / 合价为派生值：合价 = 该条目下所有定额工程量
 行合价的合计，单价 = 合价 ÷ 数量，不可编辑、随定额行单价联动刷新。
@@ -133,7 +133,7 @@ class QuantityDetailPanel(QWidget):
         self._listing_collapsed = False
         #: 单价索引（summary.price_maps 的快照，改单价后局部刷新）
         self._by_key: dict[str, float] = {}
-        self._by_item: dict[str, float] = {}
+        self._by_scope: dict[tuple[str, str], float] = {}
         #: 最近一次算出的行（原始值对 + 补价后的行），改单价只重乘、导出复用
         self._quota_pairs: list[tuple[list, bool]] = []
         self._listing_pairs: list[tuple[list, bool]] = []
@@ -298,7 +298,7 @@ class QuantityDetailPanel(QWidget):
         self._node = node
         if node is None:
             self._dirty = False
-            self._by_key, self._by_item = {}, {}
+            self._by_key, self._by_scope = {}, {}
             self._quota_pairs, self._listing_pairs = [], []
             self._quota_rowset, self._listing_rowset = [], []
             self._summary, self._detail = None, []
@@ -349,7 +349,7 @@ class QuantityDetailPanel(QWidget):
             # 源数据再解析一次（见 _export_current_table）
             summary, detail = compute_unit(node.id)
             self._summary, self._detail = summary, detail
-            self._by_key, self._by_item = summary_service.price_maps()
+            self._by_key, self._by_scope = summary_service.price_maps()
             self._quota_pairs = [
                 (row, False) for row in _quota_rows(summary, with_expression=False)
             ]
@@ -370,8 +370,9 @@ class QuantityDetailPanel(QWidget):
     def _compose(self, rows: list[tuple[list, bool]]) -> list[_Row]:
         """给行补上单价 / 合价（纯重乘，不算工程量、不解析表达式）。
 
-        定额行单价按 key 取价目表、合价 = 数量 × 单价；清单项目行合价 = 该
-        条目下所有定额工程量行合价的合计、单价 = 合价 ÷ 数量（派生值，不写库）。
+        定额行单价按 key / 类别 + 项目取价目表、合价 = 数量 × 单价；清单项目行
+        合价 = 该条目下所有定额工程量行合价的合计、单价 = 合价 ÷ 数量（派生值，
+        不写库）。
         合价始终按**全量**行合计——收起态表格里只剩清单项目行时也不受影响。
         """
         composed: list[_Row] = []
@@ -385,12 +386,12 @@ class QuantityDetailPanel(QWidget):
                         break
                     child_category, child_name, child_unit, child_amount = child_values[:4]
                     child_key = f"{child_category}|{child_name}|{child_unit}"
-                    total += float(child_amount) * self._resolve_price(child_key, child_name)
+                    total += float(child_amount) * self._resolve_price(child_key)
                 price = total / amount if amount else 0.0
                 price_key = None
             else:
                 price_key = f"{category}|{name}|{unit}"
-                price = self._resolve_price(price_key, name)
+                price = self._resolve_price(price_key)
                 total = amount * price
             composed.append(_Row(list(values), is_listing, price, total, price_key))
         return composed
@@ -559,15 +560,12 @@ class QuantityDetailPanel(QWidget):
         return rows
 
     # ------------------------------------------------------------------ 单价
-    def _resolve_price(self, key: str, item: str) -> float:
-        """key 显式记录优先，无记录回落到同“项目”名单价（按项目名全局联动）。"""
-        price = self._by_key.get(key)
-        if price is not None:
-            return price
-        return self._by_item.get(item, 0.0)
+    def _resolve_price(self, key: str) -> float:
+        """单价解析：key 显式记录优先，否则回落同（类别, 项目）单价。"""
+        return summary_service.resolve_price(key, self._by_key, self._by_scope)
 
     def _on_price_item_changed(self, item: QTableWidgetItem) -> None:
-        """单价编辑落定：按“项目”名联动写库，两表单价 / 合价同步重乘刷新。"""
+        """单价编辑落定：按“类别 + 项目”联动写库，两表单价 / 合价同步重乘刷新。"""
         if self._loading or item.column() != _COL_PRICE:
             return
         price_key = item.data(_PRICE_KEY_ROLE)
@@ -580,15 +578,15 @@ class QuantityDetailPanel(QWidget):
             bus().status_message.emit(f"单价“{text}”不是有效数字。", 4000)
             self._loading = True
             try:
-                item.setText(fmt(self._resolve_price(price_key, self._item_of(price_key))))
+                item.setText(fmt(self._resolve_price(price_key)))
             finally:
                 self._loading = False
             return
         summary_service.set_price_propagate(price_key, value)
-        # 单价按项目名联动后重建索引，两表一起刷（只重乘，不重算工程量）
+        # 单价按类别 + 项目联动后重建索引，两表一起刷（只重乘，不重算工程量）
         self._loading = True
         try:
-            self._by_key, self._by_item = summary_service.price_maps()
+            self._by_key, self._by_scope = summary_service.price_maps()
             self._refresh_price_cells()
         finally:
             self._loading = False
@@ -613,11 +611,6 @@ class QuantityDetailPanel(QWidget):
             total_item = table.item(row_index, _COL_TOTAL)
             if total_item is not None:
                 total_item.setText(fmt(row.total))
-
-    @staticmethod
-    def _item_of(price_key: str) -> str:
-        parts = price_key.split("|")
-        return parts[1] if len(parts) > 1 else ""
 
     @staticmethod
     def _secondary_color() -> QColor:
