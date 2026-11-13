@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from PySide6.QtCore import QObject, Signal
 
 from app.core.event_bus import bus
+from app.core.models import base as orm
 from app.core.models.models import Segment, Unit
 from app.services import project_io
 
@@ -109,7 +110,7 @@ class ProjectViewModel(QObject):
     def add_segment(self, name: str = "新建标段") -> TreeNode | None:
         if not project_io.is_open():
             return None
-        session = project_io.orm.session()
+        session = orm.session()
         segment = Segment(name=name, order_no=project_io.next_order_no(Segment))
         session.add(segment)
         project_io.commit()
@@ -119,7 +120,7 @@ class ProjectViewModel(QObject):
     def add_unit(self, segment_id: int, name: str = "新建单位工程") -> TreeNode | None:
         if not project_io.is_open():
             return None
-        session = project_io.orm.session()
+        session = orm.session()
         unit = Unit(
             segment_id=segment_id,
             name=name,
@@ -223,7 +224,7 @@ class ProjectViewModel(QObject):
         if node is None or node.id is None or not project_io.is_open():
             return None
         if node.kind == KIND_SEGMENT:
-            return project_io.orm.session().get(Segment, node.id)
+            return orm.session().get(Segment, node.id)
         if node.kind == KIND_UNIT:
-            return project_io.orm.session().get(Unit, node.id)
+            return orm.session().get(Unit, node.id)
         return None

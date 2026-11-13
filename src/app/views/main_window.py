@@ -59,7 +59,11 @@ from app.views.panels.quantity_detail_panel import QuantityDetailPanel
 from app.views.panels.summary_panel import SummaryPanel
 from app.views.panels.unit_panel import UnitPanel
 from app.views.widgets.frameless_dialog import FramelessMessageBox
-from app.views.widgets.mac_window import apply_mac_window_chrome, is_mac
+from app.views.widgets.mac_window import (
+    TRAFFIC_LIGHT_INSET_ALL,
+    apply_mac_window_chrome,
+    is_mac,
+)
 from app.views.widgets.panel_splitter import (
     SPLITTER_HANDLE_WIDTH,
     TOGGLE_BAR_WIDTH,

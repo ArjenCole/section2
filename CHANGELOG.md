@@ -89,7 +89,15 @@ alpha.2 之后的开发内容（待随下个版本发布）。
   哪条原则（默认仍是库中其余原则的最后一条）；
 - 删除 / 改名围护原则时，左右分设与合槽组员的 `pe_left_name` /
   `pe_right_name` 引用一并并入或改名（原先只处理 `pe_name`，这两列会悬空、
-  计算时静默回退到库中第一条原则）。
+  计算时静默回退到库中第一条原则）；
+- 修复项目结构树删除标段 / 单位工程必报 `NameError`：`ProjectViewModel.delete()`
+  用了没导入的 `orm`（`viewmodels/project_vm.py` 原先只导入 `Segment` / `Unit`），
+  现在与全项目一致用 `from app.core.models import base as orm`；删除后选中回到
+  父节点（原先在重建树之后才写 `_selected_key`，用户会被跳回工程根）；
+- 修复两处同类 `NameError`：主窗体 `FramelessTitleBar` 在 macOS 上引用未导入的
+  `TRAFFIC_LIGHT_INSET_ALL`（「去除多余的标题栏」时把 import 一起删了，mac 端
+  启动即崩）；`services/principle_edit.apply_component_params` 补新参数行时引用
+  未导入的 `ComponentParam`。
 
 ## [2.0.0-alpha.2] - 2026-11-06
 

@@ -450,10 +450,12 @@ class TreePanel(QWidget):
         )
         if answer != FramelessMessageBox.StandardButton.Yes:
             return
+        # 选中父节点必须在 delete 之前写：delete 内部就 load() 重建树并按
+        # _selected_key 恢复选中，晚写的话用户会跳回工程根
         parent = self._parent_key(node)
-        self._vm.delete(node)
         if parent is not None:
             self._selected_key = parent
+        self._vm.delete(node)
 
     def _move(self, delta: int) -> None:
         node = self._current_node()

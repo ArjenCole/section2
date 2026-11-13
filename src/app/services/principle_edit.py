@@ -21,6 +21,7 @@ from app.core.models.models import (
     WIDTH_KIND_GROOVE_B,
     WIDTH_KIND_WORK,
     Component,
+    ComponentParam,
     EnclosureLevel,
     EnclosureWork,
     FoundationCushion,
