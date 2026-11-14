@@ -74,7 +74,7 @@ from app.views.widgets.cell_fill_table import CellFillTable
 from app.views.widgets.frameless_dialog import FramelessMessageBox
 from app.views.widgets.panel_splitter import SPLITTER_HANDLE_WIDTH, LineSplitter
 from app.views.widgets.row_button_column import RowButtonColumn
-from app.views.widgets.table_edit_delegate import TableEditDelegate
+from app.views.widgets.table_edit_delegate import ENTER_NEXT_COLUMNS_ATTR, TableEditDelegate
 from app.views.widgets.table_width import fixed_width_behavior, header_fit_width
 
 _ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -533,6 +533,10 @@ class UnitPanel(QWidget):
         self._element_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._element_table.customContextMenuRequested.connect(self._on_element_context_menu)
         self._element_table.installEventFilter(self)
+        # 回车编辑约定（旧版 dGVmain 同款）：埋深 / 数量列的编辑器里按回车 =
+        # 提交并把当前格移到下一可见行同一列（跳过收起的合槽成员行），批量
+        # 录数不用碰鼠标；委托 eventFilter 读取，见 TableEditDelegate
+        setattr(self._element_table, ENTER_NEXT_COLUMNS_ATTR, (_COL_DEPTH, _COL_AMOUNT))
         return self._element_table
 
     def _build_bottom_area(self) -> QWidget:

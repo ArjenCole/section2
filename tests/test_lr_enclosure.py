@@ -1641,9 +1641,16 @@ def test_group_parent_amount_edit_keeps_group_detail(project, qapp) -> None:
     """改合槽父节点数量后仍选中父行：成员合计工程量与整槽断面不被清空。
 
     回归：父行不是构件（``_current_element_id`` 恒 None），整表重载原先会
-    回落到第 0 行，随后的空态清理又把明细清掉。
+    回落到第 0 行，随后的空态清理又把明细清掉。回车提交（主表格新约定）
+    会把焦点跳到下一行，故保持父行选中的改数走 VM 直写（AI / MCP 同款
+    路径）来触发整表重载。
     """
+    from PySide6.QtWidgets import QApplication
+
+    from app.core.models import base as orm
+    from app.core.models.models import Element
     from app.views.panels.unit_panel import _select_row
+    from app.viewmodels import unit_vm
 
     _element("父行前构件")  # 让合槽父行不在第 0 行
     e1 = _element("父行组员1")
@@ -1656,7 +1663,18 @@ def test_group_parent_amount_edit_keeps_group_detail(project, qapp) -> None:
     )
     _select_row(table, group_row, 0)
     panel._sync_detail_to_selection()
+    # 回车真实编辑：提交并同步成员数量，焦点按新约定跳到首个成员行
     _edit_group_parent_amount(panel, group.id, "150")
+    assert table.currentRow() == group_row + 1
+    assert panel._current_element_id() == e1
+    assert orm.session().get(Element, e1).amount == "150"
+
+    # 回到父行再触发一次整表重载（AI / MCP 改数同款路径）：回归目标——
+    # 重载不得清空父行选中与合槽明细
+    _select_row(table, group_row, 0)
+    panel._sync_detail_to_selection()
+    unit_vm.update_group(group.id, amount="150")
+    QApplication.processEvents()
 
     assert table.currentRow() == group_row
     assert panel._group_member_ids == [e1, e2]
@@ -1677,8 +1695,15 @@ def test_group_parent_amount_edit_first_row_not_stale(project, qapp) -> None:
 
     回归：明细目标停留在末条子构件时改父节点数量，重载先清空再补发
     过期 detail_loaded，整个下方面板会刷成末条子构件的内容、定额/清单清空。
+    回车提交（主表格新约定）会把焦点跳到下一行，故保持父行选中的改数走
+    VM 直写（AI / MCP 同款路径）来触发整表重载。
     """
+    from PySide6.QtWidgets import QApplication
+
+    from app.core.models import base as orm
+    from app.core.models.models import Element
     from app.views.panels.unit_panel import _select_row
+    from app.viewmodels import unit_vm
 
     e1 = _element("首行组员1")
     e2 = _element("首行组员2")
@@ -1697,7 +1722,16 @@ def test_group_parent_amount_edit_first_row_not_stale(project, qapp) -> None:
     panel._sync_detail_to_selection()
     _select_row(table, group_row, 0)
     panel._sync_detail_to_selection()
+    # 回车真实编辑：提交并同步成员数量，焦点按新约定跳到首个成员行
     _edit_group_parent_amount(panel, group.id, "150")
+    assert table.currentRow() == group_row + 1
+    assert orm.session().get(Element, e1).amount == "150"
+
+    # 回到父行再触发一次整表重载（AI / MCP 改数同款路径）
+    _select_row(table, group_row, 0)
+    panel._sync_detail_to_selection()
+    unit_vm.update_group(group.id, amount="150")
+    QApplication.processEvents()
 
     assert table.currentRow() == group_row
     assert panel._current_element_id() is None
