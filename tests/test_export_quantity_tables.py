@@ -59,16 +59,16 @@ def test_export_per_unit(tmp_path) -> None:
     result = summary.export_quantity_tables(tmp_path / "out.xlsx", unit_ids)
     # sheet 按项目结构从上到下：工程根费用汇总 → 标段费用汇总 → 各单位定额 / 清单
     assert result["sheets"] == [
-        "新建项目-费用汇总表",
-        "新建标段-费用汇总表",
-        "雨水工程-定额工程量汇总表",
-        "雨水工程-清单工程量汇总表",
-        "污水工程-定额工程量汇总表",
-        "污水工程-清单工程量汇总表",
+        "新建项目-费用",
+        "新建标段-费用",
+        "新建标段-雨水工程-定额表",
+        "新建标段-雨水工程-清单表",
+        "新建标段-污水工程-定额表",
+        "新建标段-污水工程-清单表",
     ]
 
     workbook = openpyxl.load_workbook(tmp_path / "out.xlsx")
-    quota = workbook["雨水工程-定额工程量汇总表"]
+    quota = workbook["新建标段-雨水工程-定额表"]
     assert [cell.value for cell in quota[1]] == [
         "类别",
         "名称",
@@ -88,7 +88,7 @@ def test_export_per_unit(tmp_path) -> None:
     assert abs(rain[5].value - 400.0) < 1e-9  # 合价 = 数量 × 单价
     assert rain[6].value and rain[7].value  # 表达式 / 算式都有内容
 
-    listing = workbook["雨水工程-清单工程量汇总表"]
+    listing = workbook["新建标段-雨水工程-清单表"]
     listing_rows = _quota_rows(listing)
     header_row = _listing_header_rows(listing_rows)[0]
     assert header_row[1].value == "雨水检查井"  # 名称 = 规格 / 名称
@@ -101,13 +101,13 @@ def test_export_per_unit(tmp_path) -> None:
     assert "D6EAF8" in str(header_row[0].fill.start_color.rgb)
     assert listing_rows[1][1].value == "垫层"
     # 各单位工程一张 sheet：污水块在污水工程自己的清单表里
-    sewage_rows = _quota_rows(workbook["污水工程-清单工程量汇总表"])
+    sewage_rows = _quota_rows(workbook["新建标段-污水工程-清单表"])
     assert [row[1].value for row in _listing_header_rows(sewage_rows)] == ["污水检查井"]
     assert abs(sewage_rows[0][5].value - 300.0) < 1e-9  # 3.0 × 100
 
     # 费用汇总表：工程根 → 标段 → 单位工程，逐行合价
-    root_rows = _quota_rows(workbook["新建项目-费用汇总表"])
-    assert [cell.value for cell in workbook["新建项目-费用汇总表"][1]] == [
+    root_rows = _quota_rows(workbook["新建项目-费用"])
+    assert [cell.value for cell in workbook["新建项目-费用"][1]] == [
         "序号", "名称", "合价",
     ]
     assert [(row[0].value, row[1].value) for row in root_rows] == [
@@ -119,7 +119,7 @@ def test_export_per_unit(tmp_path) -> None:
     assert abs(root_rows[0][2].value - 700.0) < 1e-9  # 400 + 300
     assert abs(root_rows[2][2].value - 400.0) < 1e-9
     assert abs(root_rows[3][2].value - 300.0) < 1e-9
-    seg_rows = _quota_rows(workbook["新建标段-费用汇总表"])
+    seg_rows = _quota_rows(workbook["新建标段-费用"])
     assert [(row[0].value, row[1].value) for row in seg_rows] == [
         ("1", "新建标段"),
         ("1.1", "雨水工程"),
@@ -133,13 +133,13 @@ def test_export_subset_excludes_unchecked(tmp_path) -> None:
     unit_ids = _two_unit_project(tmp_path)
     result = summary.export_quantity_tables(tmp_path / "part.xlsx", unit_ids[:1])
     assert result["sheets"] == [
-        "新建项目-费用汇总表",
-        "新建标段-费用汇总表",
-        "雨水工程-定额工程量汇总表",
-        "雨水工程-清单工程量汇总表",
+        "新建项目-费用",
+        "新建标段-费用",
+        "新建标段-雨水工程-定额表",
+        "新建标段-雨水工程-清单表",
     ]
     workbook = openpyxl.load_workbook(tmp_path / "part.xlsx")
-    root_rows = _quota_rows(workbook["新建项目-费用汇总表"])
+    root_rows = _quota_rows(workbook["新建项目-费用"])
     assert [(row[0].value, row[1].value) for row in root_rows] == [
         ("1", "新建项目"),
         ("1.1", "新建标段"),
@@ -155,13 +155,13 @@ def test_export_empty_unit_writes_header_only(tmp_path) -> None:
     unit_ids = [unit.id for unit in project_io.units(segment.id)]
     summary.export_quantity_tables(tmp_path / "empty.xlsx", unit_ids)
     workbook = openpyxl.load_workbook(tmp_path / "empty.xlsx")
-    assert workbook["雨水工程-定额工程量汇总表"].max_row == 1  # 只有表头
-    root_rows = _quota_rows(workbook["新建项目-费用汇总表"])
+    assert workbook["新建标段-雨水工程-定额表"].max_row == 1  # 只有表头
+    root_rows = _quota_rows(workbook["新建项目-费用"])
     assert abs(root_rows[0][2].value) < 1e-9  # 无量 → 合计 0
 
 
-def test_same_name_units_get_distinct_sheets(tmp_path) -> None:
-    """不同标段下的同名单位工程：sheet 名按结构顺序排列并加序号区分。"""
+def test_unit_sheet_names_prefixed_with_segment(tmp_path) -> None:
+    """单位工程表 sheet 名带标段前缀；跨标段同名单位靠前缀天然区分。"""
     path = tmp_path / "同名.stn"
     project_io.new_project(
         NewProjectSpec(
@@ -172,13 +172,44 @@ def test_same_name_units_get_distinct_sheets(tmp_path) -> None:
     unit_ids += [unit.id for unit in project_io.units(project_io.segments()[1].id)]
     result = summary.export_quantity_tables(tmp_path / "same.xlsx", unit_ids)
     assert result["sheets"] == [
-        "新建项目-费用汇总表",
-        "标段一-费用汇总表",
-        "同名工程-定额工程量汇总表",
-        "同名工程-清单工程量汇总表",
-        "标段二-费用汇总表",
-        "同名工程-定额工程量汇总表(2)",
-        "同名工程-清单工程量汇总表(2)",
+        "新建项目-费用",
+        "标段一-费用",
+        "标段一-同名工程-定额表",
+        "标段一-同名工程-清单表",
+        "标段二-费用",
+        "标段二-同名工程-定额表",
+        "标段二-同名工程-清单表",
+    ]
+
+
+def test_same_name_units_in_one_segment_get_numbered_sheets(tmp_path) -> None:
+    """同一标段下的同名单位工程：sheet 名加序号区分。"""
+    from app.core.models import base as orm
+    from app.core.models.models import Unit
+
+    path = tmp_path / "同段同名.stn"
+    project_io.new_project(NewProjectSpec(path=path, unit_names=["同名工程"]))
+    segment = project_io.segments()[0]
+    unit_ids = [unit.id for unit in project_io.units(segment.id)]
+    # 同标段下再加一个同名单位工程（同 ProjectViewModel.add_unit 的落库方式）
+    session = orm.session()
+    duplicate = Unit(
+        segment_id=segment.id,
+        name="同名工程",
+        order_no=project_io.next_order_no(Unit, segment_id=segment.id),
+    )
+    session.add(duplicate)
+    project_io.commit()
+    unit_ids.append(duplicate.id)
+
+    result = summary.export_quantity_tables(tmp_path / "dup.xlsx", unit_ids)
+    assert result["sheets"] == [
+        "新建项目-费用",
+        "新建标段-费用",
+        "新建标段-同名工程-定额表",
+        "新建标段-同名工程-清单表",
+        "新建标段-同名工程-定额表(2)",
+        "新建标段-同名工程-清单表(2)",
     ]
 
 
@@ -193,30 +224,30 @@ def test_export_include_flags(tmp_path) -> None:
         tmp_path / "no_cost.xlsx", unit_ids, include_cost=False
     )
     assert result["sheets"] == [
-        "雨水工程-定额工程量汇总表",
-        "雨水工程-清单工程量汇总表",
-        "污水工程-定额工程量汇总表",
-        "污水工程-清单工程量汇总表",
+        "新建标段-雨水工程-定额表",
+        "新建标段-雨水工程-清单表",
+        "新建标段-污水工程-定额表",
+        "新建标段-污水工程-清单表",
     ]
 
     result = summary.export_quantity_tables(
         tmp_path / "no_quota.xlsx", unit_ids, include_quota=False
     )
     assert result["sheets"] == [
-        "新建项目-费用汇总表",
-        "新建标段-费用汇总表",
-        "雨水工程-清单工程量汇总表",
-        "污水工程-清单工程量汇总表",
+        "新建项目-费用",
+        "新建标段-费用",
+        "新建标段-雨水工程-清单表",
+        "新建标段-污水工程-清单表",
     ]
 
     result = summary.export_quantity_tables(
         tmp_path / "no_listing.xlsx", unit_ids, include_listing=False
     )
     assert result["sheets"] == [
-        "新建项目-费用汇总表",
-        "新建标段-费用汇总表",
-        "雨水工程-定额工程量汇总表",
-        "污水工程-定额工程量汇总表",
+        "新建项目-费用",
+        "新建标段-费用",
+        "新建标段-雨水工程-定额表",
+        "新建标段-污水工程-定额表",
     ]
 
 
@@ -227,7 +258,7 @@ def test_export_listing_only(tmp_path) -> None:
     summary.export_quantity_tables(tmp_path / "only.xlsx", unit_ids, listing_only=True)
 
     workbook = openpyxl.load_workbook(tmp_path / "only.xlsx")
-    rows = _quota_rows(workbook["雨水工程-清单工程量汇总表"])
+    rows = _quota_rows(workbook["新建标段-雨水工程-清单表"])
     assert len(rows) == 1  # 只剩清单项目行
     assert "D6EAF8" in str(rows[0][0].fill.start_color.rgb)
     assert abs(rows[0][5].value - 400.0) < 1e-9  # 合价 = 被隐藏定额行合计（4 × 100）
@@ -338,15 +369,15 @@ def test_unit_name_with_invalid_chars_sanitized_in_sheet_title(tmp_path) -> None
         tmp_path / "name.xlsx", [unit.id]
     )
     assert result["sheets"] == [
-        "新建项目-费用汇总表",
-        "新建标段-费用汇总表",
-        "雨_水_工程-定额工程量汇总表",
-        "雨_水_工程-清单工程量汇总表",
+        "新建项目-费用",
+        "新建标段-费用",
+        "新建标段-雨_水_工程-定额表",
+        "新建标段-雨_水_工程-清单表",
     ]
     workbook = openpyxl.load_workbook(tmp_path / "name.xlsx")
-    rows = _quota_rows(workbook["雨_水_工程-定额工程量汇总表"])
+    rows = _quota_rows(workbook["新建标段-雨_水_工程-定额表"])
     assert rows[0][1].value == "垫层"  # 定额行内容原样
-    listing_rows = _quota_rows(workbook["雨_水_工程-清单工程量汇总表"])
+    listing_rows = _quota_rows(workbook["新建标段-雨_水_工程-清单表"])
     assert listing_rows[0][1].value == "检查井"  # 清单项目行内容原样
 
 

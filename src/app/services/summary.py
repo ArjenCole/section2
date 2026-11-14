@@ -455,8 +455,8 @@ def _sheet_title(workbook, name: str, suffix: str) -> str:
     """节点名 + 固定后缀的 sheet 名：替换非法字符、超长截名、重名加序号。
 
     Excel sheet 名上限 31 字符且不能含 ``: \\ / ? * [ ]``；超长时截节点名
-    保住后缀（如“-定额工程量汇总表”），重名（不同标段下的同名单位工程）
-    用 ``(2)`` 起的序号区分。
+    保住后缀（如“-定额表”），重名（同一标段下的同名单位工程）用 ``(2)``
+    起的序号区分。
     """
     name = _INVALID_SHEET_CHARS.sub("_", str(name or "")).strip()
     title = f"{name}{suffix}"
@@ -669,7 +669,7 @@ def export_quantity_tables(
                 )
             root_rows.insert(0, ("1", project, root_total, 0))
             _write_cost_sheet(
-                workbook.create_sheet(_sheet_title(workbook, project, "-费用汇总表")),
+                workbook.create_sheet(_sheet_title(workbook, project, "-费用")),
                 root_rows,
             )
 
@@ -684,17 +684,17 @@ def export_quantity_tables(
                     for unit_index, unit in enumerate(units, start=1)
                 )
                 _write_cost_sheet(
-                    workbook.create_sheet(
-                        _sheet_title(workbook, segment.name, "-费用汇总表")
-                    ),
+                    workbook.create_sheet(_sheet_title(workbook, segment.name, "-费用")),
                     seg_rows,
                 )
-            # 单位工程的定额 / 清单工程量汇总表（行带单价 / 合价）
+            # 单位工程的定额 / 清单工程量汇总表（行带单价 / 合价），
+            # sheet 名带标段前缀（如“加油站-雨水工程-定额表”）
             for unit in units:
+                prefixed = f"{segment.name}-{unit.name}"
                 if include_quota:
                     _write_sheet(
                         workbook.create_sheet(
-                            _sheet_title(workbook, unit.name, "-定额工程量汇总表")
+                            _sheet_title(workbook, prefixed, "-定额表")
                         ),
                         _PRICE_QUANTITY_HEADERS,
                         _priced_rows(
@@ -714,7 +714,7 @@ def export_quantity_tables(
                         ]
                     _write_sheet(
                         workbook.create_sheet(
-                            _sheet_title(workbook, unit.name, "-清单工程量汇总表")
+                            _sheet_title(workbook, prefixed, "-清单表")
                         ),
                         _PRICE_QUANTITY_HEADERS,
                         listing_priced,
