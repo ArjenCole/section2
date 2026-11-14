@@ -37,8 +37,6 @@ from app.core.param_naming import (
     PARAM_C1_NAME,
     PARAM_C2_NAME,
     PARAM_T_NAME,
-    STRUCTURE_NAME_PARAM,
-    STRUCTURE_UNIT_PARAM,
 )
 from app.core.pipe_category import is_concrete as _pipe_is_concrete
 from app.views.widgets.mac_window import is_mac
@@ -83,11 +81,13 @@ _ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
 #: 费用汇总表挂在序号列；父行 / 子行挂
 #: {"indent": int, "has_children": bool, "expanded": bool}，普通行不挂
 _TREE_ROLE = Qt.ItemDataRole.UserRole + 2
+#: 行的类别（name item 上，规格 / 单位列编辑时分流：附属构筑物可改，其他只读）
+_ELEMENT_CATEGORY_ROLE = Qt.ItemDataRole.UserRole + 6
 #: 合槽父节点行的标记（name item 的 UserRole 数据 = ("group", 组 id)）
 _GROUP_ROLE_TAG = "group"
 _COL_NAME, _COL_CATEGORY, _COL_SPEC, _COL_DEPTH, _COL_UNIT, _COL_AMOUNT, _COL_PE, _COL_PF, _COL_PP, _COL_PW, _COL_SOURCE = range(11)
 _ELEMENT_HEADERS = ["名称", "类型", "规格", "埋深", "单位", "数量", "沟槽围护原则", "地基处理原则", "挖填降水原则", "工作面宽原则", "来源"]
-#: 复刻旧版 dGVmain 列结构（类型 / 规格 / 来源列只读）
+#: 复刻旧版 dGVmain 列结构（类型 / 来源列只读；规格 / 单位列仅附属构筑物可改）
 #: 围护/地基原则两列等宽（下拉框完整显示 6 个字）；
 #: 规格列两倍宽；埋深=数量列宽；类型/单位列容得下表头两字；埋深/单位/数量居中
 _ELEMENT_WIDTHS = [130, 48, 280, 70, 48, 70, 130, 130, 130, 130, 80]
@@ -106,7 +106,7 @@ _DISTANCE_ROWS = (
 
 #: 类型列简称（仅显示层，数据库 / 工程量 / 导出等仍用完整类别名）：
 #: 直埋管道→直；包封埋管/箱涵/管廊（构件库“混凝土结构”组）→箱；
-#: 顶管/牵引管（构件库“非开挖管道”组）→顶；构筑物（附属构筑物）→井
+#: 顶管/牵引管（构件库“非开挖管道”组）→顶；构筑物（附属构筑物）→附
 _CATEGORY_ABBRS = {
     CATEGORY_BURIED: "直",
     CATEGORY_ENCASED: "箱",
@@ -114,7 +114,7 @@ _CATEGORY_ABBRS = {
     CATEGORY_GALLERY: "箱",
     CATEGORY_JACKING: "顶",
     CATEGORY_PULLING: "顶",
-    CATEGORY_STRUCTURE: "井",
+    CATEGORY_STRUCTURE: "附",
 }
 
 _QUANTITY_HEADERS = ["编号", "类别", "项目", "单位", "工程量", "计算表达式"]
@@ -165,8 +165,7 @@ _MATCH_BG_CROSS = "cross"
 _MATCH_BG_GRAY = "gray"
 #: 参数名 / 单位 / 参数值三列；直埋构件在"参数值"右侧追加候选参数列
 #: （砼基础/非砼基础 × 90/120/150/180，混凝土管 8 列、其他管材 4 列）。
-#: 锁定行（该类别显示的图集参数行、构筑物名称 / 单位行）参数名 / 单位只读，
-#: 单位列居中，构筑物名称 / 单位行的单位列显示 “-”
+#: 锁定行（该类别显示的图集参数行）参数名 / 单位只读，单位列居中
 _PARAM_HEADERS = ["参数名", "单位", "参数值"]
 #: 直埋 + 有候选时参数值列锁定（自动从候选里选），候选列可编辑
 _CANDIDATE_FIELD_BY_PARAM = {
@@ -180,16 +179,11 @@ _CANDIDATE_FIELD_BY_PARAM = {
 _PARAM_NAME_WIDTH = 90
 #: 单位列：刚好容下表头「单位」两个字与 mm 值
 _PARAM_UNIT_WIDTH = 52
-#: 没有单位的参数行（附属构筑物的名称 / 单位行，库里单位列为空）显示 “-”
-_NO_UNIT_TEXT = "-"
-_NO_UNIT_PARAM_ROWS: tuple[tuple[str, str], ...] = (
-    (STRUCTURE_NAME_PARAM, ""),
-    (STRUCTURE_UNIT_PARAM, ""),
-)
 _QTY_ROLE = Qt.ItemDataRole.UserRole + 1
-#: 附属构筑物的工程量行（类别|项目|单位 三段合一 + 值算式）；末列空表头 = 按钮
-#: 列（「+」表头格 + 行尾「-」，见 RowButtonColumn）
-_QTY_HEADERS = ["类别", "项目", "单位", "值", ""]
+#: 附属构筑物的工程量行（类别|项目|单位 三段合一 + 含量算式）；末列空表头 = 按钮
+#: 列（「+」表头格 + 行尾「-」，见 RowButtonColumn）。列头叫“含量”：
+#: 工程量 = 构件数量 × 该行含量（旧版叫“值”，语义含混）
+_QTY_HEADERS = ["类别", "项目", "单位", "含量", ""]
 
 #: 共享单元格焦点的归属标记（挂在 QTableWidget 实例属性上，Quotor _GLOBAL_LATEST 同款）
 _FOCUS_OWNER_ATTR = "_unit_panel_focus_owner"
@@ -652,7 +646,7 @@ class UnitPanel(QWidget):
         qty_layout.addWidget(self._qty_table, 1)
         self._qty_placeholder = QLabel(
             "仅附属构筑物可录入工程量行。\n"
-            "选中附属构筑物后在此逐行录入类别｜项目｜单位｜值算式。"
+            "选中附属构筑物后在此逐行录入类别｜项目｜单位｜含量算式。"
         )
         self._qty_placeholder.setProperty("role", "placeholder")
         self._qty_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1374,8 +1368,10 @@ class UnitPanel(QWidget):
         if isinstance(row, GroupRow):
             self._fill_group_row(index, row)
             return
+        is_structure = row.category == CATEGORY_STRUCTURE
         name_item = QTableWidgetItem(row.name)
         name_item.setData(_ELEMENT_ROLE, row.id)
+        name_item.setData(_ELEMENT_CATEGORY_ROLE, row.category)
         if row.group_id is not None:
             # 合槽子节点：委托画缩进竖线（组内从上到下 = 沟槽从左到右）
             name_item.setData(_TREE_ROLE, {"indent": 1, "has_children": False, "expanded": False})
@@ -1390,8 +1386,13 @@ class UnitPanel(QWidget):
         self._element_table.setItem(index, _COL_CATEGORY, category_item)
 
         spec_item = QTableWidgetItem(row.spec)
-        spec_item.setFlags(spec_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        spec_item.setForeground(QBrush(_secondary_color()))
+        if is_structure:
+            # 附属构筑物：规格直接在主表格编辑（写回“名称”参数行，
+            # 见 set_structure_spec）；其他类别规格由库 / 参数推导，只读
+            spec_item.setToolTip("附属构筑物规格：直接在此编辑，显示在清单 / 定额与导出表。")
+        else:
+            spec_item.setFlags(spec_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            spec_item.setForeground(QBrush(_secondary_color()))
         self._element_table.setItem(index, _COL_SPEC, spec_item)
 
         depth_item = QTableWidgetItem(row.depth)
@@ -1400,9 +1401,14 @@ class UnitPanel(QWidget):
         _apply_expression_hint(depth_item, row.depth, row.depth_error)
 
         unit_item = QTableWidgetItem(row.unit)
-        unit_item.setFlags(unit_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         unit_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        unit_item.setForeground(QBrush(_secondary_color()))
+        if is_structure:
+            # 附属构筑物：单位直接在主表格编辑（写回“单位”参数行，
+            # 见 set_structure_unit）；其他类别单位恒 m / 个，只读
+            unit_item.setToolTip("附属构筑物单位（座 / 个 / 套…）：直接在此编辑，清空即显示空。")
+        else:
+            unit_item.setFlags(unit_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            unit_item.setForeground(QBrush(_secondary_color()))
         self._element_table.setItem(index, _COL_UNIT, unit_item)
 
         amount_item = QTableWidgetItem(row.amount)
@@ -1614,6 +1620,16 @@ class UnitPanel(QWidget):
             return
         field = {_COL_NAME: "name", _COL_DEPTH: "depth", _COL_AMOUNT: "amount"}.get(item.column())
         if field is None:
+            # 规格 / 单位列：仅附属构筑物可编辑（格子的 flags 已挡住其他类别，
+            # 这里再按类别分流一次防绕过），内容写回“名称 / 单位”参数行
+            if item.column() == _COL_SPEC:
+                if self._row_category(row) == CATEGORY_STRUCTURE:
+                    self._vm.set_structure_spec(element_id, item.text())
+                return
+            if item.column() == _COL_UNIT:
+                if self._row_category(row) == CATEGORY_STRUCTURE:
+                    self._vm.set_structure_unit(element_id, item.text())
+                return
             return
         text = item.text()
         if field == "name":
@@ -1628,6 +1644,12 @@ class UnitPanel(QWidget):
             bus().status_message.emit(f"{label}算式错误：{error}", 6000)
         else:
             bus().status_message.emit(f"{label} {text} = {format_number(value)}", 4000)
+
+    def _row_category(self, row: int) -> int:
+        """主表格某行的构件类别（name item 的 _ELEMENT_CATEGORY_ROLE）。"""
+        item = self._element_table.item(row, _COL_NAME)
+        category = item.data(_ELEMENT_CATEGORY_ROLE) if item is not None else None
+        return int(category or 0)
 
     def _on_current_element_changed(self, row: int, _column: int, _previous_row: int, _previous_column: int) -> None:
         if self._loading:
@@ -2102,6 +2124,25 @@ class UnitPanel(QWidget):
         if element_id is not None:
             self._vm.move_element(element_id, delta)
 
+    def _insert_empty_row(self) -> None:
+        """主表格插入空行（右键「插入空行」/ Insert 键）：附属构筑物占位构件。
+
+        落点跟随当前选中行（与粘贴同口径）：选中普通构件 → 插到它之后；
+        选中合槽（成员或父行）→ 插到整组之后——空行不进组，组员必须连续；
+        没有选中条目 → 追加末尾。插入后选中新行（_pending_select_id）。
+        """
+        if self._unit_id is None:
+            bus().status_message.emit("请先选中单位工程，再插入空行。", 4000)
+            return
+        from app.viewmodels.unit_vm import element_id_after_group, insert_empty_row
+
+        target_group, anchor = self._insertion_target()
+        if target_group is not None:
+            anchor = element_id_after_group(target_group)
+        element = insert_empty_row(self._unit_id, anchor)
+        if element is None:
+            bus().status_message.emit("插入空行失败：单位工程不存在。", 5000)
+
     # ------------------------------------------------------------------ 主表格快捷键 / 右键菜单（复刻旧版 dGVmain_KeyUp / CMSmain）
     def eventFilter(self, source, event) -> bool:  # noqa: N802
         from PySide6.QtCore import QEvent
@@ -2111,6 +2152,10 @@ class UnitPanel(QWidget):
             assert isinstance(event, QKeyEvent)
             if event.key() == Qt.Key.Key_Delete:
                 self._delete_selected_elements()
+                return True
+            if event.key() == Qt.Key.Key_Insert:
+                # Insert 键：在当前行后插入空行（附属构筑物占位构件）
+                self._insert_empty_row()
                 return True
             # 复制 / 剪切 / 粘贴（brackets 同款：Ctrl+C/X/V，剪贴板内容可跨文件）
             if event.matches(QKeySequence.StandardKey.Copy):
@@ -2163,6 +2208,7 @@ class UnitPanel(QWidget):
         from PySide6.QtWidgets import QMenu
 
         menu = QMenu(self)
+        menu.addAction("插入空行\tInsert", self._insert_empty_row)
         menu.addAction("删除选中构件", self._delete_selected_elements)
         menu.addSeparator()
         # 快捷键提示写进文案（\t 后段由样式渲染成右侧的快捷键列）。
@@ -2612,10 +2658,7 @@ class UnitPanel(QWidget):
             for index, param in enumerate(params):
                 key_item = QTableWidgetItem(param.key)
                 key_item.setData(_PARAM_ROLE, param.id)
-                if (param.key, param.unit) in _NO_UNIT_PARAM_ROWS:
-                    unit_item = QTableWidgetItem(_NO_UNIT_TEXT)
-                else:
-                    unit_item = QTableWidgetItem(param.unit)
+                unit_item = QTableWidgetItem(param.unit)
                 unit_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 value_item = QTableWidgetItem(param.value)
                 if param.pipe_field:

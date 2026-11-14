@@ -185,7 +185,7 @@ class ParamRow:
     key: str
     unit: str
     value: str
-    #: 参数名/单位锁定（图集行、构筑物的名称/单位行），只允许改值
+    #: 参数名/单位锁定（图集行），只允许改值
     lock_name: bool = False
     #: 候选参数列（v9，直埋构件）：{combo_key: (候选行 id, 该参数对应的值)}；
     #: 空字典 = 该构件不显示候选列
@@ -371,9 +371,14 @@ def param_rows(element_id: int) -> list[ParamRow]:
         )
     for param in element.params:
         if element.category == CATEGORY_STRUCTURE:
-            lock_name = (param.key, param.unit) == (STRUCTURE_NAME_PARAM, "") or (
-                param.key, param.unit
-            ) == (STRUCTURE_UNIT_PARAM, "")
+            if (param.key, param.unit) in (
+                (STRUCTURE_NAME_PARAM, ""),
+                (STRUCTURE_UNIT_PARAM, ""),
+            ):
+                # 名称 / 单位行不进参数表：主表格规格 / 单位列直接编辑，
+                # 内容写回这两行（set_structure_spec / set_structure_unit）
+                continue
+            lock_name = False
         elif is_atlas_param(param.key, param.unit):
             if not supports_atlas_param(element.category, param.key, param.unit):
                 continue  # 该类别不显示这一行（旧库残留行也不显示，不参与计算）
@@ -543,9 +548,11 @@ def _element_row(element: Element) -> ElementRow:
     amount_value, amount_error = _evaluate_field(element.amount)
     unit = unit_of(element.category)
     if element.category == CATEGORY_STRUCTURE:
-        # 旧版 mcElement.Unit getter：参数里的“单位”行覆盖默认单位（座/个/套…）
+        # 旧版 mcElement.Unit getter：参数里的“单位”行就是主表格单位列
+        # （座/个/套…）。行存在即按它的值原样显示（空值 = 显示空，用户清空
+        # 单位格或空行尚未填写）；只有旧行缺失时回退类别默认单位
         for param in element.params:
-            if (param.key, param.unit) == (STRUCTURE_UNIT_PARAM, "") and param.value.strip():
+            if (param.key, param.unit) == (STRUCTURE_UNIT_PARAM, ""):
                 unit = param.value.strip()
                 break
     return ElementRow(
@@ -578,7 +585,8 @@ def _element_row(element: Element) -> ElementRow:
 # --------------------------------------------------------------------------- #
 # 数据操作（界面与 AI 工具共用）
 # --------------------------------------------------------------------------- #
-#: 附属构筑物默认参数：名称 / 单位行（锁定参数名、单位列留空，值列影响主表格）
+#: 附属构筑物默认参数：名称 / 单位行（存储载体；参数表不显示，
+#: 主表格规格 / 单位列直接编辑写回，见 set_structure_spec / set_structure_unit）
 _STRUCTURE_DEFAULT_PARAMS = (
     (STRUCTURE_NAME_PARAM, "", "自定义构筑物"),
     (STRUCTURE_UNIT_PARAM, "", "个"),
@@ -854,13 +862,16 @@ def create_element(
     support_right: bool = True,
     center_distance_left: str = "",
     center_distance_right: str = "",
+    default_structure_rows: bool = True,
 ) -> Element | None:
     """新增构件条目；未指定原则时取库中第一条（旧版 mcElement.GetData 的做法）。
 
     包封埋管 / 箱涵 / 管廊按旧版构造函数补默认扩展参数（包封宽、净宽、含钢量…），
     各构件再按类别补图集参数行（直埋的工作面加宽 / 垫层厚 / 基础厚，包封 /
     箱涵 / 管廊的工作面加宽 / 垫层厚；空 = 自动按图集，见 param_naming）；
-    构筑物（附属构筑物）补名称 / 单位参数与默认工程量行且不带管材。
+    构筑物（附属构筑物）补名称 / 单位参数与默认工程量行且不带管材
+    （``default_structure_rows=False`` 时不补——主表格“插入空行”用，见
+    :func:`insert_empty_row`）。
     ``atlas_candidates`` 为图集候选快照 (con_found, angle, a, C1, C2) 列表
     （构件库插入传资产里的 8 组）；``seed_atlas_defaults=True`` 时直埋构件
     自动匹配候选（候选缺失则现场查图集补），包封 / 箱涵 / 管廊预填软件约定值。
@@ -919,7 +930,7 @@ def create_element(
     if params:
         for key, unit, value in params:
             element.params.append(ElementParam(key=key, unit=unit, value=str(value)))
-    elif category == CATEGORY_STRUCTURE:
+    elif category == CATEGORY_STRUCTURE and default_structure_rows:
         for key, unit, value in _STRUCTURE_DEFAULT_PARAMS:
             element.params.append(ElementParam(key=key, unit=unit, value=value))
     else:
@@ -939,7 +950,7 @@ def create_element(
                     order_no=order,
                 )
             )
-    elif category == CATEGORY_STRUCTURE:
+    elif category == CATEGORY_STRUCTURE and default_structure_rows:
         element.quantities.append(_structure_default_quantity())
     session.add(element)
     session.flush()
@@ -1076,6 +1087,39 @@ def insert_element_data(
         support_right=bool(data.get("support_right", True)),
         center_distance_left=str(data.get("center_distance_left") or ""),
         center_distance_right=str(data.get("center_distance_right") or ""),
+    )
+
+
+def insert_empty_row(unit_id: int, before_element_id: int | None = None) -> Element | None:
+    """主表格插入空行（附属构筑物占位构件），返回新构件。
+
+    空行 = 附属构筑物类：规格 / 单位为空（“名称 / 单位”参数行存空值，主表格
+    对应列直接编辑回写）、埋深与数量为 0、不带工程量行（用户在详情面板
+    “工程量”页自行增加）。原则自动取库中第一条（与新建构件一致）。
+    ``before_element_id`` 指定插到哪一行之前，None 时追加末尾；插行只落普通
+    位置，不进合槽组（组员必须连续，见界面的落点换算）。
+    """
+    if not project_io.is_open() or not _unit_exists(unit_id):
+        return None
+    order_no = None
+    if before_element_id is not None:
+        anchor = _element(before_element_id)
+        if anchor is not None and anchor.unit_id == unit_id:
+            order_no = anchor.order_no
+            # 后续行整体后移，给新行腾位（与 insert_element_data 同款）
+            for item in _elements_of(unit_id):
+                if item.order_no >= order_no:
+                    item.order_no += 1
+    return create_element(
+        unit_id,
+        category=CATEGORY_STRUCTURE,
+        name="",
+        depth="0",
+        amount="0",
+        params=[(STRUCTURE_NAME_PARAM, "", ""), (STRUCTURE_UNIT_PARAM, "", "")],
+        quantities=[],
+        order_no=order_no,
+        default_structure_rows=False,
     )
 
 
@@ -2193,6 +2237,50 @@ def delete_param(param_id: int) -> str | None:
 
 
 # --------------------------------------------------------------------------- #
+# 附属构筑物主表格规格 / 单位列直编辑
+# --------------------------------------------------------------------------- #
+def _set_structure_named_param(element: Element, key: str, value: str) -> None:
+    """写回附属构筑物的“名称 / 单位”参数行（旧行缺失时补建，值首尾去空白）。"""
+    text = str(value).strip()
+    for param in element.params:
+        if (param.key, param.unit) == (key, ""):
+            param.value = text
+            return
+    element.params.append(ElementParam(key=key, unit="", value=text))
+
+
+def set_structure_spec(element_id: int, spec: str) -> None:
+    """主表格规格列直接编辑（附属构筑物）：内容写回“名称”参数行。
+
+    “名称”行是旧版 Specification() 的数据源——主表格规格列、清单 / 定额
+    项目行与导出表据此显示。参数表不再显示该行，编辑入口就落在主表格
+    规格列上（替代旧版在参数表改“名称”行的做法）。
+    """
+    element = _element(element_id)
+    if element is None or element.category != CATEGORY_STRUCTURE:
+        return
+    _set_structure_named_param(element, STRUCTURE_NAME_PARAM, spec)
+    project_io.commit()
+    _expire_element(element)
+    bus().unit_changed.emit(element.unit_id)
+
+
+def set_structure_unit(element_id: int, unit: str) -> None:
+    """主表格单位列直接编辑（附属构筑物）：内容写回“单位”参数行。
+
+    空值合法：显示空单位（空行尚未填写时即如此）；单位行缺失的旧数据
+    回退类别默认“个”（见 _element_row）。
+    """
+    element = _element(element_id)
+    if element is None or element.category != CATEGORY_STRUCTURE:
+        return
+    _set_structure_named_param(element, STRUCTURE_UNIT_PARAM, unit)
+    project_io.commit()
+    _expire_element(element)
+    bus().unit_changed.emit(element.unit_id)
+
+
+# --------------------------------------------------------------------------- #
 # 构筑物工程量行（详情面板“工程量”页）
 # --------------------------------------------------------------------------- #
 def create_quantity(
@@ -2202,7 +2290,7 @@ def create_quantity(
     unit: str = "",
     value: str = "0",
 ) -> ElementQuantity | None:
-    """新增工程量行（值可为算式，随构件数量放大）。"""
+    """新增工程量行（含量可为算式，随构件数量放大）。"""
     element = _element(element_id)
     if element is None:
         return None
@@ -2383,6 +2471,14 @@ class UnitViewModel(QObject):
     def set_param_field(self, param_id: int, field: str, value) -> None:
         if update_param(param_id, **{field: value}) is None:
             self.error_occurred.emit(_ATLAS_PARAM_LOCKED_HINT)
+
+    def set_structure_spec(self, element_id: int, spec: str) -> None:
+        """主表格规格列直接编辑（附属构筑物）：写回“名称”参数行。"""
+        set_structure_spec(element_id, spec)
+
+    def set_structure_unit(self, element_id: int, unit: str) -> None:
+        """主表格单位列直接编辑（附属构筑物）：写回“单位”参数行。"""
+        set_structure_unit(element_id, unit)
 
     def update_atlas_candidate(self, candidate_id: int, field: str, value) -> None:
         """改一格候选参数（候选列）；改完自动重匹配当前构件的参数值。"""

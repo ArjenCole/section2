@@ -94,7 +94,8 @@ DEFAULT_PARAM_UNITS: dict[str, str] = {
     "含钢量": "kg/m3",
 }
 
-#: 附属构筑物专有：前两行固定为名称 / 单位（值影响主表格规格、单位列）
+#: 附属构筑物专有：规格 / 单位的存储行（主表格规格、单位列直接编辑写回，
+#: 参数表不显示这两行；值即旧版 Specification() 与主表格单位列的数据源）
 STRUCTURE_NAME_PARAM = "名称"
 STRUCTURE_UNIT_PARAM = "单位"
 

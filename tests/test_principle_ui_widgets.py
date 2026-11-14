@@ -327,7 +327,7 @@ def test_category_abbreviations():
     assert _category_abbr(CATEGORY_GALLERY) == "箱"
     assert _category_abbr(CATEGORY_JACKING) == "顶"
     assert _category_abbr(CATEGORY_PULLING) == "顶"
-    assert _category_abbr(CATEGORY_STRUCTURE) == "井"
+    assert _category_abbr(CATEGORY_STRUCTURE) == "附"
     # 简称表之外的类别回退完整名（空类别显示空）
     assert _category_abbr(CATEGORY_NONE) == ""
 
@@ -370,19 +370,20 @@ def test_pipe_table_headers_and_dn_only(qapp, project):
 
 
 def test_param_table_columns_and_no_unit_placeholder(qapp, project):
-    """构件参数表：单位列居中且加宽（参数名列相应变窄）；构筑物名称 / 单位行的单位列
-    显示 “-”；直埋管道显示三行图集参数与候选列（参数值由候选自动匹配、锁定）。"""
+    """构件参数表：单位列居中且加宽（参数名列相应变窄）；构筑物名称 / 单位行
+    不再进参数表（主表格规格 / 单位列直接编辑）；直埋管道显示三行图集参数与
+    候选列（参数值由候选自动匹配、锁定）。"""
     from PySide6.QtCore import Qt
 
     from app.core.models.models import CATEGORY_STRUCTURE
     from app.services import project_io
     from app.viewmodels import unit_vm
     from app.views.panels.unit_panel import (
-        _NO_UNIT_TEXT,
         _PARAM_NAME_WIDTH,
         _PARAM_UNIT_WIDTH,
         UnitPanel,
     )
+    from app.viewmodels.unit_vm import _element
 
     unit = project_io.units(project_io.segments()[0].id)[0]
     structure = unit_vm.create_element(unit.id, category=CATEGORY_STRUCTURE, name="检查井")
@@ -405,17 +406,13 @@ def test_param_table_columns_and_no_unit_placeholder(qapp, project):
         for text in ("单位", "mm"):
             assert _PARAM_UNIT_WIDTH >= metrics.horizontalAdvance(text) + 16
 
-        # 构筑物（第一行）：名称 / 单位两行的单位列由空值改为 “-”，居中只读
+        # 构筑物（第一行）：名称 / 单位行不再进参数表——主表格规格 / 单位列
+        # 直接编辑，内容写回这两行（见 unit_vm.set_structure_spec / unit）
         panel._element_table.setCurrentCell(0, 0)
         qapp.processEvents()
-        assert [table.item(row, 0).text() for row in range(table.rowCount())] == ["名称", "单位"]
-        for row in (0, 1):
-            cell = table.item(row, 1)
-            assert cell.text() == _NO_UNIT_TEXT
-            assert cell.textAlignment() == Qt.AlignmentFlag.AlignCenter
-            assert not cell.flags() & Qt.ItemFlag.ItemIsEditable
-        # 库里仍然是空单位（“-” 只是显示）
-        assert [(param.key, param.unit) for param in unit_vm.param_rows(structure.id)] == [
+        assert table.rowCount() == 0
+        # 库里仍保留名称 / 单位参数行（规格 / 单位的存储载体）
+        assert [(param.key, param.unit) for param in _element(structure.id).params] == [
             ("名称", ""),
             ("单位", ""),
         ]
@@ -454,6 +451,125 @@ def test_param_table_columns_and_no_unit_placeholder(qapp, project):
                 assert not table.item(row, 2).flags() & Qt.ItemFlag.ItemIsEditable
         # 直埋 + 有候选 → 参数值右侧追加候选参数列
         assert table.columnCount() > 3
+    finally:
+        panel.close()
+
+
+def test_main_table_spec_unit_editable_for_structure_only(qapp, project):
+    """主表格规格 / 单位列：附属构筑物行可编辑（其他类别只读），编辑写回
+    “名称 / 单位”参数行并回显；类别列附属构筑物显示「附」。"""
+    from PySide6.QtCore import Qt
+
+    from app.core.models.models import CATEGORY_STRUCTURE
+    from app.services import project_io
+    from app.viewmodels import unit_vm
+    from app.views.panels.unit_panel import _COL_CATEGORY, _COL_SPEC, _COL_UNIT, UnitPanel
+
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    structure = unit_vm.create_element(unit.id, category=CATEGORY_STRUCTURE, name="检查井")
+    pipe = unit_vm.create_element(unit.id, name="管A", pipes=[("Ⅱ级混凝土管", 600, "1")])
+    assert structure is not None and pipe is not None
+
+    panel = UnitPanel()
+    try:
+        panel._show_unit(unit.id)
+        qapp.processEvents()
+        table = panel._element_table
+        # 类别列简称：附属构筑物 → 附
+        assert table.item(0, _COL_CATEGORY).text() == "附"
+        assert table.item(1, _COL_CATEGORY).text() == "直"
+        # 规格 / 单位格：附属构筑物可编辑，直埋只读
+        assert table.item(0, _COL_SPEC).flags() & Qt.ItemFlag.ItemIsEditable
+        assert table.item(0, _COL_UNIT).flags() & Qt.ItemFlag.ItemIsEditable
+        assert not table.item(1, _COL_SPEC).flags() & Qt.ItemFlag.ItemIsEditable
+        assert not table.item(1, _COL_UNIT).flags() & Qt.ItemFlag.ItemIsEditable
+
+        # 编辑构筑物行的规格 / 单位格：写回参数行、主表格回显
+        table.item(0, _COL_SPEC).setText("圆形雨水检查井 DN1000")
+        table.item(0, _COL_UNIT).setText("座")
+        qapp.processEvents()
+        rows = unit_vm.element_rows(unit.id)
+        assert rows[0].spec == "圆形雨水检查井 DN1000"
+        assert rows[0].unit == "座"
+        assert table.item(0, _COL_SPEC).text() == "圆形雨水检查井 DN1000"
+        assert table.item(0, _COL_UNIT).text() == "座"
+    finally:
+        panel.close()
+
+
+def test_qty_tab_header_amount_column(qapp, project):
+    """详情面板「工程量」页：值列表头为「含量」（工程量 = 数量 × 含量）。"""
+    from app.core.models.models import CATEGORY_STRUCTURE
+    from app.services import project_io
+    from app.viewmodels import unit_vm
+    from app.views.panels.unit_panel import UnitPanel
+
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    unit_vm.create_element(unit.id, category=CATEGORY_STRUCTURE, name="检查井")
+
+    panel = UnitPanel()
+    try:
+        panel._show_unit(unit.id)
+        qapp.processEvents()
+        headers = [
+            panel._qty_table.horizontalHeaderItem(column).text()
+            for column in range(panel._qty_table.columnCount())
+        ]
+        assert headers == ["类别", "项目", "单位", "含量", ""]
+    finally:
+        panel.close()
+
+
+def test_insert_empty_row_via_menu_and_key(qapp, project):
+    """主表格插入空行：右键菜单与 Insert 键两个入口；落点跟随当前选中行，
+    空行是附属构筑物占位构件（规格 / 单位空、类别「附」）。"""
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication
+
+    from app.core.models import base as orm
+    from app.core.models.models import CATEGORY_STRUCTURE, Element
+    from app.services import project_io
+    from app.viewmodels import unit_vm
+    from app.views.panels.unit_panel import _COL_CATEGORY, _COL_SPEC, _COL_UNIT, UnitPanel
+
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    pipe_a = unit_vm.create_element(unit.id, name="管A", pipes=[("Ⅱ级混凝土管", 600, "1")])
+    pipe_b = unit_vm.create_element(unit.id, name="管B", pipes=[("Ⅱ级混凝土管", 600, "1")])
+    assert pipe_a is not None and pipe_b is not None
+
+    panel = UnitPanel()
+    try:
+        panel._show_unit(unit.id)
+        qapp.processEvents()
+        table = panel._element_table
+
+        # 右键菜单带「插入空行」入口
+        menu = panel._build_element_context_menu()
+        actions = [action.text().split("\t")[0] for action in menu.actions() if action.text()]
+        assert "插入空行" in actions
+
+        # 选中第一行按 Insert：空行插到它之后、第二根管之前
+        table.setCurrentCell(0, 0)
+        qapp.processEvents()
+        QApplication.sendEvent(
+            table,
+            QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Insert, Qt.KeyboardModifier.NoModifier),
+        )
+        qapp.processEvents()
+        rows = unit_vm.element_rows(unit.id)
+        assert len(rows) == 3
+        empty_id = rows[1].id
+        assert [row.id for row in rows] == [pipe_a.id, empty_id, pipe_b.id]
+        empty = orm.session().get(Element, empty_id)
+        assert empty.category == CATEGORY_STRUCTURE
+        assert rows[1].spec == "" and rows[1].unit == ""
+        # 新行被选中，类别「附」、规格 / 单位格可编辑（空值待填）
+        assert table.currentRow() == 1
+        assert table.item(1, _COL_CATEGORY).text() == "附"
+        assert table.item(1, _COL_SPEC).text() == ""
+        assert table.item(1, _COL_SPEC).flags() & Qt.ItemFlag.ItemIsEditable
+        assert table.item(1, _COL_UNIT).flags() & Qt.ItemFlag.ItemIsEditable
     finally:
         panel.close()
 
