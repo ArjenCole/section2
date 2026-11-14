@@ -1,8 +1,8 @@
 """工程数量表导出（services.summary.export_quantity_tables）测试。
 
 覆盖：分单位工程 / 合并两种口径的 sheet 结构与加总规则、按项目结构的
-sheet 排序、费用汇总表、行内单价 / 合价、清单项目行浅蓝标记、导出对话
-框的树状勾选。
+sheet 排序、费用汇总表、行内单价 / 合价、清单项目行浅蓝标记、导出内容
+勾选（费用汇总 / 定额 / 清单）与仅清单项、导出对话框的树状勾选与内容勾选。
 """
 
 from pathlib import Path
@@ -183,6 +183,79 @@ def test_same_name_units_get_distinct_sheets(tmp_path) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 导出内容勾选（费用汇总 / 定额 / 清单）与仅清单项
+# --------------------------------------------------------------------------- #
+def test_export_include_flags(tmp_path) -> None:
+    """取消勾选的导出内容不输出对应 sheet，剩余 sheet 保持结构顺序。"""
+    unit_ids = _two_unit_project(tmp_path)
+
+    result = summary.export_quantity_tables(
+        tmp_path / "no_cost.xlsx", unit_ids, include_cost=False
+    )
+    assert result["sheets"] == [
+        "雨水工程-定额工程量汇总表",
+        "雨水工程-清单工程量汇总表",
+        "污水工程-定额工程量汇总表",
+        "污水工程-清单工程量汇总表",
+    ]
+
+    result = summary.export_quantity_tables(
+        tmp_path / "no_quota.xlsx", unit_ids, include_quota=False
+    )
+    assert result["sheets"] == [
+        "新建项目-费用汇总表",
+        "新建标段-费用汇总表",
+        "雨水工程-清单工程量汇总表",
+        "污水工程-清单工程量汇总表",
+    ]
+
+    result = summary.export_quantity_tables(
+        tmp_path / "no_listing.xlsx", unit_ids, include_listing=False
+    )
+    assert result["sheets"] == [
+        "新建项目-费用汇总表",
+        "新建标段-费用汇总表",
+        "雨水工程-定额工程量汇总表",
+        "污水工程-定额工程量汇总表",
+    ]
+
+
+def test_export_listing_only(tmp_path) -> None:
+    """仅清单项：清单表隐藏定额工程量行，清单项目行合价仍按被隐藏行合计。"""
+    unit_ids = _two_unit_project(tmp_path)
+    summary.set_price("构筑物|垫层|m3", 100.0)
+    summary.export_quantity_tables(tmp_path / "only.xlsx", unit_ids, listing_only=True)
+
+    workbook = openpyxl.load_workbook(tmp_path / "only.xlsx")
+    rows = _quota_rows(workbook["雨水工程-清单工程量汇总表"])
+    assert len(rows) == 1  # 只剩清单项目行
+    assert "D6EAF8" in str(rows[0][0].fill.start_color.rgb)
+    assert abs(rows[0][5].value - 400.0) < 1e-9  # 合价 = 被隐藏定额行合计（4 × 100）
+    assert abs(rows[0][4].value - 200.0) < 1e-9  # 派生单价不变
+
+
+def test_export_merged_include_flags(tmp_path) -> None:
+    """合并口径同样受定额 / 清单勾选与仅清单项控制（无费用汇总表）。"""
+    unit_ids = _two_unit_project(tmp_path)
+    result = summary.export_quantity_tables(
+        tmp_path / "m1.xlsx", unit_ids, merged=True, include_quota=False
+    )
+    assert result["sheets"] == ["清单工程量"]
+    result = summary.export_quantity_tables(
+        tmp_path / "m2.xlsx", unit_ids, merged=True, include_listing=False
+    )
+    assert result["sheets"] == ["定额工程量"]
+
+    summary.export_quantity_tables(
+        tmp_path / "m3.xlsx", unit_ids, merged=True, listing_only=True
+    )
+    workbook = openpyxl.load_workbook(tmp_path / "m3.xlsx")
+    rows = _quota_rows(workbook["清单工程量"])
+    assert len(rows) == 2  # 两个清单项目行，定额拆分行被隐藏
+    assert all("D6EAF8" in str(row[0].fill.start_color.rgb) for row in rows)
+
+
+# --------------------------------------------------------------------------- #
 # 合并导出（所选单位工程加总）
 # --------------------------------------------------------------------------- #
 def test_export_merged(tmp_path) -> None:
@@ -303,4 +376,29 @@ def test_dialog_unit_tree(qapp, tmp_path) -> None:
 
     dialog._set_all_checked(False)
     assert dialog._checked_unit_ids() == []
+    dialog.deleteLater()
+
+
+def test_dialog_content_checks(qapp, tmp_path) -> None:
+    """三个导出内容勾选默认全出；仅清单项下拉默认展开态、随清单勾选启停。"""
+    from app.views.dialogs.export_excel_dialog import ExportExcelDialog
+
+    _two_unit_project(tmp_path)
+    dialog = ExportExcelDialog()
+    assert dialog._cost_check.isChecked()
+    assert dialog._quota_check.isChecked()
+    assert dialog._listing_check.isChecked()
+    assert dialog._listing_mode_combo.currentIndex() == 0  # 展开工程量项
+    assert dialog._listing_mode_combo.isEnabled()
+
+    dialog._listing_check.setChecked(False)
+    assert not dialog._listing_mode_combo.isEnabled()  # 不导清单表时下拉禁用
+    dialog._listing_check.setChecked(True)
+    assert dialog._listing_mode_combo.isEnabled()
+
+    # 合并口径没有费用汇总表：费用汇总勾选随合并选项禁用
+    dialog._merge_check.setChecked(True)
+    assert not dialog._cost_check.isEnabled()
+    dialog._merge_check.setChecked(False)
+    assert dialog._cost_check.isEnabled()
     dialog.deleteLater()

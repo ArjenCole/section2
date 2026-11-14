@@ -1,10 +1,11 @@
 """导出工程数量表对话框（工具栏「导出 Excel」入口，brackets2 同款交互）。
 
 单位工程按 工程 → 标段 → 单位工程 树状勾选（每行带复选框，父节点三态）；
-默认分单位工程口径导出：sheet 按项目结构从上到下排列——工程根 / 各标段
-各一张费用汇总表，每个单位工程定额 / 清单工程量汇总表各一张（行带单价 /
-合价）；勾选合并选项则把所选单位工程的工程量全部加总，固定输出定额工程
-量 / 清单工程量两张 sheet，一张 sheet 只放一个表。
+下方三个导出内容勾选决定输出哪些 sheet（默认全出，取消的项不输出对应
+sheet）：标段费用汇总（工程根 / 各标段各一张）、定额 / 清单工程量汇总表
+（每个单位工程各一张，行带单价 / 合价；清单勾选右侧的下拉可选“仅清单项”
+——清单表隐藏清单项目下的定额工程量行）。勾选合并选项则把所选单位工程的
+工程量全部加总，输出定额 / 清单两张合并表（同样受定额 / 清单勾选控制）。
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -72,16 +74,6 @@ class ExportExcelDialog(FramelessDialog):
         layout.setContentsMargins(14, 10, 14, 12)
         layout.setSpacing(8)
 
-        hint = QLabel(
-            "导出工程量汇总表。默认分单位工程口径：按项目结构出 sheet（工程根"
-            " / 各标段各一张费用汇总表，每个单位工程定额 / 清单工程量汇总表各"
-            "一张，行带单价 / 合价）；勾选合并后把所选单位工程的工程量全部加总，"
-            "输出定额 / 清单两张合并表。"
-        )
-        hint.setProperty("role", "hint")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-
         layout.addWidget(QLabel("选择单位工程："))
         switch_row = QHBoxLayout()
         self._btn_all = QPushButton("全选")
@@ -99,7 +91,36 @@ class ExportExcelDialog(FramelessDialog):
         self._unit_tree.setColumnCount(1)
         layout.addWidget(self._unit_tree, 1)
 
+        # 导出内容勾选（默认全出；取消的项不输出对应 sheet）
+        self._cost_check = QCheckBox("导出标段费用汇总")
+        self._cost_check.setChecked(True)
+        layout.addWidget(self._cost_check)
+        self._quota_check = QCheckBox("导出定额工程量汇总表")
+        self._quota_check.setChecked(True)
+        layout.addWidget(self._quota_check)
+
+        # 清单勾选同一行右侧：清单表内容下拉（仅清单项 = 隐藏定额工程量行）
+        self._listing_check = QCheckBox("导出清单工程量汇总表")
+        self._listing_check.setChecked(True)
+        self._listing_mode_combo = QComboBox()
+        self._listing_mode_combo.addItem("展开工程量项")
+        self._listing_mode_combo.addItem("仅清单项")
+        self._listing_mode_combo.setToolTip(
+            "仅清单项：清单工程量汇总表只输出清单项目行，隐藏其下的定额工程量"
+            "行（清单项目行的合价仍按被隐藏行的合计计算）。"
+        )
+        self._listing_check.toggled.connect(self._listing_mode_combo.setEnabled)
+        listing_row = QHBoxLayout()
+        listing_row.addWidget(self._listing_check)
+        listing_row.addStretch(1)
+        listing_row.addWidget(self._listing_mode_combo)
+        layout.addLayout(listing_row)
+
         self._merge_check = QCheckBox("合并所选单位工程（工程量全部加总后输出）")
+        # 合并口径没有费用汇总表：费用汇总勾选仅在分单位工程口径生效
+        self._merge_check.toggled.connect(
+            lambda checked: self._cost_check.setEnabled(not checked)
+        )
         layout.addWidget(self._merge_check)
 
         # 底部标准按钮行（导出/关闭）：顺序、默认按钮、对齐按平台规范，
@@ -165,6 +186,17 @@ class ExportExcelDialog(FramelessDialog):
         if not unit_ids:
             FramelessMessageBox.warning(self, "无法导出", "请至少勾选一个单位工程。")
             return
+        include_cost = self._cost_check.isChecked()
+        include_quota = self._quota_check.isChecked()
+        include_listing = self._listing_check.isChecked()
+        # 至少要出一张表（合并口径没有费用汇总表，费用汇总勾选不参与判断）
+        if self._merge_check.isChecked():
+            exportable = include_quota or include_listing
+        else:
+            exportable = include_cost or include_quota or include_listing
+        if not exportable:
+            FramelessMessageBox.warning(self, "无法导出", "请至少勾选一种要导出的表。")
+            return
         start = suggested_dir() / "工程数量表.xlsx"
         target, _filter = QFileDialog.getSaveFileName(
             self, "导出 Excel", str(start), "Excel 工作簿 (*.xlsx)"
@@ -178,7 +210,13 @@ class ExportExcelDialog(FramelessDialog):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             result = summary.export_quantity_tables(
-                path, unit_ids, merged=self._merge_check.isChecked()
+                path,
+                unit_ids,
+                merged=self._merge_check.isChecked(),
+                include_cost=include_cost,
+                include_quota=include_quota,
+                include_listing=include_listing,
+                listing_only=self._listing_mode_combo.currentIndex() == 1,
             )
         except PermissionError:
             error_text = "文件被占用，无法写入。请先关闭已打开的同名 Excel 文件再重试。"
