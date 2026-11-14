@@ -99,6 +99,52 @@ def test_pretty_json_keeps_raw_text_on_invalid_json(qapp) -> None:
     assert _pretty_json("不是 JSON") == "不是 JSON"
 
 
+def test_reasoning_stream_renders_complete_text(qapp) -> None:
+    """思考流必须整段完整显示：中间片段和结尾都不能丢（原 bug 只留最后几个字）。"""
+    panel = AiPanel()
+    block = _ThinkingBlock("思考过程")
+    panel._thinking_block = block
+    block.start_thinking()
+    chunks = [
+        f"第{i}步，先核对第{i}号管段的埋深与管径数据是否一致，再决定分段原则。"
+        for i in range(10)
+    ]
+    for chunk in chunks:
+        panel._on_reasoning(chunk)  # 足量字符触发多次中间渲染
+    panel._on_finished("最终回复")
+    assert block._stream_label.text() == "（思考）" + "".join(chunks)
+
+
+def test_reasoning_tail_flushed_even_below_throttle(qapp) -> None:
+    """节流期内收尾：最后的短片段也要在结束时补渲染，不能永远留在缓冲里。"""
+    panel = AiPanel()
+    block = _ThinkingBlock("思考过程")
+    panel._thinking_block = block
+    block.start_thinking()
+    panel._on_reasoning("第一段思考。")
+    panel._on_reasoning("结尾补丁。")  # 两段加起来不到 40 字，中间不触发渲染
+    panel._on_finished("最终回复")
+    assert block._stream_label.text() == "（思考）第一段思考。结尾补丁。"
+
+
+def test_reasoning_then_content_keeps_both_segments(qapp) -> None:
+    """同一轮先思考后正文：思考文字换独立段落保留，不被正文覆盖。"""
+    panel = AiPanel()
+    block = _ThinkingBlock("思考过程")
+    panel._thinking_block = block
+    block.start_thinking()
+    panel._on_reasoning("思考前半段。")
+    reasoning_label = block._stream_label
+    assert reasoning_label.text() == "（思考）思考前半段。"
+    panel._on_content("正文第一句。")
+    content_label = block._stream_label
+    assert content_label is not reasoning_label
+    assert content_label.text() == "正文第一句。"
+    assert reasoning_label.text() == "（思考）思考前半段。"
+    layout = block._content_layout
+    assert layout.indexOf(reasoning_label) < layout.indexOf(content_label)
+
+
 def test_panel_tool_flow_builds_ordered_nodes(qapp) -> None:
     """面板工具回调：开始建节点填参数、结果填同一节点、正文接在节点后。"""
     panel = AiPanel()

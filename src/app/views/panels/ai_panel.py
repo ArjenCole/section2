@@ -619,8 +619,10 @@ class AiPanel(QWidget):
         self.unit_id: int | None = None  # 当前单位工程（AI 工具的作用范围）
         self.unit_name: str = ""
         self._stream_text = ""  # 当前流式正文累计
-        self._reasoning_buffer = ""  # 思考流缓冲（节流渲染）
+        self._reasoning_text = ""  # 当前思考段累计（显示"（思考）"后跟的整段文字）
+        self._reasoning_pending = 0  # 思考段尚未渲染的字符数（节流用）
         self._reasoning_last = 0.0
+        self._label_shows_reasoning = False  # 当前流式标签承载的是思考文字
         self._build()
         self._connect()
         self._refresh_hint()
@@ -1155,7 +1157,7 @@ class AiPanel(QWidget):
         self._thinking_block.start_thinking()
         self._send_btn.setEnabled(False)
         self._source_btn.setEnabled(False)
-        self._stream_text = ""
+        self._rotate_stream()
 
         if attachments:
             # 两段式：第一段调模型按提示词从文件提炼数据（无工具），
@@ -1195,9 +1197,7 @@ class AiPanel(QWidget):
         # 本条用户消息换成「提示词 + 提取数据」：后续追问仍能引用这份数据
         if self._history and self._history[-1].role == "user":
             self._history[-1].content = composed
-        if self._thinking_block is not None:
-            self._thinking_block.rotate_stream_label()
-        self._stream_text = ""
+        self._rotate_stream()
         self._start_agent_phase(worker.provider, worker.api_key)
 
     def _on_extract_failed(self, message: str) -> None:
@@ -1224,24 +1224,57 @@ class AiPanel(QWidget):
 
     # ------------------------------------------------------------------ 流式回调
     def _on_content(self, text: str) -> None:
-        """流式正文：在思考块里就地刷新（Quotor stream 同款）。"""
-        if self._thinking_block is not None:
-            self._stream_text += text
-            self._thinking_block.set_stream_text(self._stream_text)
-            self._scroll_to_bottom()
+        """流式正文：在思考块里就地刷新（Quotor stream 同款）。
 
-    def _on_reasoning(self, text: str) -> None:
-        """思考流节流渲染（0.25s 或累计 40 字符刷新一次，避免逐 token 重排）。"""
+        同一轮思考文字先到时：先把思考段补渲染完，再换一个新标签承接正文，
+        思考文字保留为独立一段（思考文字》正文》工具调用》…）。
+        """
         if self._thinking_block is None:
             return
-        self._reasoning_buffer += text
-        now = time.monotonic()
-        if now - self._reasoning_last < 0.25 and len(self._reasoning_buffer) < 40:
-            return
-        self._reasoning_last = now
-        self._reasoning_buffer = ""
-        self._thinking_block.set_stream_text("（思考）" + text[-500:])
+        if self._label_shows_reasoning:
+            self._flush_reasoning()
+            self._thinking_block.rotate_stream_label()
+            self._label_shows_reasoning = False
+            self._reasoning_text = ""
+            self._reasoning_pending = 0
+        self._stream_text += text
+        self._thinking_block.set_stream_text(self._stream_text)
         self._scroll_to_bottom()
+
+    def _on_reasoning(self, text: str) -> None:
+        """思考流：全量累计，节流渲染（0.25s 或累计 40 字符刷一次，避免逐 token 重排）。
+
+        片段是增量的，必须拼进累计文本；只显示片段尾巴会把前面的思考丢光。
+        """
+        if self._thinking_block is None:
+            return
+        self._reasoning_text += text
+        self._reasoning_pending += len(text)
+        self._label_shows_reasoning = True
+        now = time.monotonic()
+        if now - self._reasoning_last < 0.25 and self._reasoning_pending < 40:
+            return
+        self._flush_reasoning(now)
+
+    def _flush_reasoning(self, now: float | None = None) -> None:
+        """把累计的思考文字整段渲染出来（补上节流期间没刷的尾巴）。"""
+        if self._thinking_block is None or not self._label_shows_reasoning:
+            return
+        if now is not None:
+            self._reasoning_last = now
+        self._reasoning_pending = 0
+        self._thinking_block.set_stream_text("（思考）" + self._reasoning_text)
+        self._scroll_to_bottom()
+
+    def _rotate_stream(self) -> None:
+        """换段（工具调用/重试/新一轮）：补渲染思考尾巴后丢弃流式标签引用。"""
+        if self._thinking_block is not None:
+            self._flush_reasoning()
+            self._thinking_block.rotate_stream_label()
+        self._stream_text = ""
+        self._reasoning_text = ""
+        self._reasoning_pending = 0
+        self._label_shows_reasoning = False
 
     def _on_status(self, text: str) -> None:
         """非工具调用的状态行（如请求失败重试）按时间顺序排进第一层正文。
@@ -1251,8 +1284,7 @@ class AiPanel(QWidget):
         """
         if self._thinking_block is None or text.startswith("调用工具 "):
             return
-        self._stream_text = ""
-        self._thinking_block.rotate_stream_label()
+        self._rotate_stream()
         self._thinking_block.append_html(
             f'<p style="color:{_c().warning};font-weight:600;margin:0;">'
             f"🔧 {html.escape(text)}</p>"
@@ -1263,8 +1295,7 @@ class AiPanel(QWidget):
         """工具调用开始：按时间顺序插入折叠节点（默认收起），填入参数。"""
         if self._thinking_block is None:
             return
-        self._stream_text = ""
-        self._thinking_block.rotate_stream_label()
+        self._rotate_stream()
         self._active_tool_node = self._thinking_block.append_tool_node(
             f"调用工具 {name}…"
         )
@@ -1280,9 +1311,13 @@ class AiPanel(QWidget):
 
     def _on_finished(self, text: str) -> None:
         if self._thinking_block is not None:
+            self._flush_reasoning()  # 思考段若还没刷完尾巴，收尾前补上
             self._thinking_block.stop_thinking()
         answer = text or self._stream_text
         self._stream_text = ""
+        self._reasoning_text = ""
+        self._reasoning_pending = 0
+        self._label_shows_reasoning = False
         # 思考模式的端点要求把历史 assistant 的 reasoning_content 原样回传，
         # 否则下一轮对话会 400（AiPanel 每轮用 _history 重建请求）。
         reasoning = (
@@ -1303,12 +1338,16 @@ class AiPanel(QWidget):
 
     def _on_failed(self, message: str) -> None:
         if self._thinking_block is not None:
+            self._flush_reasoning()
             self._thinking_block.stop_thinking()
             self._thinking_block.append_html(
                 f'<p style="color:{_c().danger};font-weight:600;">'
                 f"[错误] {html.escape(str(message))}</p>"
             )
         self._stream_text = ""
+        self._reasoning_text = ""
+        self._reasoning_pending = 0
+        self._label_shows_reasoning = False
         self._append_message("error", str(message))
         self._thinking_block = None
         self._active_tool_node = None
