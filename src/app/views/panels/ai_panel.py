@@ -6,7 +6,8 @@
   - :class:`_MessageBubble` —— 角色标签（用户=主色 / AI 助手=success / 错误=danger）
     + :class:`_MarkdownView`（高度随文档自适应；AI 用 Markdown，用户/错误转义 <pre>）；
   - :class:`_ThinkingBlock` —— 两级可折叠思考块，"思考中…" 400ms 动画：第一层
-    展开只显示思考/流式正文，工具调用行收在第二层"工具调用（N）"里再点才展开；
+    按模型思考-执行的顺序排列思考/流式正文，每次工具调用是独立的第二层折叠
+    节点（:class:`_ToolNode`，默认收起，展开看参数与结果）；
 * 输入区 = QPlainTextEdit#aiInputEdit（圆角、右下角 overlay 模型来源选择器
   #aiSourceBtn + 发送按钮 #aiSendBtn），Enter 发送、Shift/Ctrl+Enter 换行；
   - 模型来源选择器显示「provider 显示名/当前模型」+ 下箭头，点击向上弹出菜单；
@@ -20,12 +21,14 @@
     提取数据保留在对话历史里，后续追问可直接引用；
 * 顶部：标题 + 「清空」（兼停止，运行中点击即中断）+ 齿轮「设置」。
 
-agent 层沿用本项目的 AgentLoop（content/reasoning/status/finished/failed/confirm 信号）。
+agent 层沿用本项目的 AgentLoop（content/reasoning/status/tool_started/tool_result/
+finished/failed/confirm 信号）。
 """
 
 from __future__ import annotations
 
 import html
+import json
 import threading
 import time
 from pathlib import Path
@@ -107,6 +110,48 @@ def _c():
     return ThemeManager.instance().current()
 
 
+def _pretty_json(text: str) -> str:
+    """JSON 字符串尽量缩进美化；不是合法 JSON 时原样返回。"""
+    try:
+        return json.dumps(json.loads(text), ensure_ascii=False, indent=2)
+    except ValueError:
+        return text
+
+
+def _detail_html(caption: str, text: str) -> str:
+    """工具节点里"参数/结果"小节：加粗小标题 + 等宽换行正文。"""
+    return (
+        f'<span style="color:{_c().text_secondary};font-weight:600;">{caption}</span>'
+        f'<pre style="margin:2px 0 0 0; white-space:pre-wrap;">{html.escape(text)}</pre>'
+    )
+
+
+def _make_toggle(title: str, color: str | None = None) -> QToolButton:
+    """折叠标题：无背景、左对齐、箭头随展开翻转（两级折叠标题共用）。"""
+    toggle = QToolButton()
+    toggle.setText(title)
+    toggle.setArrowType(Qt.ArrowType.RightArrow)
+    toggle.setCheckable(True)
+    toggle.setChecked(False)
+    toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+    toggle.setStyleSheet(
+        "QToolButton { border: none; background: transparent; text-align: left;"
+        f" color: {color or _c().text_secondary}; font-weight: 600; padding: 2px; }}\n"
+        "QToolButton:hover { background: transparent; }"
+    )
+    return toggle
+
+
+def _make_content_frame() -> QFrame:
+    """折叠正文容器：左侧竖线示意层级归属（两级折叠共用）。"""
+    frame = QFrame()
+    frame.setStyleSheet(
+        f"QFrame {{ border: none; border-left: 2px solid {_c().border};"
+        " margin-left: 8px; }"
+    )
+    return frame
+
+
 class _MarkdownView(QTextBrowser):
     """高度随文档内容自动撑开的 Markdown 视图（Quotor 同款技巧）。"""
 
@@ -185,13 +230,67 @@ class _MessageBubble(QWidget):
         self._refresh_role_label()
 
 
+class _ToolNode(QWidget):
+    """单个工具调用的第二层折叠节点：标题=🔧 调用文字，展开看参数与结果。
+
+    每次工具调用独立一个节点、按时间顺序插在思考块第一层正文里
+    （思考文字》工具调用》思考文字》…），默认收起，避免满屏工具日志。
+    """
+
+    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        self._toggle = _make_toggle(f"🔧 {title}", color=_c().warning)
+        self._toggle.toggled.connect(self._on_toggle)
+        layout.addWidget(self._toggle)
+
+        self._content = _make_content_frame()
+        self._content_layout = QVBoxLayout(self._content)
+        self._content_layout.setContentsMargins(8, 0, 0, 0)
+        self._content_layout.setSpacing(2)
+        self._content.setVisible(False)
+        layout.addWidget(self._content)
+
+        self._args_label: QLabel | None = None
+        self._result_label: QLabel | None = None
+
+    def _on_toggle(self, checked: bool) -> None:
+        self._toggle.setArrowType(
+            Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
+        )
+        self._content.setVisible(checked)
+
+    def _make_detail_label(self) -> QLabel:
+        label = QLabel()
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setWordWrap(True)
+        self._content_layout.addWidget(label)
+        return label
+
+    def set_arguments(self, arguments: str) -> None:
+        """模型给出的工具参数原文（JSON 尽量缩进美化）。"""
+        if self._args_label is None:
+            self._args_label = self._make_detail_label()
+        self._args_label.setText(_detail_html("参数", _pretty_json(arguments)))
+
+    def set_result(self, payload: str) -> None:
+        """工具执行结果（与写进对话历史的同源，已截断）。"""
+        if self._result_label is None:
+            self._result_label = self._make_detail_label()
+        self._result_label.setText(_detail_html("结果", _pretty_json(payload)))
+
+
 class _ThinkingBlock(QWidget):
     """两级可折叠思考块：同一轮对话的思考/工具调用/流式正文累积在同一块里。
 
-    第一层"思考过程"展开后只显示思考/流式正文（与错误行）；工具调用行收在
-    第二层"工具调用（N）"里，默认收起，再点一下才展开——避免一点开就是
-    满屏工具日志。思考进行中第一层标题带动态省略号（"思考过程…"），完成后
-    消失，收起时也能看出是否还在跑。
+    第一层"思考过程"展开后按模型思考-执行的顺序显示：思考/流式正文与错误行
+    直接排列，每次工具调用是独立的第二层折叠节点（:class:`_ToolNode`，默认
+    收起，展开看参数与结果）——既按顺序呈现执行过程，又不会一点开就满屏
+    工具日志。思考进行中第一层标题带动态省略号（"思考过程…"），完成后消失，
+    收起时也能看出是否还在跑。
     """
 
     def __init__(self, title: str = "思考过程", parent: QWidget | None = None) -> None:
@@ -202,22 +301,16 @@ class _ThinkingBlock(QWidget):
         layout.setContentsMargins(0, 4, 0, 4)
         layout.setSpacing(4)
 
-        self._toggle = self._make_toggle(title)
+        self._toggle = _make_toggle(title)
         self._toggle.toggled.connect(self._on_toggle)
         layout.addWidget(self._toggle)
 
-        self._content = self._make_content_frame()
+        self._content = _make_content_frame()
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(8, 0, 0, 0)
         self._content_layout.setSpacing(2)
         self._content.setVisible(False)
         layout.addWidget(self._content)
-
-        # 第二层：工具调用折叠区（首次收到工具调用时惰性创建，默认收起）
-        self._tools_toggle: QToolButton | None = None
-        self._tools_content: QFrame | None = None
-        self._tools_layout: QVBoxLayout | None = None
-        self._tools_count = 0
 
         self._thinking_timer = QTimer(self)
         self._thinking_timer.setInterval(400)
@@ -225,71 +318,16 @@ class _ThinkingBlock(QWidget):
         self._thinking_dots = 0
         self._status_label: QLabel | None = None
 
-    @staticmethod
-    def _make_toggle(title: str) -> QToolButton:
-        """折叠标题：次级文字色、无背景、左对齐（两级折叠标题共用）。"""
-        toggle = QToolButton()
-        toggle.setText(title)
-        toggle.setArrowType(Qt.ArrowType.RightArrow)
-        toggle.setCheckable(True)
-        toggle.setChecked(False)
-        toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        toggle.setStyleSheet(
-            "QToolButton { border: none; background: transparent; text-align: left;"
-            f" color: {_c().text_secondary}; font-weight: 600; padding: 2px; }}\n"
-            "QToolButton:hover { background: transparent; }"
-        )
-        return toggle
-
-    @staticmethod
-    def _make_content_frame() -> QFrame:
-        """折叠正文容器：左侧竖线示意层级归属（两级折叠共用）。"""
-        frame = QFrame()
-        frame.setStyleSheet(
-            f"QFrame {{ border: none; border-left: 2px solid {_c().border};"
-            " margin-left: 8px; }"
-        )
-        return frame
-
     def _on_toggle(self, checked: bool) -> None:
         self._toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
         self._content.setVisible(checked)
-
-    def _on_tools_toggle(self, checked: bool) -> None:
-        self._tools_toggle.setArrowType(
-            Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
-        )
-        self._tools_content.setVisible(checked)
-
-    def _ensure_tools_section(self) -> None:
-        """惰性创建第二层"工具调用（N）"折叠区（默认收起）。"""
-        if self._tools_toggle is not None:
-            return
-        self._tools_toggle = self._make_toggle("")
-        self._tools_toggle.toggled.connect(self._on_tools_toggle)
-        self._content_layout.addWidget(self._tools_toggle)
-        self._tools_content = self._make_content_frame()
-        self._tools_layout = QVBoxLayout(self._tools_content)
-        self._tools_layout.setContentsMargins(8, 0, 0, 0)
-        self._tools_layout.setSpacing(2)
-        self._tools_content.setVisible(False)
-        self._content_layout.addWidget(self._tools_content)
-
-    def _add_content_widget(self, widget: QWidget) -> None:
-        """第一层正文按时间顺序追加；已有工具调用区时插到它前面。"""
-        if self._tools_toggle is not None:
-            self._content_layout.insertWidget(
-                self._content_layout.indexOf(self._tools_toggle), widget
-            )
-        else:
-            self._content_layout.addWidget(widget)
 
     def _ensure_status_label(self) -> QLabel:
         if self._status_label is None:
             self._status_label = QLabel()
             self._status_label.setWordWrap(True)
             self._status_label.setTextFormat(Qt.TextFormat.RichText)
-            self._add_content_widget(self._status_label)
+            self._content_layout.addWidget(self._status_label)
         return self._status_label
 
     def start_thinking(self) -> None:
@@ -327,7 +365,7 @@ class _ThinkingBlock(QWidget):
             self._stream_label.setWordWrap(True)
             self._stream_label.setTextFormat(Qt.TextFormat.PlainText)
             self._stream_label.setStyleSheet(f"color: {_c().text_primary};")
-            self._add_content_widget(self._stream_label)
+            self._content_layout.addWidget(self._stream_label)
         self._stream_label.setText(text)
 
     def rotate_stream_label(self) -> None:
@@ -335,23 +373,18 @@ class _ThinkingBlock(QWidget):
         self._stream_label = None
 
     def append_html(self, rich_text: str) -> None:
-        """第一层正文直接追加（错误行等展开第一层就该看到的内容）。"""
+        """第一层正文直接追加（错误行、重试提示等按时间顺序的内容）。"""
         label = QLabel()
         label.setTextFormat(Qt.TextFormat.RichText)
         label.setWordWrap(True)
         label.setText(rich_text)
-        self._add_content_widget(label)
+        self._content_layout.addWidget(label)
 
-    def append_tool_html(self, rich_text: str) -> None:
-        """工具调用行收进第二层折叠区，折叠标题实时显示累计条数。"""
-        self._ensure_tools_section()
-        label = QLabel()
-        label.setTextFormat(Qt.TextFormat.RichText)
-        label.setWordWrap(True)
-        label.setText(rich_text)
-        self._tools_layout.addWidget(label)
-        self._tools_count += 1
-        self._tools_toggle.setText(f"工具调用（{self._tools_count}）")
+    def append_tool_node(self, title: str) -> _ToolNode:
+        """按时间顺序插入一个独立的工具调用折叠节点（默认收起）。"""
+        node = _ToolNode(title)
+        self._content_layout.addWidget(node)
+        return node
 
 
 class _InputEdit(QPlainTextEdit):
@@ -576,6 +609,8 @@ class AiPanel(QWidget):
         self._session_id = new_session_id()  # opencode Go 的稳定会话标识
         self._loop: AgentLoop | None = None
         self._thinking_block: _ThinkingBlock | None = None
+        #: 当前等待结果的工具调用节点（tool_started 建，tool_result 填完后清掉）
+        self._active_tool_node: _ToolNode | None = None
         self._bubbles: list[_MessageBubble] = []
         #: 附件提取阶段（第一段）的后台工作器；非 None 即流程进行中
         self._extract_worker: _ExtractionWorker | None = None
@@ -1020,6 +1055,7 @@ class AiPanel(QWidget):
         self._session_id = new_session_id()
         self._bubbles.clear()
         self._thinking_block = None
+        self._active_tool_node = None
         self._send_btn.setEnabled(self._provider() is not None)
         self._source_btn.setEnabled(self._provider() is not None)
 
@@ -1180,6 +1216,8 @@ class AiPanel(QWidget):
         self._loop.content.connect(self._on_content)
         self._loop.reasoning.connect(self._on_reasoning)
         self._loop.status.connect(self._on_status)
+        self._loop.tool_started.connect(self._on_tool_started)
+        self._loop.tool_result.connect(self._on_tool_result)
         self._loop.finished.connect(self._on_finished)
         self._loop.failed.connect(self._on_failed)
         self._loop.run([system, *self._history], provider, api_key, None)
@@ -1206,15 +1244,38 @@ class AiPanel(QWidget):
         self._scroll_to_bottom()
 
     def _on_status(self, text: str) -> None:
-        """工具调用：🔧 行收进第二层折叠区 + 换轮时重置流式标签。"""
+        """非工具调用的状态行（如请求失败重试）按时间顺序排进第一层正文。
+
+        "调用工具 X…"行由 _on_tool_started 建独立折叠节点（含参数/结果），
+        这里跳过避免重复。
+        """
+        if self._thinking_block is None or text.startswith("调用工具 "):
+            return
+        self._stream_text = ""
+        self._thinking_block.rotate_stream_label()
+        self._thinking_block.append_html(
+            f'<p style="color:{_c().warning};font-weight:600;margin:0;">'
+            f"🔧 {html.escape(text)}</p>"
+        )
+        self._scroll_to_bottom()
+
+    def _on_tool_started(self, name: str, arguments: str) -> None:
+        """工具调用开始：按时间顺序插入折叠节点（默认收起），填入参数。"""
         if self._thinking_block is None:
             return
         self._stream_text = ""
         self._thinking_block.rotate_stream_label()
-        self._thinking_block.append_tool_html(
-            f'<p style="color:{_c().warning};font-weight:600;margin:0;">'
-            f"🔧 {html.escape(text)}</p>"
+        self._active_tool_node = self._thinking_block.append_tool_node(
+            f"调用工具 {name}…"
         )
+        self._active_tool_node.set_arguments(arguments)
+        self._scroll_to_bottom()
+
+    def _on_tool_result(self, name: str, payload: str) -> None:
+        """工具执行完成：结果填进对应的节点（展开才可见）。"""
+        if self._active_tool_node is not None:
+            self._active_tool_node.set_result(payload)
+        self._active_tool_node = None
         self._scroll_to_bottom()
 
     def _on_finished(self, text: str) -> None:
@@ -1234,6 +1295,7 @@ class AiPanel(QWidget):
             ChatMessage(role="assistant", content=answer, reasoning_content=reasoning)
         )
         self._thinking_block = None
+        self._active_tool_node = None
         self._send_btn.setEnabled(self._provider() is not None)
         self._source_btn.setEnabled(self._provider() is not None)
         self._loop = None
@@ -1249,6 +1311,7 @@ class AiPanel(QWidget):
         self._stream_text = ""
         self._append_message("error", str(message))
         self._thinking_block = None
+        self._active_tool_node = None
         self._send_btn.setEnabled(self._provider() is not None)
         self._source_btn.setEnabled(self._provider() is not None)
         self._loop = None

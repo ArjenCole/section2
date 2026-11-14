@@ -29,6 +29,10 @@ class AgentLoop(QObject):
     content = Signal(str)
     reasoning = Signal(str)
     status = Signal(str)
+    #: 工具调用开始（name, 参数原文）：界面按顺序插入独立的折叠节点
+    tool_started = Signal(str, str)
+    #: 工具调用结束（name, 截断后的结果 JSON）
+    tool_result = Signal(str, str)
     finished = Signal(str)
     failed = Signal(str)
 
@@ -156,41 +160,48 @@ class AgentLoop(QObject):
                     name = buffer["name"]
                     arguments = buffer["arguments"] or "{}"
                     self.status.emit(f"调用工具 {name}…")
+                    self.tool_started.emit(name, arguments)
                     if self._registry.is_write(name):
                         approved = ask_confirm(self._preview(name, arguments))
                         if not approved:
+                            cancelled = json.dumps(
+                                {"cancelled": True, "message": "用户取消了操作"},
+                                ensure_ascii=False,
+                            )
                             conversation.append(
                                 ChatMessage(
                                     role="tool",
                                     tool_call_id=call_id,
-                                    content=json.dumps(
-                                        {"cancelled": True, "message": "用户取消了操作"},
-                                        ensure_ascii=False,
-                                    ),
+                                    content=cancelled,
                                 )
                             )
+                            self.tool_result.emit(name, cancelled)
                             self.finished.emit("（用户取消了操作，已停止。）")
                             return
                     # ToolRegistry.execute 内部会 marshal 到 Qt 主线程执行
                     result = self._registry.execute(name, arguments)
                     if isinstance(result, dict) and result.get("cancelled"):
+                        payload = json.dumps(result, ensure_ascii=False, default=str)
                         conversation.append(
                             ChatMessage(
                                 role="tool",
                                 tool_call_id=call_id,
-                                content=json.dumps(result, ensure_ascii=False, default=str),
+                                content=payload,
                             )
                         )
+                        self.tool_result.emit(name, payload)
                         self.finished.emit("（用户取消了操作，已停止。）")
                         return
                     payload = json.dumps(result, ensure_ascii=False, default=str)
+                    truncated = governance.truncate_tool_result(payload)
                     conversation.append(
                         ChatMessage(
                             role="tool",
                             tool_call_id=call_id,
-                            content=governance.truncate_tool_result(payload),
+                            content=truncated,
                         )
                     )
+                    self.tool_result.emit(name, truncated)
                     if stagnation.observe(name, arguments):
                         nudge = True
                 if nudge:
