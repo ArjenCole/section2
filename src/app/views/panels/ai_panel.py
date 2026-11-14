@@ -5,8 +5,8 @@
 * 消息区 = QScrollArea + 容器布局，每条消息一个独立控件：
   - :class:`_MessageBubble` —— 角色标签（用户=主色 / AI 助手=success / 错误=danger）
     + :class:`_MarkdownView`（高度随文档自适应；AI 用 Markdown，用户/错误转义 <pre>）；
-  - :class:`_ThinkingBlock` —— 可折叠思考块，"思考中…" 400ms 动画，工具调用与
-    流式正文就地刷新；
+  - :class:`_ThinkingBlock` —— 两级可折叠思考块，"思考中…" 400ms 动画：第一层
+    展开只显示思考/流式正文，工具调用行收在第二层"工具调用（N）"里再点才展开；
 * 输入区 = QPlainTextEdit#aiInputEdit（圆角、右下角 overlay 模型来源选择器
   #aiSourceBtn + 发送按钮 #aiSendBtn），Enter 发送、Shift/Ctrl+Enter 换行；
   - 模型来源选择器显示「provider 显示名/当前模型」+ 下箭头，点击向上弹出菜单；
@@ -186,40 +186,38 @@ class _MessageBubble(QWidget):
 
 
 class _ThinkingBlock(QWidget):
-    """可折叠思考块：同一轮对话的思考/工具调用/流式正文累积在同一块里。"""
+    """两级可折叠思考块：同一轮对话的思考/工具调用/流式正文累积在同一块里。
+
+    第一层"思考过程"展开后只显示思考/流式正文（与错误行）；工具调用行收在
+    第二层"工具调用（N）"里，默认收起，再点一下才展开——避免一点开就是
+    满屏工具日志。思考进行中第一层标题带动态省略号（"思考过程…"），完成后
+    消失，收起时也能看出是否还在跑。
+    """
 
     def __init__(self, title: str = "思考过程", parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._base_title = title
         self._stream_label: QLabel | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 4, 0, 4)
         layout.setSpacing(4)
 
-        colors = _c()
-        self._toggle = QToolButton()
-        self._toggle.setText(title)
-        self._toggle.setArrowType(Qt.ArrowType.RightArrow)
-        self._toggle.setCheckable(True)
-        self._toggle.setChecked(False)
-        self._toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._toggle.setStyleSheet(
-            "QToolButton { border: none; background: transparent; text-align: left;"
-            f" color: {colors.text_secondary}; font-weight: 600; padding: 2px; }}\n"
-            "QToolButton:hover { background: transparent; }"
-        )
+        self._toggle = self._make_toggle(title)
         self._toggle.toggled.connect(self._on_toggle)
         layout.addWidget(self._toggle)
 
-        self._content = QFrame()
-        self._content.setStyleSheet(
-            f"QFrame {{ border: none; border-left: 2px solid {colors.border};"
-            " margin-left: 8px; }"
-        )
+        self._content = self._make_content_frame()
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(8, 0, 0, 0)
         self._content_layout.setSpacing(2)
         self._content.setVisible(False)
         layout.addWidget(self._content)
+
+        # 第二层：工具调用折叠区（首次收到工具调用时惰性创建，默认收起）
+        self._tools_toggle: QToolButton | None = None
+        self._tools_content: QFrame | None = None
+        self._tools_layout: QVBoxLayout | None = None
+        self._tools_count = 0
 
         self._thinking_timer = QTimer(self)
         self._thinking_timer.setInterval(400)
@@ -227,29 +225,90 @@ class _ThinkingBlock(QWidget):
         self._thinking_dots = 0
         self._status_label: QLabel | None = None
 
+    @staticmethod
+    def _make_toggle(title: str) -> QToolButton:
+        """折叠标题：次级文字色、无背景、左对齐（两级折叠标题共用）。"""
+        toggle = QToolButton()
+        toggle.setText(title)
+        toggle.setArrowType(Qt.ArrowType.RightArrow)
+        toggle.setCheckable(True)
+        toggle.setChecked(False)
+        toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        toggle.setStyleSheet(
+            "QToolButton { border: none; background: transparent; text-align: left;"
+            f" color: {_c().text_secondary}; font-weight: 600; padding: 2px; }}\n"
+            "QToolButton:hover { background: transparent; }"
+        )
+        return toggle
+
+    @staticmethod
+    def _make_content_frame() -> QFrame:
+        """折叠正文容器：左侧竖线示意层级归属（两级折叠共用）。"""
+        frame = QFrame()
+        frame.setStyleSheet(
+            f"QFrame {{ border: none; border-left: 2px solid {_c().border};"
+            " margin-left: 8px; }"
+        )
+        return frame
+
     def _on_toggle(self, checked: bool) -> None:
         self._toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
         self._content.setVisible(checked)
+
+    def _on_tools_toggle(self, checked: bool) -> None:
+        self._tools_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
+        )
+        self._tools_content.setVisible(checked)
+
+    def _ensure_tools_section(self) -> None:
+        """惰性创建第二层"工具调用（N）"折叠区（默认收起）。"""
+        if self._tools_toggle is not None:
+            return
+        self._tools_toggle = self._make_toggle("")
+        self._tools_toggle.toggled.connect(self._on_tools_toggle)
+        self._content_layout.addWidget(self._tools_toggle)
+        self._tools_content = self._make_content_frame()
+        self._tools_layout = QVBoxLayout(self._tools_content)
+        self._tools_layout.setContentsMargins(8, 0, 0, 0)
+        self._tools_layout.setSpacing(2)
+        self._tools_content.setVisible(False)
+        self._content_layout.addWidget(self._tools_content)
+
+    def _add_content_widget(self, widget: QWidget) -> None:
+        """第一层正文按时间顺序追加；已有工具调用区时插到它前面。"""
+        if self._tools_toggle is not None:
+            self._content_layout.insertWidget(
+                self._content_layout.indexOf(self._tools_toggle), widget
+            )
+        else:
+            self._content_layout.addWidget(widget)
 
     def _ensure_status_label(self) -> QLabel:
         if self._status_label is None:
             self._status_label = QLabel()
             self._status_label.setWordWrap(True)
             self._status_label.setTextFormat(Qt.TextFormat.RichText)
-            self._content_layout.addWidget(self._status_label)
+            self._add_content_widget(self._status_label)
         return self._status_label
 
     def start_thinking(self) -> None:
         self._thinking_dots = 0
         self._thinking_timer.start()
+        self._toggle.setText(self._thinking_title())
         self._ensure_status_label().setText(self._thinking_text())
 
     def stop_thinking(self) -> None:
         self._thinking_timer.stop()
+        self._toggle.setText(self._base_title)  # 完成后标题回到纯文字
         if self._status_label is not None:
             self._status_label.setText(
                 f'<span style="color:{_c().text_secondary};font-weight:600;">思考完成</span>'
             )
+
+    def _thinking_title(self) -> str:
+        """第一层折叠标题：思考进行中带动态省略号（收起时也能看出在跑）。"""
+        return f"{self._base_title}{'.' * (self._thinking_dots + 1)}"
 
     def _thinking_text(self) -> str:
         dots = "." * (self._thinking_dots + 1)
@@ -257,6 +316,7 @@ class _ThinkingBlock(QWidget):
 
     def _on_thinking_tick(self) -> None:
         self._thinking_dots = (self._thinking_dots + 1) % 3
+        self._toggle.setText(self._thinking_title())
         if self._status_label is not None:
             self._status_label.setText(self._thinking_text())
 
@@ -267,7 +327,7 @@ class _ThinkingBlock(QWidget):
             self._stream_label.setWordWrap(True)
             self._stream_label.setTextFormat(Qt.TextFormat.PlainText)
             self._stream_label.setStyleSheet(f"color: {_c().text_primary};")
-            self._content_layout.addWidget(self._stream_label)
+            self._add_content_widget(self._stream_label)
         self._stream_label.setText(text)
 
     def rotate_stream_label(self) -> None:
@@ -275,11 +335,23 @@ class _ThinkingBlock(QWidget):
         self._stream_label = None
 
     def append_html(self, rich_text: str) -> None:
+        """第一层正文直接追加（错误行等展开第一层就该看到的内容）。"""
         label = QLabel()
         label.setTextFormat(Qt.TextFormat.RichText)
         label.setWordWrap(True)
         label.setText(rich_text)
-        self._content_layout.addWidget(label)
+        self._add_content_widget(label)
+
+    def append_tool_html(self, rich_text: str) -> None:
+        """工具调用行收进第二层折叠区，折叠标题实时显示累计条数。"""
+        self._ensure_tools_section()
+        label = QLabel()
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setWordWrap(True)
+        label.setText(rich_text)
+        self._tools_layout.addWidget(label)
+        self._tools_count += 1
+        self._tools_toggle.setText(f"工具调用（{self._tools_count}）")
 
 
 class _InputEdit(QPlainTextEdit):
@@ -1134,12 +1206,12 @@ class AiPanel(QWidget):
         self._scroll_to_bottom()
 
     def _on_status(self, text: str) -> None:
-        """工具调用：🔧 行 + 换轮时重置流式标签。"""
+        """工具调用：🔧 行收进第二层折叠区 + 换轮时重置流式标签。"""
         if self._thinking_block is None:
             return
         self._stream_text = ""
         self._thinking_block.rotate_stream_label()
-        self._thinking_block.append_html(
+        self._thinking_block.append_tool_html(
             f'<p style="color:{_c().warning};font-weight:600;margin:0;">'
             f"🔧 {html.escape(text)}</p>"
         )
