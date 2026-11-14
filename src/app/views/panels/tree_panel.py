@@ -82,8 +82,11 @@ def _structure_signature(root: TreeNode | None) -> tuple[tuple[str, int | None, 
 class _ProjectTree(QTreeWidget):
     """项目结构树：拖拽移动节点（Quotor _ProjectTree 同款交互）。"""
 
-    #: (source_node, target_parent_id, index)；index 为排除自身后的兄弟位置
-    move_node_requested = Signal(object, int, int)
+    #: (source_node, target_parent_id, index)；index 为排除自身后的兄弟位置。
+    #: parent_id 必须声明为 object 而不是 int：标段移动的父级是项目根（None），
+    #  Signal(int) 会把 None 静默转换成 0（仅打一行 stderr 警告），
+    #  move_node 里 "parent_id is not None" 判定拿 0 当非法父级，移动被静默吞掉
+    move_node_requested = Signal(object, object, int)
     drop_rejected = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -102,7 +105,7 @@ class _ProjectTree(QTreeWidget):
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self._dragging_item: QTreeWidgetItem | None = None
-        self._pending_move: tuple[object, int, int] | None = None
+        self._pending_move: tuple[object, object, int] | None = None
 
     # --- 拖拽（Quotor 同款：自建 QDrag + 半透明影像；drop 只记录、循环结束后写库） ---
     def startDrag(self, supported_actions) -> None:  # noqa: N802 - Qt 命名
@@ -179,20 +182,22 @@ class _ProjectTree(QTreeWidget):
     # --- 落点解析：section2 层级为 工程→标段→单位工程 ---
     def _resolve_drop(
         self, source: TreeNode, target_item: QTreeWidgetItem | None, indicator
-    ) -> tuple[str, tuple[object, int, int] | str]:
+    ) -> tuple[str, tuple[object, object, int] | str]:
         from app.services import project_io
 
         target = self._node_of(target_item) if target_item is not None else None
         on_item = indicator == QAbstractItemView.DropIndicatorPosition.OnItem
-        above = indicator == QAbstractItemView.DropIndicatorPosition.AboveItem
         below = indicator == QAbstractItemView.DropIndicatorPosition.BelowItem
 
         if source.kind == KIND_SEGMENT:
-            if target is None or target.kind != KIND_SEGMENT or on_item or not (above or below):
-                return "invalid", "标段只能拖到其它标段的上方或下方并排。"
+            # Qt 默认落点判定只有行上下边缘约 2px 的窄条算 Above/Below，
+            # 行中心绝大多数是 OnItem——把它当作"放到该标段之后"，
+            # 否则标段拖拽几乎总落在非法区（老代码要求边缘窄条，等于不可用）
+            if target is None or target.kind != KIND_SEGMENT:
+                return "invalid", "标段只能拖到其它标段的上方、下方或行上并排。"
             siblings = [item for item in project_io.segments() if item.id != source.id]
             index = next((i for i, item in enumerate(siblings) if item.id == target.id), 0)
-            if below:
+            if below or on_item:
                 index += 1
             return "ok", (source, None, index)
 
