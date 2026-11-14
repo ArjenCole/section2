@@ -2256,8 +2256,8 @@ class UnitViewModel(QObject):
     detail_loaded = Signal(int, object, object, object)
     error_occurred = Signal(str)
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
         self._unit_id: int | None = None
         self._element_id: int | None = None
         bus().unit_changed.connect(self._on_unit_changed)

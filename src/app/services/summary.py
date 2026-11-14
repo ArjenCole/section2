@@ -2,7 +2,9 @@
 
 汇总口径：工程量（QDict 合并后） × 单价（price 表，key = 类别|项目|单位；
 单价联动与回落都按“类别 + 项目”判断是否同一工程量，见 :func:`resolve_price`）。
-Excel 导出：定额 / 清单两张表，含“计算表达式”列（产品核心数据）。
+Excel 导出：分单位工程口径按项目结构出 sheet（工程根 / 各标段费用汇总表 +
+各单位工程定额 / 清单工程量汇总表，行带单价 / 合价）；合并口径固定定额 /
+清单两张表；均含“计算表达式”列（产品核心数据）。
 
 桌面 M5（汇总面板 / 批量载价）重做时直接复用本模块，避免两套逻辑。
 """
@@ -18,6 +20,7 @@ from sqlalchemy import select
 from app.core.models import base as orm
 from app.core.models.models import Price, Unit
 from app.core.models.models import category_name
+from app.services import undo as undo_stack
 
 
 def _unit_ids(unit_id: int | None) -> list[tuple[int, str]]:
@@ -56,6 +59,9 @@ def set_price(key: str, value: float) -> None:
         session.add(Price(key=key, value=float(value)))
     else:
         row.value = float(value)
+    # 撤销焦点：告诉撤销栈这一步改的是哪条单价（联动修改动到多条，快照
+    # 对比只能给出集合，用户改的那条只有这里知道）
+    undo_stack.note_intent({"kind": "price", "key": key})
     project_io.commit()
 
 
@@ -318,16 +324,25 @@ def export_excel(
 
 
 # --------------------------------------------------------------------------- #
-# 工程数量表导出（工具栏「导出 Excel」）：6 列，1.0 基础上右侧增添纯数字算式列
+# 工程数量表导出（工具栏「导出 Excel」）
 # --------------------------------------------------------------------------- #
-#: 导出表格固定列：类别 / 名称 / 单位 / 数量 / 表达式（主式） / 算式（纯数字代入式）
+#: 合并口径的固定列：类别 / 名称 / 单位 / 数量 / 表达式（主式） / 算式（纯数字代入式）
 _QUANTITY_HEADERS = ["类别", "名称", "单位", "数量", "表达式", "算式"]
-#: 分单位工程口径：行前带“单位工程”列（合并口径不用）
-_UNIT_QUANTITY_HEADERS = ["单位工程", *_QUANTITY_HEADERS]
-_UNIT_COL_WIDTH = 18
+_QUOTA_WIDTHS = (14, 34, 10, 14, 46, 60)
+#: 分单位工程口径的固定列：每张 sheet 对应一个单位工程，数量右侧带单价 / 合价
+_PRICE_QUANTITY_HEADERS = ["类别", "名称", "单位", "数量", "单价", "合价", "表达式", "算式"]
+#: 对应列宽（单价 / 合价列宽沿用工程量明细表导出）
+_PRICE_QUOTA_WIDTHS = (*_QUOTA_WIDTHS[:4], 12, 14, *_QUOTA_WIDTHS[4:])
+#: 写成数字（float）并限定小数位显示的列（单元格里仍可直接再计算）
+_NUMBER_COLUMNS = ("数量", "单价", "合价")
+#: 费用汇总表固定列（与汇总页费用汇总表同序：序号 / 名称 / 合价）
+_COST_SHEET_HEADERS = ["序号", "名称", "合价"]
+_COST_SHEET_WIDTHS = (14, 40, 16)
 #: 清单项目行底色（删除版 excel_export 同款浅蓝）
 _LISTING_FILL = "D6EAF8"
-_QUOTA_WIDTHS = (14, 34, 10, 14, 46, 60)
+#: Excel sheet 名的非法字符与长度上限
+_INVALID_SHEET_CHARS = re.compile(r'[\\/:*?\[\]]')
+_SHEET_NAME_MAX = 31
 
 
 def _main_expression(quantity) -> str:
@@ -436,7 +451,63 @@ def _merged_listing_rows(computed) -> list[tuple[list, bool]]:
     return rows
 
 
-def _write_sheet(sheet, headers: list[str], rows: list[tuple[list, bool]]) -> None:
+def _sheet_title(workbook, name: str, suffix: str) -> str:
+    """节点名 + 固定后缀的 sheet 名：替换非法字符、超长截名、重名加序号。
+
+    Excel sheet 名上限 31 字符且不能含 ``: \\ / ? * [ ]``；超长时截节点名
+    保住后缀（如“-定额工程量汇总表”），重名（不同标段下的同名单位工程）
+    用 ``(2)`` 起的序号区分。
+    """
+    name = _INVALID_SHEET_CHARS.sub("_", str(name or "")).strip()
+    title = f"{name}{suffix}"
+    if len(title) > _SHEET_NAME_MAX:
+        title = name[: _SHEET_NAME_MAX - len(suffix)] + suffix
+    existing = {sheet.title for sheet in workbook.worksheets}
+    if title not in existing:
+        return title
+    index = 2
+    while True:
+        tail = f"({index})"
+        candidate = title[: _SHEET_NAME_MAX - len(tail)] + tail
+        if candidate not in existing:
+            return candidate
+        index += 1
+
+
+def _priced_rows(
+    rows: list[tuple[list, bool]],
+    by_key: dict[str, float],
+    by_scope: dict[tuple[str, str], float],
+) -> list[tuple[list, bool]]:
+    """给行生成器的行补上单价 / 合价（插在数量右侧）。
+
+    定额行单价按 key（类别|项目|单位）/ “类别 + 项目”取价目表，合价 =
+    数量 × 单价；清单项目行合价 = 该条目下所有定额行合价的合计、单价 =
+    合价 ÷ 数量（派生值，与工程量明细表面板 :meth:`QuantityDetailPanel._compose`
+    同口径）。
+    """
+    priced: list[tuple[list, bool]] = []
+    for index, (values, is_listing) in enumerate(rows):
+        category, name, unit, amount = values[:4]
+        amount = float(amount)
+        if is_listing:
+            total = 0.0
+            for child_values, child_is_listing in rows[index + 1:]:
+                if child_is_listing:
+                    break
+                child_key = f"{child_values[0]}|{child_values[1]}|{child_values[2]}"
+                total += float(child_values[3]) * resolve_price(child_key, by_key, by_scope)
+            price = total / amount if amount else 0.0
+        else:
+            price = resolve_price(f"{category}|{name}|{unit}", by_key, by_scope)
+            total = amount * price
+        priced.append(([category, name, unit, amount, price, total, *values[4:]], is_listing))
+    return priced
+
+
+def _write_sheet(
+    sheet, headers: list[str], rows: list[tuple[list, bool]], widths: tuple
+) -> None:
     """把一张工程数量表写进 sheet：表头加粗、清单项目行浅蓝、冻结首行。"""
     import openpyxl
     from openpyxl.styles import Font, PatternFill
@@ -450,13 +521,35 @@ def _write_sheet(sheet, headers: list[str], rows: list[tuple[list, bool]]) -> No
         if is_listing:
             for cell in sheet[sheet.max_row]:
                 cell.fill = fill
-    widths = (_UNIT_COL_WIDTH, *_QUOTA_WIDTHS) if len(headers) > len(_QUANTITY_HEADERS) else _QUOTA_WIDTHS
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[openpyxl.utils.get_column_letter(index)].width = width
-    # 数量列写的是 float，限定最多 4 位小数显示（单元格里仍可直接再计算）
-    amount_column = headers.index("数量") + 1
+    for name in _NUMBER_COLUMNS:
+        if name in headers:
+            column = headers.index(name) + 1
+            for row in range(2, sheet.max_row + 1):
+                sheet.cell(row=row, column=column).number_format = "0.####"
+    sheet.freeze_panes = "A2"
+
+
+def _write_cost_sheet(sheet, rows: list[tuple[str, str, float, int]]) -> None:
+    """写一张费用汇总表（序号 / 名称 / 合价）：表头加粗、名称按层级缩进、冻结首行。
+
+    ``rows`` 为 ``(序号, 名称, 合价, 缩进层级)``，序号即项目结构的层级编号
+    （工程根 1 → 标段 1.1 → 单位工程 1.1.1），与汇总页费用汇总表同口径。
+    """
+    import openpyxl
+    from openpyxl.styles import Alignment, Font
+
+    sheet.append(_COST_SHEET_HEADERS)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+    for seq, name, total, indent in rows:
+        sheet.append([seq, name, total])
+        sheet.cell(row=sheet.max_row, column=2).alignment = Alignment(indent=indent)
+    for index, width in enumerate(_COST_SHEET_WIDTHS, start=1):
+        sheet.column_dimensions[openpyxl.utils.get_column_letter(index)].width = width
     for row in range(2, sheet.max_row + 1):
-        sheet.cell(row=row, column=amount_column).number_format = "0.####"
+        sheet.cell(row=row, column=3).number_format = "0.####"
     sheet.freeze_panes = "A2"
 
 
@@ -465,13 +558,18 @@ def export_quantity_tables(
     unit_ids: list[int],
     merged: bool = False,
 ) -> dict:
-    """导出工程数量表（定额 + 清单，一次一个 xlsx 文件，固定两张 sheet）。
+    """导出工程数量表（一次一个 xlsx 文件）。
 
-    sheet 只放一个表：``定额工程量`` / ``清单工程量``。默认分单位工程口径，
-    行前带“单位工程”列、各单位工程各自汇总合计；``merged=True`` 为合并口径
-    ——所选单位工程的工程量全部加总，不带单位工程列。列见
-    :data:`_QUANTITY_HEADERS`（数量列为 float，表达式为主算式、算式为纯数字
-    代入式）。返回 ``{path, sheets, rows}``。
+    ``merged=True``（合并口径）：所选单位工程的工程量全部加总，固定输出
+    ``定额工程量`` / ``清单工程量`` 两张 sheet，一张 sheet 只放一个表。
+
+    默认（分单位工程口径）：sheet 按项目结构从上到下排列——工程根一张
+    费用汇总表；每个勾了单位工程的标段一张费用汇总表，其下每个单位工程
+    各出定额 / 清单两张工程量汇总表（行内数量右侧带单价 / 合价）。未勾选
+    的单位工程不参与任何表；标段下的单位工程一个都没勾时该标段不出表。
+    费用汇总表列见 :data:`_COST_SHEET_HEADERS`，工程量表列见
+    :data:`_PRICE_QUANTITY_HEADERS`（数量列为 float，表达式为主算式、算式
+    为纯数字代入式）。返回 ``{path, sheets, rows}``。
     """
     import openpyxl
 
@@ -484,18 +582,17 @@ def export_quantity_tables(
     if target.suffix.lower() != ".xlsx":
         target = target.with_suffix(".xlsx")
 
-    computed: list[tuple[str, QDict, list]] = []
-    for uid in unit_ids:
-        unit = orm.session().get(Unit, int(uid))
-        if unit is None:
-            raise ValueError(f"找不到 id={uid} 的单位工程。")
-        summary, detail = compute_unit(int(uid))
-        computed.append((unit.name, summary, detail))
-
     workbook = openpyxl.Workbook()
     workbook.remove(workbook.active)
 
     if merged:
+        computed: list[tuple[str, QDict, list]] = []
+        for uid in unit_ids:
+            unit = orm.session().get(Unit, int(uid))
+            if unit is None:
+                raise ValueError(f"找不到 id={uid} 的单位工程。")
+            unit_summary, detail = compute_unit(int(uid))
+            computed.append((unit.name, unit_summary, detail))
         merged_summary = QDict()
         for _name, unit_summary, _detail in computed:
             merged_summary.extend(unit_summary)
@@ -503,30 +600,96 @@ def export_quantity_tables(
             workbook.create_sheet("定额工程量"),
             _QUANTITY_HEADERS,
             [(row, False) for row in _quota_rows(merged_summary)],
+            _QUOTA_WIDTHS,
         )
         _write_sheet(
             workbook.create_sheet("清单工程量"),
             _QUANTITY_HEADERS,
             _merged_listing_rows(computed),
+            _QUOTA_WIDTHS,
         )
     else:
-        # 分单位工程口径：各单位工程各自汇总合计，行前带“单位工程”列
-        quota_rows: list[tuple[list, bool]] = []
-        listing_rows: list[tuple[list, bool]] = []
-        for unit_name, unit_summary, detail in computed:
-            quota_rows.extend(
-                ([unit_name, *row], False) for row in _quota_rows(unit_summary)
+        # 分单位工程口径：按项目结构（工程 → 标段 → 单位工程）从上到下出 sheet
+        from app.services import project_io
+
+        checked = {int(uid) for uid in unit_ids}
+        groups: list[tuple[object, list]] = []
+        for segment in project_io.segments():
+            units = [unit for unit in project_io.units(segment.id) if unit.id in checked]
+            if units:
+                groups.append((segment, units))
+        found = {unit.id for _segment, units in groups for unit in units}
+        for uid in unit_ids:  # 勾选里混进无效 id 时保持原有报错行为
+            if int(uid) not in found:
+                raise ValueError(f"找不到 id={uid} 的单位工程。")
+
+        summaries: dict[int, QDict] = {}
+        details: dict[int, list] = {}
+        for _segment, units in groups:
+            for unit in units:
+                summaries[unit.id], details[unit.id] = compute_unit(unit.id)
+
+        by_key, by_scope = price_maps()
+
+        def unit_total(unit_id: int) -> float:
+            """单位工程合价：Σ(工程量 × 单价)，与汇总页费用汇总表同口径。"""
+            return sum(
+                quantity.value * resolve_price(quantity.key, by_key, by_scope)
+                for quantity in summaries[unit_id].items()
             )
-            listing_rows.extend(
-                ([unit_name, *row], is_listing)
-                for row, is_listing in _listing_rows(detail)
+
+        # 工程根费用汇总表：工程 → 标段 → 单位工程，逐行合价
+        project = project_io.project_name() or "未命名工程"
+        root_rows: list[tuple[str, str, float, int]] = []
+        root_total = 0.0
+        for seg_index, (segment, units) in enumerate(groups, start=1):
+            seg_total = sum(unit_total(unit.id) for unit in units)
+            root_total += seg_total
+            root_rows.append((f"1.{seg_index}", segment.name, seg_total, 1))
+            root_rows.extend(
+                (f"1.{seg_index}.{unit_index}", unit.name, unit_total(unit.id), 2)
+                for unit_index, unit in enumerate(units, start=1)
             )
-        _write_sheet(
-            workbook.create_sheet("定额工程量"), _UNIT_QUANTITY_HEADERS, quota_rows
+        root_rows.insert(0, ("1", project, root_total, 0))
+        _write_cost_sheet(
+            workbook.create_sheet(_sheet_title(workbook, project, "-费用汇总表")), root_rows
         )
-        _write_sheet(
-            workbook.create_sheet("清单工程量"), _UNIT_QUANTITY_HEADERS, listing_rows
-        )
+
+        for segment, units in groups:
+            # 标段费用汇总表：标段为根（序号 1），下属单位工程 1.x
+            seg_rows: list[tuple[str, str, float, int]] = [
+                ("1", segment.name, sum(unit_total(unit.id) for unit in units), 0)
+            ]
+            seg_rows.extend(
+                (f"1.{unit_index}", unit.name, unit_total(unit.id), 1)
+                for unit_index, unit in enumerate(units, start=1)
+            )
+            _write_cost_sheet(
+                workbook.create_sheet(_sheet_title(workbook, segment.name, "-费用汇总表")),
+                seg_rows,
+            )
+            # 单位工程的定额 / 清单工程量汇总表（行带单价 / 合价）
+            for unit in units:
+                _write_sheet(
+                    workbook.create_sheet(
+                        _sheet_title(workbook, unit.name, "-定额工程量汇总表")
+                    ),
+                    _PRICE_QUANTITY_HEADERS,
+                    _priced_rows(
+                        [(row, False) for row in _quota_rows(summaries[unit.id])],
+                        by_key,
+                        by_scope,
+                    ),
+                    _PRICE_QUOTA_WIDTHS,
+                )
+                _write_sheet(
+                    workbook.create_sheet(
+                        _sheet_title(workbook, unit.name, "-清单工程量汇总表")
+                    ),
+                    _PRICE_QUANTITY_HEADERS,
+                    _priced_rows(_listing_rows(details[unit.id]), by_key, by_scope),
+                    _PRICE_QUOTA_WIDTHS,
+                )
 
     exported_rows = sum(
         sheet.max_row - 1 for sheet in workbook.worksheets  # 不含表头

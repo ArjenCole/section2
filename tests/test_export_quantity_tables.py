@@ -1,7 +1,8 @@
 """工程数量表导出（services.summary.export_quantity_tables）测试。
 
-覆盖：分单位工程 / 合并两种口径的 sheet 结构与加总规则、单位工程列、
-清单项目行浅蓝标记、导出对话框的树状勾选。
+覆盖：分单位工程 / 合并两种口径的 sheet 结构与加总规则、按项目结构的
+sheet 排序、费用汇总表、行内单价 / 合价、清单项目行浅蓝标记、导出对话
+框的树状勾选。
 """
 
 from pathlib import Path
@@ -45,59 +46,140 @@ def _quota_rows(sheet) -> list:
     return [row for row in sheet.iter_rows(min_row=2)]
 
 
+def _listing_header_rows(rows) -> list:
+    return [row for row in rows if "D6EAF8" in str(row[0].fill.start_color.rgb)]
+
+
 # --------------------------------------------------------------------------- #
-# 分单位工程导出（默认口径：行前带“单位工程”列）
+# 分单位工程导出（默认口径：按项目结构出 sheet，行带单价 / 合价）
 # --------------------------------------------------------------------------- #
 def test_export_per_unit(tmp_path) -> None:
     unit_ids = _two_unit_project(tmp_path)
+    summary.set_price("构筑物|垫层|m3", 100.0)
     result = summary.export_quantity_tables(tmp_path / "out.xlsx", unit_ids)
-    # 不为单个单位工程出 sheet：固定两张表
-    assert result["sheets"] == ["定额工程量", "清单工程量"]
+    # sheet 按项目结构从上到下：工程根费用汇总 → 标段费用汇总 → 各单位定额 / 清单
+    assert result["sheets"] == [
+        "新建项目-费用汇总表",
+        "新建标段-费用汇总表",
+        "雨水工程-定额工程量汇总表",
+        "雨水工程-清单工程量汇总表",
+        "污水工程-定额工程量汇总表",
+        "污水工程-清单工程量汇总表",
+    ]
 
     workbook = openpyxl.load_workbook(tmp_path / "out.xlsx")
-    quota = workbook["定额工程量"]
+    quota = workbook["雨水工程-定额工程量汇总表"]
     assert [cell.value for cell in quota[1]] == [
-        "单位工程",
         "类别",
         "名称",
         "单位",
         "数量",
+        "单价",
+        "合价",
         "表达式",
         "算式",
     ]
-    rows = {(row[0].value, row[2].value): row for row in _quota_rows(quota)}
-    rain = rows["雨水工程", "垫层"]
-    assert rain[1].value == "构筑物" and rain[3].value == "m3"
-    assert abs(rain[4].value - 4.0) < 1e-9  # 2.0 × 数量 2
-    assert rain[5].value and rain[6].value  # 表达式 / 算式都有内容
-    sewage = rows["污水工程", "垫层"]
-    assert abs(sewage[4].value - 3.0) < 1e-9  # 1.0 × 数量 3，未与雨水合并
+    rows = _quota_rows(quota)
+    assert len(rows) == 1
+    rain = rows[0]
+    assert rain[0].value == "构筑物" and rain[2].value == "m3"
+    assert abs(rain[3].value - 4.0) < 1e-9  # 2.0 × 数量 2
+    assert abs(rain[4].value - 100.0) < 1e-9  # 单价
+    assert abs(rain[5].value - 400.0) < 1e-9  # 合价 = 数量 × 单价
+    assert rain[6].value and rain[7].value  # 表达式 / 算式都有内容
 
-    listing = workbook["清单工程量"]
+    listing = workbook["雨水工程-清单工程量汇总表"]
     listing_rows = _quota_rows(listing)
-    header_row = listing_rows[0]
-    assert header_row[0].value == "雨水工程"
-    assert header_row[2].value == "雨水检查井"  # 名称 = 规格 / 名称
-    assert abs(header_row[4].value - 2.0) < 1e-9
-    assert header_row[5].value == "2" and header_row[6].value == "2"  # 数量原文
+    header_row = _listing_header_rows(listing_rows)[0]
+    assert header_row[1].value == "雨水检查井"  # 名称 = 规格 / 名称
+    assert abs(header_row[3].value - 2.0) < 1e-9
+    # 清单项目行合价 = 定额拆分行合价合计（4.0 × 100），单价 = 合价 ÷ 数量
+    assert abs(header_row[5].value - 400.0) < 1e-9
+    assert abs(header_row[4].value - 200.0) < 1e-9
+    assert header_row[6].value == "2" and header_row[7].value == "2"  # 数量原文
     # 清单项目行浅蓝标记（D6EAF8），下挂定额拆分行
-    assert "D6EAF8" in str(header_row[1].fill.start_color.rgb)
-    assert listing_rows[1][2].value == "垫层"
-    # 之后是污水工程块
-    assert listing_rows[-1][0].value == "污水工程"
+    assert "D6EAF8" in str(header_row[0].fill.start_color.rgb)
+    assert listing_rows[1][1].value == "垫层"
+    # 各单位工程一张 sheet：污水块在污水工程自己的清单表里
+    sewage_rows = _quota_rows(workbook["污水工程-清单工程量汇总表"])
+    assert [row[1].value for row in _listing_header_rows(sewage_rows)] == ["污水检查井"]
+    assert abs(sewage_rows[0][5].value - 300.0) < 1e-9  # 3.0 × 100
+
+    # 费用汇总表：工程根 → 标段 → 单位工程，逐行合价
+    root_rows = _quota_rows(workbook["新建项目-费用汇总表"])
+    assert [cell.value for cell in workbook["新建项目-费用汇总表"][1]] == [
+        "序号", "名称", "合价",
+    ]
+    assert [(row[0].value, row[1].value) for row in root_rows] == [
+        ("1", "新建项目"),
+        ("1.1", "新建标段"),
+        ("1.1.1", "雨水工程"),
+        ("1.1.2", "污水工程"),
+    ]
+    assert abs(root_rows[0][2].value - 700.0) < 1e-9  # 400 + 300
+    assert abs(root_rows[2][2].value - 400.0) < 1e-9
+    assert abs(root_rows[3][2].value - 300.0) < 1e-9
+    seg_rows = _quota_rows(workbook["新建标段-费用汇总表"])
+    assert [(row[0].value, row[1].value) for row in seg_rows] == [
+        ("1", "新建标段"),
+        ("1.1", "雨水工程"),
+        ("1.2", "污水工程"),
+    ]
+    assert abs(seg_rows[0][2].value - 700.0) < 1e-9
+
+
+def test_export_subset_excludes_unchecked(tmp_path) -> None:
+    """只勾部分单位工程：未勾选的不出表，费用汇总也不计未勾选的。"""
+    unit_ids = _two_unit_project(tmp_path)
+    result = summary.export_quantity_tables(tmp_path / "part.xlsx", unit_ids[:1])
+    assert result["sheets"] == [
+        "新建项目-费用汇总表",
+        "新建标段-费用汇总表",
+        "雨水工程-定额工程量汇总表",
+        "雨水工程-清单工程量汇总表",
+    ]
+    workbook = openpyxl.load_workbook(tmp_path / "part.xlsx")
+    root_rows = _quota_rows(workbook["新建项目-费用汇总表"])
+    assert [(row[0].value, row[1].value) for row in root_rows] == [
+        ("1", "新建项目"),
+        ("1.1", "新建标段"),
+        ("1.1.1", "雨水工程"),
+    ]
 
 
 def test_export_empty_unit_writes_header_only(tmp_path) -> None:
-    """没有构件的单位工程也照常出表（只有表头）。"""
+    """没有构件的单位工程也照常出表（工程量表只有表头，费用汇总合计 0）。"""
     path = tmp_path / "空工程.stn"
     project_io.new_project(NewProjectSpec(path=path, unit_names=["雨水工程"]))
     segment = project_io.segments()[0]
     unit_ids = [unit.id for unit in project_io.units(segment.id)]
-    result = summary.export_quantity_tables(tmp_path / "empty.xlsx", unit_ids)
-    assert result["rows"] == 0
+    summary.export_quantity_tables(tmp_path / "empty.xlsx", unit_ids)
     workbook = openpyxl.load_workbook(tmp_path / "empty.xlsx")
-    assert workbook.sheetnames == ["定额工程量", "清单工程量"]
-    assert [cell.value for cell in workbook["定额工程量"][1]][0] == "单位工程"
+    assert workbook["雨水工程-定额工程量汇总表"].max_row == 1  # 只有表头
+    root_rows = _quota_rows(workbook["新建项目-费用汇总表"])
+    assert abs(root_rows[0][2].value) < 1e-9  # 无量 → 合计 0
+
+
+def test_same_name_units_get_distinct_sheets(tmp_path) -> None:
+    """不同标段下的同名单位工程：sheet 名按结构顺序排列并加序号区分。"""
+    path = tmp_path / "同名.stn"
+    project_io.new_project(
+        NewProjectSpec(
+            path=path, segment_names=["标段一", "标段二"], unit_names=["同名工程"]
+        )
+    )
+    unit_ids = [unit.id for unit in project_io.units(project_io.segments()[0].id)]
+    unit_ids += [unit.id for unit in project_io.units(project_io.segments()[1].id)]
+    result = summary.export_quantity_tables(tmp_path / "same.xlsx", unit_ids)
+    assert result["sheets"] == [
+        "新建项目-费用汇总表",
+        "标段一-费用汇总表",
+        "同名工程-定额工程量汇总表",
+        "同名工程-清单工程量汇总表",
+        "标段二-费用汇总表",
+        "同名工程-定额工程量汇总表(2)",
+        "同名工程-清单工程量汇总表(2)",
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -159,10 +241,10 @@ def test_export_merged_same_name_listing_groups(tmp_path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 单位工程列原样输出（sheet 名固定，不再参与命名）
+# sheet 名合法化（单位工程名可能带 Excel 非法字符）
 # --------------------------------------------------------------------------- #
-def test_unit_name_with_invalid_chars_kept_in_column(tmp_path) -> None:
-    """单位工程名带 Excel 非法字符：不出独立 sheet，名字原样进“单位工程”列。"""
+def test_unit_name_with_invalid_chars_sanitized_in_sheet_title(tmp_path) -> None:
+    """单位工程名带 Excel 非法字符：sheet 名里替换为下划线，表内容不受影响。"""
     from app.core.models.models import CATEGORY_STRUCTURE
 
     path = tmp_path / "名字测试.stn"
@@ -182,10 +264,17 @@ def test_unit_name_with_invalid_chars_kept_in_column(tmp_path) -> None:
     result = summary.export_quantity_tables(
         tmp_path / "name.xlsx", [unit.id]
     )
-    assert result["sheets"] == ["定额工程量", "清单工程量"]
+    assert result["sheets"] == [
+        "新建项目-费用汇总表",
+        "新建标段-费用汇总表",
+        "雨_水_工程-定额工程量汇总表",
+        "雨_水_工程-清单工程量汇总表",
+    ]
     workbook = openpyxl.load_workbook(tmp_path / "name.xlsx")
-    rows = _quota_rows(workbook["定额工程量"])
-    assert rows[0][0].value == "雨/水:工程"
+    rows = _quota_rows(workbook["雨_水_工程-定额工程量汇总表"])
+    assert rows[0][1].value == "垫层"  # 定额行内容原样
+    listing_rows = _quota_rows(workbook["雨_水_工程-清单工程量汇总表"])
+    assert listing_rows[0][1].value == "检查井"  # 清单项目行内容原样
 
 
 # --------------------------------------------------------------------------- #

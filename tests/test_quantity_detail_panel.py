@@ -209,7 +209,7 @@ def test_collapse_does_not_affect_toolbar_export(qapp, tmp_path) -> None:
     panel._btn_toggle.click()
 
     summary.export_quantity_tables(tmp_path / "toolbar.xlsx", [unit.id])
-    sheet = openpyxl.load_workbook(tmp_path / "toolbar.xlsx")["清单工程量"]
+    sheet = openpyxl.load_workbook(tmp_path / "toolbar.xlsx")["雨水工程-清单工程量汇总表"]
     headers = [cell.value for cell in sheet[1]]
     assert headers[-2:] == ["表达式", "算式"]
     assert sheet.max_row == 1 + 4  # 表头 + 清单项目行 + 工程量行，未受收起影响

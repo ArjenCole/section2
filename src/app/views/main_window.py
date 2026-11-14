@@ -509,8 +509,11 @@ class MainWindow(QMainWindow):
         self._quantity_detail = QuantityDetailPanel()
         self._main_tabs.addTab(self._quantity_detail, "工程量明细表")
 
-        # 汇总页控制器：两个页面分别作为主面板顶级 tab
-        self._summary_panel = SummaryPanel()
+        # 汇总页控制器：两个页面分别作为主面板顶级 tab。控制器是挂在窗体下的
+        # QObject（页面本身挂进 tab 组）——随窗体销毁，避免窗口关闭后残留的
+        # EventBus 连接还触到已删除的页面（工程量明细页是 QWidget，天然随
+        # tab 组销毁，无此问题）
+        self._summary_panel = SummaryPanel(self)
         self._main_tabs.addTab(self._summary_panel.cost_page, "费用汇总表")
         self._main_tabs.addTab(self._summary_panel.price_page, "综合单价汇总表")
         self._main_tabs.currentChanged.connect(self._on_main_tab_changed)
@@ -1259,9 +1262,13 @@ class MainWindow(QMainWindow):
         state = ui if isinstance(ui, dict) else {}
         tree_path = state.get("tree")
         # 撤销 / 重做的选中以"该步修改的条目"为准（相邻快照对比得出，
-        # 不受操作间浏览影响）；无构件级差异时退回快照携带的视图
+        # 不受操作间浏览影响）；无可定位差异时退回快照携带的视图。
+        # 单价步骤（"price", key）在树选中恢复后另跳单价表，见 _focus_price_edit
         focus = undo_stack.last_focus()
-        if focus is not None:
+        price_key = None
+        if isinstance(focus, tuple) and len(focus) == 2 and focus[0] == "price":
+            price_key = str(focus[1])
+        elif focus is not None:
             (seg_index, unit_index), row = focus
             tree_path = (seg_index, unit_index)
             element_state = state.get("element")
@@ -1284,7 +1291,27 @@ class MainWindow(QMainWindow):
         bus().tree_structure_changed.emit()
         self._tree_panel.select_by_path(tree_path)
         self._unit_panel.restore_ui_state(state.get("element"))
+        if price_key is not None:
+            self._focus_price_edit(price_key)
         self._update_undo_actions()
+
+    def _focus_price_edit(self, key: str) -> None:
+        """单价步骤的撤销 / 重做：跳到该步实际修改的单价单元格。
+
+        落点按恢复后的树选中决定（单价编辑只发生在两张表里，编辑发生时的
+        树选中性质就是这张表）：单位工程 → 工程量明细表，工程根 / 标段 →
+        综合单价汇总表。切 tab 触发 currentChanged → maybe_reload 补载脏页，
+        面板定位不到（联动兄弟行 / key 不在范围）时保持当前选中。
+        """
+        node = self._tree_panel.current_node
+        if node is None:
+            return
+        if node.kind == KIND_UNIT:
+            self._main_tabs.setCurrentWidget(self._quantity_detail)
+            self._quantity_detail.locate_price_row(key)
+        else:
+            self._main_tabs.setCurrentWidget(self._summary_panel.price_page)
+            self._summary_panel.locate_price_row(key)
 
     def _import_legacy(self) -> None:
         """旧 .stn 单向迁移导入（M6）。"""

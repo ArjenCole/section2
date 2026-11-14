@@ -509,7 +509,7 @@ def test_last_focus_diff_across_snapshots() -> None:
     undo_stack.undo()
     assert undo_stack.last_focus() == ((0, 0), 1)
 
-    # 原则 / 单价类步骤（构件清单无差异）：无焦点，选中由快照视图兜底
+    # 结构与单价同时变化的合成步骤：位置语义不稳，不给焦点
     undo_stack.record({"segments": [], "prices": [{"key": "k", "value": 1.0}]})
     undo_stack.undo()
     assert undo_stack.last_focus() is None
@@ -683,3 +683,236 @@ def test_tree_panel_select_by_path_falls_back(qapp, project) -> None:
     assert not panel.select_by_path((99, None))
     assert not panel.select_by_path(None)
     assert not panel.select_by_path("bad")
+
+
+# --------------------------------------------------------------------------- #
+# 单价步骤：编辑意图 + 单价差异对比（撤销 / 重做跳到被改的单价行）
+# --------------------------------------------------------------------------- #
+def _price_data(prices: list[tuple[str, float]]) -> dict:
+    """纯单价步骤的快照数据：构件清单完全一致，只有 prices 不同。"""
+    return {
+        "segments": [
+            {
+                "name": "标段",
+                "units": [{"name": "雨水工程", "elements": [{"name": "构件"}]}],
+            }
+        ],
+        "prices": [{"key": key, "value": value} for key, value in prices],
+    }
+
+
+def test_price_intent_focus_on_undo_redo() -> None:
+    """带编辑意图的单价步骤：撤销 / 重做都落在被改的单价 key 上。"""
+    undo_stack.reset(_price_data([("回填|中粗砂|m3", 100.0)]))
+    undo_stack.note_intent({"kind": "price", "key": "回填|中粗砂|m3"})
+    undo_stack.record(_price_data([("回填|中粗砂|m3", 150.0)]))
+
+    undo_stack.undo()
+    assert undo_stack.last_focus() == ("price", "回填|中粗砂|m3")
+    undo_stack.redo()
+    assert undo_stack.last_focus() == ("price", "回填|中粗砂|m3")
+
+
+def test_price_intent_survives_coalesce(monkeypatch) -> None:
+    """改单价连着两次提交（写目标行 + 联动兄弟行）合并为一步：意图留住，
+    落点是用户改的那条，而不是联动修改的兄弟行。"""
+    clock = iter([100.0, 100.05, 100.06])
+    monkeypatch.setattr("app.services.undo.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr("app.services.undo._COALESCE_SECONDS", 0.2)
+
+    undo_stack.reset(_price_data([("回填|中粗砂|m3", 100.0), ("回填|中粗砂|t", 100.0)]))
+    undo_stack.note_intent({"kind": "price", "key": "回填|中粗砂|m3"})
+    undo_stack.record(
+        _price_data([("回填|中粗砂|m3", 150.0), ("回填|中粗砂|t", 100.0)])
+    )  # 写目标行
+    undo_stack.record(
+        _price_data([("回填|中粗砂|m3", 150.0), ("回填|中粗砂|t", 150.0)])
+    )  # 联动（无意图，窗口内合并）
+
+    undo_stack.undo()
+    assert undo_stack.last_focus() == ("price", "回填|中粗砂|m3")
+    undo_stack.redo()
+    assert undo_stack.last_focus() == ("price", "回填|中粗砂|m3")
+
+
+def test_price_diff_fallback_single_key() -> None:
+    """无意图且恰好一条单价变化（如批量载价只动一条）：单价对比兜底定位。"""
+    undo_stack.reset(_price_data([("回填|中粗砂|m3", 100.0)]))
+    undo_stack.record(_price_data([("回填|中粗砂|m3", 150.0)]))
+    undo_stack.undo()
+    assert undo_stack.last_focus() == ("price", "回填|中粗砂|m3")
+    undo_stack.redo()
+    assert undo_stack.last_focus() == ("price", "回填|中粗砂|m3")
+
+
+def test_price_diff_multiple_keys_no_focus() -> None:
+    """无意图且多条单价同时变化（批量载价）：不猜测，交给快照视图兜底。"""
+    undo_stack.reset(_price_data([("回填|中粗砂|m3", 100.0), ("回填|中粗砂|t", 100.0)]))
+    undo_stack.record(_price_data([("回填|中粗砂|m3", 150.0), ("回填|中粗砂|t", 150.0)]))
+    undo_stack.undo()
+    assert undo_stack.last_focus() is None
+
+
+def test_price_intent_dropped_when_content_unchanged() -> None:
+    """内容未变的提交不占步数，意图一并丢弃——不得污染后续步骤的落点。"""
+    undo_stack.reset(_price_data([("回填|中粗砂|m3", 100.0), ("回填|中粗砂|t", 100.0)]))
+    undo_stack.note_intent({"kind": "price", "key": "回填|中粗砂|m3"})
+    undo_stack.record(_price_data([("回填|中粗砂|m3", 100.0), ("回填|中粗砂|t", 100.0)]))
+    assert not undo_stack.can_undo()  # 内容未变：意图随这次提交一起丢弃
+
+    undo_stack.record(_price_data([("回填|中粗砂|m3", 100.0), ("回填|中粗砂|t", 150.0)]))
+    undo_stack.undo()
+    assert undo_stack.last_focus() == ("price", "回填|中粗砂|t")  # 落在真实变化上
+
+
+def test_price_intent_cleared_on_reset() -> None:
+    """重开工程（reset）丢弃过期意图，不得带到新工程的步骤上。"""
+    undo_stack.note_intent({"kind": "price", "key": "旧工程的单价"})
+    undo_stack.reset({"segments": []})
+    undo_stack.record({"segments": [], "prices": [{"key": "k", "value": 1.0}]})
+    undo_stack.undo()
+    assert undo_stack.last_focus() == ("price", "k")
+
+
+def test_set_price_undo_redo_focus(project) -> None:
+    """改单价可撤销重做，焦点落在被改的单价 key 上（服务层端到端）。"""
+    from app.services import summary as summary_service
+
+    summary_service.set_price("回填|中粗砂|m3", 100.0)
+    summary_service.set_price("回填|中粗砂|m3", 150.0)
+
+    data, _ui = undo_stack.undo()
+    project_io.restore_snapshot(data)
+    assert summary_service.prices()["回填|中粗砂|m3"] == 100.0
+    assert undo_stack.last_focus() == ("price", "回填|中粗砂|m3")
+
+    data, _ui = undo_stack.redo()
+    project_io.restore_snapshot(data)
+    assert summary_service.prices()["回填|中粗砂|m3"] == 150.0
+    assert undo_stack.last_focus() == ("price", "回填|中粗砂|m3")
+
+
+def test_set_price_propagate_focus_after_coalesce(project, monkeypatch) -> None:
+    """联动改价（写目标行 + 联动兄弟行两次提交）在时间窗内合并为一步：
+    撤销落在用户改的那条，兄弟行一并复原。用脚本时钟把两次铺底 set_price
+    拉开到窗口外、联动改价的两次提交留在窗口内（对应真实操作节奏）。"""
+    from app.services import summary as summary_service
+
+    clock = iter([100.0, 200.0, 300.0, 300.05])
+    monkeypatch.setattr("app.services.undo.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr("app.services.undo._COALESCE_SECONDS", 0.2)
+
+    summary_service.set_price("回填|中粗砂|m3", 100.0)  # 窗口外：独立一步
+    summary_service.set_price("回填|中粗砂|t", 100.0)  # 窗口外：独立一步
+    summary_service.set_price_propagate("回填|中粗砂|m3", 150.0)  # 窗口内两连提交 → 一步
+
+    data, _ui = undo_stack.undo()
+    project_io.restore_snapshot(data)
+    prices = summary_service.prices()
+    assert prices["回填|中粗砂|m3"] == 100.0
+    assert prices["回填|中粗砂|t"] == 100.0
+    assert undo_stack.last_focus() == ("price", "回填|中粗砂|m3")
+
+
+def test_undo_price_edit_jumps_to_summary_price_cell(qapp, project) -> None:
+    """端到端（用户需求）：综合单价汇总表改价后撤销 / 重做，主面板跳回
+    综合单价汇总表并选中被改的单价格，数值随数据恢复。"""
+    from app.views.main_window import MainWindow
+    from app.views.panels.summary_panel import _PCOL_PRICE
+
+    from conftest import make_element
+
+    make_element("污水管 D600")
+    window = MainWindow(str(project))
+    window.show()
+    qapp.processEvents()
+    try:
+        # 选中标段 → 费用汇总 / 综合单价汇总装填，切到综合单价汇总表
+        segment_item = window._tree_panel._tree.topLevelItem(0).child(0)
+        window._tree_panel._tree.setCurrentItem(segment_item)
+        qapp.processEvents()
+        window._main_tabs.setCurrentIndex(4)
+        qapp.processEvents()
+        panel = window._summary_panel
+        table = panel._price_table
+        assert table.rowCount() >= 1
+
+        old_text = table.item(0, _PCOL_PRICE).text()
+        table.item(0, _PCOL_PRICE).setText("123")  # 单元格编辑路径：itemChanged → 联动写库
+        qapp.processEvents()
+        new_text = table.item(0, _PCOL_PRICE).text()
+        assert new_text != old_text
+
+        # 撤销：跳回综合单价汇总表，该行单价格选中、值回旧价
+        window._undo()
+        qapp.processEvents()
+        qapp.processEvents()
+        assert window._main_tabs.currentWidget() is panel.price_page
+        assert table.currentRow() == 0
+        assert table.currentColumn() == _PCOL_PRICE
+        assert table.item(0, _PCOL_PRICE).text() == old_text
+
+        # 重做：同一落点，值回新价
+        window._redo()
+        qapp.processEvents()
+        qapp.processEvents()
+        assert window._main_tabs.currentWidget() is panel.price_page
+        assert table.currentRow() == 0
+        assert table.currentColumn() == _PCOL_PRICE
+        assert table.item(0, _PCOL_PRICE).text() == new_text
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+def test_undo_price_edit_jumps_to_detail_price_cell(qapp, project) -> None:
+    """端到端（用户需求）：工程量明细表定额行改价后撤销 / 重做，主面板跳回
+    工程量明细表（定额工程量子表）并选中被改的单价格。"""
+    from app.views.main_window import MainWindow
+    from app.views.panels.quantity_detail_panel import _COL_PRICE
+
+    from conftest import make_element
+
+    make_element("污水管 D600")
+    window = MainWindow(str(project))
+    window.show()
+    qapp.processEvents()
+    try:
+        # 选中单位工程，切到工程量明细表（定额工程量子表）
+        unit_item = window._tree_panel._tree.topLevelItem(0).child(0).child(0)
+        window._tree_panel._tree.setCurrentItem(unit_item)
+        qapp.processEvents()
+        window._main_tabs.setCurrentIndex(2)
+        qapp.processEvents()
+        panel = window._quantity_detail
+        table = panel._quota_table
+        assert table.rowCount() >= 1
+        assert panel._tables.currentIndex() == 0
+
+        old_text = table.item(0, _COL_PRICE).text()
+        table.item(0, _COL_PRICE).setText("88")  # 单元格编辑路径：itemChanged → 联动写库
+        qapp.processEvents()
+        new_text = table.item(0, _COL_PRICE).text()
+        assert new_text != old_text
+
+        # 撤销：跳回工程量明细表，该行单价格选中、值回旧价
+        window._undo()
+        qapp.processEvents()
+        qapp.processEvents()
+        assert window._main_tabs.currentWidget() is window._quantity_detail
+        assert panel._tables.currentIndex() == 0
+        assert table.currentRow() == 0
+        assert table.currentColumn() == _COL_PRICE
+        assert table.item(0, _COL_PRICE).text() == old_text
+
+        # 重做：同一落点，值回新价
+        window._redo()
+        qapp.processEvents()
+        qapp.processEvents()
+        assert window._main_tabs.currentWidget() is window._quantity_detail
+        assert table.currentRow() == 0
+        assert table.currentColumn() == _COL_PRICE
+        assert table.item(0, _COL_PRICE).text() == new_text
+    finally:
+        window.close()
+        qapp.processEvents()

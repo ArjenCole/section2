@@ -41,6 +41,7 @@ from app.views.panels.unit_panel import (
     _FOCUS_OWNER_ATTR,
     _TREE_ROLE,
     _ElementNameDelegate,
+    _select_row,
 )
 
 _COST_HEADERS = ["序号", "名称", "合价"]
@@ -191,7 +192,7 @@ class SummaryPanel(QObject):
         """数据变化联动：可见时延后重算，不可见时标脏（显示时补载）。"""
         connect_weak(bus().unit_changed, self, "_on_data_changed")
         connect_weak(bus().principle_changed, self, "_on_data_changed")
-        bus().tree_structure_changed.connect(self._on_structure_changed)
+        connect_weak(bus().tree_structure_changed, self, "_on_structure_changed")
         connect_weak(bus().project_closed, self, "set_node", None)
 
     def _on_data_changed(self, *_args) -> None:
@@ -323,6 +324,27 @@ class SummaryPanel(QObject):
             self._fill_cost_table()
         finally:
             self._loading = False
+
+    def locate_price_row(self, key: str) -> bool:
+        """按单价 key 定位并选中该行的单价格（撤销 / 重做单价步骤后由主窗体调用）。
+
+        页面不可见期间标脏过就先补一次重载（此时主窗体已把本页设为当前
+        tab）；找不到该 key（如联动修改的兄弟行、key 不在当前范围）返回
+        False，不动选中。选中走显式 ClearAndSelect 命令——撤销 / 重做在
+        Ctrl+Z / Ctrl+Y 按键处理过程中执行，setCurrentCell 会被 Ctrl 修饰键
+        推断成追加选择（见 unit_panel._select_row）。
+        """
+        if self._dirty:
+            self._dirty = False
+            self._reload()
+        for index, row in enumerate(self._price_rows):
+            if row["key"] == key:
+                _select_row(self._price_table, index, _PCOL_PRICE)
+                item = self._price_table.item(index, _PCOL_PRICE)
+                if item is not None:
+                    self._price_table.scrollToItem(item)
+                return True
+        return False
 
     # ------------------------------------------------------------------ 费用汇总
     def _unit_total(self, unit_id: int) -> float:

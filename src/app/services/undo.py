@@ -14,6 +14,10 @@
 * 内容未变的重复提交只更新快照的界面状态，不占用撤销步数（界面浏览不占步数）；
 * 写入前先用当前界面状态刷新"变更前"快照：撤销回到上一步时恢复的是用户
   操作时刻的选中 / 焦点，界面状态不单独占步数；
+* 焦点（撤销 / 重做落点）由相邻快照对比得出：构件步骤落在修改的构件行；
+  单价步骤落在被改的单价 key 上——编辑入口经 :func:`note_intent` 声明意图
+  （联动修改动到多条单价，对比只能给集合，用户改的那条只有入口知道），
+  无意图时单价恰好一条变化也可兜底定位；
 * section2 特有：commit 时刻界面还没按新数据刷新（EventBus 广播 → QTimer
   延后重装表格），栈顶快照的界面状态由视图刷新完成后经 :meth:`UndoStack.patch_top_ui`
   回填——否则重做到栈顶时快照里的选中行指向已删除/已移位的行，恢复即错乱；
@@ -43,6 +47,7 @@ __all__ = [
     "can_undo",
     "clear",
     "last_focus",
+    "note_intent",
     "patch_top_ui",
     "record",
     "redo",
@@ -62,6 +67,7 @@ class _Snapshot:
     text: str  # 工程 JSON 数据体（不含 saved_at）
     ui: dict | None = None  # 界面状态（由视图提供，可为空）
     size: int = 0  # UTF-8 字节数
+    intent: dict | None = None  # 产生本快照的编辑意图（note_intent 注入，如改的是哪个单价 key）
 
 
 def _serialize(data: dict) -> tuple[str, int]:
@@ -101,6 +107,27 @@ def _weak_callback(callback):
     return _call
 
 
+def _structure_stable(prev_segs: list, target_segs: list) -> bool:
+    """标段 / 单位工程的数量与名称一致（工程结构未变），位置语义才可用。
+
+    撤销重建工作库后一切按位置（order_no 顺序）对号：结构数量或名称变了，
+    位置就不再指向同一个条目，相邻快照的行级对比无从谈起。
+    """
+    if len(prev_segs) != len(target_segs):
+        return False  # 标段级变化：位置语义不稳
+    for prev_seg, target_seg in zip(prev_segs, target_segs):
+        if prev_seg.get("name") != target_seg.get("name"):
+            return False
+        prev_units = prev_seg.get("units") or []
+        target_units = target_seg.get("units") or []
+        if len(prev_units) != len(target_units):
+            return False
+        for prev_unit, target_unit in zip(prev_units, target_units):
+            if prev_unit.get("name") != target_unit.get("name"):
+                return False
+    return True
+
+
 def _diff_focus(previous: dict, target: dict) -> tuple[tuple[int, int], int | None] | None:
     """对比相邻两份快照的构件清单，定位该步修改的条目。
 
@@ -115,19 +142,13 @@ def _diff_focus(previous: dict, target: dict) -> tuple[tuple[int, int], int | No
     """
     prev_segs = previous.get("segments") or []
     target_segs = target.get("segments") or []
-    if len(prev_segs) != len(target_segs):
-        return None  # 标段级变化：位置语义不稳
+    if not _structure_stable(prev_segs, target_segs):
+        return None
     focus: tuple[tuple[int, int], int | None] | None = None
     for seg_index, (prev_seg, target_seg) in enumerate(zip(prev_segs, target_segs)):
-        if prev_seg.get("name") != target_seg.get("name"):
-            return None
         prev_units = prev_seg.get("units") or []
         target_units = target_seg.get("units") or []
-        if len(prev_units) != len(target_units):
-            return None
         for unit_index, (prev_unit, target_unit) in enumerate(zip(prev_units, target_units)):
-            if prev_unit.get("name") != target_unit.get("name"):
-                return None
             prev_elements = prev_unit.get("elements") or []
             target_elements = target_unit.get("elements") or []
             if prev_elements == target_elements:
@@ -153,14 +174,32 @@ def _diff_focus(previous: dict, target: dict) -> tuple[tuple[int, int], int | No
     return focus
 
 
+def _diff_price_key(previous: dict, target: dict) -> str | None:
+    """对比相邻两份快照的单价表，定位该步修改的单价 key。
+
+    仅工程结构稳定且**恰好一个** key 变化（改值 / 新增 / 删除，key 集合取
+    两份快照的并集比较）时返回该 key；多个 key 同时变化（如批量载价）或
+    结构同时变化时不猜测，返回 None。带编辑意图（:meth:`UndoStack.note_intent`）
+    的步骤在 :meth:`UndoStack._step_focus` 里直接采用意图 key，不走本对比。
+    """
+    if not _structure_stable(previous.get("segments") or [], target.get("segments") or []):
+        return None
+    prev_prices = {row.get("key"): row.get("value") for row in previous.get("prices") or []}
+    target_prices = {row.get("key"): row.get("value") for row in target.get("prices") or []}
+    keys = list(target_prices) + [key for key in prev_prices if key not in target_prices]
+    changed = [key for key in keys if prev_prices.get(key) != target_prices.get(key)]
+    return changed[0] if len(changed) == 1 else None
+
+
 class UndoStack:
     def __init__(self) -> None:
         self._snaps: list[_Snapshot] = []
         self._pos: int = -1  # 当前快照下标
         self._last_push: float | None = None  # 最近一次记录时刻，时间窗合并用
-        self._last_focus: tuple[tuple[int, int], int | None] | None = None
+        self._last_focus: tuple[tuple[int, int], int | None] | tuple[str, str] | None = None
         self._ui_provider = None  # 由视图注入：捕获界面状态的回调
         self._listener = None  # 由视图注入：栈变化后刷新撤销/重做按钮
+        self._pending_intent: dict | None = None  # 下一次 record 携带的编辑意图
 
     # ------------------------------------------------------------ 视图注入
     def set_ui_provider(self, provider) -> None:
@@ -170,6 +209,15 @@ class UndoStack:
     def set_listener(self, listener) -> None:
         """注入栈变化监听（record/undo/redo/reset/clear 后回调），主窗体调用。"""
         self._listener = _weak_callback(listener)
+
+    def note_intent(self, intent: dict | None) -> None:
+        """记录下一次 record 携带的编辑意图（单价步骤定位焦点用）。
+
+        服务层在改库之后、commit 之前调用，如 ``{"kind": "price", "key": ...}``
+        ——快照对比只能知道"哪些单价变了"，变化多于一条（联动修改）时无法
+        知道用户改的是哪一条，意图由编辑入口直接给出。
+        """
+        self._pending_intent = intent
 
     def _capture_ui(self) -> dict | None:
         if self._ui_provider is None:
@@ -197,11 +245,14 @@ class UndoStack:
         return 0 <= self._pos < len(self._snaps) - 1
 
     @property
-    def last_focus(self) -> tuple[tuple[int, int], int | None] | None:
-        """最近一次 undo()/redo() 对比相邻快照得出的焦点（(单位位置), 行号）。
+    def last_focus(self) -> tuple[tuple[int, int], int | None] | tuple[str, str] | None:
+        """最近一次 undo()/redo() 对比相邻快照得出的焦点。
 
-        撤销 / 重做恢复选中用：每一步只落在该步实际修改的那一条上；None =
-        步骤没有构件级差异（原则 / 单价 / 结构变化），选中由快照界面状态兜底。
+        撤销 / 重做恢复选中用：每一步只落在该步实际修改的那一条上。两种
+        形态——构件步骤 ``((标段序号, 单位工程序号), 行号)``，单价步骤
+        ``("price", key)``（单价行按 key 定位，见 :meth:`note_intent`）；
+        None = 步骤没有可定位的差异（原则 / 批量单价变化），选中由快照
+        界面状态兜底。
         """
         return self._last_focus
 
@@ -211,6 +262,7 @@ class UndoStack:
         self._snaps = []
         self._pos = -1
         self._last_focus = None
+        self._pending_intent = None
         self._notify()
 
     def reset(self, data: dict) -> None:
@@ -220,6 +272,7 @@ class UndoStack:
         self._pos = 0
         self._last_push = None
         self._last_focus = None
+        self._pending_intent = None
         self._notify()
 
     def record(self, data: dict) -> None:
@@ -232,20 +285,23 @@ class UndoStack:
         """
         text, size = _serialize(data)
         ui = self._capture_ui()
+        intent, self._pending_intent = self._pending_intent, None
         if self._pos >= 0:
             self._snaps[self._pos].ui = ui
             if self._snaps[self._pos].text == text:
-                return
+                return  # 内容未变：意图一并丢弃（没有步骤需要它）
         now = time.monotonic()
         del self._snaps[self._pos + 1 :]  # 新变更清除重做分支
         if self._pos >= 1 and (
             self._last_push is not None and now - self._last_push <= _COALESCE_SECONDS
         ):
-            # 时间窗合并：替换（而不是追加）栈顶，一步撤销回到整次操作前
+            # 时间窗合并：替换（而不是追加）栈顶，一步撤销回到整次操作前。
+            # 一次编辑的多次提交（如改单价先写目标行再联动）合并时意图要留住
             merged = self._snaps[self._pos]
             merged.text, merged.size, merged.ui = text, size, ui
+            merged.intent = intent if intent is not None else merged.intent
         else:
-            self._snaps.append(_Snapshot(text, ui, size))
+            self._snaps.append(_Snapshot(text, ui, size, intent))
             self._pos = len(self._snaps) - 1
         self._last_push = now
         self._last_focus = None
@@ -263,6 +319,26 @@ class UndoStack:
         if 0 <= self._pos < len(self._snaps):
             self._snaps[self._pos].ui = ui
 
+    def _step_focus(
+        self, previous: dict, target: dict, target_snap: _Snapshot
+    ) -> tuple[tuple[int, int], int | None] | tuple[str, str] | None:
+        """该步的焦点：构件级差异优先，其次编辑意图，最后单价差异兜底。
+
+        意图来自产生该步的快照（``note_intent`` 注入，如改单价步骤的
+        ``("price", key)``）——联动修改动到多条单价，对比只能给出集合，
+        用户改的那一条只有编辑入口知道。
+        """
+        focus = _diff_focus(previous, target)
+        if focus is not None:
+            return focus
+        intent = target_snap.intent
+        if isinstance(intent, dict) and intent.get("kind") == "price":
+            key = str(intent.get("key") or "")
+            if key:
+                return ("price", key)
+        price_key = _diff_price_key(previous, target)
+        return ("price", price_key) if price_key else None
+
     def undo(self) -> tuple[dict, dict | None] | None:
         """回退一步，返回 (工程 JSON 数据体, 界面状态)；无可撤销返回 None。
 
@@ -274,8 +350,10 @@ class UndoStack:
         self._pos -= 1
         self._last_push = None  # 撤销后的新变更不与撤销前的提交合并
         snap = self._snaps[self._pos]
-        self._last_focus = _diff_focus(
-            json.loads(self._snaps[self._pos + 1].text), json.loads(snap.text)
+        # 意图取来路快照：该步是编辑产生的，意图挂在编辑生成的那份快照上
+        source = self._snaps[self._pos + 1]
+        self._last_focus = self._step_focus(
+            json.loads(source.text), json.loads(snap.text), source
         )
         self._notify()
         return json.loads(snap.text), snap.ui
@@ -290,8 +368,8 @@ class UndoStack:
         self._pos += 1
         self._last_push = None
         snap = self._snaps[self._pos]
-        self._last_focus = _diff_focus(
-            json.loads(self._snaps[self._pos - 1].text), json.loads(snap.text)
+        self._last_focus = self._step_focus(
+            json.loads(self._snaps[self._pos - 1].text), json.loads(snap.text), snap
         )
         self._notify()
         return json.loads(snap.text), snap.ui
@@ -341,6 +419,11 @@ def patch_top_ui(ui: dict | None) -> None:
     _stack.patch_top_ui(ui)
 
 
+def note_intent(intent: dict | None) -> None:
+    """记录下一次 record 携带的编辑意图（服务层改库后、commit 前调用）。"""
+    _stack.note_intent(intent)
+
+
 def undo() -> tuple[dict, dict | None] | None:
     return _stack.undo()
 
@@ -349,7 +432,7 @@ def redo() -> tuple[dict, dict | None] | None:
     return _stack.redo()
 
 
-def last_focus() -> tuple[tuple[int, int], int | None] | None:
+def last_focus() -> tuple[tuple[int, int], int | None] | tuple[str, str] | None:
     return _stack.last_focus
 
 

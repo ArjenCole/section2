@@ -53,6 +53,7 @@ from app.resources.qss.theme import ThemeManager
 from app.services import project_io
 from app.services import summary as summary_service
 from app.viewmodels.unit_vm import compute_unit
+from app.views.panels.unit_panel import _select_row
 from app.views.widgets.frameless_dialog import FramelessMessageBox, load_icon
 from app.views.widgets.table_edit_delegate import TableEditDelegate
 from app.views.widgets.table_width import fixed_width_behavior
@@ -611,6 +612,31 @@ class QuantityDetailPanel(QWidget):
             total_item = table.item(row_index, _COL_TOTAL)
             if total_item is not None:
                 total_item.setText(fmt(row.total))
+
+    def locate_price_row(self, key: str) -> bool:
+        """按单价 key 定位定额行的单价格并选中（撤销 / 重做单价步骤后由主窗体调用）。
+
+        页面不可见期间标脏过就先补一次重载（此时主窗体已把本页设为当前
+        tab）；单价只能改在定额行上，定位也只在定额表（清单项目行的单价是
+        派生值）。找不到该 key（如联动修改的兄弟行、该单位工程没有这条
+        工程量）返回 False，不动选中。选中走显式 ClearAndSelect 命令——
+        撤销 / 重做在 Ctrl+Z / Ctrl+Y 按键处理过程中执行，setCurrentCell 会
+        被 Ctrl 修饰键推断成追加选择（见 unit_panel._select_row）。
+        """
+        if self._dirty:
+            self._dirty = False
+            self._reload()
+        for index, row in enumerate(self._quota_rowset):
+            if row.price_key == key:
+                if self._tables.currentIndex() != 0:
+                    self._segment_group.button(0).setChecked(True)
+                    self._on_segment_clicked(0)
+                _select_row(self._quota_table, index, _COL_PRICE)
+                item = self._quota_table.item(index, _COL_PRICE)
+                if item is not None:
+                    self._quota_table.scrollToItem(item)
+                return True
+        return False
 
     @staticmethod
     def _secondary_color() -> QColor:

@@ -454,7 +454,9 @@ class UnitPanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setProperty("role", "panel")
-        self._vm = UnitViewModel()
+        # 视图模型挂在面板下：随面板销毁，EventBus 连接（unit_changed）自动
+        # 断开——否则窗口关闭后残留的模型还会响应广播（见 SummaryPanel 同款）
+        self._vm = UnitViewModel(self)
         self._unit_id: int | None = None
         self._loading = False
         # 构件库插入后待选中的新条目 id：表格刷新经 unit_changed → QTimer 延后，
