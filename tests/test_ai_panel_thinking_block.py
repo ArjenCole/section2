@@ -145,6 +145,34 @@ def test_reasoning_then_content_keeps_both_segments(qapp) -> None:
     assert layout.indexOf(reasoning_label) < layout.indexOf(content_label)
 
 
+def test_final_answer_not_duplicated_inside_block(qapp) -> None:
+    """最终正文已显示在外面的回复气泡里，思考块里不再保留这一段。"""
+    panel = AiPanel()
+    block = _ThinkingBlock("思考过程")
+    panel._thinking_block = block
+    block.start_thinking()
+    panel._on_reasoning("先想一下。")
+    reasoning_label = block._stream_label
+    panel._on_content("这是最终回复正文。")
+    panel._on_finished("这是最终回复正文。")
+    # 当前正文标签连同文字一起从思考块移除
+    assert block._stream_label is None
+    # 思考文字段保留，正文不再重复出现
+    assert reasoning_label.text() == "（思考）先想一下。"
+
+
+def test_finished_without_content_keeps_reasoning_segment(qapp) -> None:
+    """收尾时最后一段是思考文字（无正文）则不能误删。"""
+    panel = AiPanel()
+    block = _ThinkingBlock("思考过程")
+    panel._thinking_block = block
+    block.start_thinking()
+    panel._on_reasoning("只有思考没有正文。")
+    panel._on_finished("（已停止）")
+    assert block._stream_label is not None
+    assert "只有思考没有正文。" in block._stream_label.text()
+
+
 def test_panel_tool_flow_builds_ordered_nodes(qapp) -> None:
     """面板工具回调：开始建节点填参数、结果填同一节点、正文接在节点后。"""
     panel = AiPanel()

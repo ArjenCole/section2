@@ -372,6 +372,13 @@ class _ThinkingBlock(QWidget):
         """换轮/重试时丢弃旧流式标签，下次 set_stream_text 重建。"""
         self._stream_label = None
 
+    def drop_stream_label(self) -> None:
+        """移除当前流式标签连同已显示的文字（最终回复在外面气泡里已有）。"""
+        if self._stream_label is not None:
+            self._content_layout.removeWidget(self._stream_label)
+            self._stream_label.deleteLater()
+            self._stream_label = None
+
     def append_html(self, rich_text: str) -> None:
         """第一层正文直接追加（错误行、重试提示等按时间顺序的内容）。"""
         label = QLabel()
@@ -1312,6 +1319,9 @@ class AiPanel(QWidget):
     def _on_finished(self, text: str) -> None:
         if self._thinking_block is not None:
             self._flush_reasoning()  # 思考段若还没刷完尾巴，收尾前补上
+            if not self._label_shows_reasoning:
+                # 当前段落是最终正文，已写进下面的回复气泡，思考块里不再重复
+                self._thinking_block.drop_stream_label()
             self._thinking_block.stop_thinking()
         answer = text or self._stream_text
         self._stream_text = ""
