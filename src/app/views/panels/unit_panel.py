@@ -2781,8 +2781,13 @@ class UnitPanel(QWidget):
                     category_item.setData(_QTY_ROLE, quantity.id)
                     self._qty_table.setItem(index, 0, category_item)
                     self._qty_table.setItem(index, 1, QTableWidgetItem(quantity.item))
-                    self._qty_table.setItem(index, 2, QTableWidgetItem(quantity.unit))
-                    self._qty_table.setItem(index, 3, QTableWidgetItem(quantity.value))
+                    # 单位 / 含量列内容居中（数值口径列与主表格埋深 / 数量同款）
+                    unit_item = QTableWidgetItem(quantity.unit)
+                    unit_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    self._qty_table.setItem(index, 2, unit_item)
+                    value_item = QTableWidgetItem(quantity.value)
+                    value_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    self._qty_table.setItem(index, 3, value_item)
                     self._qty_buttons.add_row_button(index)
             else:
                 self._qty_table.setRowCount(0)

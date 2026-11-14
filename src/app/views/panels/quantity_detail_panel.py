@@ -70,6 +70,8 @@ from app.services.summary import (
 #: 列表详情面板定额 / 清单工程量 tab 首列一致，单价列交互同综合单价汇总表）
 _HEADERS = ["编号", "类别", "名称", "单位", "数量", "单价", "合价"]
 _COL_NO, _COL_CAT, _COL_NAME, _COL_UNIT, _COL_AMOUNT, _COL_PRICE, _COL_TOTAL = range(7)
+#: 数值口径列（单位 / 数量 / 单价 / 合价）内容居中显示
+_CENTERED_COLUMNS = (_COL_UNIT, _COL_AMOUNT, _COL_PRICE, _COL_TOTAL)
 _WIDTHS = (77, *(width * 8 for width in _QUOTA_WIDTHS[:4]), 110, 140)
 
 #: 清单项目行标识（存首列条目，委托据此整行画浅蓝底）
@@ -418,6 +420,9 @@ class QuantityDetailPanel(QWidget):
             )
             for column, text in enumerate(texts):
                 item = QTableWidgetItem(text)
+                if column in _CENTERED_COLUMNS:
+                    # 单位 / 数量 / 单价 / 合价列内容居中
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 if column == _COL_PRICE and row.price_key is not None:
                     item.setData(_PRICE_KEY_ROLE, row.price_key)
                 else:

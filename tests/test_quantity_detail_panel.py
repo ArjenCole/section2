@@ -69,6 +69,24 @@ def test_toggle_button_only_on_listing_tab(qapp, tmp_path) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 数值列居中
+# --------------------------------------------------------------------------- #
+def test_numeric_columns_centered(qapp, tmp_path) -> None:
+    """单位 / 数量 / 单价 / 合价列内容居中（编号 / 类别 / 名称列保持默认左对齐）。"""
+    from PySide6.QtCore import Qt
+
+    panel = _make_panel(_unit_with_two_elements(tmp_path), qapp)
+    for table in (panel._quota_table, panel._listing_table):
+        for row in range(table.rowCount()):
+            for column, centered in enumerate((False, False, False, True, True, True, True)):
+                item = table.item(row, column)
+                assert item is not None
+                assert bool(item.textAlignment() & Qt.AlignmentFlag.AlignHCenter) == centered, (
+                    f"table={table} row={row} column={column}"
+                )
+
+
+# --------------------------------------------------------------------------- #
 # 复制当前表格
 # --------------------------------------------------------------------------- #
 def test_copy_current_table_to_clipboard(qapp, tmp_path) -> None:

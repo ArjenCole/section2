@@ -498,7 +498,10 @@ def test_main_table_spec_unit_editable_for_structure_only(qapp, project):
 
 
 def test_qty_tab_header_amount_column(qapp, project):
-    """详情面板「工程量」页：值列表头为「含量」（工程量 = 数量 × 含量）。"""
+    """详情面板「工程量」页：值列表头为「含量」（工程量 = 数量 × 含量）；
+    单位 / 含量列内容居中（类别 / 项目列保持默认左对齐）。"""
+    from PySide6.QtCore import Qt
+
     from app.core.models.models import CATEGORY_STRUCTURE
     from app.services import project_io
     from app.viewmodels import unit_vm
@@ -511,11 +514,19 @@ def test_qty_tab_header_amount_column(qapp, project):
     try:
         panel._show_unit(unit.id)
         qapp.processEvents()
+        table = panel._qty_table
         headers = [
-            panel._qty_table.horizontalHeaderItem(column).text()
-            for column in range(panel._qty_table.columnCount())
+            table.horizontalHeaderItem(column).text()
+            for column in range(table.columnCount())
         ]
         assert headers == ["类别", "项目", "单位", "含量", ""]
+        for row in range(table.rowCount()):
+            for column, centered in enumerate((False, False, True, True)):
+                item = table.item(row, column)
+                assert item is not None
+                assert bool(item.textAlignment() & Qt.AlignmentFlag.AlignHCenter) == centered, (
+                    f"row={row} column={column}"
+                )
     finally:
         panel.close()
 
