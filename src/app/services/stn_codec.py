@@ -119,12 +119,126 @@ _LEGACY_PE_KEYS = (
 # --------------------------------------------------------------------------- #
 # 导出：数据库 → JSON
 # --------------------------------------------------------------------------- #
+#: 慢路径全量装填后钉住的顶层实体列表（见 dump_database 的快慢双路径）。
+#: SQLAlchemy 身份映射对持久对象是**弱引用**：没有任何外部引用的行会被
+#: 回收出映射（实测 251 条构件的工程，commit 后映射里只剩被组员关系牵着
+#: 的 32 条）——快路径因此不能遍历身份映射，改为遍历这里钉住的会话对象。
+#: 钉住整棵树（顶层列表 → 集合 → 子行）还有第二个作用：此后任何查询都
+#: 命中身份映射、复用同一批 Python 对象，内存集合与库内实况才可能有
+#: "纯属性修改不碰集合"这条不变式。
+_keepalive: list = []
+
+
 def dump_database() -> dict:
-    """把当前打开的工程整体导出成 JSON 数据体（调用前先 orm.commit()）。"""
+    """把当前打开的工程整体导出成 JSON 数据体（调用前先 orm.commit()）。
+
+    快慢双路径（打标见 base.COLLECTION_DIRTY_KEY 的 before_flush）：
+
+    * **慢路径**：本轮 flush 增删过行 / 改过外键（个别写法仍绕开集合直接按
+      外键插子行，如 unit_vm.create_pipe / create_param），relationship 集合
+      可能与库内实况脱节：expire_all 全部过期 + selectinload 全表重读
+      （expire_on_commit=False 下 selectinload 对已加载集合不会重查，必须先
+      expire 才能真正刷新）。装填结果钉进 :data:`_keepalive`。
+    * **快路径**：本轮 flush 纯属性修改（改埋深 / 名称 / 参数值——绝大多数
+      编辑）不碰集合，直接遍历 :data:`_keepalive` 钉住的内存对象导出，**不发
+      任何查询**。commit 每次编辑都 dump 一遍，这条路把单次导出从 ~45ms
+      压到 ~2ms，是"改一格就整库导出"能成立的关键。
+
+    会话里还有未 flush 的修改时先显式 flush：让 before_flush 先打上标，
+    否则快慢路径判断发生在打标之前，可能导出陈旧集合。
+    """
     session = orm.session()
-    # expire_on_commit=False 会让已加载的 relationship 集合变陈旧（绕开集合、
-    # 直接按外键插入的子行不在里面），导出前全部过期重读，保证按库内实况导出
+    if session.new or session.dirty or session.deleted:
+        session.flush()
+    if session.info.pop(orm.COLLECTION_DIRTY_KEY, False) or not _keepalive:
+        return _dump_slow(session)
+    return _dump_keepalive(session)
+
+
+def _dump_slow(session) -> dict:
+    """全量过期重读 + selectinload 装填（打开工程 / 撤销重建 / 增删行后的 dump）。"""
     session.expire_all()
+    enclosures = _ordered(
+        session,
+        PcpEnclosure,
+        selectinload(PcpEnclosure.works)
+        .selectinload(EnclosureWork.levels)
+        .selectinload(EnclosureLevel.components)
+        .selectinload(Component.params),
+        selectinload(PcpEnclosure.works)
+        .selectinload(EnclosureWork.waterstops)
+        .selectinload(Component.params),
+    )
+    foundations = _ordered(
+        session,
+        PcpFoundation,
+        selectinload(PcpFoundation.cushions),
+        selectinload(PcpFoundation.replacements),
+        selectinload(PcpFoundation.components).selectinload(Component.params),
+    )
+    precipitations = _ordered(session, PcpPrecipitation)
+    widths = _ordered(session, PcpWidth, selectinload(PcpWidth.items))
+    segments = _ordered(
+        session,
+        Segment,
+        selectinload(Segment.units).selectinload(Unit.elements).selectinload(Element.pipes),
+        selectinload(Segment.units).selectinload(Unit.elements).selectinload(Element.params),
+        selectinload(Segment.units)
+        .selectinload(Unit.elements)
+        .selectinload(Element.atlas_candidates),
+        selectinload(Segment.units)
+        .selectinload(Unit.elements)
+        .selectinload(Element.quantities),
+        selectinload(Segment.units).selectinload(Unit.groups),
+    )
+    prices = list(session.query(Price).order_by(Price.id))
+    # 钉住本次装填的对象树，替换掉上一个会话 / 上一轮的引用
+    _keepalive.clear()
+    _keepalive.extend((enclosures, foundations, precipitations, widths, segments, prices))
+    return _dump_document(
+        session,
+        enclosures=enclosures,
+        foundations=foundations,
+        precipitations=precipitations,
+        widths=widths,
+        segments=segments,
+        prices=prices,
+    )
+
+
+def _dump_keepalive(session) -> dict:
+    """快路径导出：遍历钉住的内存对象，不发查询。
+
+    前提见 dump_database：最近一次慢路径 dump 已把全部业务行连同集合装进
+    会话并钉住，此后没有增删行 / 外键变更——内存集合即库内实况，属性修改
+    直接反映在这些对象上。顶层列表（原则 / 标段 / 单价）按 (order_no, id)
+    排序与慢路径同口径；下级（单位工程 / 构件 / 管材…）的排序由 _dump_*
+    内部完成（同样基于集合）。
+    """
+    enclosures, foundations, precipitations, widths, segments, prices = _keepalive
+    by_order = lambda item: (item.order_no, item.id)
+    return _dump_document(
+        session,
+        enclosures=sorted(enclosures, key=by_order),
+        foundations=sorted(foundations, key=by_order),
+        precipitations=sorted(precipitations, key=by_order),
+        widths=sorted(widths, key=by_order),
+        segments=sorted(segments, key=by_order),
+        prices=sorted(prices, key=lambda item: item.id),
+    )
+
+
+def _dump_document(
+    session,
+    *,
+    enclosures: list,
+    foundations: list,
+    precipitations: list,
+    widths: list,
+    segments: list,
+    prices: list,
+) -> dict:
+    """由给定的顶层实体列表拼出 JSON 数据体（查询 / 身份映射两路径共用）。"""
     info = session.get(BasicInfo, 1)
     return {
         "format": "Section2",
@@ -139,59 +253,15 @@ def dump_database() -> dict:
             "atlas_name": (info.atlas_name or "") if info else "",
         },
         "principles": {
-            "enclosures": [
-                _dump_enclosure(item)
-                for item in _ordered(
-                    session,
-                    PcpEnclosure,
-                    selectinload(PcpEnclosure.works)
-                    .selectinload(EnclosureWork.levels)
-                    .selectinload(EnclosureLevel.components)
-                    .selectinload(Component.params),
-                    selectinload(PcpEnclosure.works)
-                    .selectinload(EnclosureWork.waterstops)
-                    .selectinload(Component.params),
-                )
-            ],
-            "foundations": [
-                _dump_foundation(item)
-                for item in _ordered(
-                    session,
-                    PcpFoundation,
-                    selectinload(PcpFoundation.cushions),
-                    selectinload(PcpFoundation.replacements),
-                    selectinload(PcpFoundation.components).selectinload(Component.params),
-                )
-            ],
-            "precipitations": [
-                _dump_precipitation(item) for item in _ordered(session, PcpPrecipitation)
-            ],
-            "widths": [
-                _dump_width(item)
-                for item in _ordered(
-                    session, PcpWidth, selectinload(PcpWidth.items)
-                )
-            ],
+            "enclosures": [_dump_enclosure(item) for item in enclosures],
+            "foundations": [_dump_foundation(item) for item in foundations],
+            "precipitations": [_dump_precipitation(item) for item in precipitations],
+            "widths": [_dump_width(item) for item in widths],
         },
-        "segments": [
-            _dump_segment(item)
-            for item in _ordered(
-                session,
-                Segment,
-                selectinload(Segment.units).selectinload(Unit.elements).selectinload(Element.pipes),
-                selectinload(Segment.units).selectinload(Unit.elements).selectinload(Element.params),
-                selectinload(Segment.units)
-                .selectinload(Unit.elements)
-                .selectinload(Element.atlas_candidates),
-                selectinload(Segment.units)
-                .selectinload(Unit.elements)
-                .selectinload(Element.quantities),
-                selectinload(Segment.units).selectinload(Unit.groups),
-            )
-        ],
+        "segments": [_dump_segment(item) for item in segments],
         "prices": [
             {"key": item.key or "", "value": float(item.value or 0.0)}
-            for item in session.query(Price).order_by(Price.id)
+            for item in prices
         ],
     }
 
@@ -199,8 +269,8 @@ def dump_database() -> dict:
 def _ordered(session, model, *options) -> list:
     """按界面语义排序取全表（order_no 优先，同号按 id 稳定）。
 
-    ``options`` 用于 selectinload 关系：dump_database 先 expire_all，
-    不批量预载时每个 relationship 都会各发一条 SQL（工程大时提交会明显卡顿）。
+    ``options`` 用于 selectinload 关系：慢路径先 expire_all，不批量预载时
+    每个 relationship 都会各发一条 SQL（工程大时提交会明显卡顿）。
     """
     query = select(model).options(*options).order_by(model.order_no, model.id)
     return list(session.scalars(query))
@@ -402,6 +472,8 @@ def _dump_element(element: Element, group_index: int | None = None) -> dict:
 # --------------------------------------------------------------------------- #
 def load_database(data: dict) -> None:
     """把 JSON 数据体写进当前打开的空工作库并提交。"""
+    global _keepalive
+    _keepalive = []  # 新会话：旧工程钉住的对象树全部作废（首次 dump 走慢路径重建）
     session = orm.session()
 
     info = data.get("basic_info") or {}
@@ -484,10 +556,12 @@ def load_database(data: dict) -> None:
     for price in data.get("prices") or []:
         session.add(Price(key=price.get("key") or "", value=float(price.get("value") or 0.0)))
 
-    if data.get("created_at"):
-        orm.set_meta("created_at", str(data["created_at"]))
-    if data.get("saved_at"):
-        orm.set_meta("updated_at", str(data["saved_at"]))
+    # meta 写入不触发 autoflush：全库插入留给 orm.commit 一次 flush 完成
+    with session.no_autoflush:
+        if data.get("created_at"):
+            orm.set_meta("created_at", str(data["created_at"]))
+        if data.get("saved_at"):
+            orm.set_meta("updated_at", str(data["saved_at"]))
     orm.commit()
 
 
@@ -545,32 +619,31 @@ def _attach_component(parent, component: Component) -> None:
 
 
 def _load_enclosure(session, data: dict, *, order_no: int) -> None:
-    """围护原则：v10 起只剩名称与做法；旧 payload 里的挖填/基础字段一律忽略。"""
+    """围护原则：v10 起只剩名称与做法；旧 payload 里的挖填/基础字段一律忽略。
+
+    子行一律经 relationship 集合追加（append 而非外键直插）：外键由
+    flush 时按集合关系回填，全库插入由收尾的 orm.commit 一次 flush 完成。
+    """
     enclosure = PcpEnclosure(
         name=data.get("name") or "新围护原则",
         order_no=order_no,
     )
     session.add(enclosure)
-    session.flush()
     for work_index, work_data in enumerate(data.get("works") or []):
         work = EnclosureWork(
-            enclosure_id=enclosure.id,
             min_depth=float(work_data.get("min_depth") or 0.0),
             cpnt_cat=work_data.get("cpnt_cat") or "",
             order_no=work_index,
         )
-        session.add(work)
-        session.flush()
+        enclosure.works.append(work)
         for level_index, level_data in enumerate(work_data.get("levels") or []):
             level = EnclosureLevel(
-                work_id=work.id,
                 name=level_data.get("name") or "",
                 h=float(level_data.get("h") or 0.0),
                 step_width=float(level_data.get("step_width") or 0.0),
                 order_no=level_index,
             )
-            session.add(level)
-            session.flush()
+            work.levels.append(level)
             _load_component(level, level_data.get("component"))
         _load_component(work, work_data.get("waterstop"))
 
@@ -617,22 +690,19 @@ def _load_foundation(session, data: dict, *, order_no: int, legacy_pe: dict | No
         found_angle=int(data.get("found_angle") or legacy_pe.get("found_angle") or 120),
     )
     session.add(foundation)
-    session.flush()
     for cushion_index, cushion in enumerate(
         data.get("cushions", legacy_pe.get("cushions")) or []
     ):
-        session.add(
+        foundation.cushions.append(
             FoundationCushion(
-                foundation_id=foundation.id,
                 name=cushion.get("name") or "中粗砂",
                 h=float(cushion.get("h") or 0.0),
                 order_no=cushion_index,
             )
         )
     for replace_index, replacement in enumerate(data.get("replacements") or []):
-        session.add(
+        foundation.replacements.append(
             FoundationReplacement(
-                foundation_id=foundation.id,
                 name=replacement.get("name") or "中粗砂",
                 h=float(replacement.get("h") or 0.0),
                 order_no=replace_index,
@@ -648,7 +718,6 @@ def _load_width(session, data: dict, *, order_no: int) -> None:
         order_no=order_no,
     )
     session.add(width)
-    session.flush()
     tables = data.get("tables") or {}
     row_no = 0
     for kind in ("work", "groove_b"):
@@ -658,9 +727,8 @@ def _load_width(session, data: dict, *, order_no: int) -> None:
                     dn = int(dn_text)
                 except (TypeError, ValueError):
                     continue
-                session.add(
+                width.items.append(
                     WidthItem(
-                        width_id=width.id,
                         pipe_type=pipe_type,
                         dn=dn,
                         width=float(value or 0.0),

@@ -115,6 +115,18 @@ _last_migration_notice = ""
 # （brackets2 reload_from_doc(snapshot=False) 的同款语义）
 _restoring_snapshot = False
 
+# 落盘防抖窗口（毫秒）：窗口内的连续提交只写一次 `.stn`。撤销快照仍每次
+# commit 即时入栈（内存操作），延后的只是文件写入——崩溃最多丢窗口内最后
+# 几百毫秒的文件落盘，工作库与 Backup 机制兜底。
+_DEFERRED_FLUSH_MS = 400
+# 主窗体注入的防抖调度器：scheduler(callback) 在窗口后执行一次 callback，
+# 连续提交时重置计时。None = 同步写（headless / 测试保持原语义，见
+# set_flush_scheduler）。
+_flush_scheduler = None
+# 防抖窗口内待写出的整库 JSON（最近一次 commit 的导出结果；内容永远比
+# 磁盘文件新——任何更新的 commit 都会覆盖它）
+_write_pending: dict | None = None
+
 
 # --------------------------------------------------------------------------- #
 # 路径与锁
@@ -388,6 +400,7 @@ def save() -> Path | None:
         return None
     orm.commit()
     _write_project_file()
+    _discard_pending_write()  # 刚写出的就是最新内容，防抖挂起不再需要
     create_backup()
     _backup_done_for_session = True
     return _original_path
@@ -411,6 +424,7 @@ def save_as(path: str | Path) -> Path:
     _reject_foreign_lock(target)
 
     orm.commit()  # 先落盘，保证写出的是最新内容
+    _discard_pending_write()  # 挂起内容属于旧路径，另存后由下次 commit 重新挂起
     target.parent.mkdir(parents=True, exist_ok=True)
     _write_project_file(target)
     release_lock(old_path)
@@ -420,8 +434,17 @@ def save_as(path: str | Path) -> Path:
     return target
 
 
+def _discard_pending_write() -> None:
+    """丢弃防抖挂起的写出内容（显式保存 / 另存为刚写过，挂起已过期）。"""
+    global _write_pending
+    _write_pending = None
+
+
 def close_project() -> Path | None:
-    """关闭工程：落盘 → 关会话（删除临时工作库）→ 释放锁；转译提示一并清空。"""
+    """关闭工程：落盘 → 关会话（删除临时工作库）→ 释放锁；转译提示一并清空。
+
+    防抖窗口内挂起的写出在关闭前立即落盘，不会丢在窗口里。
+    """
     global _original_path, _backup_done_for_session, _last_migration_notice
 
     ensure_main_thread("关闭工程")
@@ -430,9 +453,11 @@ def close_project() -> Path | None:
         _original_path = None
         _backup_done_for_session = False
         _last_migration_notice = ""
+        _discard_pending_write()
         undo_stack.clear()
         return None
     try:
+        flush_pending_write()  # 挂起的修改先落盘（写失败则工程保持打开）
         orm.commit()
     finally:
         orm.close_database()
@@ -449,29 +474,88 @@ def commit() -> None:
     """一次修改落盘（自动保存）；本次打开后的第一次修改会顺手备份一份。
 
     业务侧的所有修改都汇聚到本函数，因此这里同时是撤销快照的唯一入口：
-    整库导出一份 JSON，既写出 `.stn` 又压进撤销栈（brackets2 的快照式
-    撤销，见 services.undo）。撤销 / 重做恢复期间（``_restoring_snapshot``）
-    不记录。
-    """
-    global _backup_done_for_session
+    整库导出一份 JSON，既压进撤销栈又供 `.stn` 写出复用（不导出两遍）。
+    撤销 / 重做恢复期间（``_restoring_snapshot``）不记录。
 
+    文件写出默认经防抖调度器延后合并（见 :func:`set_flush_scheduler`）：
+    连续录数不再每格写一次全文件；未注入调度器（headless / 测试）时保持
+    同步写。
+    """
     ensure_main_thread("保存工程数据")
     if not orm.is_open():
         return
-    session = orm.session()
     orm.commit()
     # before_flush 勾出的“原则 / 面宽变化”标记：提交成功后再清计算缓存。
     # 普通构件编辑（埋深 / 数量）不打标，连续点击仍复用原则名称与面宽表缓存。
+    _clear_calc_cache_if_dirty()
+    _finish_commit(stn_codec.dump_database())
+
+
+def _clear_calc_cache_if_dirty() -> None:
+    """before_flush 打了“原则 / 面宽变化”标时清计算缓存（commit / 撤销共用）。"""
+    if not orm.is_open():
+        return
+    session = orm.session()
     if session.info.pop(orm.CALC_CACHE_DIRTY_KEY, False):
         from app.core.calc.engine import clear_calculation_caches
 
         clear_calculation_caches(session)
-    data = stn_codec.dump_database()
+
+
+def _finish_commit(data: dict) -> None:
+    """commit 的后半段：撤销快照入栈 + `.stn` 写出（同步或防抖）+ 首改备份。
+
+    撤销 / 重做（:func:`restore_snapshot`）复用：恢复期间抑制快照记录，
+    且直接复用恢复用的 JSON，不再整库重复导出一遍。
+    """
+    global _write_pending
+
     if not _restoring_snapshot:
         undo_stack.record(data)
     if _original_path is None:
         return  # 临时工程没有正式文件，写出留到首次另存为
-    _write_project_file(data=data)
+    if _flush_scheduler is None:
+        _write_project_file(data=data)
+        _backup_after_write()
+        return
+    # 防抖：挂起最新导出并安排一次写出；窗口内再次 commit 会覆盖挂起内容
+    # 并重置计时（调度器实现方负责），最终只有最新一份落盘。
+    _write_pending = data
+    _flush_scheduler(flush_pending_write)
+
+
+def set_flush_scheduler(scheduler) -> None:
+    """注入落盘防抖调度器（主窗体启动时用 QTimer 调用）；None 恢复同步写。
+
+    ``scheduler(callback)`` 应安排 callback 在 ``_DEFERRED_FLUSH_MS`` 后执行
+    一次，窗口内的重复调用重置计时；callback 幂等，执行时已无挂起内容则
+    直接返回（例如窗口期间已显式保存）。
+    """
+    global _flush_scheduler
+    _flush_scheduler = scheduler
+
+
+def flush_pending_write() -> None:
+    """立即写出防抖窗口内挂起的工程文件（关闭工程 / 另存为 / 退出前调用）。
+
+    无挂起内容时空操作；写出失败异常原样抛出（与同步写同语义）。
+    """
+    global _write_pending
+    data, _write_pending = _write_pending, None
+    if data is None:
+        return
+    if _original_path is not None:
+        _write_project_file(data=data)
+        _backup_after_write()
+
+
+def _backup_after_write() -> None:
+    """本次打开后的第一次写出（自动保存或显式保存都算）后备份一份。
+
+    与写盘动作绑定：防抖模式下备份跟随真正的落盘时机，内容语义与同步
+    写完全一致（备份 = 刚写出的工程状态）。
+    """
+    global _backup_done_for_session
     if not _backup_done_for_session:
         create_backup()
         _backup_done_for_session = True
@@ -480,9 +564,10 @@ def commit() -> None:
 def restore_snapshot(data: dict) -> None:
     """撤销 / 重做：用快照 JSON 重建临时工作库（工程路径与锁保持不变）。
 
-    恢复本身也是一次内容变更：重建后经 :func:`commit` 落盘（自动保存语义
-    不变），期间 ``_restoring_snapshot`` 抑制撤销栈记录；界面刷新由调用方
-    通过 EventBus 广播。失败时关闭工程并抛出（转 ProjectIoError）。
+    恢复本身也是一次内容变更：重建后经 :func:`_finish_commit` 落盘（自动
+    保存语义不变，防抖同样生效），期间 ``_restoring_snapshot`` 抑制撤销栈
+    记录；界面刷新由调用方通过 EventBus 广播。失败时关闭工程并抛出
+    （转 ProjectIoError）。
     """
     global _restoring_snapshot
 
@@ -491,7 +576,10 @@ def restore_snapshot(data: dict) -> None:
     try:
         orm.create_working_database()
         stn_codec.load_database(data)
-        commit()
+        # load_database 内部已 orm.commit 落库（updated_at 一并刷新），这里
+        # 只需清计算缓存并落盘；复用恢复用的 JSON，不再整库重复导出一遍。
+        _clear_calc_cache_if_dirty()
+        _finish_commit(data)
     except Exception as error:
         orm.close_database()
         undo_stack.clear()

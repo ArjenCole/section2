@@ -46,7 +46,7 @@ def test_connect_weak_keeps_receiver_collectable(qapp) -> None:
     del receiver
     gc.collect()
     assert reference() is None, "connect_weak 仍在强引用接收者"
-    signal_bus.unit_changed.emit(1)  # 不抛异常即可
+    signal_bus.unit_changed.emit(1, None)  # 不抛异常即可
 
 
 def test_connect_weak_survives_destroyed_widget(qapp) -> None:

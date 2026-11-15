@@ -68,8 +68,12 @@ def write_stn(path: str | Path, data: dict, *, header_version: str = HEADER_VERS
     ``data`` 里需带 ``basic_info``（工程名等镜像到 1.0 风格的头部）。
     信封手工拼装：ElementTree 不支持 CDATA，且头部形状固定，拼接比
     逐节点构建再序列化更直观。
+
+    数据体用紧凑 JSON（无缩进）：commit 每次编辑都整文件重写，缩进版体积
+    大 2.5 倍、序列化耗时也成倍涨（561KB → 226KB），读取端 json.loads 对
+    两者无差别。
     """
-    body = json.dumps(data, ensure_ascii=False, indent=2)
+    body = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     # CDATA 里不允许出现 "]]>"：JSON 里 > 只可能出现在字符串字面量内，把 > 转成
     # \u003e 转义（解码后仍是 >），保证信封是合法 XML
     body = body.replace("]]>", "]]\\u003e")

@@ -860,6 +860,9 @@ class MainWindow(QMainWindow):
         # 撤销快照的界面状态由主窗体提供，栈变化后刷新按钮可用态（brackets2 同款注入）
         undo_stack.set_ui_provider(self._capture_ui_state)
         undo_stack.set_listener(self._update_undo_actions)
+        # commit 的 .stn 落盘防抖：连续编辑（回车跳行录数）窗口内只写一次文件。
+        # 挂起的写出在关闭工程 / 另存为 / 退出前由 project_io 主动落盘兜底。
+        self._install_deferred_save()
         # commit 时刻界面还没按新数据刷新（unit_changed → QTimer 延后重装表格），
         # 广播落定后再回填栈顶快照的界面状态，撤销/重做恢复的选中才与用户所见一致
         for signal in (
@@ -1214,6 +1217,36 @@ class MainWindow(QMainWindow):
         bus().project_closed.emit()
 
     # ------------------------------------------------------------------ 撤销 / 重做
+    def _install_deferred_save(self) -> None:
+        """给 project_io 注入 `.stn` 落盘防抖调度器（QTimer 单次触发）。
+
+        连续 commit 时反复重启计时（窗口 = project_io._DEFERRED_FLUSH_MS），
+        归零后执行挂起的写出；期间显式保存会把挂起清掉，回调空跑一次无害。
+        """
+        self._deferred_save_timer = QTimer(self)
+        self._deferred_save_timer.setSingleShot(True)
+        self._deferred_save_timer.setInterval(project_io._DEFERRED_FLUSH_MS)
+        self._deferred_save_timer.timeout.connect(project_io.flush_pending_write)
+        project_io.set_flush_scheduler(self._schedule_deferred_save)
+
+    def _schedule_deferred_save(self, _callback) -> None:
+        """防抖调度入口（project_io 每次带挂起内容的 commit 调用）：重置计时。
+
+        回调固定是 project_io.flush_pending_write（timeout 信号已直连）。
+        窗口销毁后底层 QTimer 已删除（测试里建窗又关窗的场景）：退回同步
+        落盘，挂起内容不丢。
+        """
+        timer = self._deferred_save_timer
+        try:
+            import shiboken6
+
+            if not shiboken6.isValid(timer):
+                project_io.flush_pending_write()
+                return
+        except Exception:  # noqa: BLE001 - shiboken 不可用时照常走定时器
+            pass
+        timer.start()
+
     def _capture_ui_state(self) -> dict:
         """撤销快照携带的界面状态：树选中位置 + 工作台焦点（brackets2 同款）。"""
         return {
@@ -1438,4 +1471,6 @@ class MainWindow(QMainWindow):
             project_io.close_project()
         except Exception as error:  # pragma: no cover - 退出路径不阻塞
             self._set_status(f"关闭工程时出错：{error}", 5000)
+        # 撤销防抖调度器：窗口销毁后 QTimer 随之删除，恢复同步写避免悬空调用
+        project_io.set_flush_scheduler(None)
         super().closeEvent(event)

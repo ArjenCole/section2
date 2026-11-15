@@ -34,7 +34,11 @@ class EventBus(QObject):
     # --- 数据结构 ---
     tree_structure_changed = Signal()  # 标段/单位工程增删改
     node_selected = Signal(object)  # viewmodels.project_vm.TreeNode | None
-    unit_changed = Signal(int)  # 单位工程 id：构件/管道/参数变更
+    #: 单位工程 id + 受影响构件 id 列表：构件/管道/参数变更。
+    #: 载荷为 ``list[int] | None``——热路径（改埋深/名称/参数值）带上被改的
+    #: 构件 id，界面按行局部刷新；结构性操作（增删/移动/编组）传 None，界面
+    #: 整表重装。订阅方必须兼容 None（= 放弃局部化、全量刷新）。
+    unit_changed = Signal(int, object)
     #: 新增构件获得焦点（单位工程 id, 构件 id）：面板选中新行，撤销/重做恢复的
     #: 选中也随之落在每一步新增的条目上
     element_focused = Signal(int, int)

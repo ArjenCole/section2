@@ -1006,8 +1006,12 @@ class UnitPanel(QWidget):
         self._vm.load_unit(unit_id)
 
     # ------------------------------------------------------------------ 构件表
-    def _on_unit_loaded(self, unit_id: int, rows: list[ElementRow]) -> None:
+    def _on_unit_loaded(self, unit_id: int, rows: list[ElementRow] | None, changed_ids: list[int] | None) -> None:
         if unit_id != self._unit_id:
+            return
+        if rows is None:
+            # 局部刷新：unit_changed 带了受影响构件 id（热路径，如改埋深/名称）
+            self._partial_reload(changed_ids or [])
             return
         keep_element = self._current_element_id()
         keep_group = self._group_id_at(self._element_table.currentRow())
@@ -1063,6 +1067,61 @@ class UnitPanel(QWidget):
             return
         self._refresh_grouped_lr_tab()
         self._refresh_section_for(self._current_element_id())
+
+    def _partial_reload(self, element_ids: list[int]) -> None:
+        """按受影响构件 id 局部刷新主表格行（热路径：改埋深 / 名称 / 参数值）。
+
+        行序不变、不整表重装：只重填受影响行与它们所在的合槽父行，再同步
+        明细 / 工程量 / 断面。任何受影响行定位失败（构件不存在 / 行不在表上）
+        就回落整表重装——AI / MCP 批量操作与竞态下宁可全刷也不漏刷。
+        """
+        from app.viewmodels.unit_vm import element_row, group_row_for
+
+        fresh: dict[int, ElementRow] = {}
+        for element_id in element_ids:
+            row_data = element_row(element_id)
+            if row_data is None or self._row_of_element(element_id) is None:
+                self.refresh()  # 回落整表重装
+                return
+            fresh[element_id] = row_data
+        group_ids = {row.group_id for row in fresh.values() if row.group_id is not None}
+        group_rows: dict[int, GroupRow] = {}
+        for group_id in group_ids:
+            grow = group_row_for(group_id)
+            if grow is None or self._row_of_group(group_id) is None:
+                self.refresh()
+                return
+            group_rows[group_id] = grow
+        name_rows = self._rows_cache  # 下拉项兜底按全表行算（含未受影响的行）
+        enclosure_names = _combo_names(project_io.enclosure_names(), name_rows, "pe_name")
+        foundation_names = _combo_names(project_io.foundation_names(), name_rows, "pf_name")
+        precipitation_names = _combo_names(project_io.precipitation_names(), name_rows, "pp_name")
+        width_names = _combo_names(project_io.width_names(), name_rows, "pw_name")
+        self._loading = True
+        try:
+            for element_id, row_data in fresh.items():
+                index = self._row_of_element(element_id)
+                self._rows_cache[index] = row_data
+                self._fill_element_row(
+                    index,
+                    row_data,
+                    enclosure_names,
+                    foundation_names,
+                    precipitation_names,
+                    width_names,
+                    reuse_combos=True,
+                )
+            for group_id, grow in group_rows.items():
+                index = self._row_of_group(group_id)
+                self._rows_cache[index] = grow
+                self._fill_group_row(index, grow, reuse_combos=True)
+        finally:
+            self._loading = False
+        # 与整表重装同口径：明细 / 工程量 / 断面按当前选中重算（VM 已按新
+        # 数据补发 detail_loaded，这里只负责工程量与断面）
+        self._sync_detail_to_selection()
+        if self._group_id_at(self._element_table.currentRow()) is None:
+            self._refresh_section_for(self._current_element_id())
 
     def _refresh_grouped_lr_tab(self) -> None:
         """埋深变化后刷新合槽子节点的「围护原则」tab 左右侧可编辑状态。
@@ -1356,6 +1415,48 @@ class UnitPanel(QWidget):
         dialog = ExpressionDetailDialog(self, quantity, context)
         dialog.exec()
 
+    def _combo_for(
+        self,
+        index: int,
+        column: int,
+        key: tuple,
+        options: list[str],
+        current: str,
+        on_change,
+        *,
+        reuse: bool,
+    ) -> QComboBox:
+        """取该格的原则 / 口径下拉：局部刷新时优先原地复用（第三档性能项）。
+
+        整表重装（reuse=False）沿用旧行为——每次新建（_clear_cell_widgets 已把
+        旧控件清掉）。局部刷新（reuse=True）时行序不变，先看本格现有下拉：
+        选项一致就原地复用并只更新当前值——正在交互的下拉（改围护原则弹出
+        的列表）不会被销毁；选项变了（原则库增删/改名）才重建。重建前显式
+        removeCellWidget + deleteLater 旧控件（setCellWidget 只隐藏被替换的
+        控件，不删）。
+        """
+        table = self._element_table
+        combo: QComboBox | None = None
+        in_place = table.cellWidget(index, column)
+        if reuse and isinstance(in_place, QComboBox) and getattr(in_place, "_combo_options", None) == options:
+            combo = in_place
+        elif in_place is not None:
+            in_place.blockSignals(True)
+            table.removeCellWidget(index, column)
+            in_place.deleteLater()
+        if combo is None:
+            combo = QComboBox()
+            combo.addItems(options)
+            combo._combo_options = options
+            combo.currentTextChanged.connect(on_change)
+        combo.blockSignals(True)
+        if combo.currentText() != current:
+            combo.setCurrentText(current)
+        combo.blockSignals(False)
+        if combo is not in_place:
+            table.setCellWidget(index, column, combo)
+        return combo
+
     def _fill_element_row(
         self,
         index: int,
@@ -1364,9 +1465,10 @@ class UnitPanel(QWidget):
         foundation_names: list[str],
         precipitation_names: list[str],
         width_names: list[str],
+        reuse_combos: bool = False,
     ) -> None:
         if isinstance(row, GroupRow):
-            self._fill_group_row(index, row)
+            self._fill_group_row(index, row, reuse_combos=reuse_combos)
             return
         is_structure = row.category == CATEGORY_STRUCTURE
         name_item = QTableWidgetItem(row.name)
@@ -1431,47 +1533,56 @@ class UnitPanel(QWidget):
             )
             self._element_table.setItem(index, _COL_PE, pe_item)
         else:
-            pe_combo = QComboBox()
             # 普通构件：库原则 + 「左右分设」占位
-            pe_combo.addItems(enclosure_names + ([] if LR_PE_TEXT in enclosure_names else [LR_PE_TEXT]))
-            pe_combo.setCurrentText(row.pe_name)
-            pe_combo.currentTextChanged.connect(
+            pe_options = enclosure_names + ([] if LR_PE_TEXT in enclosure_names else [LR_PE_TEXT])
+            self._combo_for(
+                index,
+                _COL_PE,
+                ("pe", row.id),
+                pe_options,
+                row.pe_name,
                 lambda text, element_id=row.id: self._vm.set_element_field(
                     element_id, "pe_name", text
-                )
+                ),
+                reuse=reuse_combos,
             )
-            self._element_table.setCellWidget(index, _COL_PE, pe_combo)
 
-        pf_combo = QComboBox()
-        pf_combo.addItems(foundation_names)
-        pf_combo.setCurrentText(row.pf_name)
-        pf_combo.currentTextChanged.connect(
-            lambda text, element_id=row.id: self._vm.set_element_field(element_id, "pf_name", text)
+        self._combo_for(
+            index,
+            _COL_PF,
+            ("pf", row.id),
+            foundation_names,
+            row.pf_name,
+            lambda text, element_id=row.id: self._vm.set_element_field(element_id, "pf_name", text),
+            reuse=reuse_combos,
         )
-        self._element_table.setCellWidget(index, _COL_PF, pf_combo)
 
-        pp_combo = QComboBox()
-        pp_combo.addItems(precipitation_names)
-        pp_combo.setCurrentText(row.pp_name)
-        pp_combo.currentTextChanged.connect(
-            lambda text, element_id=row.id: self._vm.set_element_field(element_id, "pp_name", text)
+        self._combo_for(
+            index,
+            _COL_PP,
+            ("pp", row.id),
+            precipitation_names,
+            row.pp_name,
+            lambda text, element_id=row.id: self._vm.set_element_field(element_id, "pp_name", text),
+            reuse=reuse_combos,
         )
-        self._element_table.setCellWidget(index, _COL_PP, pp_combo)
 
-        pw_combo = QComboBox()
-        pw_combo.addItems(width_names)
-        pw_combo.setCurrentText(row.pw_name)
-        pw_combo.currentTextChanged.connect(
-            lambda text, element_id=row.id: self._vm.set_element_field(element_id, "pw_name", text)
+        self._combo_for(
+            index,
+            _COL_PW,
+            ("pw", row.id),
+            width_names,
+            row.pw_name,
+            lambda text, element_id=row.id: self._vm.set_element_field(element_id, "pw_name", text),
+            reuse=reuse_combos,
         )
-        self._element_table.setCellWidget(index, _COL_PW, pw_combo)
 
         source_item = QTableWidgetItem(row.source)
         source_item.setFlags(source_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         source_item.setForeground(QBrush(_secondary_color()))
         self._element_table.setItem(index, _COL_SOURCE, source_item)
 
-    def _fill_group_row(self, index: int, row: GroupRow) -> None:
+    def _fill_group_row(self, index: int, row: GroupRow, *, reuse_combos: bool = False) -> None:
         """合槽父节点行：名称 / 数量（L_组）可编辑；埋深恒 "-"、不参与计算。"""
         name_item = QTableWidgetItem(row.name)
         name_item.setData(_ELEMENT_ROLE, (_GROUP_ROLE_TAG, row.id))
@@ -1528,23 +1639,31 @@ class UnitPanel(QWidget):
             item.setToolTip(tooltip)
 
         group_id = row.id
-        fill_combo = QComboBox()
-        fill_combo.addItems(list(BACKFILL_MODES))
-        fill_combo.setCurrentText(row.backfill_mode)
+        fill_combo = self._combo_for(
+            index,
+            _COL_PP,
+            ("fill", group_id),
+            list(BACKFILL_MODES),
+            row.backfill_mode,
+            lambda text, group_id=group_id: update_group(group_id, backfill_mode=text),
+            reuse=reuse_combos,
+        )
         fill_combo.setToolTip(
             "合槽回填分层方式：\n"
             "· 独立回填标高——每条构件按自己的回填分层界面计算；\n"
             "· 统一回填标高——每条构件先各自算出每层顶标高，再逐层统筹，"
             "取组内最浅标高作为所有构件该层的界面（分层线贯通整槽）。"
         )
-        fill_combo.currentTextChanged.connect(
-            lambda text, group_id=group_id: update_group(group_id, backfill_mode=text)
-        )
-        self._element_table.setCellWidget(index, _COL_PP, fill_combo)
 
-        split_combo = QComboBox()
-        split_combo.addItems(list(SPLIT_MODES))
-        split_combo.setCurrentText(row.split_mode)
+        split_combo = self._combo_for(
+            index,
+            _COL_PW,
+            ("split", group_id),
+            list(SPLIT_MODES),
+            row.split_mode,
+            lambda text, group_id=group_id: update_group(group_id, split_mode=text),
+            reuse=reuse_combos,
+        )
         split_combo.setToolTip(
             "合槽断面划分方式：\n"
             "· 起坡点分隔——相邻构件以深侧起坡点为分界（深侧含放坡投影）；\n"
@@ -1554,10 +1673,6 @@ class UnitPanel(QWidget):
             "混凝土结构取结构本体共享侧最外侧边线）。"
             "后两种方式分界两侧工程量分别归属。"
         )
-        split_combo.currentTextChanged.connect(
-            lambda text, group_id=group_id: update_group(group_id, split_mode=text)
-        )
-        self._element_table.setCellWidget(index, _COL_PW, split_combo)
 
     def _on_group_toggle_requested(self, row_index: int) -> None:
         """点击合槽父行 +/- 方框：切换该组成员行的显示/隐藏（Quotor 组合定额同款）。"""
@@ -1995,6 +2110,24 @@ class UnitPanel(QWidget):
         data = item.data(_ELEMENT_ROLE)
         if isinstance(data, tuple) and data[0] == _GROUP_ROLE_TAG:
             return int(data[1])
+        return None
+
+    def _row_of_element(self, element_id: int) -> int | None:
+        """按构件 id 反查主表格行号（局部刷新用）；不在表上返回 None。"""
+        if element_id is None:
+            return None
+        for row in range(self._element_table.rowCount()):
+            if self._element_id_at(row) == element_id:
+                return row
+        return None
+
+    def _row_of_group(self, group_id: int) -> int | None:
+        """按合槽组 id 反查父节点行号（局部刷新用）；不在表上返回 None。"""
+        if group_id is None:
+            return None
+        for row in range(self._element_table.rowCount()):
+            if self._group_id_at(row) == group_id:
+                return row
         return None
 
     def _insertion_target(self) -> tuple[int | None, int | None]:

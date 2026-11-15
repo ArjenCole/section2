@@ -59,15 +59,38 @@ _CALC_CACHE_TABLES = frozenset(
 )
 CALC_CACHE_DIRTY_KEY = "section2_calc_cache_dirty"
 
+#: 本轮 flush 增删过行 / 改过外键时打标：relationship 集合可能已与库内实况
+#: 脱节，dump_database 据此决定是否全量过期重读（见 stn_codec.dump_database）。
+COLLECTION_DIRTY_KEY = "section2_collections_dirty"
+
 
 @event.listens_for(Session, "before_flush")
-def _mark_calc_cache_dirty(session, _flush_context, _instances):  # pragma: no cover
+def _mark_flush_dirty_flags(session, _flush_context, _instances):  # pragma: no cover
     changed = [*session.new, *session.dirty, *session.deleted]
     if any(
         getattr(getattr(item, "__table__", None), "name", None) in _CALC_CACHE_TABLES
         for item in changed
     ):
         session.info[CALC_CACHE_DIRTY_KEY] = True
+    # 集合陈旧打标：增删行（含绕开集合、直接按外键插入的写法）或改动外键
+    # 都会让已加载的 relationship 集合陈旧；纯属性修改（改埋深 / 名称 / 参数
+    # 值——绝大多数编辑）不碰集合，dump_database 可信任身份映射快路径导出。
+    if session.new or session.deleted or _fk_changed(session.dirty):
+        session.info[COLLECTION_DIRTY_KEY] = True
+
+
+def _fk_changed(dirty_objects) -> bool:
+    """dirty 对象里是否有外键列被改动（多对一指向父表的列变更 = 换了父集合）。"""
+    from sqlalchemy import inspect as orm_inspect
+
+    for item in dirty_objects:
+        state = orm_inspect(item)
+        for attr in state.mapper.column_attrs:
+            if not any(column.foreign_keys for column in attr.columns):
+                continue
+            if state.attrs[attr.key].history.has_changes():
+                return True
+    return False
 
 
 class ProjectFileError(RuntimeError):
@@ -197,12 +220,16 @@ def session() -> Session:
 
 
 def commit() -> None:
-    """落盘：commit + 刷新 meta.updated_at（“保存”与自动保存都走这里）。"""
+    """落盘：commit + 刷新 meta.updated_at（“保存”与自动保存都走这里）。
+
+    updated_at 与业务修改写进同一事务（原先分两次 commit，每次编辑都多一趟
+    BEGIN/COMMIT 往返；同一事务还保证时间戳与内容原子一致）。
+    """
     ensure_main_thread("保存工程数据")
     if _session is None:
         return
+    set_meta("updated_at", datetime.now().isoformat(timespec="seconds"))
     _session.commit()
-    set_meta("updated_at", datetime.now().isoformat(timespec="seconds"), commit_now=True)
 
 
 def get_meta(key: str, default: str = "") -> str:

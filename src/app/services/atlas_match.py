@@ -258,7 +258,7 @@ def match_for_foundation(foundation_name: str) -> int:
         project_io.commit()
         unit_ids = {element.unit_id for element in elements}
         for unit_id in unit_ids:
-            bus().unit_changed.emit(unit_id)
+            bus().unit_changed.emit(unit_id, None)  # 批量重匹配：整表重装
     return matched
 
 

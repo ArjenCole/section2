@@ -257,6 +257,32 @@ def table_rows(unit_id: int) -> list:
     return rows
 
 
+def element_row(element_id: int) -> ElementRow | None:
+    """单条构件的显示行（含规格与算式求值），主表格局部刷新用。"""
+    element = _element(element_id)
+    if element is None:
+        return None
+    row = _element_row(element)
+    row.spec = _element_spec(element)
+    return row
+
+
+def group_row_for(group_id: int) -> GroupRow | None:
+    """单个合槽组的父节点行，主表格局部刷新用。
+
+    组员行数据只用于父节点回退数量 / 成员计数，随组员集合现查现算。
+    """
+    group = orm.session().get(TrenchGroup, group_id) if project_io.is_open() else None
+    if group is None:
+        return None
+    member_rows: list[ElementRow] = []
+    for member in sorted(group.members, key=lambda item: (item.order_no, item.id)):
+        row = _element_row(member)
+        row.spec = _element_spec(member)
+        member_rows.append(row)
+    return _group_row(group_id, member_rows)
+
+
 def _group_row(group_id: int, members: list[ElementRow]) -> GroupRow:
     """父节点行：名称 + 数量（L_组）；埋深与原则不参与（显示 "-"）。"""
     group = orm.session().get(TrenchGroup, group_id)
@@ -300,13 +326,28 @@ def _group_amount(group: TrenchGroup | None) -> str:
 
 
 def _element_spec(element: Element) -> str:
-    """规格文本（旧版 Specification()）；不依赖原则，算不出就留空。"""
+    """规格文本（旧版 Specification()）；不依赖原则，算不出就留空。
+
+    按构件内容指纹缓存在实例上（类别 + 管材 + 参数行）：整表重装与计算行
+    都会对每条构件跑一遍 build_element_input（逐参数 simpleeval 求值），而
+    一次编辑只影响一条构件——其余行（绝大多数）直接取上次结果。
+    """
+    fingerprint = (
+        element.category,
+        tuple((pipe.mat, pipe.dn, pipe.content) for pipe in element.pipes),
+        tuple(sorted((param.key, param.unit, param.value) for param in element.params)),
+    )
+    cached = getattr(element, "_spec_cache", None)
+    if cached is not None and cached[0] == fingerprint:
+        return cached[1]
     try:
         from app.core.calc.engine import build_element_input
 
-        return build_element_input(element, None, None).spec()
+        spec = build_element_input(element, None, None).spec()
     except Exception:
-        return ""
+        spec = ""
+    element._spec_cache = (fingerprint, spec)
+    return spec
 
 
 def pipe_rows(element_id: int) -> list[PipeRow]:
@@ -986,7 +1027,7 @@ def create_element(
 
         ensure_atlas_candidates(element)
     project_io.commit()
-    bus().unit_changed.emit(unit_id)
+    bus().unit_changed.emit(unit_id, None)
     # 新条目获得焦点：面板选中新行（构件库双击插入、AI 新增共用此行为），
     # 撤销/重做恢复的选中也随之落在每一步新增的条目上
     bus().element_focused.emit(unit_id, element.id)
@@ -1230,7 +1271,7 @@ def insert_group_data(
         member.group_id = group.id
         member.amount = group.amount
     project_io.commit()
-    bus().unit_changed.emit(unit_id)
+    bus().unit_changed.emit(unit_id, None)
     return group
 
 
@@ -1391,6 +1432,8 @@ def update_element(element_id: int, **fields) -> Element | None:
                         member.amount = group.amount
                 fields["amount"] = _group_amount(group)
     was_lr = element.pe_name == LR_PE_TEXT
+    # 挖填原则联动波及的组员（统一回填标高时改一个全组跟随）：一并局部刷新
+    propagated_members: list[int] = []
     new_pe_name = str(fields.get("pe_name", element.pe_name or ""))
     if "pe_name" in fields:
         if new_pe_name == LR_PE_TEXT and not was_lr:
@@ -1422,6 +1465,7 @@ def update_element(element_id: int, **fields) -> Element | None:
             for member in group.members:
                 if member.id != element.id and member.pp_name != new_pp:
                     member.pp_name = new_pp
+                    propagated_members.append(member.id)
     if category_changed and element.category == CATEGORY_STRUCTURE:
         # 旧版 mcE7 构造：mList.Clear() + 名称/单位参数 + 默认工程量行（构筑物不带管材）
         for pipe in list(element.pipes):
@@ -1460,7 +1504,7 @@ def update_element(element_id: int, **fields) -> Element | None:
 
             match_atlas_candidates(element, commit=False)
     project_io.commit()
-    bus().unit_changed.emit(element.unit_id)
+    bus().unit_changed.emit(element.unit_id, [element.id, *propagated_members])
     return element
 
 
@@ -1487,7 +1531,7 @@ def delete_element(element_id: int) -> None:
             # 相邻关系变了：剩余组员的中心距离不再指向原邻居，统一清空
             _clear_center_distances(remaining)
             project_io.commit()
-    bus().unit_changed.emit(unit_id)
+    bus().unit_changed.emit(unit_id, None)
 
 
 def move_element(element_id: int, delta: int) -> None:
@@ -1527,7 +1571,7 @@ def move_element(element_id: int, delta: int) -> None:
     for position, item in enumerate(ordered):
         item.order_no = position
     project_io.commit()
-    bus().unit_changed.emit(element.unit_id)
+    bus().unit_changed.emit(element.unit_id, None)
 
 
 # --------------------------------------------------------------------------- #
@@ -1629,7 +1673,7 @@ def create_trench_group(element_ids: list[int]) -> tuple[TrenchGroup | None, str
     for index, member in enumerate(members):
         member.order_no = head_position + index
     project_io.commit()
-    bus().unit_changed.emit(unit_id)
+    bus().unit_changed.emit(unit_id, None)
     bus().tree_structure_changed.emit()
     return group, None
 
@@ -1644,7 +1688,7 @@ def dissolve_trench_group(group_id: int) -> None:
     _revert_members(list(group.members), plan)
     orm.session().delete(group)
     project_io.commit()
-    bus().unit_changed.emit(unit_id)
+    bus().unit_changed.emit(unit_id, None)
     bus().tree_structure_changed.emit()
 
 
@@ -1658,7 +1702,7 @@ def delete_trench_group(group_id: int) -> None:
         orm.session().delete(member)  # 管材 / 参数 / 工程量随 ORM 级联删除
     orm.session().delete(group)
     project_io.commit()
-    bus().unit_changed.emit(unit_id)
+    bus().unit_changed.emit(unit_id, None)
     bus().tree_structure_changed.emit()
 
 
@@ -1723,7 +1767,7 @@ def add_to_group(
     # 插入点两侧的相邻关系变了：组内已有的中心距离全部清空重填
     _clear_center_distances([*members, element])
     project_io.commit()
-    bus().unit_changed.emit(element.unit_id)
+    bus().unit_changed.emit(element.unit_id, None)
     return True, None
 
 
@@ -1746,7 +1790,7 @@ def remove_from_group(element_id: int) -> None:
         # 相邻关系变了：剩余组员的中心距离不再指向原邻居，统一清空
         _clear_center_distances(remaining)
     project_io.commit()
-    bus().unit_changed.emit(unit_id)
+    bus().unit_changed.emit(unit_id, None)
     bus().tree_structure_changed.emit()
 
 
@@ -1911,7 +1955,7 @@ def update_group(group_id: int, **fields) -> TrenchGroup | None:
         elif key == "split_mode" and value in SPLIT_MODES:
             group.split_mode = str(value)
     project_io.commit()
-    bus().unit_changed.emit(group.unit_id)
+    bus().unit_changed.emit(group.unit_id, [member.id for member in group.members])
     return group
 
 
@@ -1994,7 +2038,7 @@ def create_pipe(
         _seed_atlas_defaults(element)
     project_io.commit()
     _expire_element(element)
-    bus().unit_changed.emit(element.unit_id)
+    bus().unit_changed.emit(element.unit_id, [element.id])
     return pipe
 
 
@@ -2052,7 +2096,7 @@ def update_pipe(pipe_id: int, **fields) -> Pipe | None:
 
         match_atlas_candidates(pipe.element, commit=False)
     project_io.commit()
-    bus().unit_changed.emit(pipe.element.unit_id)
+    bus().unit_changed.emit(pipe.element.unit_id, [pipe.element.id])
     return pipe
 
 
@@ -2076,7 +2120,7 @@ def delete_pipe(pipe_id: int) -> None:
         match_atlas_candidates(element, commit=False)
     project_io.commit()
     _expire_element(element)
-    bus().unit_changed.emit(unit_id)
+    bus().unit_changed.emit(unit_id, [element.id])
 
 
 def create_param(element_id: int, key: str = "", unit: str = "", value: str = "") -> ElementParam | None:
@@ -2089,7 +2133,7 @@ def create_param(element_id: int, key: str = "", unit: str = "", value: str = ""
     orm.session().add(param)
     project_io.commit()
     _expire_element(element)
-    bus().unit_changed.emit(element.unit_id)
+    bus().unit_changed.emit(element.unit_id, [element.id])
     return param
 
 
@@ -2123,7 +2167,7 @@ def update_param(param_id: int, **fields) -> ElementParam | None:
         sync_pipe_wall(element.pipes[0], thickness)
     project_io.commit()
     _expire_element(element)
-    bus().unit_changed.emit(element.unit_id)
+    bus().unit_changed.emit(element.unit_id, [element.id])
     return param
 
 
@@ -2153,13 +2197,13 @@ def update_atlas_candidate(candidate_id: int, field: str, value) -> bool:
         return False
     ok, number = _candidate_number(value)
     if not ok:
-        bus().unit_changed.emit(row.element.unit_id)  # 还原显示
+        bus().unit_changed.emit(row.element.unit_id, [row.element.id])  # 还原显示
         return False
     setattr(row, field, number)
     match_atlas_candidates(row.element, commit=False)
     project_io.commit()
     _expire_element(row.element)
-    bus().unit_changed.emit(row.element.unit_id)
+    bus().unit_changed.emit(row.element.unit_id, [row.element.id])
     return True
 
 
@@ -2182,7 +2226,7 @@ def set_atlas_candidate_value(element_id: int, combo: str, field: str, value) ->
         return False
     ok, number = _candidate_number(value)
     if not ok:
-        bus().unit_changed.emit(element.unit_id)  # 还原显示
+        bus().unit_changed.emit(element.unit_id, [element.id])  # 还原显示
         return False
 
     con_found, angle = parsed
@@ -2207,7 +2251,7 @@ def set_atlas_candidate_value(element_id: int, combo: str, field: str, value) ->
     match_atlas_candidates(element, commit=False)
     project_io.commit()
     _expire_element(element)
-    bus().unit_changed.emit(element.unit_id)
+    bus().unit_changed.emit(element.unit_id, [element.id])
     return True
 
 
@@ -2232,7 +2276,7 @@ def delete_param(param_id: int) -> str | None:
     orm.session().delete(param)
     project_io.commit()
     _expire_element(element)
-    bus().unit_changed.emit(unit_id)
+    bus().unit_changed.emit(unit_id, [element.id])
     return None
 
 
@@ -2262,7 +2306,7 @@ def set_structure_spec(element_id: int, spec: str) -> None:
     _set_structure_named_param(element, STRUCTURE_NAME_PARAM, spec)
     project_io.commit()
     _expire_element(element)
-    bus().unit_changed.emit(element.unit_id)
+    bus().unit_changed.emit(element.unit_id, [element.id])
 
 
 def set_structure_unit(element_id: int, unit: str) -> None:
@@ -2277,7 +2321,7 @@ def set_structure_unit(element_id: int, unit: str) -> None:
     _set_structure_named_param(element, STRUCTURE_UNIT_PARAM, unit)
     project_io.commit()
     _expire_element(element)
-    bus().unit_changed.emit(element.unit_id)
+    bus().unit_changed.emit(element.unit_id, [element.id])
 
 
 # --------------------------------------------------------------------------- #
@@ -2306,7 +2350,7 @@ def create_quantity(
     orm.session().add(quantity)
     project_io.commit()
     _expire_element(element)
-    bus().unit_changed.emit(element.unit_id)
+    bus().unit_changed.emit(element.unit_id, [element.id])
     return quantity
 
 
@@ -2319,7 +2363,7 @@ def update_quantity(quantity_id: int, **fields) -> ElementQuantity | None:
         if key in _QUANTITY_FIELDS:
             setattr(quantity, key, str(value))
     project_io.commit()
-    bus().unit_changed.emit(quantity.element.unit_id)
+    bus().unit_changed.emit(quantity.element.unit_id, [quantity.element.id])
     return quantity
 
 
@@ -2332,14 +2376,17 @@ def delete_quantity(quantity_id: int) -> None:
     orm.session().delete(quantity)
     project_io.commit()
     _expire_element(element)
-    bus().unit_changed.emit(unit_id)
+    bus().unit_changed.emit(unit_id, [element.id])
 
 
 # --------------------------------------------------------------------------- #
 # 视图模型
 # --------------------------------------------------------------------------- #
 class UnitViewModel(QObject):
-    unit_loaded = Signal(int, object)  # unit_id, list[ElementRow]
+    #: unit_id, 行列表（ElementRow | GroupRow 混合）或 None。
+    #: 行列表为 None 表示局部刷新（第三载荷携带受影响构件 id）；
+    #: 列表（含空表）表示整表重装。
+    unit_loaded = Signal(int, object, object)
     # element_id, list[PipeRow], list[ParamRow], list[QuantityRow]
     detail_loaded = Signal(int, object, object, object)
     error_occurred = Signal(str)
@@ -2348,6 +2395,8 @@ class UnitViewModel(QObject):
         super().__init__(parent)
         self._unit_id: int | None = None
         self._element_id: int | None = None
+        self._pending_ids: list[int] | None = None  # 延后刷新的受影响构件（None = 全量）
+        self._refresh_scheduled = False
         bus().unit_changed.connect(self._on_unit_changed)
 
     # --- 状态 ---
@@ -2363,10 +2412,10 @@ class UnitViewModel(QObject):
             self._element_id = None
         self._unit_id = unit_id
         if unit_id is None:
-            self.unit_loaded.emit(0, [])
+            self.unit_loaded.emit(0, [], None)
             self.detail_loaded.emit(0, [], [], [])
             return
-        self.unit_loaded.emit(unit_id, table_rows(unit_id))
+        self.unit_loaded.emit(unit_id, table_rows(unit_id), None)
 
     def load_detail(self, element_id: int | None) -> None:
         self._element_id = element_id
@@ -2386,20 +2435,33 @@ class UnitViewModel(QObject):
         """
         self._element_id = None
 
-    def _on_unit_changed(self, unit_id: int) -> None:
+    def _on_unit_changed(self, unit_id: int, element_ids: list[int] | None = None) -> None:
         """任何来源（界面 / AI 工具）改了构件都重新加载当前单位工程。
 
-        延后到事件循环再刷新：本槽可能是在表格 itemChanged 里被同步触发的，
-        此时重建表格行会把正在处理的单元格删掉。
+        ``element_ids`` 是受影响构件（热路径局部刷新用）；None = 结构性变更，
+        整表重装。多次广播按"并集合并、None 覆盖"聚合，延后到事件循环一次
+        刷新：本槽可能是在表格 itemChanged / 下拉回调里被同步触发的，此时
+        重建表格行会把正在处理的单元格删掉。
         """
         if self._unit_id is None or unit_id != self._unit_id:
             return
-        QTimer.singleShot(0, self._refresh)
+        if element_ids is None or self._pending_ids is None:
+            self._pending_ids = None if element_ids is None else list(element_ids)
+        else:
+            self._pending_ids = list({*self._pending_ids, *element_ids})
+        if not self._refresh_scheduled:
+            self._refresh_scheduled = True
+            QTimer.singleShot(0, self._refresh)
 
     def _refresh(self) -> None:
+        self._refresh_scheduled = False
         if self._unit_id is None:
             return
-        self.unit_loaded.emit(self._unit_id, table_rows(self._unit_id))
+        ids, self._pending_ids = self._pending_ids, None
+        if ids is None:
+            self.unit_loaded.emit(self._unit_id, table_rows(self._unit_id), None)
+        else:
+            self.unit_loaded.emit(self._unit_id, None, ids)
         if self._element_id is not None:
             self.detail_loaded.emit(
                 self._element_id,
