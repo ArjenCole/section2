@@ -72,6 +72,46 @@ def _closed_project():
     _dispose_top_level_widgets()
 
 
+#: 复位修饰键状态用的接收者（延迟创建；被 _dispose_top_level_widgets 回收后重建）
+_MODIFIER_PROBE = None
+
+
+def _reset_keyboard_modifiers() -> None:
+    """把 QGuiApplication 里滞留的修饰键状态清回 NoModifier。
+
+    用例里合成的带修饰符按键事件（``QApplication.sendEvent`` 的 Ctrl+Enter、
+    ``QTest.keyClick(..., ControlModifier)`` 等）会把修饰键状态留在 Ctrl/Shift：
+    真实键盘会单独发修饰键释放事件，合成事件不会。残留的 Ctrl 会让之后任何
+    ExtendedSelection 视图的 ``setCurrentCell`` / 单击从「ClearAndSelect」变成
+    「Toggle」——例如 test_enclosure_category 的「删除选中分级」会多删一行，
+    且只在特定用例顺序下复现（实测由 test_element_enter_next 的 Ctrl+Enter
+    用例带入：先 selectAll 再 setCurrentCell(1,0)，带 Ctrl 时变成把第 1 行
+    toggle 掉，选中集只剩 0、2 两行）。
+
+    ``QTest.keyRelease`` 发出的是「带 NoModifier 的修饰键释放」事件，会把全局
+    修饰键状态直接写回 NoModifier（对 Shift / Alt / Meta 同样有效）。
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QWidget
+    from shiboken6 import isValid
+
+    application = QApplication.instance()
+    if application is None or application.keyboardModifiers() == Qt.KeyboardModifier.NoModifier:
+        return
+    global _MODIFIER_PROBE
+    if _MODIFIER_PROBE is None or not isValid(_MODIFIER_PROBE):
+        _MODIFIER_PROBE = QWidget()  # 不 show：只作按键事件接收者
+    QTest.keyRelease(_MODIFIER_PROBE, Qt.Key.Key_Control)
+
+
+@pytest.fixture(autouse=True)
+def _clean_keyboard_modifiers():
+    """每个用例后清掉合成按键事件残留的修饰键（见 _reset_keyboard_modifiers）。"""
+    yield
+    _reset_keyboard_modifiers()
+
+
 @pytest.fixture()
 def project(tmp_path):
     """默认配置的临时工程（单个单位工程「雨水工程」），返回工程文件路径。"""

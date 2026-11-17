@@ -74,6 +74,14 @@ def _press_enter(editor, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.No
         editor,
         QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, modifiers),
     )
+    if modifiers != Qt.KeyboardModifier.NoModifier:
+        # 合成事件不会补发修饰键释放：Ctrl 会滞留在 QApplication.keyboardModifiers()
+        # 里，之后任何 ExtendedSelection 视图的 setCurrentCell 会从 ClearAndSelect
+        # 退化成 Toggle，跨用例出现「多删一行」这类怪问题（conftest 的
+        # _clean_keyboard_modifiers 兜底，这里就地清掉更贴近真实键盘）。
+        from PySide6.QtTest import QTest
+
+        QTest.keyRelease(editor, Qt.Key.Key_Control)
 
 
 def test_enter_on_depth_commits_and_moves_to_next_row(qapp, three_elements) -> None:
