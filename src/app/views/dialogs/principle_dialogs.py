@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -72,6 +73,7 @@ from app.core.models.models import (
     parse_precipitation,
 )
 from app.services import project_io
+from app.services.steel_products import SteelProduct, kind_for_param, products_of
 from app.views.widgets.cell_fill_table import CellFillTable
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 from app.views.widgets.platform_buttons import (
@@ -579,6 +581,13 @@ class ComponentEditDialog(PrincipleSubDialog):
     参数表与公式表都允许用户增删行。公式表的「类别 / 名称 / 单位」三列在
     库内仍拼成 ``类别|名称|单位`` 作为定额键（计算与导出沿用该格式）。
 
+    参数表右键（旧版 dGVparam 的 ``CMS`` 菜单）：光标所在行的参数名若是钢制品
+    类型（钢板桩型号 / 支撑延米重量 kg/m / 钢围檩延米重量 kg/m / 工法桩轴数 轴
+    / 型钢延米重量 kg/m），列出该类型的型号，选中后把型号对应的参数值写进
+    同名的「值」格（选钢板桩型号顺带填单桩宽度 / 桩中心间隔 / 单桩延米重量；
+    「单桩延米重量 kg/m」行也能调出同一份钢板桩型号菜单，
+    见 :mod:`app.services.steel_products`）。
+
     悬空引用（方案三）：公式引用了已不存在的参数键时，该公式单元格标红并
     以悬停提示列出缺失键，计算按 0（引擎既有语义）；新增参数取最小未占用
     且未被任何公式引用的字母，避免旧公式误绑到新参数。
@@ -638,6 +647,10 @@ class ComponentEditDialog(PrincipleSubDialog):
             table.itemChanged.connect(
                 lambda item, p=prefix: self._on_item_changed(p, item)
             )
+            if prefix == "":
+                # 参数表右键选钢制品（旧版 dGVparam.ContextMenuStrip = CMS）
+                table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                table.customContextMenuRequested.connect(self._on_param_context_menu)
             self._tables[prefix] = table
 
             buttons = RowButtonColumn(
@@ -755,6 +768,64 @@ class ComponentEditDialog(PrincipleSubDialog):
         finally:
             self._loading = False
         self._refresh_formula_warnings()
+
+    # -------------------------------------------------------- 钢制品（右键）
+    def _param_display_name(self, row: int) -> str:
+        """参数表某行的显示名 ``名称 单位``（与库内存储格式一致，用于匹配类型）。"""
+        table = self._tables[""]
+        name_item = table.item(row, 0)
+        unit_item = table.item(row, 1)
+        name = name_item.text().strip() if name_item else ""
+        unit = unit_item.text().strip() if unit_item else ""
+        return f"{name} {unit}".strip()
+
+    def _steel_products_for_row(self, row: int) -> tuple[SteelProduct, ...]:
+        """该行参数名对应的钢制品候选（旧版 SelectionChanged 里的类型过滤）。"""
+        return products_of(kind_for_param(self._param_display_name(row)))
+
+    def _on_param_context_menu(self, position) -> None:
+        """参数表右键：按光标所在行列出可选型号（旧版 dGVparam 的 CMS 菜单）。"""
+        table = self._tables[""]
+        row = table.rowAt(position.y())
+        if row < 0:
+            return
+        menu = self._build_steel_menu(self._steel_products_for_row(row))
+        menu.exec(table.viewport().mapToGlobal(position))
+
+    def _build_steel_menu(self, products: tuple[SteelProduct, ...]) -> QMenu:
+        """型号菜单：型号名作菜单项，悬停给出重量 / 宽度 / 轴数。"""
+        menu = QMenu(self._tables[""])
+        menu.setToolTipsVisible(True)
+        if not products:
+            # 旧版这里是一个空菜单，看起来像坏了；给出可操作的提示
+            menu.addAction("该行没有可选的钢制品").setEnabled(False)
+            return menu
+        for product in products:
+            action = menu.addAction(product.name)
+            action.setToolTip(product.detail())
+            action.triggered.connect(
+                lambda _checked=False, item=product: self._apply_steel_product(item)
+            )
+        return menu
+
+    def _apply_steel_product(self, product: SteelProduct) -> None:
+        """把型号的参数值写进同名的参数行「值」列（旧版 CMS_ItemClicked 的回填）。
+
+        只覆盖参数表里已有的行：旧版同样如此（缺行由构件库模板带出，用户可
+        自行用行尾「+」补）。
+        """
+        table = self._tables[""]
+        column = self._EXPRESSION_COLUMNS[""]
+        values = product.param_values()
+        for row in range(table.rowCount()):
+            display = self._param_display_name(row)
+            if display not in values:
+                continue
+            item = table.item(row, column)
+            if item is None:
+                item = QTableWidgetItem("")
+                table.setItem(row, column, item)
+            item.setText(values[display])
 
     # ------------------------------------------------------------------ 增删
     def _next_key(self, prefix: str) -> str | None:
