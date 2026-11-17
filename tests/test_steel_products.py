@@ -18,7 +18,7 @@ from conftest import make_enclosure
 # 目录数据
 # --------------------------------------------------------------------------- #
 def test_catalog_kinds_and_counts() -> None:
-    """五个类型、型号条数与 1.0 数据表一致。"""
+    """五个类型；型号条数 = 1.0 原表 + 补充的常用断面。"""
     assert steel_products.kinds() == (
         "钢板桩型号",
         "支撑延米重量 kg/m",
@@ -26,11 +26,43 @@ def test_catalog_kinds_and_counts() -> None:
         "工法桩轴数 轴",
         "型钢延米重量 kg/m",
     )
-    assert len(steel_products.products_of("钢板桩型号")) == 14
-    assert len(steel_products.products_of("支撑延米重量 kg/m")) == 5
-    assert len(steel_products.products_of("钢围檩延米重量 kg/m")) == 9
+    assert len(steel_products.products_of("钢板桩型号")) == 22
+    assert len(steel_products.products_of("支撑延米重量 kg/m")) == 18
+    assert len(steel_products.products_of("钢围檩延米重量 kg/m")) == 20
     assert len(steel_products.products_of("工法桩轴数 轴")) == 8
-    assert len(steel_products.products_of("型钢延米重量 kg/m")) == 3
+    assert len(steel_products.products_of("型钢延米重量 kg/m")) == 8
+
+
+def test_pipe_and_welded_h_weights_follow_their_formulas() -> None:
+    """钢管 / 焊接 H 型钢的重量必须能由公式复现（数据表被改错时在这里报）。
+
+    钢管：``π(D-t)tρ/1000``（ρ=7.85），1.0 表里的 Ø203×10=47.597 等就是这条；
+    焊接 H：``(2·b·tf + (h-2tf)·tw) × 0.00785``，1.0 表里的 H300×200×6×8=38.49 等。
+    """
+    import math
+
+    rho = 7.85
+    for product in steel_products.products_of("支撑延米重量 kg/m"):
+        d, t = (float(part) for part in product.name.removeprefix("Ø").split("×"))
+        expected = math.pi * (d - t) * t * rho / 1000.0
+        assert product.weight == pytest.approx(expected, abs=0.001), product.name
+    for kind in ("钢围檩延米重量 kg/m", "型钢延米重量 kg/m"):
+        for product in steel_products.products_of(kind):
+            if not product.name.startswith("H"):
+                continue
+            h, b, tw, tf = (float(part) for part in product.name.removeprefix("H").split("×"))
+            expected = (2 * b * tf + (h - 2 * tf) * tw) * rho / 1000.0
+            assert product.weight == pytest.approx(expected, abs=0.01), product.name
+
+
+def test_hot_rolled_section_weights_match_gb706() -> None:
+    """热轧工字钢 / 槽钢取 GB/T 706 理论重量（与 1.0 的 I45a/b/c 同一来源）。"""
+    purlin = {item.name: item.weight for item in steel_products.products_of("钢围檩延米重量 kg/m")}
+    assert (purlin["I40a"], purlin["I40b"], purlin["I40c"]) == (67.6, 73.8, 80.1)
+    assert (purlin["I45a"], purlin["I45b"], purlin["I45c"]) == (80.4, 87.4, 94.5)
+    assert (purlin["I50a"], purlin["I50b"], purlin["I50c"]) == (93.6, 101.0, 109.0)
+    piles = {item.name: item.weight for item in steel_products.products_of("钢板桩型号")}
+    assert (piles["[40a"], piles["[40b"], piles["[40c"]) == (58.9, 65.2, 71.5)
 
 
 def test_sheet_pile_product_values() -> None:
@@ -47,6 +79,10 @@ def test_sheet_pile_product_values() -> None:
     assert products["[32c"].param_values()["单桩延米重量 kg/m"] == "48.3"
     assert products["[32c"].param_values()["钢板桩型号"] == "槽型钢板桩"
     assert products["FSP VIL"].param_values()["钢板桩型号"] == "钢板桩"
+    # 补充的常用型号：FSP 系列（日标）与拉森Ⅱ
+    assert products["FSP-Ⅳ"].param_values()["单桩延米重量 kg/m"] == "76.1"
+    assert products["拉森Ⅱ"].param_values()["单桩延米重量 kg/m"] == "48"
+    assert products["FSP-ⅤL"].param_values()["单桩宽度 mm"] == "500"
 
 
 def test_mixing_pile_product_values_keep_full_area() -> None:
@@ -59,16 +95,38 @@ def test_mixing_pile_product_values_keep_full_area() -> None:
         "单套截面积 m2": "1.495346490125",
         "搭接 mm": "250",
     }
-    # 表里没有搭接值的型号不写「搭接 mm」（旧版会写空串，把 A-E 公式弄坏）
-    assert "搭接 mm" not in products["Ø900三轴工法桩"].param_values()
+
+
+def test_every_mixing_pile_has_a_standard_overlap() -> None:
+    """所有工法桩型号都带搭接值：Ø850/Ø900 取 250、Ø700/Ø650 取 200。
+
+    即「桩径 − 相邻钻杆中心距」的机械模数（Ø850 中心距 600、Ø900 中心距 650、
+    Ø700 中心距 500、Ø650 中心距 450），与表内 Ø850/700/650 的单套截面积反算一致。
+    """
+    expected = {900: "250", 850: "250", 700: "200", 650: "200"}
+    for product in steel_products.products_of("工法桩轴数 轴"):
+        diameter = int(product.name[1:].split("二")[0].split("三")[0])
+        assert product.overlap == float(expected[diameter]), product.name
+        assert product.param_values()["搭接 mm"] == expected[diameter], product.name
+
+
+def test_product_without_overlap_leaves_the_row_alone() -> None:
+    """表里万一没有搭接值：不写「搭接 mm」（旧版会写空串，把 A-E 公式弄坏）。"""
+    product = steel_products.SteelProduct(
+        name="Ø900三轴工法桩", kind=steel_products.KIND_MIXING_PILE, weight=1.58, width=900, axes=3
+    )
+    assert "搭接 mm" not in product.param_values()
 
 
 def test_weight_products_map_to_their_own_row() -> None:
     """支撑 / 钢围檩 / 型钢：型号只对应一行「延米重量」，值就是该型号的重量。"""
     support = {item.name: item for item in steel_products.products_of("支撑延米重量 kg/m")}
     assert support["Ø609×16"].param_values() == {"支撑延米重量 kg/m": "233.988"}
+    assert support["Ø800×16"].param_values() == {"支撑延米重量 kg/m": "309.354"}
+    assert support["Ø1000×16"].param_values() == {"支撑延米重量 kg/m": "388.271"}
     purlin = {item.name: item for item in steel_products.products_of("钢围檩延米重量 kg/m")}
     assert purlin["I45a"].param_values() == {"钢围檩延米重量 kg/m": "80.4"}
+    assert purlin["H500×300×11×18"].param_values() == {"钢围檩延米重量 kg/m": "124.85"}
     section = {item.name: item for item in steel_products.products_of("型钢延米重量 kg/m")}
     assert section["H700×300×13×24"].param_values() == {"型钢延米重量 kg/m": "179.57"}
 
@@ -107,15 +165,11 @@ class _FakeAction:
     def __init__(self, text: str) -> None:
         self.text = text
         self.tooltip = ""
-        self.enabled = True
         self._slots: list = []
         self.triggered = _FakeSignal(self._slots)
 
     def setToolTip(self, text: str) -> None:  # noqa: N802 - Qt 命名
         self.tooltip = text
-
-    def setEnabled(self, flag: bool) -> None:  # noqa: N802 - Qt 命名
-        self.enabled = flag
 
     def activate(self) -> None:
         for slot in self._slots:
@@ -166,7 +220,7 @@ def _rows_by_name(dialog) -> dict[str, int]:
     return {dialog._param_display_name(row): row for row in range(table.rowCount())}
 
 
-def _right_click(qapp, dialog, row: int) -> _FakeMenu:
+def _emit_context_menu(qapp, dialog, row: int) -> None:
     """在参数表该行上发一次右键（坐标走 viewport，与 item view 的信号一致）。"""
     from PySide6.QtCore import QPoint
 
@@ -174,6 +228,11 @@ def _right_click(qapp, dialog, row: int) -> _FakeMenu:
     position = QPoint(table.columnViewportPosition(0) + 5, table.rowViewportPosition(row) + 4)
     table.customContextMenuRequested.emit(position)
     qapp.processEvents()
+
+
+def _right_click(qapp, dialog, row: int) -> _FakeMenu:
+    """右键该行并返回弹出的菜单（该行没有候选时用例会在这里失败）。"""
+    _emit_context_menu(qapp, dialog, row)
     return _FakeMenu.captured[-1]
 
 
@@ -196,16 +255,20 @@ def test_param_menu_lists_products_of_the_row_kind(qapp, project, fake_menu) -> 
 
         support_menu = _right_click(qapp, dialog, rows["支撑延米重量 kg/m"])
         assert [action.text for action in support_menu.actions] == [
-            "Ø203×10", "Ø299×10", "Ø300×8", "Ø426×12", "Ø609×16",
+            item.name for item in steel_products.products_of("支撑延米重量 kg/m")
         ]
+        assert "Ø609×16" in [action.text for action in support_menu.actions]
+        assert "Ø800×16" in [action.text for action in support_menu.actions]
 
         purlin_menu = _right_click(qapp, dialog, rows["钢围檩延米重量 kg/m"])
         assert "I45c" in [action.text for action in purlin_menu.actions]
+        assert "H500×300×11×18" in [action.text for action in purlin_menu.actions]
 
-        # 与钢制品无关的行：给一条禁用的提示，不是空菜单
-        other_menu = _right_click(qapp, dialog, rows["桩长 m"])
-        assert [action.text for action in other_menu.actions] == ["该行没有可选的钢制品"]
-        assert other_menu.actions[0].enabled is False
+        # 与钢制品无关的行：右键直接没反应（不弹空菜单，也不弹提示项）
+        before = len(_FakeMenu.captured)
+        for row_name in ("桩长 m", "支撑垂直向数量 道", "支撑水平向间隔 m"):
+            _emit_context_menu(qapp, dialog, rows[row_name])
+        assert len(_FakeMenu.captured) == before
 
         # 「单桩延米重量」行调出同一份钢板桩型号菜单，选完照旧回填四行
         weight_menu = _right_click(qapp, dialog, rows["单桩延米重量 kg/m"])
@@ -258,17 +321,15 @@ def test_param_menu_fills_pile_and_support_values(qapp, project, fake_menu) -> N
         dialog.close()
 
 
-def test_param_menu_mixing_pile_keeps_overlap_when_catalog_has_none(
-    qapp, project, fake_menu
-) -> None:
-    """SMW 工法桩：选无搭接数据的型号时保留用户当前搭接值（1.0 会写成空串）。"""
+def test_param_menu_mixing_pile_fills_overlap(qapp, project, fake_menu) -> None:
+    """SMW 工法桩：选型号把搭接一并填上（Ø900/Ø850 → 250，Ø700/Ø650 → 200）。"""
     pe = make_enclosure("SMW原则", "SMW工法桩")
     component = pe.works_sorted()[0].levels[0].components[0]
     dialog = _open_dialog(qapp, component)
     try:
         rows = _rows_by_name(dialog)
         table = dialog._tables[""]
-        assert table.item(rows["搭接 mm"], 2).text() == "350"
+        assert table.item(rows["搭接 mm"], 2).text() == "350"  # 构件库模板默认值
 
         menu = _right_click(qapp, dialog, rows["工法桩轴数 轴"])
         assert [action.text for action in menu.actions] == [
@@ -278,15 +339,21 @@ def test_param_menu_mixing_pile_keeps_overlap_when_catalog_has_none(
         assert table.item(rows["桩径 mm"], 2).text() == "900"
         assert table.item(rows["工法桩轴数 轴"], 2).text() == "3"
         assert table.item(rows["单套截面积 m2"], 2).text() == "1.58"
-        assert table.item(rows["搭接 mm"], 2).text() == "350"  # 未被清空
+        assert table.item(rows["搭接 mm"], 2).text() == "250"
 
-        # 表里有搭接值的型号才覆盖
+        next(a for a in menu.actions if a.text == "Ø700二轴工法桩").activate()
+        assert table.item(rows["桩径 mm"], 2).text() == "700"
+        assert table.item(rows["工法桩轴数 轴"], 2).text() == "2"
+        assert table.item(rows["单套截面积 m2"], 2).text() == "0.7024"
+        assert table.item(rows["搭接 mm"], 2).text() == "200"
+
         next(a for a in menu.actions if a.text == "Ø850三轴工法桩").activate()
         assert table.item(rows["搭接 mm"], 2).text() == "250"
         assert table.item(rows["单套截面积 m2"], 2).text() == "1.495346490125"
 
         dialog.save()
         assert _param_value(component, "D") == "单套截面积 m2|1.495346490125"
+        assert _param_value(component, "E") == "搭接 mm|250"
     finally:
         dialog.close()
 
@@ -375,22 +442,22 @@ def test_real_menu_actions(qapp, project) -> None:
         assert dialog._tables[""].item(rows["单桩延米重量 kg/m"], 2).text() == "75"
 
         empty = dialog._build_steel_menu(())
-        assert [action.text() for action in empty.actions()] == ["该行没有可选的钢制品"]
-        assert empty.actions()[0].isEnabled() is False
+        assert empty.actions() == []  # 没有候选时上层根本不弹菜单
     finally:
         dialog.close()
 
 
 def test_editor_still_opens_without_catalog(qapp, project, fake_menu, monkeypatch) -> None:
-    """数据文件缺失时编辑器照常可用，右键只给提示。"""
+    """数据文件缺失时编辑器照常可用，右键不弹菜单（不是空菜单）。"""
     monkeypatch.setattr(steel_products, "steel_products", lambda: ())
     pe = make_enclosure("钢制品原则", "钢板桩")
     component = pe.works_sorted()[0].levels[0].components[0]
     dialog = _open_dialog(qapp, component)
     try:
         rows = _rows_by_name(dialog)
-        menu = _right_click(qapp, dialog, rows["钢板桩型号"])
-        assert [action.text for action in menu.actions] == ["该行没有可选的钢制品"]
+        before = len(_FakeMenu.captured)
+        _emit_context_menu(qapp, dialog, rows["钢板桩型号"])
+        assert len(_FakeMenu.captured) == before
     finally:
         dialog.close()
 

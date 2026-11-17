@@ -586,7 +586,7 @@ class ComponentEditDialog(PrincipleSubDialog):
     / 型钢延米重量 kg/m），列出该类型的型号，选中后把型号对应的参数值写进
     同名的「值」格（选钢板桩型号顺带填单桩宽度 / 桩中心间隔 / 单桩延米重量；
     「单桩延米重量 kg/m」行也能调出同一份钢板桩型号菜单，
-    见 :mod:`app.services.steel_products`）。
+    见 :mod:`app.services.steel_products`）。其余行右键不弹菜单。
 
     悬空引用（方案三）：公式引用了已不存在的参数键时，该公式单元格标红并
     以悬停提示列出缺失键，计算按 0（引擎既有语义）；新增参数取最小未占用
@@ -784,22 +784,25 @@ class ComponentEditDialog(PrincipleSubDialog):
         return products_of(kind_for_param(self._param_display_name(row)))
 
     def _on_param_context_menu(self, position) -> None:
-        """参数表右键：按光标所在行列出可选型号（旧版 dGVparam 的 CMS 菜单）。"""
+        """参数表右键：按光标所在行列出可选型号（旧版 dGVparam 的 CMS 菜单）。
+
+        该行不是钢制品行时**不弹菜单**（右键无反应）：旧版是一个空菜单，点了
+        只有一块白框，反而像界面坏了。
+        """
         table = self._tables[""]
         row = table.rowAt(position.y())
         if row < 0:
             return
-        menu = self._build_steel_menu(self._steel_products_for_row(row))
+        products = self._steel_products_for_row(row)
+        if not products:
+            return
+        menu = self._build_steel_menu(products)
         menu.exec(table.viewport().mapToGlobal(position))
 
     def _build_steel_menu(self, products: tuple[SteelProduct, ...]) -> QMenu:
         """型号菜单：型号名作菜单项，悬停给出重量 / 宽度 / 轴数。"""
         menu = QMenu(self._tables[""])
         menu.setToolTipsVisible(True)
-        if not products:
-            # 旧版这里是一个空菜单，看起来像坏了；给出可操作的提示
-            menu.addAction("该行没有可选的钢制品").setEnabled(False)
-            return menu
         for product in products:
             action = menu.addAction(product.name)
             action.setToolTip(product.detail())
