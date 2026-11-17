@@ -110,10 +110,35 @@ def test_every_mixing_pile_has_a_standard_overlap() -> None:
         assert product.param_values()["搭接 mm"] == expected[diameter], product.name
 
 
+def test_mixing_pile_areas_match_their_overlap_geometry() -> None:
+    """单套截面积必须与「桩径 / 轴数 / 搭接」的并集几何一致。
+
+    口径：n 个直径 D 的圆排成一排，扣掉 n−1 个相邻重叠（圆心距 = 桩径 − 搭接）。
+    1.0 表里 Ø900 两行原本是 1.58 / 1.1717，反算出的搭接为 336 / 240 mm（都不是
+    机器模数），已按本口径改为 1.6945 / 1.1653；其余 6 行与几何值的差在 0.0005
+    以内（1.0 的取整），所以容差取 0.001。
+    """
+    import math
+
+    def overlap(d: float, r: float) -> float:
+        if d >= 2 * r:
+            return 0.0
+        return 2 * r * r * math.acos(d / (2 * r)) - (d / 2) * math.sqrt(4 * r * r - d * d)
+
+    for product in steel_products.products_of("工法桩轴数 轴"):
+        assert product.width is not None and product.axes and product.overlap
+        radius = product.width / 2 / 1000.0
+        center = (product.width - product.overlap) / 1000.0
+        expected = (
+            product.axes * math.pi * radius * radius - (product.axes - 1) * overlap(center, radius)
+        )
+        assert product.weight == pytest.approx(expected, abs=0.001), product.name
+
+
 def test_product_without_overlap_leaves_the_row_alone() -> None:
     """表里万一没有搭接值：不写「搭接 mm」（旧版会写空串，把 A-E 公式弄坏）。"""
     product = steel_products.SteelProduct(
-        name="Ø900三轴工法桩", kind=steel_products.KIND_MIXING_PILE, weight=1.58, width=900, axes=3
+        name="Ø900三轴工法桩", kind=steel_products.KIND_MIXING_PILE, weight=1.6945, width=900, axes=3
     )
     assert "搭接 mm" not in product.param_values()
 
@@ -338,7 +363,7 @@ def test_param_menu_mixing_pile_fills_overlap(qapp, project, fake_menu) -> None:
         next(a for a in menu.actions if a.text == "Ø900三轴工法桩").activate()
         assert table.item(rows["桩径 mm"], 2).text() == "900"
         assert table.item(rows["工法桩轴数 轴"], 2).text() == "3"
-        assert table.item(rows["单套截面积 m2"], 2).text() == "1.58"
+        assert table.item(rows["单套截面积 m2"], 2).text() == "1.6945"
         assert table.item(rows["搭接 mm"], 2).text() == "250"
 
         next(a for a in menu.actions if a.text == "Ø700二轴工法桩").activate()
