@@ -155,6 +155,10 @@ class _Scene:
     #: 合槽各成员的水平区间：(element_id, 本体中心 x 相对槽中心 m, 槽底深 m)。
     #: 表达式详情弹窗把分项的断面范围按成员定位到整槽图上用
     member_spans: tuple[tuple[int, float, float], ...] = ()
+    #: 各构件的回填分层高（自槽底向上，m；含 0 厚度层以对齐 H1/H2… 层号）：
+    #: 键为构件 id，单构件断面只有 ``None`` 一项。表达式详情弹窗给拿不到面积行
+    #: 边线的 Hx / Bx 行按层号累加定位标注线
+    layer_heights: dict[int | None, tuple[float, ...]] = field(default_factory=dict)
     #: 右侧为尺寸标注预留的像素宽（表达式详情弹窗用）：绘图区整体左移一半，
     #: 保证竖向标注始终能画在断面右侧而不被画布裁掉
     right_reserve: float = 0.0
@@ -640,6 +644,7 @@ def _build_trench_scene(
         # 本体零点抬升：换填厚 + (显示垫层厚 - 图集垫层厚)，旧版 PaintOntology 的 Translate
         shift=foundation_thickness(pf) + c1_display - c1_original,
         right_reserve=right_reserve,
+        layer_heights={None: tuple(layer.v for _key, layer, _note in layers)},
     )
     scene.atlas_text = _atlas_text(at, c1_display)
     return scene, ""
@@ -1390,6 +1395,10 @@ def _build_group_scene(
             )
             for i, snap in enumerate(snapshots)
         ),
+        layer_heights={
+            snap["element"].id: tuple(layer.v for _key, layer, _note in layers)
+            for snap, layers in zip(snapshots, member_layers)
+        },
         right_reserve=right_reserve,
     )
     scene.atlas_text = f"合槽断面：{n} 条构件（从左到右）"

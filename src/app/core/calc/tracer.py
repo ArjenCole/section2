@@ -541,6 +541,9 @@ class ExpressionDefinition:
     basic: bool = False
     #: 层底宽 / 分层高角色（Bx / Hx）：始终保留，跨 tab 统一
     role: str = ""
+    #: 角色序号（分层高 / 层底宽自下而上 1、2、3…）：详情窗按它累加层厚，
+    #: 把没有直接几何的 Hx / Bx 行定位到断面图上
+    order: int = 0
     #: 悬停该行时在断面图上描出的线（场景坐标，m）：横线 / 竖线
     geometry: tuple[tuple[float, float], ...] | None = None
 
@@ -1524,6 +1527,7 @@ def _compact_terms(
                     source=role_tag.source or "分层",
                     kind="intermediate",
                     role=role_tag.role,
+                    order=role_tag.order,
                 )
             )
             part_symbols[id(part)] = symbol
@@ -1697,6 +1701,7 @@ def _compact_terms(
                 value=value if value is not None else 0.0,
                 source=candidate.source or "本步原始参数",
                 role=candidate.role,
+                order=candidate.order,
             )
         )
 

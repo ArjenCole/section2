@@ -756,6 +756,97 @@ def test_expression_dialog_group_member_basic_geometry(qapp, tmp_path) -> None:
     dialog.close()
 
 
+def test_expression_dialog_group_layer_height_annotation(qapp, tmp_path) -> None:
+    """合槽成员：面积行被浅构件槽底切开时，层高行悬停仍要有断面标注。
+
+    回归（2026-11-17）：浅构件槽底切进深构件垫层后，垫层被拆成两段
+    （0~浅槽底、浅槽底~垫层顶），``H1 = C1+C2`` 不再是任何一段的“高”，
+    tracer 拿不到面积行边线；合槽场景又没有单构件的分段兜底，悬停 H1 时
+    断面图完全没有标注。改为按层号累加分层高定位后，垫层的 H1 与挖方的
+    H1/H2/H3/H5（合并分层段同样没有单独边线）都要有标注；父行合并行里
+    每个成员按各自槽底定位。
+    """
+    from app.viewmodels.unit_vm import compute_elements
+    from app.views.dialogs.expression_detail_dialog import ExpressionDetailDialog
+    from app.views.panels.unit_panel import UnitPanel
+
+    group, e1, e2 = _group_pair_fixture(tmp_path, "层高标注", depth2="3.2")
+    _summary, detail = compute_elements([e1.id, e2.id])
+    per_member = {row.id: dq for row, dq in detail}
+    quantities = {quantity.key: quantity for quantity in per_member[e2.id].items()}
+
+    def hover_rows(quantity, context):
+        dialog = ExpressionDetailDialog(None, quantity, context)
+        dialog.show()
+        qapp.processEvents()
+        assert dialog._scene is not None and dialog._scene.outline is not None
+        scene = dialog._scene
+        spans = {span[0]: span for span in scene.member_spans}
+        rows = []
+        for table in dialog._inter_tables:
+            for row in range(table.rowCount()):
+                symbol = table.item(row, 0).text()
+                if not (symbol[:1] == "H" and symbol[1:].isdigit()):
+                    continue
+                dialog._on_inter_entered(table, row, 0)
+                dimension = dialog._canvas._dimension
+                if dimension is not None:
+                    rows.append(
+                        (
+                            symbol,
+                            dimension.member_id,
+                            dimension,
+                            float(table.item(row, 3).text()),
+                        )
+                    )
+        dialog.close()
+        return rows, scene, spans
+
+    def check_vertical(dimension, value_mm):
+        """竖向标注：两端同 x，跨距 = 该行计算结果（mm→m）；返回层底标高。"""
+        (x1, y1), (x2, y2) = dimension.points
+        assert x1 == pytest.approx(x2)
+        assert y2 - y1 == pytest.approx(value_mm / 1000.0, abs=1e-6)
+        return y1
+
+    cushion = next(
+        quantity for key, quantity in quantities.items() if key.startswith("垫层|")
+    )
+    rows, _scene, spans = hover_rows(cushion, ("group", group.id, e2.id))
+    h1 = next((row for row in rows if row[0] == "H1"), None)
+    assert h1 is not None, "垫层 H1=C1+C2 悬停没有标注"
+    _symbol, member, dimension, value_mm = h1
+    assert member == e2.id
+    # 深构件槽底在整槽底面：H1 自槽底起，跨满垫层厚（C1+C2）
+    assert check_vertical(dimension, value_mm) == pytest.approx(0.0)
+    assert dimension.points[0][0] > spans[e2.id][1]  # 尺寸线在构件右侧
+
+    dig = next(
+        quantity for key, quantity in quantities.items() if key.startswith("开挖|")
+    )
+    rows, _scene, _spans = hover_rows(dig, ("group", group.id, e2.id))
+    symbols = {row[0] for row in rows}
+    for symbol in ("H1", "H2", "H3", "H5"):
+        assert symbol in symbols, f"挖方 {symbol} 悬停没有标注"
+    for _symbol, _member, dimension, value_mm in rows:
+        check_vertical(dimension, value_mm)
+
+    # 父行合并行（多成员堆叠）：每个成员的 H1 按各自槽底定位
+    merged = next(
+        quantity
+        for quantity in UnitPanel._merge_quantities(
+            [(member_id, dq) for member_id, dq in per_member.items()]
+        )
+        if quantity.key.startswith("垫层|")
+    )
+    rows, scene, spans = hover_rows(merged, ("group", group.id, None))
+    h1_members = {row[1] for row in rows if row[0] == "H1"}
+    assert h1_members == {e1.id, e2.id}, "合并行两个成员的 H1 都要有标注"
+    for _symbol, member, dimension, value_mm in rows:
+        bottom = check_vertical(dimension, value_mm)
+        assert bottom == pytest.approx(scene.total_h - spans[member][2], abs=1e-6)
+
+
 def test_expression_dialog_single_annotation_stays_right(qapp, tmp_path) -> None:
     """非合槽构件：竖向标注统一画在断面右侧，宽断面也不翻到左侧。
 

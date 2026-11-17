@@ -16,6 +16,12 @@ t/iD/oD 的测量切面取管中心标高处的水平切线，与内外圆的交
 空间，不因空间不足翻到左侧），合槽成员贴成员布置——最左构件放构件左侧
 （引出线自边坡线左缘起画，不横穿构件断面），中间构件放就近虚拟分割线外侧
 （文字不必避让到整槽基坑外边线以外），最右构件放构件右侧（与最左构件镜像）。
+
+层高 / 层底宽（Hx、Bx）的几何优先用引擎随面积行记下的边线；面积行被相邻
+构件槽底或围护分级切成多段时（如合槽里浅构件槽底切进深构件的垫层），
+``C1+C2`` 不再是某一段的“高”，边线取不到。这类行按层号（H1、B2…）累加
+断面场景里该构件的回填分层高（缺失时用中间量定义的分层高）定位——合槽成员
+以该成员自己的槽底为 0，再平移到整槽场景坐标，单构件与合槽成员同一口径。
 """
 
 from __future__ import annotations
@@ -78,6 +84,21 @@ class _Dimension:
     text: str
     #: 标注所属的合槽成员 id：竖向标注按成员位置贴边布置用
     member_id: int | None = None
+
+
+def _layer_heights_of(definitions) -> dict[int, float]:
+    """中间量定义里的分层高：层号 → 层厚（m）。
+
+    H1/H2… 是自槽底向上的分层高（引擎按 mm 记法记录）。面积行被相邻构件
+    槽底 / 围护分级切开时，Hx 的代入式（如 ``C1+C2``）不再是某一段的“高”，
+    拿不到面积行边线；详情窗按层号累加定位该层。断面场景自带更完整的层表
+    （纯数字层如“管顶以上 500”不会提成中间量），这里只在场景缺失时兜底。
+    """
+    heights: dict[int, float] = {}
+    for item in definitions:
+        if item.role == "layer_height" and item.order > 0:
+            heights[item.order] = item.value / 1000.0
+    return heights
 
 
 class _SectionCanvas(section_view.SectionCanvasBase):
@@ -370,6 +391,8 @@ class ExpressionDetailDialog(FramelessDialog):
         #: 成员单选时的成员 id：合槽场景下用它把分项几何定位到整槽图
         self._single_member_id = member_id
         self._scene = None
+        #: 每个成员（None = 单构件）的分层高：层号 → 层厚 m（Hx / Bx 定位用）
+        self._layer_heights: dict[int | None, dict[int, float]] = {}
         self._merged_members: list[tuple[int | None, object]] = []
         merged = getattr(quantity, "per_element", False)
         if merged:
@@ -487,6 +510,9 @@ class ExpressionDetailDialog(FramelessDialog):
         self._refresh_table_height(self._term_table)
 
         self._start_tabs()
+        self._layer_heights[self._single_member_id] = _layer_heights_of(
+            view.definitions
+        )
         self._add_inter_tab("基本参数", view.basic_definitions, self._single_member_id)
         for group in view.groups:
             title = f"{group.symbol} {group.note}".strip()
@@ -506,6 +532,7 @@ class ExpressionDetailDialog(FramelessDialog):
         index = 0
         for member_no, (element_id, member) in enumerate(self._merged_members, start=1):
             view = member.presentation()
+            self._layer_heights[element_id] = _layer_heights_of(view.definitions)
             for term in view.terms:
                 index += 1
                 self._add_term_row(
@@ -651,7 +678,9 @@ class ExpressionDetailDialog(FramelessDialog):
             item = QTableWidgetItem(text)
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             table.setItem(row, col, item)
-        table.item(row, 0).setData(Qt.ItemDataRole.UserRole, (geometry, member_id))
+        table.item(row, 0).setData(
+            Qt.ItemDataRole.UserRole, (geometry, member_id, 0)
+        )
 
     def _add_inter_row(
         self,
@@ -663,6 +692,7 @@ class ExpressionDetailDialog(FramelessDialog):
         source: str,
         geometry=None,
         member_id: int | None = None,
+        order: int = 0,
     ) -> None:
         row = table.rowCount()
         table.insertRow(row)
@@ -671,7 +701,7 @@ class ExpressionDetailDialog(FramelessDialog):
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             table.setItem(row, col, item)
         table.item(row, 0).setData(
-            Qt.ItemDataRole.UserRole, (geometry, member_id)
+            Qt.ItemDataRole.UserRole, (geometry, member_id, order)
         )
 
     def _start_tabs(self) -> None:
@@ -706,6 +736,7 @@ class ExpressionDetailDialog(FramelessDialog):
                 item.source,
                 item.geometry,
                 item_member,
+                item.order,
             )
         self._refresh_table_height(table, _MAX_INTER_ROWS)
         self._inter_tabs.addTab(table, title)
@@ -789,13 +820,23 @@ class ExpressionDetailDialog(FramelessDialog):
         return list(pts_m)
 
     # ------------------------------------------------------------------ 事件
-    def _scene_line_for(self, symbol: str, member_id: int | None = None):
+    def _scene_line_for(
+        self,
+        symbol: str,
+        member_id: int | None = None,
+        value_mm: float | None = None,
+        order: int = 0,
+    ):
         """B / H 行的兜底描边：从断面分段取横线 / 竖线；合槽按成员取管体。
 
         层底宽 / 层高在面积行里已有 ``ExpressionDefinition.geometry``；这里只
         补基本参数页里没有对应面积行的 B、H、H1（例如回填页的垫层高度），
         以及管径 / 壁厚：管中心标高处的水平切线与内外圆的交点（引出线从
         交点向下引出，与工作面宽度 a 同款画法）。
+
+        ``value_mm`` 是该行“计算结果”列的数值（mm 记法）：分层高 / 层底宽
+        没有边线时按层号累加定位用。``order`` 是定义里的层号（``H12`` 这类
+        同名冲突后缀按定义原值，不再按符号后缀猜）。
         """
         scene = self._scene
         if scene is None:
@@ -836,6 +877,13 @@ class ExpressionDetailDialog(FramelessDialog):
                 return [(cx - r_inner, cy), (cx + r_inner, cy)]
             if symbol == "oD":
                 return [(cx - r_outer, cy), (cx + r_outer, cy)]
+        # 分层高 / 层底宽：面积行被相邻构件槽底或围护分级切成多段时，
+        # Hx 的代入式（如 C1+C2）不再是某一段的“高”，拿不到面积行边线；
+        # 合槽场景又没有单构件的分段兜底，悬停会完全没有标注。按层号累加
+        # 层厚定位（单构件与合槽成员同一口径）。
+        line = self._layer_line_for(symbol, member_id, value_mm, order)
+        if line is not None:
+            return line
         if group:
             return None
         segments = list(scene.segments)
@@ -868,6 +916,130 @@ class ExpressionDetailDialog(FramelessDialog):
                 ]
         return None
 
+    def _layer_line_for(
+        self,
+        symbol: str,
+        member_id: int | None,
+        value_mm: float | None,
+        order: int = 0,
+    ) -> list[tuple[float, float]] | None:
+        """按分层累加给 Hx / Bx（以及 H / B / h / b）行推标注线；不适用返回 None。
+
+        层号优先取定义里的 ``order``（同名冲突后缀 H12 之类不会误判成第 12 层），
+        缺省才按符号后缀解析。层厚取断面场景记录的该构件分层高
+        （``_Scene.layer_heights``；缺失时用中间量定义里的分层高），自槽底
+        向上累加；合槽成员以**该成员自己的槽底**为 0，再平移成整槽场景坐标
+        （``member_spans`` 的本体中心 + 槽底标高）。缺低层（拿不到累计高度）
+        时不猜，交回调用方走原有兜底 / 不画。
+        """
+        scene = self._scene
+        if scene is None:
+            return None
+        kind = ""
+        if symbol in ("H", "h"):
+            kind = "height"
+        elif symbol in ("B", "b"):
+            kind = "width"
+        elif len(symbol) > 1 and symbol[1:].isdigit() and symbol[0] in ("H", "B"):
+            kind = "height" if symbol[0] == "H" else "width"
+            if order <= 0:
+                order = int(symbol[1:])
+        if not kind:
+            return None
+        value = None if value_mm is None else value_mm / 1000.0
+        if scene.outline is not None:
+            # 合槽：按成员定位（成员本体中心 + 该成员槽底在整槽 y 中的位置）
+            if member_id is None:
+                return None
+            spans = {span[0]: span for span in scene.member_spans}
+            span = spans.get(member_id)
+            if span is None:
+                return None
+            center, depth = span[1], span[2]
+            base_y = scene.total_h - depth
+        else:
+            center, depth, base_y = 0.0, scene.total_h, 0.0
+        heights = self._layer_heights.get(member_id) or {}
+        stack = scene.layer_heights.get(member_id)
+        if stack:
+            # 断面场景的层表最完整（含未提成中间量的纯数字层，如“管顶以上 500”），
+            # 层号与 H1/H2… 一致；定义表的分层高只作场景缺失时的兜底
+            heights = {index + 1: thickness for index, thickness in enumerate(stack)}
+
+        def layer_bottom(index: int) -> float | None:
+            """第 index 层（自下而上 1 起）的层底标高；低层缺失返回 None。"""
+            total = 0.0
+            for lower in range(1, index):
+                thickness = heights.get(lower)
+                if thickness is None:
+                    return None
+                total += thickness
+            return total
+
+        if kind == "height":
+            if order == 0:
+                # H = 计算深度（整个槽深）；h = 基础厚度（自槽底起）
+                bottom = 0.0
+                top = depth if symbol == "H" else value
+            else:
+                bottom = layer_bottom(order)
+                if bottom is None:
+                    return None
+                thickness = heights.get(order, value)
+                if thickness is None:
+                    return None
+                # 统一回填标高下，别的构件的同名层厚表达式也会被带进本构件
+                # 的定义表（H12/H13 这类同名后缀）：数值与本构件该层不符时
+                # 不画，避免标注文字与断面跨距对不上
+                if (
+                    value is not None
+                    and abs(thickness - value) > max(1e-3, abs(value) * 0.01)
+                ):
+                    return None
+                top = bottom + thickness
+            if top is None or top <= bottom + 1e-9:
+                return None
+            right = self._member_right(member_id)
+            return [
+                (center + right, base_y + bottom),
+                (center + right, base_y + top),
+            ]
+        # 层底宽 / 槽底宽：横线画在该层底面标高处，宽度取该符号的值
+        if value is None or value <= 0:
+            return None
+        bottom = 0.0 if order == 0 else layer_bottom(order)
+        if bottom is None:
+            return None
+        half = value / 2.0
+        return [
+            (center - half, base_y + bottom),
+            (center + half, base_y + bottom),
+        ]
+
+    def _member_right(self, member_id: int | None) -> float:
+        """构件断面右缘的横坐标（相对本体中心，m）：取分项几何的右下缘。
+
+        竖向标注的尺寸线放在构件右侧；端部构件的引出线起点由断面外缘决定
+        （``_group_vertical_placement`` 按该标高处的边坡线改起点），这里只要
+        一个落在构件右半侧的定位 x。合并行按成员取各自的分项。
+        """
+        quantity = self._quantity
+        if getattr(quantity, "per_element", False):
+            for element_id, member in getattr(quantity, "quantities", ()):
+                if element_id == member_id:
+                    quantity = member
+                    break
+            else:
+                return 0.0
+        rights = [
+            float(term.geometry[3])
+            for term in getattr(quantity, "terms", ())
+            if term.geometry
+            and len(term.geometry) == 6
+            and isinstance(term.geometry[0], (int, float))
+        ]
+        return max(rights) if rights else 0.0
+
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt 命名
         if event.type() == QEvent.Type.Leave:
             if obj is self._term_table:
@@ -881,8 +1053,16 @@ class ExpressionDetailDialog(FramelessDialog):
         if item is None:
             self._canvas.set_highlight(None)
             return
-        geometry, member_id = item.data(Qt.ItemDataRole.UserRole) or (None, None)
+        geometry, member_id, _order = self._row_data(item)
         self._canvas.set_highlight(self._highlight_polygon(geometry, member_id))
+
+    @staticmethod
+    def _row_data(item) -> tuple[object, int | None, int]:
+        """中间符号 / 分项行的 ``(geometry, member_id, order)``（兼容旧 2 元组）。"""
+        data = item.data(Qt.ItemDataRole.UserRole) or (None, None, 0)
+        if len(data) == 2:
+            return data[0], data[1], 0
+        return data[0], data[1], data[2]
 
     def _on_inter_entered(
         self, table: QTableWidget, row: int, _column: int
@@ -891,15 +1071,19 @@ class ExpressionDetailDialog(FramelessDialog):
         if item is None:
             self._canvas.set_dimension(None)
             return
-        geometry, member_id = item.data(Qt.ItemDataRole.UserRole) or (None, None)
-        if geometry is None:
-            # 兜底线（t/iD/oD 切线、B/H 分段线）已是场景最终坐标（合槽已按
-            # 成员定位），不再走按成员平移的 _highlight_polygon
-            line = self._scene_line_for(item.text(), member_id)
-        else:
-            line = self._highlight_polygon(geometry, member_id)
+        geometry, member_id, order = self._row_data(item)
         value_item = table.item(row, 3)
         value_text = value_item.text() if value_item is not None else ""
+        if geometry is None:
+            # 兜底线（t/iD/oD 切线、B/H 分段线、按分层累加的 Hx/Bx）已是场景
+            # 最终坐标（合槽已按成员定位），不再走按成员平移的 _highlight_polygon
+            try:
+                value_mm = float(value_text.replace(",", ""))
+            except (TypeError, ValueError):
+                value_mm = None
+            line = self._scene_line_for(item.text(), member_id, value_mm, order)
+        else:
+            line = self._highlight_polygon(geometry, member_id)
         self._canvas.set_dimension(
             line,
             f"{item.text()}={value_text}" if line else "",
