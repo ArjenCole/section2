@@ -9,8 +9,8 @@
 版本号唯一来源是 ``src/app/core/version.py`` 的 ``APP_VERSION``；``pyproject.toml``
 里的 version 必须与之等价（PEP 440 归一化后比较），否则脚本直接报错退出。
 
-产物：``dist\\Section-<版本>-win-64-<日期>.zip``，解压后是**与压缩包同名**的
-``Section-<版本>-win-64-<日期>\\`` 目录，同事解压到同一位置时不会互相覆盖，
+产物：``dist\\Section-<版本>-win-x64-<日期>.zip``，解压后是**与压缩包同名**的
+``Section-<版本>-win-x64-<日期>\\`` 目录，同事解压到同一位置时不会互相覆盖，
 也一眼能看出是哪个版本。
 
 打完自动归档到 ``releases\\<压缩包名>\\``（zip + SHA256 + build-info.json，
@@ -87,8 +87,13 @@ def check_versions(version: str, header_version: str) -> None:
     print(f"[版本] 显示 {version} | EXE 与 .stn 头 {header_version}")
 
 
-def git_state() -> tuple[str, bool]:
-    """返回 (HEAD 提交号, 工作区是否有未提交改动)；没有 git 时返回空。"""
+def git_state() -> tuple[str, bool, list[str]]:
+    """返回 (HEAD 提交号, 是否有影响产物的未提交改动, 未跟踪文件列表)。
+
+    未跟踪文件只有落在 ``src/`` 下才会被打进包（PyInstaller 从 src 收集代码与
+    资源），所以 ``docs/`` 之类的未跟踪文档不算"脏"，只记进 build-info 备查——
+    免得发布记录里永远挂着一个 dirty。
+    """
     try:
         commit = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=False
@@ -97,17 +102,31 @@ def git_state() -> tuple[str, bool]:
             ["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True, check=False
         )
     except OSError:
-        return "", False
+        return "", False, []
     if commit.returncode != 0 or status.returncode != 0:
-        return "", False
-    return commit.stdout.strip(), bool(status.stdout.strip())
+        return "", False, []
+
+    dirty = False
+    untracked: list[str] = []
+    for line in status.stdout.splitlines():
+        code, path = line[:2], line[3:].strip().strip('"')
+        if code == "??":
+            untracked.append(path)
+            if path.replace("\\", "/").startswith("src/"):
+                dirty = True  # 未入库的源码/资源会被打进包
+        else:
+            dirty = True
+    return commit.stdout.strip(), dirty, untracked
 
 
 def check_git_clean() -> None:
     """发布包应来自已提交的代码，否则同事报的问题对不上任何提交。"""
-    _, dirty = git_state()
+    _, dirty, untracked = git_state()
     if dirty:
         print("[提醒] 工作区有未提交的改动，建议先提交并打 tag 再打包。")
+    if untracked:
+        print(f"[提示] 有 {len(untracked)} 个未跟踪文件未入库（不影响产物）："
+              f"{', '.join(untracked[:3])}{' …' if len(untracked) > 3 else ''}")
 
 
 def build() -> None:
@@ -122,11 +141,11 @@ def build() -> None:
 
 
 #: 平台标记。目前只有 Windows x64 一种构建。
-PLATFORM_TAG = "win-64"
+PLATFORM_TAG = "win-x64"
 
 
 def release_stem(version: str) -> str:
-    """压缩包与归档目录共用的名字：``Section-<版本>-win-64-<日期>``。
+    """压缩包与归档目录共用的名字：``Section-<版本>-win-x64-<日期>``。
 
     产品名用 ``Section`` 而不是 ``Section2``：``Section 2`` 里的 "2" 就是版本号
     的第一位，再写一次会出现 ``Section-2.0.0`` 这种重复。
@@ -207,13 +226,14 @@ def archive_release(
         f"{digest}  {target.name}\n", encoding="utf-8"
     )
 
-    commit, dirty = git_state()
+    commit, dirty, untracked = git_state()
     info = {
         "version": version,
         "header_version": header_version,
         "built_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "git_commit": commit,
         "git_dirty": dirty,
+        "untracked_files": untracked,
         "python": platform.python_version(),
         "pyinstaller": _tool_version("pyinstaller"),
         "zip": target.name,

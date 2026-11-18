@@ -23,13 +23,14 @@ Python / PyInstaller 版本、构建时间），由 `scripts/make_release.py` �
 ## 安装包命名
 
 ```
-Section-<版本>-win-64-<日期>.zip
-Section-2.0.0-alpha.3-win-64-20261118.zip
+Section-<版本>-win-x64-<日期>.zip
+Section-2.0.0-alpha.4-win-x64-20261118.zip
 ```
 
 - 产品名用 `Section`，不是 `Section2`：`Section 2` 里的 "2" 就是版本号第一位，
   再写一次会出现 `Section2-2.0.0` 这种重复；
-- 压缩包内第一层目录与压缩包同名，解压后是 `Section-2.0.0-alpha.3-win-64-20261118\`；
+- 平台标记用 `win-x64`（.NET RID / 多数 CI 的写法），alpha.3 曾短暂用过 `win-64`；
+- 压缩包内第一层目录与压缩包同名，解压后是 `Section-2.0.0-alpha.4-win-x64-20261118\`；
 - alpha.1 / alpha.2 用的是旧命名 `Section2_2.0.0-alpha.N_日期.zip`，台账里保留
   原样作为历史记录。
 

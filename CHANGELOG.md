@@ -21,6 +21,15 @@
 `.stn` 文件头和 EXE 文件属性（1.0 的 C# 程序用 `System.Version` 解析文件头，
 不能带 `-alpha` 后缀）；数据体里的 `app_version` 记录带后缀的真实版本。
 
+## [2.0.0-alpha.4] - 2026-11-18
+
+### 修复
+
+- **部分 Windows 11 系统上按钮显示不正常**（文字/底色发灰、与背景糊在一起）：
+  Windows 原生样式实际按 `QStyleHints.colorScheme()` 取色，深色主题下按钮仍按
+  浅色绘制。现在切换主题时同步覆盖应用的 color scheme（须在 `setPalette` 之前），
+  并给原生按钮补了一条 QSS 兜底路径（`resources/qss/theme.py`）。
+
 ## [2.0.0-alpha.3] - 2026-11-18
 
 ### 新增
