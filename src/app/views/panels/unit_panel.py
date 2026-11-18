@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import re
+
 from PySide6.QtCore import QEvent, QItemSelectionModel, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (
@@ -126,6 +128,12 @@ _EXPR_QUANTITY_ROLE = Qt.ItemDataRole.UserRole + 10
 _EXPR_MAIN_ROLE = Qt.ItemDataRole.UserRole + 11
 _EXPR_READY_ROLE = Qt.ItemDataRole.UserRole + 12
 _EXPR_DETAIL_ROLE = Qt.ItemDataRole.UserRole + 13
+#: 主表格数量列「平时显示求值结果、双击编辑算式」的显示覆盖文本（空串 = 不覆盖）。
+#: 条目的 DisplayRole 必须保持算式原文——行内编辑器读的就是它，双击才能改回
+#: 算式；绘制时由 _FocusCellDelegate.initStyleOption 换成这里的结果文本。
+_EXPRESSION_DISPLAY_ROLE = Qt.ItemDataRole.UserRole + 14
+#: 纯数字原文（含正负号 / 科学计数法）：不换成求值结果，保留用户录入的精度
+_PLAIN_NUMBER = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 #: 定额/清单表格列宽默认值（取自运行实例实测；末列不拉伸，保持实测宽度）
 _QUANTITY_WIDTHS = [77, 66, 193, 48, 135, 434]
 
@@ -223,6 +231,17 @@ class _FocusCellDelegate(TableEditDelegate):
 
     编辑态抛光（去边框/清边距/占满单元格）由基类 TableEditDelegate 提供。
     """
+
+    def initStyleOption(self, option, index) -> None:  # noqa: N802 - Qt 命名
+        """数量列平时绘制求值结果（双击仍按 DisplayRole 的算式原文编辑）。
+
+        只在条目挂 ``_EXPRESSION_DISPLAY_ROLE`` 时替换；算式原文留在
+        DisplayRole 里，行内编辑器读到的仍是算式，双击即可继续改算式。
+        """
+        super().initStyleOption(option, index)
+        display = index.data(_EXPRESSION_DISPLAY_ROLE)
+        if display:
+            option.text = str(display)
 
     def paint(self, painter: QPainter, option, index) -> None:  # noqa: N802 - Qt 命名
         view = self.parent()
@@ -1521,7 +1540,7 @@ class UnitPanel(QWidget):
             amount_item.setForeground(QBrush(_secondary_color()))
             amount_item.setToolTip("合槽子构件数量由父节点统一控制（只读）。")
         self._element_table.setItem(index, _COL_AMOUNT, amount_item)
-        _apply_expression_hint(amount_item, row.amount, row.amount_error)
+        _apply_expression_hint(amount_item, row.amount, row.amount_error, display_result=True)
 
         if row.group_id is not None:
             # 合槽子节点：围护原则强制「左右分设」，具体左右侧在「围护原则」tab 选
@@ -1624,7 +1643,7 @@ class UnitPanel(QWidget):
         amount_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         # 数量列可编辑（改父节点即同步全部子构件）
         amount_item.setFlags(amount_item.flags() | Qt.ItemFlag.ItemIsEditable)
-        _apply_expression_hint(amount_item, row.amount, row.amount_error)
+        _apply_expression_hint(amount_item, row.amount, row.amount_error, display_result=True)
 
         # 父节点围护 / 地基两格恒留空：原则全部由子构件自己的决定；
         # 挖填降水 / 面宽两格是整槽口径下拉（回填分层方式 / 断面划分方式）
@@ -1727,7 +1746,7 @@ class UnitPanel(QWidget):
                 from app.viewmodels.unit_vm import update_group
 
                 text = item.text()
-                _apply_expression_hint(item, text, "")
+                _apply_expression_hint(item, text, "", display_result=True)
                 update_group(group_id, amount=text)
             return
         element_id = self._element_id_at(row)
@@ -1750,7 +1769,7 @@ class UnitPanel(QWidget):
         if field == "name":
             self._vm.set_element_field(element_id, field, text)
             return
-        _apply_expression_hint(item, text, "")
+        _apply_expression_hint(item, text, "", display_result=field == "amount")
         self._vm.set_element_field(element_id, field, text)
         label = "埋深" if field == "depth" else "数量"
         try:
@@ -3420,24 +3439,49 @@ def _expression_detail(quantity) -> str:
     return quantity.expression
 
 
-def _apply_expression_hint(item: QTableWidgetItem, text: str, error: str) -> None:
-    """把算式求值结果显示在 tooltip；不合法时用警示色标出。"""
+def _apply_expression_hint(
+    item: QTableWidgetItem,
+    text: str,
+    error: str,
+    *,
+    display_result: bool = False,
+) -> None:
+    """把算式求值结果显示在 tooltip；不合法时用警示色标出。
+
+    ``display_result=True``（主表格数量列）：平时单元格显示算式求值结果，
+    算式原文留在 DisplayRole 里供双击编辑——绘制时由
+    ``_FocusCellDelegate.initStyleOption`` 用 ``_EXPRESSION_DISPLAY_ROLE``
+    替换显示文本。纯数字（``_PLAIN_NUMBER``）不替换，保留用户录入的精度，
+    例如 ``0.00005`` / ``-0.00005`` 不会被 format_number 舍成 ``0.0001`` / ``0``。
+    """
+    display = ""
     if not text.strip():
         item.setToolTip("")
         item.setForeground(QBrush(_primary_color()))
-        return
-    if error:
+    elif error:
         item.setToolTip(f"算式错误：{error}")
         item.setForeground(QBrush(_warning_color()))
-        return
-    try:
-        value = evaluate(text)
-    except EvalError as exc:
-        item.setToolTip(f"算式错误：{exc}")
-        item.setForeground(QBrush(_warning_color()))
-        return
-    item.setToolTip(f"{text} = {format_number(value)}")
-    item.setForeground(QBrush(_primary_color()))
+    else:
+        try:
+            value = evaluate(text)
+        except EvalError as exc:
+            item.setToolTip(f"算式错误：{exc}")
+            item.setForeground(QBrush(_warning_color()))
+        else:
+            item.setToolTip(f"{text} = {format_number(value)}")
+            item.setForeground(QBrush(_primary_color()))
+            if display_result and not _PLAIN_NUMBER.match(text.strip()):
+                display = format_number(value)
+    if display_result:
+        # 显示覆盖不是数据变更：挡住表格的 itemChanged，免得再走一遍写库 / 刷新；
+        # 模型 dataChanged 不受影响，单元格照常重绘。
+        table = item.tableWidget()
+        blocked = table.blockSignals(True) if table is not None else False
+        try:
+            item.setData(_EXPRESSION_DISPLAY_ROLE, display)
+        finally:
+            if table is not None:
+                table.blockSignals(blocked)
 
 
 def _primary_color() -> QColor:
