@@ -145,7 +145,9 @@ def main(argv: list[str] | None = None) -> int:
     # 不设 Fusion：Fusion 对非可编辑组合框返回 SH_ComboBox_Popup=true，弹出层被按
     # 菜单渲染（位置带偏移、容器带框和阴影）；系统原生样式（Windows 6.7+ 默认
     # windows11）下弹出层紧贴输入框、无框无影。标准按钮的外观也交给原生样式
-    # （配色由 QPalette 同步，见 theme.build_palette）。
+    # （配色由 QPalette 同步；Windows 原生样式实际按 QStyleHints.colorScheme()
+    # 取色，所以 ThemeManager 还会把 color scheme 覆盖成应用主题，见
+    # theme._sync_color_scheme）。
     if sys.platform == "darwin":
         # mac 原生样式同样把组合框弹层按菜单渲染（层叠在按钮上、宽度收缩）、
         # 页签条整体居中：用薄代理样式只纠正这两点，其余保持原生

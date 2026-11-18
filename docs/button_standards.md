@@ -18,9 +18,20 @@
 | Esc | 取消（reject） | 取消（reject） |
 | 向导按钮 | 上一步/下一步/取消同在右下角 | 取消在左下角、完成在右下角 |
 
-配色不进 QSS：原生控件只读 QPalette。`theme.build_palette()` 在应用主题
-（亮/暗）切换时把窗口/文字/按钮/高亮色同步进 QPalette；mac 上另由
-`mac_window.apply_mac_app_appearance()` 把 NSAppearance 一并同步。
+配色不进 QSS。`theme.build_palette()` 在应用主题（亮/暗）切换时把窗口/
+文字/按钮/高亮色同步进 QPalette。但 Windows 的原生样式（Win11 的
+`windows11`）画按钮时**不读应用 QPalette**，而是按 `QStyleHints.colorScheme()`
+（系统深/浅色）取按钮底色与文字色，因此 `theme._sync_color_scheme()` 还会
+用 `QStyleHints.setColorScheme()`（Qt 6.8+）把应用的 color scheme 覆盖为
+当前应用主题——否则软件深色 + 系统浅色会出现“浅色文字画在浅色按钮上”的
+不可见按钮。mac 上另由 `mac_window.apply_mac_app_appearance()` 把
+NSAppearance 一并同步。
+
+Win10 的 `windowsvista` 样式（以及 Qt < 6.8）不跟随 color scheme，永远画
+浅色系统按钮，因此 `theme._native_buttons_need_qss()` 在这类环境下让
+`build_stylesheet(button_fallback=True)` 给通用 `QPushButton` 补回主题化
+QSS（默认按钮用主色填充，即 alpha.2 的观感）；Win11 / mac 仍保持原生按钮，
+不写任何通用按钮 QSS。
 
 ## 实现
 

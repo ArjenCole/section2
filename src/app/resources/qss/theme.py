@@ -1,8 +1,8 @@
 """主题与全局样式表。
 
-一套 ThemeColors 调色板 + 由调色板生成整份 QSS 与 QPalette + ThemeManager 单例，
-切换主题时重新生成并 setStyleSheet / setPalette，同时发出 theme_changed 供
-自绘控件重绘。
+一套 ThemeColors 调色板 + 由调色板生成整份 QSS / QPalette / 原生 color scheme
++ ThemeManager 单例，切换主题时重新生成并 setStyleSheet / setPalette，同时
+发出 theme_changed 供自绘控件重绘。
 
 QSS 用 string.Template（$token）而不是 f-string：样式表里 {} 太多，
 f-string 需要把每个大括号都转义成 {{}}，极易出错。
@@ -13,6 +13,13 @@ f-string 需要把每个大括号都转义成 {{}}，极易出错。
 QPushButton 改走样式表渲染、丢失原生观感，所以全局通配的背景/文字色规则
 也一并移除，改由 build_palette 生成的 QPalette 承担（自绘功能性控件除外，
 它们各有专属规则）。
+
+注意：Windows 的原生样式（Win11 的 windows11）绘制按钮时并不读应用
+QPalette，而是读 QStyleHints.colorScheme()（系统深/浅色）。只同步调色板会
+出现“深色软件界面 + 浅色系统 = 浅色文字画在浅色按钮上”的不可见按钮，所以
+apply 里还要用 _sync_color_scheme 把 color scheme 一并覆盖成应用主题。
+Win10 的 windowsvista（以及 Qt < 6.8）不认 color scheme，改由
+_native_buttons_need_qss 判定并套用 _BUTTON_FALLBACK_QSS。
 """
 
 from __future__ import annotations
@@ -20,8 +27,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from string import Template
 
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from PySide6.QtSvg import QSvgRenderer
 
 from app.core.paths import ensure_app_data_dir
@@ -374,11 +381,14 @@ QComboBox QAbstractItemView::item:selected {
 }
 
 /* ===================== 按钮 ===================== */
-/* 通用 QPushButton 不写任何规则：标准按钮（对话框/消息框的确定、取消等）
+/* 通用 QPushButton 默认不写任何规则：标准按钮（对话框/消息框的确定、取消等）
    交还原生样式渲染——Windows 用系统样式（默认按钮带系统强调色）、macOS 用
    QMacStyle（默认按钮 accent 蓝底），键盘焦点框同样由原生样式负责。
    顺序/默认按钮/对齐/宽度由 widgets/platform_buttons.py 统一安排。
-   只有自绘功能性控件（+/- 小方块、分段控件、AI 发送等）保留 QSS。 */
+   只有自绘功能性控件（+/- 小方块、分段控件、AI 发送等）保留 QSS。
+   button_fallback 占位只在原生样式不跟随 color scheme 时非空（Win10 的
+   windowsvista / 旧 Qt），见 build_stylesheet 的同名参数。 */
+$button_fallback
 /* 固定尺寸的小方块按钮（+、↑、↓ 等）：不套通用按钮规则后自带完整盒子，
    默认内边距会把单字符裁掉 */
 QPushButton[role="icon-btn"] {
@@ -690,6 +700,39 @@ QDialog QComboBox QAbstractItemView { background-color: $bg_card; }
 )
 
 
+#: 不跟随 color scheme 的原生样式（Win10 的 windowsvista、Qt < 6.8）的通用
+#: 按钮回退。这些样式永远用浅色系统贴图画按钮，深色主题下按钮文字会跟着
+#: 调色板变浅、落在浅色按钮上不可见；回退成 QSS 自绘按钮（alpha.2 的观感，
+#: 默认按钮仍是主色填充），保证按钮在任何系统主题下都跟随应用主题。
+_BUTTON_FALLBACK_QSS = Template(
+    """
+/* 标准按钮回退：当前 Windows 原生样式不跟随 color scheme */
+QPushButton {
+    background-color: $bg_card;
+    border: 1px solid $border_strong;
+    border-radius: 6px;
+    padding: 5px 14px;
+    color: $text_primary;
+}
+QPushButton:hover { background-color: $bg_hover; }
+QPushButton:pressed { background-color: $bg_pressed; }
+QPushButton:disabled {
+    color: $text_disabled;
+    border-color: $border;
+    background-color: $bg_hover;
+}
+QPushButton:default {
+    background-color: $primary;
+    border-color: $primary;
+    color: $text_inverse;
+    font-weight: 600;
+}
+QPushButton:default:hover { background-color: $primary_hover; border-color: $primary_hover; }
+QPushButton:default:pressed { background-color: $primary_pressed; border-color: $primary_pressed; }
+"""
+)
+
+
 _COMBO_ARROW_BODY = '<path d="m6 9 6 6 6-6" />'
 
 
@@ -712,27 +755,90 @@ def combo_arrow_renderer(color: str) -> QSvgRenderer:
     return QSvgRenderer(svg.encode("utf-8"))
 
 
-def build_stylesheet(colors: ThemeColors) -> str:
-    """由调色板生成整份 QSS。"""
+def build_stylesheet(colors: ThemeColors, *, button_fallback: bool = False) -> str:
+    """由调色板生成整份 QSS。
+
+    ``button_fallback=True`` 时给通用 QPushButton 加上主题化规则，用于
+    原生样式不跟随 color scheme 的平台/样式（见 _native_buttons_need_qss）；
+    默认的 windows11 / macOS 原生按钮无需这些规则。
+    """
     combo_arrow = combo_arrow_path(colors.text_secondary)
     combo_arrow_disabled = combo_arrow_path(colors.text_disabled)
     check_mark = _write_svg(
         "check-mark", colors.text_inverse, '<path d="m5 12 5 5 9-10" />'
     )
+    values = {field: getattr(colors, field) for field in colors.__dataclass_fields__}
+    button_fallback_qss = (
+        _BUTTON_FALLBACK_QSS.substitute(**values) if button_fallback else ""
+    )
     return _QSS.substitute(
-        **{field: getattr(colors, field) for field in colors.__dataclass_fields__},
+        **values,
+        button_fallback=button_fallback_qss,
         combo_arrow=combo_arrow,
         combo_arrow_disabled=combo_arrow_disabled,
         check_mark=check_mark,
     )
 
 
+def _native_buttons_need_qss(
+    *,
+    platform_name: str | None = None,
+    style_name: str | None = None,
+    has_color_scheme: bool | None = None,
+) -> bool:
+    """当前原生样式是否必须回退到 QSS 才能跟随应用主题。
+
+    - Win11 的 windows11 样式按 QStyleHints.colorScheme() 绘制按钮，配合
+      _sync_color_scheme 即可，保持原生观感；
+    - Win10 的 windowsvista（以及没有 setColorScheme 的旧 Qt）永远画浅色
+      系统按钮，只能走 QSS 回退，否则深色主题下按钮文字不可见；
+    - macOS 的 QMacStyle 由 NSAppearance 控制，其余平台（offscreen 等）
+      与发布目标无关，都不启用回退。
+    """
+    if platform_name is None:
+        platform_name = QGuiApplication.platformName()
+    if platform_name != "windows":
+        return False
+    if has_color_scheme is None:
+        hints = QGuiApplication.styleHints()
+        has_color_scheme = getattr(hints, "setColorScheme", None) is not None
+    if not has_color_scheme:
+        return True
+    if style_name is None:
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        style_name = app.style().objectName() if app is not None else ""
+    return style_name not in ("", "windows11")
+
+
+def _sync_color_scheme(colors: ThemeColors, hints=None) -> None:
+    """把 Qt 的 color scheme 覆盖为应用主题（原生样式按它给标准按钮取色）。
+
+    Windows 11 的 windows11 样式画 QPushButton 时读 QStyleHints.colorScheme()
+    而不是应用 QPalette：只同步调色板时，应用深色 + 系统浅色会得到浅色原生
+    按钮上画浅色文字（按钮“消失”），应用浅色 + 系统深色则得到深色按钮配浅色
+    面板。显式 setColorScheme 后原生样式跟随应用主题，不再随系统主题漂移。
+
+    ``setColorScheme`` 是 Qt 6.8 才有的接口；旧版本（或离屏平台）没有该方法
+    时静默跳过，不能因为换肤把启动流程打断。``hints`` 仅供测试注入。
+    """
+    if hints is None:
+        hints = QGuiApplication.styleHints()
+    set_scheme = getattr(hints, "setColorScheme", None)
+    if set_scheme is None:
+        return
+    scheme = Qt.ColorScheme.Dark if colors.name == "dark" else Qt.ColorScheme.Light
+    set_scheme(scheme)
+
+
 def build_palette(colors: ThemeColors) -> QPalette:
     """由 ThemeColors 生成 QPalette，与 QSS 同步应用。
 
-    通用按钮不写 QSS（见模块 docstring），原生样式只读调色板不读样式表；
+    通用按钮不写 QSS（见模块 docstring），原生控件只读调色板不读样式表；
     把主题的窗口/文字/按钮/高亮色同步进 QPalette，浅色、深色两套主题下的
-    原生控件才能与 QSS 面板观感一致。
+    原生控件才能与 QSS 面板观感一致。Windows 原生样式还要配合
+    _sync_color_scheme 才会跟随应用主题（见其 docstring）。
     """
     palette = QPalette()
     palette.setColor(QPalette.ColorRole.Window, QColor(colors.bg_window))
@@ -787,8 +893,13 @@ class ThemeManager(QObject):
         if colors is self._colors and self._applied:
             return
         self._colors = colors
+        # 必须在 setPalette 之前：color scheme 变化时 Qt 会重算默认调色板，
+        # 随后应用的 build_palette 才是最终生效的那一份
+        _sync_color_scheme(colors)
         app.setPalette(build_palette(colors))
-        app.setStyleSheet(build_stylesheet(colors))
+        app.setStyleSheet(
+            build_stylesheet(colors, button_fallback=_native_buttons_need_qss())
+        )
         self._applied = True
         self.theme_changed.emit(colors.name)
 
