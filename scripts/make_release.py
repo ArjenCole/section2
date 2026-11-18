@@ -9,9 +9,9 @@
 版本号唯一来源是 ``src/app/core/version.py`` 的 ``APP_VERSION``；``pyproject.toml``
 里的 version 必须与之等价（PEP 440 归一化后比较），否则脚本直接报错退出。
 
-产物：``dist\\Section2_<版本>_<日期>.zip``，解压后是**与压缩包同名**的
-``Section2_<版本>_<日期>\\`` 目录（不是笼统的 ``Section2``），同事解压到同一
-位置时不会互相覆盖，也一眼能看出是哪个版本。
+产物：``dist\\Section-<版本>-win-64-<日期>.zip``，解压后是**与压缩包同名**的
+``Section-<版本>-win-64-<日期>\\`` 目录，同事解压到同一位置时不会互相覆盖，
+也一眼能看出是哪个版本。
 
 打完自动归档到 ``releases\\<压缩包名>\\``（zip + SHA256 + build-info.json，
 记录提交号与构建环境），并**拒绝复用已归档过的版本号**：一个版本号只对应一个
@@ -121,9 +121,17 @@ def build() -> None:
         fail(f"PyInstaller 构建失败（退出码 {result.returncode}）")
 
 
+#: 平台标记。目前只有 Windows x64 一种构建。
+PLATFORM_TAG = "win-64"
+
+
 def release_stem(version: str) -> str:
-    """压缩包与归档目录共用的名字：Section2_<版本>_<日期>。"""
-    return f"Section2_{version}_{date.today().strftime('%Y%m%d')}"
+    """压缩包与归档目录共用的名字：``Section-<版本>-win-64-<日期>``。
+
+    产品名用 ``Section`` 而不是 ``Section2``：``Section 2`` 里的 "2" 就是版本号
+    的第一位，再写一次会出现 ``Section-2.0.0`` 这种重复。
+    """
+    return f"Section-{version}-{PLATFORM_TAG}-{date.today().strftime('%Y%m%d')}"
 
 
 def check_not_released(version: str, *, force: bool) -> None:
