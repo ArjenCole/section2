@@ -1,6 +1,6 @@
-"""主表格数量列：平时显示算式求值结果，双击编辑算式原文。
+"""主表格埋深 / 数量列：平时显示算式求值结果，双击编辑算式原文。
 
-数量列允许直接写算式（如 ``2.5+0.3``）。条目的 DisplayRole 必须保持算式
+两列都允许直接写算式（如 ``2.5+0.3``）。条目的 DisplayRole 必须保持算式
 原文——行内编辑器读的就是它；绘制时由 ``_FocusCellDelegate`` 用
 ``_EXPRESSION_DISPLAY_ROLE`` 把显示文本换成求值结果，于是「退出编辑状态
 （平时）」看到结果，「双击编辑」看到并可修改算式。纯数字不替换显示文本，
@@ -21,6 +21,7 @@ from app.services.project_io import NewProjectSpec
 from app.viewmodels import unit_vm
 from app.views.panels.unit_panel import (
     _COL_AMOUNT,
+    _COL_DEPTH,
     _EXPRESSION_DISPLAY_ROLE,
     UnitPanel,
 )
@@ -109,6 +110,30 @@ def test_double_click_editor_shows_expression_and_commit_shows_result(
     item = table.item(0, _COL_AMOUNT)
     assert item.text() == "1.5*2"
     assert _paint_text(table, 0, _COL_AMOUNT) == "3"
+
+
+def test_depth_paints_result_and_editor_shows_expression(qapp, tmp_path) -> None:
+    """埋深列与数量列同口径：平时显示结果，双击编辑器里是算式原文。"""
+    project_io.new_project(NewProjectSpec(path=tmp_path / "埋深算式.stn", unit_names=["雨水工程"]))
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    element_id = _element("管A", depth="2.5+0.5", amount="10")
+
+    panel = _panel_for(qapp, unit)
+    table = panel._element_table
+    item = table.item(0, _COL_DEPTH)
+    assert item.text() == "2.5+0.5"
+    assert _paint_text(table, 0, _COL_DEPTH) == "3"
+    assert item.toolTip() == "2.5+0.5 = 3"
+
+    editor = _open_editor(table, 0, _COL_DEPTH)
+    assert editor.text() == "2.5+0.5"
+    editor.setText("4.2/1.4")
+    _press_enter(editor)
+    assert orm.session().get(Element, element_id).depth == "4.2/1.4"  # 库里存原文
+
+    qapp.processEvents()
+    assert table.item(0, _COL_DEPTH).text() == "4.2/1.4"
+    assert _paint_text(table, 0, _COL_DEPTH) == "3"
 
 
 def test_plain_number_keeps_original_precision(qapp, unit_with_amounts) -> None:

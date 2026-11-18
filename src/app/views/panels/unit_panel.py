@@ -6,8 +6,9 @@
   中  工程量表（定额工程量 / 清单工程量）——“计算表达式”列在“工程量”列之前；
   右  断面示意图（旧版 mcPictureBox，随选中构件联动重绘）。
 
-埋深、数量两列允许写算式（如 2.5+0.3）：单元格 tooltip 显示求值结果，
-算式不合法时用警示色标出并给出原因，不静默按 0 处理。
+埋深、数量两列允许写算式（如 2.5+0.3）：平时单元格显示求值结果，双击
+编辑算式原文，单元格 tooltip 显示求值结果；算式不合法时用警示色标出并给出
+原因，不静默按 0 处理。
 """
 
 from __future__ import annotations
@@ -128,9 +129,10 @@ _EXPR_QUANTITY_ROLE = Qt.ItemDataRole.UserRole + 10
 _EXPR_MAIN_ROLE = Qt.ItemDataRole.UserRole + 11
 _EXPR_READY_ROLE = Qt.ItemDataRole.UserRole + 12
 _EXPR_DETAIL_ROLE = Qt.ItemDataRole.UserRole + 13
-#: 主表格数量列「平时显示求值结果、双击编辑算式」的显示覆盖文本（空串 = 不覆盖）。
-#: 条目的 DisplayRole 必须保持算式原文——行内编辑器读的就是它，双击才能改回
-#: 算式；绘制时由 _FocusCellDelegate.initStyleOption 换成这里的结果文本。
+#: 主表格埋深 / 数量列「平时显示求值结果、双击编辑算式」的显示覆盖文本
+#: （空串 = 不覆盖）。条目的 DisplayRole 必须保持算式原文——行内编辑器读的
+#: 就是它，双击才能改回算式；绘制时由 _FocusCellDelegate.initStyleOption
+#: 换成这里的结果文本。
 _EXPRESSION_DISPLAY_ROLE = Qt.ItemDataRole.UserRole + 14
 #: 纯数字原文（含正负号 / 科学计数法）：不换成求值结果，保留用户录入的精度
 _PLAIN_NUMBER = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
@@ -233,7 +235,7 @@ class _FocusCellDelegate(TableEditDelegate):
     """
 
     def initStyleOption(self, option, index) -> None:  # noqa: N802 - Qt 命名
-        """数量列平时绘制求值结果（双击仍按 DisplayRole 的算式原文编辑）。
+        """埋深 / 数量列平时绘制求值结果（双击仍按 DisplayRole 的算式原文编辑）。
 
         只在条目挂 ``_EXPRESSION_DISPLAY_ROLE`` 时替换；算式原文留在
         DisplayRole 里，行内编辑器读到的仍是算式，双击即可继续改算式。
@@ -1519,7 +1521,7 @@ class UnitPanel(QWidget):
         depth_item = QTableWidgetItem(row.depth)
         depth_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self._element_table.setItem(index, _COL_DEPTH, depth_item)
-        _apply_expression_hint(depth_item, row.depth, row.depth_error)
+        _apply_expression_hint(depth_item, row.depth, row.depth_error, display_result=True)
 
         unit_item = QTableWidgetItem(row.unit)
         unit_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1769,7 +1771,7 @@ class UnitPanel(QWidget):
         if field == "name":
             self._vm.set_element_field(element_id, field, text)
             return
-        _apply_expression_hint(item, text, "", display_result=field == "amount")
+        _apply_expression_hint(item, text, "", display_result=True)
         self._vm.set_element_field(element_id, field, text)
         label = "埋深" if field == "depth" else "数量"
         try:
@@ -3448,8 +3450,8 @@ def _apply_expression_hint(
 ) -> None:
     """把算式求值结果显示在 tooltip；不合法时用警示色标出。
 
-    ``display_result=True``（主表格数量列）：平时单元格显示算式求值结果，
-    算式原文留在 DisplayRole 里供双击编辑——绘制时由
+    ``display_result=True``（主表格埋深 / 数量列）：平时单元格显示算式求值
+    结果，算式原文留在 DisplayRole 里供双击编辑——绘制时由
     ``_FocusCellDelegate.initStyleOption`` 用 ``_EXPRESSION_DISPLAY_ROLE``
     替换显示文本。纯数字（``_PLAIN_NUMBER``）不替换，保留用户录入的精度，
     例如 ``0.00005`` / ``-0.00005`` 不会被 format_number 舍成 ``0.0001`` / ``0``。
