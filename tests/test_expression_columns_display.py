@@ -5,6 +5,8 @@
 ``_EXPRESSION_DISPLAY_ROLE`` 把显示文本换成求值结果，于是「退出编辑状态
 （平时）」看到结果，「双击编辑」看到并可修改算式。纯数字不替换显示文本，
 避免按 format_number 舍掉用户录入的精度；无效算式照原文显示并给警示色。
+视图菜单「埋深/数量显示算式」勾选后（config ``ui.depth_amount_display``
+= ``formula``）非编辑态改画算式原文，编辑路径不受影响。
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QLineEdit, QStyleOptionViewItem
 
+from app.core.config import get_config, update_config
 from app.core.models import base as orm
 from app.core.models.models import Element
 from app.services import project_io
@@ -200,3 +203,119 @@ def test_group_parent_amount_also_shows_result(qapp, tmp_path) -> None:
         item = table.item(row, _COL_AMOUNT)
         assert item.text() == "100+20"
         assert _paint_text(table, row, _COL_AMOUNT) == "120"
+
+
+# --------------------------------------------------------------------------- #
+# 视图菜单「埋深/数量显示算式」：非编辑态显示口径切换（config ui.depth_amount_display）
+# --------------------------------------------------------------------------- #
+@pytest.fixture()
+def set_display_mode():
+    """返回切换显示口径的回调；用例结束后恢复默认「显示计算结果」口径。"""
+
+    def _set(mode: str) -> None:
+        update_config({"ui": {"depth_amount_display": mode}})
+
+    try:
+        yield _set
+    finally:
+        update_config({"ui": {"depth_amount_display": "result"}})
+
+
+@pytest.fixture()
+def formula_window(qapp, set_display_mode):
+    """口径已切成「显示算式」时挂出的主窗体（用于锁定勾选项初始态）。"""
+    set_display_mode("formula")
+    from app.views.main_window import MainWindow
+
+    window = MainWindow()
+    try:
+        yield window
+    finally:
+        window.close()
+
+
+def test_formula_mode_paints_expression(qapp, unit_with_amounts, set_display_mode) -> None:
+    """勾选「显示算式」：非编辑态画算式原文；双击编辑器里仍是算式。"""
+    set_display_mode("formula")
+    unit, _ids = unit_with_amounts
+    panel = _panel_for(qapp, unit)
+    table = panel._element_table
+
+    assert _paint_text(table, 0, _COL_AMOUNT) == "2.5+0.3"  # 非编辑态显示算式原文
+    assert _paint_text(table, 1, _COL_AMOUNT) == "0.00005"  # 纯数字口径不变
+    assert not table.item(0, _COL_AMOUNT).data(_EXPRESSION_DISPLAY_ROLE)
+
+    editor = _open_editor(table, 0, _COL_AMOUNT)
+    assert editor.text() == "2.5+0.3"  # 编辑路径不受开关影响
+
+
+def test_formula_mode_toggle_refreshes_loaded_rows(
+    qapp, unit_with_amounts, set_display_mode
+) -> None:
+    """表已按结果口径装好后再切换：刷新方法即时改画，无需重开工程。"""
+    unit, _ids = unit_with_amounts
+    panel = _panel_for(qapp, unit)
+    table = panel._element_table
+    assert _paint_text(table, 0, _COL_AMOUNT) == "2.8"
+
+    set_display_mode("formula")
+    panel.refresh_depth_amount_display()
+    assert _paint_text(table, 0, _COL_AMOUNT) == "2.5+0.3"
+
+    set_display_mode("result")
+    panel.refresh_depth_amount_display()
+    assert _paint_text(table, 0, _COL_AMOUNT) == "2.8"
+
+
+def test_formula_mode_group_parent_amount(qapp, tmp_path, set_display_mode) -> None:
+    """合槽父行数量随口径切换；父行埋深格（恒 "-"）不被重算成警示色。"""
+    set_display_mode("formula")
+    project_io.new_project(NewProjectSpec(path=tmp_path / "合槽算式.stn", unit_names=["雨水工程"]))
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    ids = [_element(f"管{i}", amount="10") for i in "AB"]
+    group, error = unit_vm.create_trench_group(ids)
+    assert group is not None and error is None
+    unit_vm.update_group(group.id, amount="100+20")
+
+    panel = _panel_for(qapp, unit)
+    table = panel._element_table
+    group_row = next(
+        index for index, row in enumerate(panel._rows_cache) if hasattr(row, "member_count")
+    )
+    assert _paint_text(table, group_row, _COL_AMOUNT) == "100+20"
+    assert _paint_text(table, group_row, _COL_DEPTH) == "-"
+
+    set_display_mode("result")
+    panel.refresh_depth_amount_display()
+    assert _paint_text(table, group_row, _COL_AMOUNT) == "120"
+    assert _paint_text(table, group_row, _COL_DEPTH) == "-"
+
+
+def test_view_menu_toggle_persists(qapp, set_display_mode) -> None:
+    """视图菜单勾选项：初始勾选态取自配置，切换即写回配置（跨次启动生效）。"""
+    from app.views.main_window import MainWindow
+
+    window = MainWindow()
+    try:
+        menubar = window._title_bar.menu_bar
+        view_menu = next(
+            menu_action.menu()
+            for menu_action in menubar.actions()
+            if menu_action.menu() is not None and menu_action.menu().title().startswith("视图")
+        )
+        action = window._act_formula_display
+        assert action in view_menu.actions()
+        assert action.isCheckable()
+        assert not action.isChecked()  # 默认显示计算结果
+
+        action.setChecked(True)
+        assert get_config().depth_amount_display == "formula"
+        action.setChecked(False)
+        assert get_config().depth_amount_display == "result"
+    finally:
+        window.close()
+
+
+def test_view_menu_action_initial_state_from_config(qapp, formula_window) -> None:
+    """配置已是算式口径时启动：勾选项初始即为勾选。"""
+    assert formula_window._act_formula_display.isChecked()

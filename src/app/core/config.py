@@ -22,6 +22,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "ui": {
         "theme": "light",
         "ai_panel_expanded": False,
+        # 主表格埋深 / 数量列非编辑态的显示口径："result" 求值结果（默认）
+        # / "formula" 算式原文（视图菜单「埋深/数量显示算式」切换）
+        "depth_amount_display": "result",
         "last_dir": "",
     },
     # M7 使用；providers 为 [[ai.providers]] 数组表，key 存 keyring 不在此处
@@ -160,6 +163,12 @@ class _Proxy:
     @property
     def ai_panel_expanded(self) -> bool:
         return bool(self.ui.get("ai_panel_expanded", False))
+
+    @property
+    def depth_amount_display(self) -> str:
+        """主表格埋深 / 数量列非编辑态的显示口径："result" / "formula"。"""
+        value = str(self.ui.get("depth_amount_display", "result"))
+        return value if value in ("result", "formula") else "result"
 
     @property
     def last_dir(self) -> str:

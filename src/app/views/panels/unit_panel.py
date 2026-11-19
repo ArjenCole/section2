@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.core.config import get_config
 from app.core.evaluator import EvalError, evaluate, format_number
 from app.core.event_bus import bus, connect_weak
 from app.core.atlas_candidates import MATCH_LEVEL_LABELS, columns_for, is_cross_group
@@ -133,7 +134,8 @@ _EXPR_DETAIL_ROLE = Qt.ItemDataRole.UserRole + 13
 #: 主表格埋深 / 数量列「平时显示求值结果、双击编辑算式」的显示覆盖文本
 #: （空串 = 不覆盖）。条目的 DisplayRole 必须保持算式原文——行内编辑器读的
 #: 就是它，双击才能改回算式；绘制时由 _FocusCellDelegate.initStyleOption
-#: 换成这里的结果文本。
+#: 换成这里的结果文本。视图菜单「埋深/数量显示算式」勾选后改画算式原文：
+#: _apply_expression_hint 不再写结果覆盖（_EXPRESSION_DISPLAY_ROLE 恒空）。
 _EXPRESSION_DISPLAY_ROLE = Qt.ItemDataRole.UserRole + 14
 #: 纯数字原文（含正负号 / 科学计数法）：不换成求值结果，保留用户录入的精度
 _PLAIN_NUMBER = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
@@ -2204,6 +2206,26 @@ class UnitPanel(QWidget):
         if self._unit_id is not None:
             self._vm.load_unit(self._unit_id)
 
+    def refresh_depth_amount_display(self) -> None:
+        """视图菜单切换埋深 / 数量列显示口径（算式原文 ↔ 计算结果）后重算显示覆盖。
+
+        只动这两列的 ``_EXPRESSION_DISPLAY_ROLE``（tooltip / 前景色不变），
+        按行缓存重算——合槽父行只有数量列挂了覆盖（父行埋深恒 "-"，其
+        tooltip / 灰字是 ``_fill_group_row`` 单独设的，不能重算成警示色）。
+        """
+        for index, row in enumerate(self._rows_cache):
+            if isinstance(row, GroupRow):
+                item = self._element_table.item(index, _COL_AMOUNT)
+                if item is not None:
+                    _apply_expression_hint(item, row.amount, row.amount_error, display_result=True)
+                continue
+            depth_item = self._element_table.item(index, _COL_DEPTH)
+            if depth_item is not None:
+                _apply_expression_hint(depth_item, row.depth, row.depth_error, display_result=True)
+            amount_item = self._element_table.item(index, _COL_AMOUNT)
+            if amount_item is not None:
+                _apply_expression_hint(amount_item, row.amount, row.amount_error, display_result=True)
+
     def ui_state(self) -> dict:
         """撤销快照携带的工作台状态：主表格焦点/滚动 + 明细与工程量页签。
 
@@ -3456,6 +3478,8 @@ def _apply_expression_hint(
     ``_FocusCellDelegate.initStyleOption`` 用 ``_EXPRESSION_DISPLAY_ROLE``
     替换显示文本。纯数字（``_PLAIN_NUMBER``）不替换，保留用户录入的精度，
     例如 ``0.00005`` / ``-0.00005`` 不会被 format_number 舍成 ``0.0001`` / ``0``。
+    视图菜单「埋深/数量显示算式」勾选时改画算式原文：覆盖文本恒空，
+    tooltip 里的「原文 = 结果」保留，便于核对。
     """
     display = ""
     if not text.strip():
@@ -3476,6 +3500,10 @@ def _apply_expression_hint(
             if display_result and not _PLAIN_NUMBER.match(text.strip()):
                 display = format_number(value)
     if display_result:
+        # 视图菜单勾选「显示算式」：清掉结果覆盖（含此前旧值），非编辑态
+        # 直接画 DisplayRole 的算式原文
+        if get_config().depth_amount_display == "formula":
+            display = ""
         # 显示覆盖不是数据变更：挡住表格的 itemChanged，免得再走一遍写库 / 刷新；
         # 模型 dataChanged 不受影响，单元格照常重绘。
         table = item.tableWidget()

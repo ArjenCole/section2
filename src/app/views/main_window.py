@@ -670,6 +670,13 @@ class MainWindow(QMainWindow):
         self._act_add_unit = self._action("新增单位工程", self._tree_panel.add_unit)
         self._act_theme = self._action("切换暗色主题", self._toggle_theme, "Ctrl+Shift+T")
         self._act_ai_panel = self._action("AI 助手", self._toggle_ai_panel, "Ctrl+L")
+        # 埋深 / 数量列显示口径是勾选动作（同格式刷：接 toggled 而不是 triggered）：
+        # 勾选 = 非编辑态显示算式原文，取消勾选 = 显示求值结果（默认）；
+        # 双击编辑始终进算式原文，不受此开关影响
+        self._act_formula_display = QAction("埋深/数量显示算式", self)
+        self._act_formula_display.setCheckable(True)
+        self._act_formula_display.setChecked(get_config().depth_amount_display == "formula")
+        self._act_formula_display.toggled.connect(self._toggle_formula_display)
         self._act_ai_settings = self._action("AI 设置…", self._ai_settings)
         self._act_mcp = self._action("MCP 服务…", self._mcp_settings)
         self._act_about = self._action("关于 Section", self._about)
@@ -801,6 +808,7 @@ class MainWindow(QMainWindow):
 
         view_menu = menubar.addMenu("视图(&V)")
         view_menu.addAction(self._act_theme)
+        view_menu.addAction(self._act_formula_display)
         view_menu.addSeparator()
         view_menu.addAction(self._act_ai_panel)
 
@@ -1357,6 +1365,15 @@ class MainWindow(QMainWindow):
         name = ThemeManager.instance().toggle(QApplication.instance())
         update_config({"ui": {"theme": name}})
         self._set_status("已切换到暗色主题" if name == "dark" else "已切换到亮色主题", 3000)
+
+    def _toggle_formula_display(self, checked: bool) -> None:
+        """视图菜单「埋深/数量显示算式」：切主表格埋深 / 数量列非编辑态的显示口径。"""
+        update_config({"ui": {"depth_amount_display": "formula" if checked else "result"}})
+        self._unit_panel.refresh_depth_amount_display()
+        self._set_status(
+            "埋深 / 数量列非编辑状态将显示算式原文" if checked else "埋深 / 数量列非编辑状态将显示计算结果",
+            3000,
+        )
 
     def _toggle_ai_panel(self) -> None:
         expanded = not self._ai_panel.isVisible()
