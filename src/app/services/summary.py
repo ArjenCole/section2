@@ -17,6 +17,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from app.core.evaluator import format_number
 from app.core.models import base as orm
 from app.core.models.models import Price, Unit
 from app.core.models.models import category_name
@@ -393,11 +394,32 @@ def _quota_rows(qdict, with_expression: bool = True) -> list[list]:
     ]
 
 
-def _listing_rows(detail, with_expression: bool = True) -> list[tuple[list, bool]]:
+def listing_item_name(element_row, *, with_depth: bool = False) -> str:
+    """清单项目行的显示名称：规格（空则构件名），可后接埋深。
+
+    埋深按 ``format_number`` 取求值结果，拼法沿用旧版 FormSum 清单项目行
+    （``规格 + " 埋深 " + 埋深 + "m"``）；埋深为空或算式不合法时不追加。
+    ``with_depth=True`` 用于详情面板「清单工程量」与工程量明细表，导出默认
+    保持原名称。
+    """
+    name = element_row.spec or element_row.name
+    if not with_depth:
+        return name
+    text = (element_row.depth or "").strip()
+    if not text or element_row.depth_error:
+        return name
+    depth = format_number(element_row.depth_value)
+    return f"{name} 埋深 {depth}m" if name else f"埋深 {depth}m"
+
+
+def _listing_rows(
+    detail, with_expression: bool = True, with_depth: bool = False
+) -> list[tuple[list, bool]]:
     """清单工程量表行：``(值, 是否清单项目行)``，清单项目行下挂定额拆分行。
 
     ``detail`` 是 :func:`app.viewmodels.unit_vm.compute_unit` 返回的
-    ``[(构件行, 该构件 QDict)]``。
+    ``[(构件行, 该构件 QDict)]``；``with_depth=True`` 时清单项目行的名称
+    后追加埋深（工程量明细表页面用，导出保持原名称）。
     """
     rows: list[tuple[list, bool]] = []
     for element_row, qdict in detail:
@@ -405,7 +427,7 @@ def _listing_rows(detail, with_expression: bool = True) -> list[tuple[list, bool
             (
                 [
                     category_name(element_row.category),
-                    element_row.spec or element_row.name,
+                    listing_item_name(element_row, with_depth=with_depth),
                     element_row.unit,
                     element_row.amount_value,
                     element_row.amount,

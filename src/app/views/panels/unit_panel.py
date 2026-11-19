@@ -59,6 +59,7 @@ from app.core.models.models import (
 from app.core.pipe_category import PIPE_CATEGORIES
 from app.resources.qss.theme import ThemeManager
 from app.services import project_io
+from app.services.summary import listing_item_name
 from app.viewmodels.project_vm import TreeNode
 from app.viewmodels.unit_vm import (
     ElementRow,
@@ -1253,13 +1254,13 @@ class UnitPanel(QWidget):
             row_index += 1
 
         for element_row, dq in chosen:
-            # 清单项目行（浅蓝标记行）：类别 / 项目（规格）/ 单位 /
+            # 清单项目行（浅蓝标记行）：类别 / 项目（规格 + 埋深）/ 单位 /
             # 工程量 = 用户输入的数量算式的计算结果 / 计算表达式 = 该算式
             listing.setRowCount(row_index + 1)
             header_cells = (
                 "清单项目",
                 category_name(element_row.category),
-                element_row.spec or element_row.name,
+                listing_item_name(element_row, with_depth=True),
                 element_row.unit,
                 calc_fmt(element_row.amount_value),
                 element_row.amount,

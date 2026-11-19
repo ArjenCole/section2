@@ -3,7 +3,9 @@
 表格内容与「导出 Excel」的工程数量表同源（去掉表达式 / 算式两列）：行前
 带“编号”列（内容与构件列表详情面板 定额 / 清单工程量 tab 首列一致：清单
 项目行填“清单项目”、定额拆分行留空），列见 :data:`_HEADERS`（编号 / 类别 /
-名称 / 单位 / 数量 / 单价 / 合价），清单项目行按导出规则整行浅蓝底色。
+名称 / 单位 / 数量 / 单价 / 合价），清单项目行按导出规则整行浅蓝底色，名称
+列在规格 / 名称后追加埋深（如“DN600 埋深 3.2m”，与详情面板「清单工程量」
+的项目列同口径）。
 单价列参照综合单价汇总表交互：可编辑，按“类别 + 项目”联动写库（见
 ``summary.set_price_propagate``）；合价 = 数量 × 单价自动算出，不可编辑。
 清单项目行（清单表）的单价 / 合价为派生值：合价 = 该条目下所有定额工程量
@@ -356,7 +358,9 @@ class QuantityDetailPanel(QWidget):
             self._quota_pairs = [
                 (row, False) for row in _quota_rows(summary, with_expression=False)
             ]
-            self._listing_pairs = list(_listing_rows(detail, with_expression=False))
+            self._listing_pairs = list(
+                _listing_rows(detail, with_expression=False, with_depth=True)
+            )
             self._quota_rowset = self._compose(self._quota_pairs)
             self._listing_rowset = self._compose(self._listing_pairs)
             self._fill_table(self._quota_table, self._quota_rowset)
@@ -542,7 +546,9 @@ class QuantityDetailPanel(QWidget):
         """
         if is_listing:
             # 收起态不必解析主算式（省掉那一次极重的解析）
-            pairs = list(_listing_rows(self._detail, with_expression=not collapsed))
+            pairs = list(
+                _listing_rows(self._detail, with_expression=not collapsed, with_depth=True)
+            )
             if collapsed:
                 pairs = [(values, True) for values, flag in pairs if flag]
         else:
