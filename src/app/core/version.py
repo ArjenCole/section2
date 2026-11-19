@@ -70,8 +70,9 @@ STN_FILE_VERSION = 2
 PROJECT_SUFFIX = ".stn"
 PROJECT_FILE_FILTER = "Section 工程 (*.stn)"
 
-#: 锁文件 = 工程文件全路径 + LOCK_SUFFIX
-LOCK_SUFFIX = ".lock"
+#: 锁文件 = 工程文件同目录下的 ``~$`` + 工程文件名（Office 属主文件同款，
+#: 如 ``~$某项目.stn``；Windows 上创建后设为隐藏）。
+LOCK_PREFIX = "~$"
 
 #: 自动备份
 BACKUP_DIR_NAME = "Backup"

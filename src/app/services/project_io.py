@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import ctypes
 import errno
+import getpass
 import hashlib
 import json
 import os
 import shutil
+import socket
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -34,7 +36,7 @@ from app.core.version import (
     BACKUP_DIR_NAME,
     BACKUP_KEEP,
     DEFAULT_ATLAS_NAME,
-    LOCK_SUFFIX,
+    LOCK_PREFIX,
     PROJECT_SUFFIX,
     STN_FILE_VERSION,
 )
@@ -68,14 +70,41 @@ class ProjectIoError(orm.ProjectFileError):
 
 
 class ProjectLockedError(ProjectIoError):
-    """工程已在另一个窗口打开。"""
+    """工程已在另一个窗口或另一台电脑上打开。"""
 
-    def __init__(self, path: Path, pid: int | None, opened_at: str) -> None:
+    def __init__(self, path: Path, info: dict) -> None:
         self.path = Path(path)
-        self.pid = pid
-        self.opened_at = opened_at
-        detail = f"（进程 {pid}，{opened_at}）" if pid else ""
-        super().__init__(f"该工程已在另一窗口打开{detail}：{self.path}")
+        self.pid = _lock_pid(info) or None
+        self.opened_at = str(info.get("opened_at") or "")
+        self.hostname = str(info.get("hostname") or "")
+        self.username = str(info.get("username") or "")
+
+        owner = [f"用户 {self.username or '未知'}"]
+        owner.append(f"主机 {self.hostname or '未知'}")
+        if self.pid:
+            owner.append(f"进程 {self.pid}")
+        if self.opened_at:
+            owner.append(self.opened_at)
+        super().__init__(
+            "该工程已被打开，不能同时编辑。\n"
+            f"打开者：{'，'.join(owner)}\n"
+            f"锁文件：{lock_path(self.path)}\n"
+            "若确认没有其他人在使用（例如上次异常退出），删除锁文件后重试。"
+        )
+
+
+class ProjectLockWriteError(ProjectIoError):
+    """工程所在目录不可写，无法创建锁文件，因此拒绝打开/保存。"""
+
+    def __init__(self, path: Path, error: OSError) -> None:
+        self.path = Path(path)
+        self.lock = lock_path(path)
+        super().__init__(
+            f"无法在工程目录创建锁文件：\n{self.lock}\n"
+            f"原因：{error}\n"
+            "工程所在目录可能只读、无写入权限或磁盘已满。"
+            "请检查目录权限，或把工程另存到可写目录后再试。"
+        )
 
 
 @dataclass
@@ -135,7 +164,9 @@ _write_pending: dict | None = None
 # 路径与锁
 # --------------------------------------------------------------------------- #
 def lock_path(path: str | Path) -> Path:
-    return Path(f"{path}{LOCK_SUFFIX}")
+    """锁文件路径：工程同目录下的 ``~$工程文件.stn``（Office 属主文件同款）。"""
+    project = Path(path)
+    return project.with_name(f"{LOCK_PREFIX}{project.name}")
 
 
 def backup_root_dir() -> Path:
@@ -201,35 +232,116 @@ def _process_alive_windows(pid: int) -> bool:
         kernel32.CloseHandle(handle)
 
 
+def _current_hostname() -> str:
+    """本机主机名（锁文件用来区分“同一台电脑”还是“另一台电脑”）。"""
+    try:
+        return socket.gethostname()
+    except OSError:
+        return ""
+
+
+def _current_username() -> str:
+    """当前登录用户名；取不到时退回环境变量。"""
+    try:
+        return getpass.getuser()
+    except Exception:  # noqa: BLE001 - 用户名只用于提示，取不到不影响加锁
+        return os.environ.get("USERNAME") or os.environ.get("USER") or ""
+
+
+def _lock_payload() -> dict:
+    """锁文件内容：谁、在哪台电脑、哪个进程、什么时候打开的。"""
+    return {
+        "pid": os.getpid(),
+        "hostname": _current_hostname(),
+        "username": _current_username(),
+        "opened_at": datetime.now().isoformat(timespec="seconds"),
+        "app_version": APP_VERSION,
+    }
+
+
+def _read_lock(lock: Path) -> dict:
+    """读锁文件；不存在、损坏或不是对象时返回空 dict（按“无锁”处理）。"""
+    try:
+        data = json.loads(lock.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _lock_pid(info: dict) -> int:
+    """锁里的 pid；缺失或不是数字时按 0（未知）处理。"""
+    try:
+        return int(info.get("pid") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _lock_is_live(info: dict) -> bool:
+    """锁的持有者是否仍在编辑。
+
+    同一台电脑：PID 还活着才算占用（崩溃/强杀留下的锁自动接管）。
+    另一台电脑：本机无法探测对方进程，保守视为占用，由用户确认后删锁。
+    """
+    pid = _lock_pid(info)
+    if pid <= 0:
+        return False
+    host = str(info.get("hostname") or "").strip()
+    if host and host.casefold() != _current_hostname().casefold():
+        return True
+    return pid != os.getpid() and _process_alive(pid)
+
+
+def _hide_on_windows(path: Path) -> None:
+    """Windows 上把锁文件设为隐藏（Office 属主文件同款）；失败不影响加锁。"""
+    if os.name != "nt":
+        return
+    file_attribute_hidden = 0x2
+    invalid_file_attributes = 0xFFFFFFFF
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+        kernel32.GetFileAttributesW.restype = ctypes.c_ulong
+        kernel32.SetFileAttributesW.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong]
+        kernel32.SetFileAttributesW.restype = ctypes.c_int
+        attributes = kernel32.GetFileAttributesW(str(path))
+        if attributes == invalid_file_attributes:
+            return
+        if not attributes & file_attribute_hidden:
+            kernel32.SetFileAttributesW(str(path), attributes | file_attribute_hidden)
+    except (OSError, AttributeError):
+        pass
+
+
+def _write_lock(lock: Path, payload: dict) -> None:
+    """写出锁文件并隐藏；失败抛 OSError，由 acquire_lock 转成可读错误。"""
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        lock.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        # 写了一半（磁盘满 / 权限变化）时别留下一个空锁
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+        raise
+    _hide_on_windows(lock)
+
+
 def acquire_lock(path: str | Path) -> None:
     """获取工程锁；已被存活进程占用则抛 ProjectLockedError。
 
-    锁文件里是上一次写入的 pid + 时间，pid 已死（上次崩溃/强杀）时自动接管。
+    锁文件里记录 pid / 主机名 / 用户名 / 打开时间。同机 pid 已死（上次崩溃、
+    强杀）时自动接管；异机锁保守视为占用，避免共享盘上两边同时写。
+    目录只读等原因写不了锁时抛 ProjectLockWriteError，调用方据此放弃打开。
     """
     lock = lock_path(path)
-    if lock.exists():
-        pid: int | None = None
-        opened_at = ""
-        try:
-            data = json.loads(lock.read_text(encoding="utf-8"))
-            pid = int(data.get("pid", 0)) or None
-            opened_at = str(data.get("opened_at", ""))
-        except (OSError, ValueError, TypeError):
-            data = {}
-        if pid and pid != os.getpid() and _process_alive(pid):
-            raise ProjectLockedError(Path(path), pid, opened_at)
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text(
-        json.dumps(
-            {
-                "pid": os.getpid(),
-                "opened_at": datetime.now().isoformat(timespec="seconds"),
-                "app_version": APP_VERSION,
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
+    info = _read_lock(lock)
+    if _lock_is_live(info):
+        raise ProjectLockedError(Path(path), info)
+    try:
+        _write_lock(lock, _lock_payload())
+    except OSError as error:
+        raise ProjectLockWriteError(Path(path), error) from error
 
 
 def release_lock(path: str | Path | None) -> None:
@@ -239,12 +351,9 @@ def release_lock(path: str | Path | None) -> None:
     lock = lock_path(path)
     if not lock.exists():
         return
-    try:
-        data = json.loads(lock.read_text(encoding="utf-8"))
-        if int(data.get("pid", 0)) not in (0, os.getpid()):
-            return
-    except (OSError, ValueError, TypeError):
-        pass
+    data = _read_lock(lock)
+    if _lock_pid(data) not in (0, os.getpid()):
+        return
     try:
         lock.unlink()
     except OSError:
@@ -280,9 +389,8 @@ def new_project(spec: NewProjectSpec) -> Path | None:
     if path.suffix.lower() != PROJECT_SUFFIX:
         path = path.with_suffix(PROJECT_SUFFIX)
     try:
-        release_lock(path)
+        acquire_lock(path)  # 先抢锁：已被别的进程打开时不覆盖文件
         _write_project_file(path)
-        acquire_lock(path)
     except Exception:
         orm.close_database()
         release_lock(path)
@@ -318,7 +426,7 @@ def _seed_new_project(spec: NewProjectSpec) -> None:
 def open_project(path: str | Path) -> Path | None:
     """打开工程，返回工程文件路径。
 
-    2.0 文件：抢锁 → 解析 → 由 JSON 重建工作库，返回文件路径。
+    2.0 文件：先检查占用 → 解析 → 抢锁 → 由 JSON 重建工作库，返回文件路径。
     1.0 旧版文件：自动转译（brackets 同款，见 :func:`open_legacy_project`），
     工程进入“尚未保存”的临时状态，返回 None；提示文案见
     :func:`last_migration_notice`。
@@ -327,35 +435,59 @@ def open_project(path: str | Path) -> Path | None:
 
     ensure_main_thread("打开工程")
     target = Path(path)
-    close_project()
     if not target.exists():
         raise ProjectIoError(f"工程文件不存在：{target}")
-    _last_migration_notice = ""
+
+    reopening_same = (
+        _original_path is not None
+        and target.resolve() == Path(_original_path).resolve()
+    )
+    if not reopening_same:
+        # 先看占用，避免读到别人正在写的半成品；真正抢锁在解析成功后
+        _reject_foreign_lock(target)
+    if reopening_same:
+        # 同一路径重开：先把防抖挂起的修改落盘再读文件，否则会读到旧内容
+        close_project()
+
     try:
         document = stn_format.load_stn(target)
     except orm.NotAProjectFileError:
         if stn_format.looks_like_legacy_file(target):
+            if not reopening_same:
+                close_project()
             return open_legacy_project(target)
         raise
-    if int(document.data.get("file_version") or 0) < STN_FILE_VERSION:
+
+    file_version = int(document.data.get("file_version") or 0)
+    if not reopening_same:
+        # 先抢新工程的锁：目录只读 / 工程被占用时直接失败，当前工程保持打开
+        acquire_lock(target)
+    try:
+        if not reopening_same:
+            close_project()
+        else:
+            acquire_lock(target)  # close_project 已释放本进程的锁，重新抢回
+        try:
+            orm.create_working_database()
+            stn_codec.load_database(document.data)
+            _ensure_basic_info()
+        except Exception as error:
+            orm.close_database()
+            if isinstance(error, orm.ProjectFileError):
+                raise
+            raise ProjectIoError(f"打开工程失败：{error}") from error
+    except Exception:
+        release_lock(target)
+        raise
+
+    if file_version < STN_FILE_VERSION:
         # 旧结构版本：stn_codec 已兼容读取；多原则引用（v1）按主原则降级
         _last_migration_notice = (
-            f"工程文件是旧结构（file_version {document.data.get('file_version')}）保存的，"
+            f"工程文件是旧结构（file_version {file_version}）保存的，"
             "已升级到当前结构。\n"
             "多围护/多地基原则引用（2.0 已取消该功能）已按主要原则降级为单原则，"
             "占比信息见迁移备份或原文件。"
         )
-    acquire_lock(target)
-    try:
-        orm.create_working_database()
-        stn_codec.load_database(document.data)
-        _ensure_basic_info()
-    except Exception as error:
-        orm.close_database()
-        release_lock(target)
-        if isinstance(error, orm.ProjectFileError):
-            raise
-        raise ProjectIoError(f"打开工程失败：{error}") from error
     _original_path = target
     _backup_done_for_session = False
     undo_stack.reset(stn_codec.dump_database())
@@ -444,10 +576,14 @@ def save_as(path: str | Path) -> Path:
     orm.commit()  # 先落盘，保证写出的是最新内容
     _discard_pending_write()  # 挂起内容属于旧路径，另存后由下次 commit 重新挂起
     target.parent.mkdir(parents=True, exist_ok=True)
-    _write_project_file(target)
+    acquire_lock(target)  # 先抢新锁；失败时旧工程保持打开、旧锁不释放
+    try:
+        _write_project_file(target)
+    except Exception:
+        release_lock(target)
+        raise
     release_lock(old_path)
     _original_path = target
-    acquire_lock(target)
     _backup_done_for_session = False
     return target
 
@@ -623,19 +759,9 @@ def _write_project_file(path: Path | None = None, *, data: dict | None = None) -
 
 def _reject_foreign_lock(path: Path) -> None:
     """path 已被其他存活进程加锁时拒绝覆盖（另存为 / 新建防误覆盖）。"""
-    lock = lock_path(path)
-    if not lock.exists():
-        return
-    pid: int | None = None
-    opened_at = ""
-    try:
-        data = json.loads(lock.read_text(encoding="utf-8"))
-        pid = int(data.get("pid", 0)) or None
-        opened_at = str(data.get("opened_at", ""))
-    except (OSError, ValueError, TypeError):
-        pass
-    if pid and pid != os.getpid() and _process_alive(pid):
-        raise ProjectLockedError(Path(path), pid, opened_at)
+    info = _read_lock(lock_path(path))
+    if _lock_is_live(info):
+        raise ProjectLockedError(Path(path), info)
 
 
 def current_path() -> Path | None:

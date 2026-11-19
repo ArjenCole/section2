@@ -111,7 +111,7 @@ commit"的中间态，如改一格候选参数触发重匹配）。
 `create_working_database`）：打开工程时由 JSON 重建、保存时整体写出为 `.stn`、
 关闭即删除。`meta` 表（`schema_version` / `app_version` / `created_at` / `updated_at`）
 只作库内诊断记录；`services/project_io.py` 负责新建/打开/保存/另存/关闭、
-`.lock` 防双开与 Backup 备份。
+`~$` 属主锁防双开与 Backup 备份。
 
 JSON 数据结构变更时：改 `services/stn_codec.py`（与涉及的模型）→
 `core/version.py` 的 `STN_FILE_VERSION` +1。2.0 未发布，不做旧文件迁移：

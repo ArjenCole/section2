@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from app.core.version import SCHEMA_VERSION
+from app.core.version import APP_VERSION, SCHEMA_VERSION
 from app.core.models import base as orm
 from app.core.models.models import BasicInfo, Element, Pipe, Segment, Unit
 from app.core.paths import app_data_dir
@@ -22,6 +23,7 @@ from app.services import project_io, stn_format
 from app.services.project_io import (
     NewProjectSpec,
     ProjectLockedError,
+    ProjectLockWriteError,
     ProjectIoError,
     backup_dir,
     lock_path,
@@ -190,6 +192,96 @@ def test_release_lock_keeps_others_lock(tmp_path: Path) -> None:
     lock_path(path).write_text(json.dumps({"pid": 999_999_999}), encoding="utf-8")
     project_io.release_lock(path)
     assert lock_path(path).exists()
+
+
+def test_lock_is_office_style_owner_file_and_hidden_on_windows(tmp_path: Path) -> None:
+    """锁文件用 Office 同款 ``~$工程文件.stn``；Windows 上设为隐藏。"""
+    path = _make_project(tmp_path)
+    lock = lock_path(path)
+
+    assert lock.name == f"~${path.name}"
+    assert lock.exists()
+    if os.name == "nt":
+        import ctypes
+
+        attributes = ctypes.windll.kernel32.GetFileAttributesW(str(lock))
+        assert attributes & 0x2  # FILE_ATTRIBUTE_HIDDEN
+
+
+def test_lock_records_owner_identity(tmp_path: Path) -> None:
+    """锁里要能看出是谁、在哪台电脑、哪个进程打开的。"""
+    path = _make_project(tmp_path)
+    data = json.loads(lock_path(path).read_text(encoding="utf-8"))
+
+    assert data["pid"] == os.getpid()
+    assert data["hostname"] == socket.gethostname()
+    assert data["username"]
+    assert data["opened_at"]
+    assert data["app_version"] == APP_VERSION
+
+
+def test_lock_from_other_host_is_respected(tmp_path: Path) -> None:
+    """异机锁不能只看本机 PID：即使 PID 在本机不存在，也视为仍被占用。"""
+    path = _make_project(tmp_path)
+    project_io.close_project()
+    lock_path(path).write_text(
+        json.dumps(
+            {
+                "pid": 999_999_999,
+                "hostname": "另一台电脑",
+                "username": "张三",
+                "opened_at": "2026-11-19T10:00:00",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ProjectLockedError) as excinfo:
+        project_io.open_project(path)
+    message = str(excinfo.value)
+    assert "张三" in message
+    assert "另一台电脑" in message
+
+
+def test_new_project_does_not_overwrite_locked_file(tmp_path: Path) -> None:
+    """新建工程指向别人正打开的工程时，必须先报错，不能先把文件覆盖掉。"""
+    path = _make_project(tmp_path)
+    project_io.close_project()
+    before = path.read_bytes()
+    lock_path(path).write_text(
+        json.dumps({"pid": 1, "hostname": "另一台电脑"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ProjectLockedError):
+        project_io.new_project(NewProjectSpec(path=path, unit_names=["雨水工程"]))
+
+    assert not project_io.is_open()
+    assert path.read_bytes() == before
+
+
+def test_lock_write_failure_keeps_current_project_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """锁写不进去（只读目录等）→ 明确报错，且当前已打开的工程不受影响。"""
+    first = _make_project(tmp_path, name="甲工程")
+    project_io.close_project()
+    second = _make_project(tmp_path, name="乙工程")
+
+    def deny_write(lock: Path, payload: dict) -> None:
+        raise PermissionError("拒绝访问")
+
+    monkeypatch.setattr(project_io, "_write_lock", deny_write)
+
+    with pytest.raises(ProjectLockWriteError) as excinfo:
+        project_io.open_project(first)
+
+    assert "锁文件" in str(excinfo.value)
+    assert project_io.is_open()
+    assert project_io.current_path() == second
+    assert lock_path(second).exists()
+    assert not lock_path(first).exists()
 
 
 # --------------------------------------------------------------------------- #
