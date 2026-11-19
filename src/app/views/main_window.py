@@ -16,12 +16,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, QPropertyAnimation, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -312,7 +313,7 @@ class _StatusToast(QLabel):
     状态栏那一行去掉后，界面元素直接顶到窗体最下方；但原来的瞬时提示
     （算式结果、拖拽被拒、MCP 启动失败等）仍需可见，于是改成这个
     **绝对定位的子控件**：不参与 QMainWindow 布局，因此不占任何高度，
-    贴在窗体右下角之上，鼠标穿透、超时自动隐藏。
+    贴在窗体右下角之上，鼠标穿透、常驻半秒后淡出隐藏。
     """
 
     #: 与窗体边缘的间距（逻辑像素）
@@ -322,8 +323,10 @@ class _StatusToast(QLabel):
     #: 宽度余量：实宽贴着文字宽时（内边距假设与实机字体/DPI 的几像素差），
     #: 末字会被折到第二行、第二行又被单行高度裁掉——余量保证不触发折行
     _WIDTH_SLACK = 12
-    #: 常驻提示（timeout=0）的兜底时长，避免浮层永久压在内容上
-    _DEFAULT_MS = 6000
+    #: 提示常驻时长（半秒）：到点后进入淡出，调用方传的超时只作上限
+    _HOLD_MS = 500
+    #: 淡出动画时长（半秒）
+    _FADE_MS = 500
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
@@ -334,22 +337,39 @@ class _StatusToast(QLabel):
         self.hide()
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
-        self._timer.timeout.connect(self.hide)
+        # 超时不直接隐藏：先淡出（透明度 1 → 0），动画结束后再隐藏
+        self._effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self._effect)
+        self._fade = QPropertyAnimation(self._effect, b"opacity", self)
+        self._fade.setDuration(self._FADE_MS)
+        self._fade.setStartValue(1.0)
+        self._fade.setEndValue(0.0)
+        self._fade.finished.connect(self._on_fade_finished)
+        self._timer.timeout.connect(self._fade.start)
 
     def show_message(self, text: str, timeout_ms: int = 0) -> None:
         text = (text or "").strip()
         if not text:
             self.clear()
             return
+        self._fade.stop()
+        self._effect.setOpacity(1.0)  # 打断进行中的淡出，新提示从不透明起步
         self.setText(text)
         self._reposition()
         self.show()
         self.raise_()
-        self._timer.start(timeout_ms if timeout_ms > 0 else self._DEFAULT_MS)
+        # 统一最长半秒：调用方传的超时只作上限，超过半秒也被压到半秒
+        self._timer.start(min(timeout_ms, self._HOLD_MS) if timeout_ms > 0 else self._HOLD_MS)
 
     def clear(self) -> None:
         self._timer.stop()
+        self._fade.stop()
+        self._effect.setOpacity(1.0)
         self.hide()
+
+    def _on_fade_finished(self) -> None:
+        self.hide()
+        self._effect.setOpacity(1.0)  # 复位，下次显示直接全不透明
 
     def refresh_position(self) -> None:
         if self.isVisible():
