@@ -262,8 +262,9 @@ class ButtonStyle(QProxyStyle):
                 fill = QColor(colors.primary_hover)
             else:
                 fill = QColor(colors.primary)
-            # 主色按钮的常态边框与底色同色；键盘焦点时换成白边，
-            # 仍是同一条 1px 边框，不额外画内圈线框。
+            # 主色按钮的常态边框与底色同色；键盘焦点时换成反色边
+            # （text_inverse：亮色主题白、暗色主题深色），仍是同一条 1px
+            # 边框，不额外画内圈线框。
             border = QColor(colors.text_inverse if focused else fill)
         else:
             if pressed:

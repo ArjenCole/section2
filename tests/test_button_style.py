@@ -196,7 +196,7 @@ def test_top_level_keyboard_focus_attribute_changes_border(qapp) -> None:
         dialog.deleteLater()
 
 
-def test_keyboard_focus_primary_button_gets_white_border(qapp) -> None:
+def test_keyboard_focus_primary_button_gets_inverse_border(qapp) -> None:
     image = _paint(
         _button(),
         QStyle.StateFlag.State_Enabled

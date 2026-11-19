@@ -1,14 +1,31 @@
-# 标准按钮：自绘外观 + 平台摆放规则
+# 标准按钮：本项目实现说明
+
+## 可复用原则
+
+按钮的**角色、状态模型、尺寸规则、平台摆放、反模式与验收清单**已经拆成
+框架无关的通用版：[button_design_guidelines.md](button_design_guidelines.md)。
+其他项目可以直接拿那份文档参照；如果对方也是 Qt/PySide6，通用版第 10 节
+说明了 `button_style.py` / `platform_buttons.py` 的复用方式。
+
+本文只保留**本项目的实现映射**：`ButtonStyle` 具体怎么画、`platform_buttons`
+怎么排、QSS 与自绘怎么分工，以及本项目的硬约束。下面出现的颜色 token
+（`bg_card`、`border_strong`、`primary` 等）都是本项目 `ThemeColors` 的字段，
+不是通用规范的一部分。
+
+## 本项目方案
 
 标准按钮（对话框、消息框、向导里的确定/取消/保存/关闭等）**不再使用系统
 原生按钮绘制**。按钮长什么样、悬停/按下怎么反馈，全部由项目自绘；平台
 差异只剩**摆放顺序、默认按钮和宽度策略**。
 
+下面的平台表、状态表和尺寸值都是本项目的具体取值；对应的通用原则见
+[button_design_guidelines.md](button_design_guidelines.md) 第 3、5、6 节。
+
 ## 分工
 
 | 关注点 | 归属 | 说明 |
 |---|---|---|
-| 外观 / 悬停 / 按下 / 禁用 / 默认态 | `views/widgets/button_style.py` 的 `ButtonStyle` | QProxyStyle，只接管 `CE_PushButton`，其余控件委托底层原生样式 |
+| 外观 / 悬停 / 按下 / 禁用 / 默认态 / 键盘焦点 | `views/widgets/button_style.py` 的 `ButtonStyle` | QProxyStyle，只接管 `CE_PushButton`，其余控件委托底层原生样式 |
 | 顺序 / 默认按钮 / 对齐 / 等宽 | `views/widgets/platform_buttons.py` | 只加控件、排布局，不设颜色 |
 | 功能性按钮（＋/－、分段、AI 发送等） | `resources/qss/theme.py` 的 role/objectName 规则 | alpha.2 起就是 QSS 自绘，保持原样 |
 
@@ -27,7 +44,7 @@
 | 宽度 | 同排等宽，按当前字体量标准文案取宽（≥84px） | 按文字自然宽度，不设固定宽 |
 | 对齐 | 按钮行**右对齐** | 按钮行**右对齐** |
 | 文案 | 确定 / 取消 / 保存 / 关闭 / 是 / 否 / 不保存 | 同左 |
-| 键盘焦点 | 1px 边框变 `border_focus`（主色按钮变白）；仅键盘 Tab/方向键触发，鼠标按压不变 | 同左 |
+| 键盘焦点 | 1px 边框变 `border_focus`（主色按钮变 `text_inverse` 反色）；仅键盘 Tab/方向键触发，鼠标按压不变 | 同左 |
 | Esc | 取消（reject） | 取消（reject） |
 | 向导按钮 | 完成/取消同在下排（QWizard 自排） | 取消在左下、完成在右下 |
 

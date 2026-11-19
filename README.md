@@ -238,7 +238,8 @@ PySide6 的 `Qt6Core.dll` 依赖系统 `icuuc.dll`；如果 PATH 里有 Anaconda
 
 - 架构说明：`docs/architecture.md`
 - MCP 使用：`docs/mcp.md`；MCP 二期方案与实施记录：`docs/mcp_development_plan.md`
-- 平台按钮规范：`docs/button_standards.md`
+- 通用按钮设计规范（可给其他项目参照）：`docs/button_design_guidelines.md`
+- 平台按钮规范（本项目实现）：`docs/button_standards.md`
 - 无边框窗体自绘圆角/阴影：`docs/window_chrome.md`
 - 左右分设围护与合槽编组设计：`docs/lr_enclosure_and_trench_group_design.md`
 - 管道图集直径数据梳理（DN/oD/iD 改造底稿）：`docs/管道图集直径数据梳理.md`
