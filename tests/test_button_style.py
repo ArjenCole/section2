@@ -15,7 +15,13 @@ from __future__ import annotations
 import pytest
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QFont, QFontMetrics, QPainter, QPixmap
-from PySide6.QtWidgets import QPushButton, QStyle, QStyleOptionButton
+from PySide6.QtWidgets import (
+    QDialog,
+    QHBoxLayout,
+    QPushButton,
+    QStyle,
+    QStyleOptionButton,
+)
 
 from app.resources.qss.theme import DARK, LIGHT
 from app.views.widgets import button_style
@@ -146,12 +152,59 @@ def test_polish_enables_hover_tracking(qapp) -> None:
 
 
 def test_focus_does_not_draw_inner_ring(qapp) -> None:
-    """alpha.2 的 QSS 按钮没有内侧焦点环：Tab/按压后不应出现圆角线框。"""
+    """焦点用 1px 边框变色表达，不画内侧圆角线框（鼠标/键盘焦点都一样）。"""
+    for extra in (QStyle.StateFlag.State_None, QStyle.StateFlag.State_KeyboardFocusChange):
+        image = _paint(
+            _button("确定"),
+            QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_HasFocus | extra,
+        )
+        assert image.pixelColor(3, _H // 2).name() == LIGHT.bg_card.lower()
+
+
+def test_keyboard_focus_changes_border_color(qapp) -> None:
+    image = _paint(
+        _button("确定"),
+        QStyle.StateFlag.State_Enabled
+        | QStyle.StateFlag.State_HasFocus
+        | QStyle.StateFlag.State_KeyboardFocusChange,
+    )
+    assert image.pixelColor(0, _H // 2).name() == LIGHT.border_focus.lower()
+
+
+def test_mouse_focus_keeps_normal_border(qapp) -> None:
+    """只有 State_HasFocus（鼠标点击获得焦点）时边框不变色。"""
     image = _paint(
         _button("确定"),
         QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_HasFocus,
     )
-    assert image.pixelColor(3, _H // 2).name() == LIGHT.bg_card.lower()
+    assert image.pixelColor(0, _H // 2).name() == LIGHT.border_strong.lower()
+
+
+def test_top_level_keyboard_focus_attribute_changes_border(qapp) -> None:
+    """Qt 把 WA_KeyboardFocusChange 设在顶层窗口：按钮要回退读 window()。"""
+    dialog = QDialog()
+    row = QHBoxLayout(dialog)
+    button = _button("确定")
+    row.addWidget(button)
+    dialog.setAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange, True)
+    try:
+        image = _paint(
+            button, QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_HasFocus
+        )
+        assert image.pixelColor(0, _H // 2).name() == LIGHT.border_focus.lower()
+    finally:
+        dialog.deleteLater()
+
+
+def test_keyboard_focus_primary_button_gets_white_border(qapp) -> None:
+    image = _paint(
+        _button(),
+        QStyle.StateFlag.State_Enabled
+        | QStyle.StateFlag.State_HasFocus
+        | QStyle.StateFlag.State_KeyboardFocusChange,
+        default=True,
+    )
+    assert image.pixelColor(0, _H // 2).name() == LIGHT.text_inverse.lower()
 
 
 def test_auto_default_without_primary_stays_normal(qapp) -> None:

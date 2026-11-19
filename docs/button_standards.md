@@ -27,7 +27,7 @@
 | 宽度 | 同排等宽，按当前字体量标准文案取宽（≥84px） | 按文字自然宽度，不设固定宽 |
 | 对齐 | 按钮行**右对齐** | 按钮行**右对齐** |
 | 文案 | 确定 / 取消 / 保存 / 关闭 / 是 / 否 / 不保存 | 同左 |
-| 键盘焦点 | 不额外绘制内侧焦点框（与 alpha.2 的 QSS 按钮一致） | 同左 |
+| 键盘焦点 | 1px 边框变 `border_focus`（主色按钮变白）；仅键盘 Tab/方向键触发，鼠标按压不变 | 同左 |
 | Esc | 取消（reject） | 取消（reject） |
 | 向导按钮 | 完成/取消同在下排（QWizard 自排） | 取消在左下、完成在右下 |
 
@@ -68,7 +68,8 @@ accept 角色为 True，其余（含“只有关闭”的整排）为 False。`s
    `sizeFromContents` 会跳过这些控件，避免重复加内边距。
 4. 不要手写 `primary` 属性——它由 `platform_buttons` 统一写（True = 主色，
    False = 普通）；Enter 落点由 `setDefault(True)` 单独表达。
-5. **不要给按钮画内侧焦点圆角线框**：alpha.2 的 QSS 按钮没有这个线框，
-   自绘时也不要加。需要键盘焦点可访问性时另开选项，且只在键盘 focus
-   （`State_KeyboardFocusChange`）时画系统惯用的焦点框，不能按压就出现。
+5. **键盘焦点用 1px 边框变色表达，不画内侧焦点圆角线框**：普通按钮
+   `border_strong → border_focus`，主色按钮 `primary → text_inverse`。
+   只在键盘 focus 时变（Qt 把 `WA_KeyboardFocusChange` 设在顶层窗口上），
+   鼠标点击获得焦点不变色，避免按压时闪线框。
 6. 原生文件选择框（`QFileDialog`）是系统对话框，不在自绘范围内。

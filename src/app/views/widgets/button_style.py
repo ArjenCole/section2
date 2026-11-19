@@ -11,7 +11,9 @@ QMacStyle），平台差异只由 ``platform_buttons`` 负责排序。原生样�
 - 普通按钮：``bg_card`` 底 + ``border_strong`` 1px 边 + 6px 圆角；
 - 悬停 ``bg_hover``、按下 ``bg_pressed``、禁用 ``bg_hover`` + ``text_disabled``；
 - 默认按钮（``primary`` 属性为 True，或 Qt 自己创建的默认按钮）：主色填充 +
-  反白文字 + 半粗体，悬停/按下用 ``primary_hover`` / ``primary_pressed``。
+  反白文字 + 半粗体，悬停/按下用 ``primary_hover`` / ``primary_pressed``；
+- 键盘焦点只把 1px 边框换成 ``border_focus``（主色按钮换成 ``text_inverse``），
+  不画内侧线框；鼠标点击获得焦点不变色。
 
 QSS 里带 ``role`` / ``objectName`` 的功能性按钮（``icon-btn``、分段控件、
 AI 发送等）仍由样式表绘制——它们本来就是 alpha.2 的自绘规则，不受本样式
@@ -77,6 +79,22 @@ def _is_hovered(option: QStyleOptionButton) -> bool:
     # QPushButton::initStyleOption 在鼠标进入时置 State_MouseOver；不要再用
     # widget.underMouse() 兜底——多个按钮重叠（如离屏测试/浮动层）时会误判。
     return bool(option.state & QStyle.StateFlag.State_MouseOver)
+
+
+def _keyboard_focus(option: QStyleOptionButton, widget: QWidget | None) -> bool:
+    """焦点是否来自键盘（Tab/方向键），用于决定是否显示焦点边框。
+
+    Qt 把 ``WA_KeyboardFocusChange`` 设在**顶层窗口**上（不是按钮本身），
+    所以先看 style option 的 State_KeyboardFocusChange，再回退到
+    ``widget.window()`` 的属性；鼠标点击会把该属性清掉，因此按压不会亮边框。
+    """
+    if not (option.state & QStyle.StateFlag.State_HasFocus):
+        return False
+    if option.state & QStyle.StateFlag.State_KeyboardFocusChange:
+        return True
+    return widget is not None and widget.window().testAttribute(
+        Qt.WidgetAttribute.WA_KeyboardFocusChange
+    )
 
 
 def _display_text(text: str) -> str:
@@ -192,6 +210,7 @@ class ButtonStyle(QProxyStyle):
         )
         hovered = enabled and _is_hovered(option)
         default = _visual_default(option, widget)
+        focused = enabled and _keyboard_focus(option, widget)
 
         if background:
             self._paint_background(
@@ -202,6 +221,7 @@ class ButtonStyle(QProxyStyle):
                 pressed=pressed,
                 hovered=hovered,
                 default=default,
+                focused=focused,
             )
         if label:
             self._paint_label(
@@ -224,6 +244,7 @@ class ButtonStyle(QProxyStyle):
         pressed: bool,
         hovered: bool,
         default: bool,
+        focused: bool,
     ) -> None:
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -241,7 +262,9 @@ class ButtonStyle(QProxyStyle):
                 fill = QColor(colors.primary_hover)
             else:
                 fill = QColor(colors.primary)
-            border = QColor(fill)
+            # 主色按钮的常态边框与底色同色；键盘焦点时换成白边，
+            # 仍是同一条 1px 边框，不额外画内圈线框。
+            border = QColor(colors.text_inverse if focused else fill)
         else:
             if pressed:
                 fill = QColor(colors.bg_pressed)
@@ -249,7 +272,7 @@ class ButtonStyle(QProxyStyle):
                 fill = QColor(colors.bg_hover)
             else:
                 fill = QColor(colors.bg_card)
-            border = QColor(colors.border_strong)
+            border = QColor(colors.border_focus if focused else colors.border_strong)
 
         path = QPainterPath()
         path.addRoundedRect(box, _RADIUS, _RADIUS)
