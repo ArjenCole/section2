@@ -1,68 +1,65 @@
-# 标准按钮的平台规范与统一实现
+# 标准按钮：自绘外观 + 平台摆放规则
 
-对话框、消息框里的**标准按钮**（确定/取消/保存/关闭等文字按钮）按所在平台的
-原生规范呈现；自绘功能性控件（+/- 行按钮、分段控件、AI 发送、标题栏按钮等）
-不属于标准按钮，仍由应用 QSS 描画（见 `src/app/resources/qss/theme.py`）。
+标准按钮（对话框、消息框、向导里的确定/取消/保存/关闭等）**不再使用系统
+原生按钮绘制**。按钮长什么样、悬停/按下怎么反馈，全部由项目自绘；平台
+差异只剩**摆放顺序、默认按钮和宽度策略**。
 
-## 平台规范
+## 分工
+
+| 关注点 | 归属 | 说明 |
+|---|---|---|
+| 外观 / 悬停 / 按下 / 禁用 / 默认态 | `views/widgets/button_style.py` 的 `ButtonStyle` | QProxyStyle，只接管 `CE_PushButton`，其余控件委托底层原生样式 |
+| 顺序 / 默认按钮 / 对齐 / 等宽 | `views/widgets/platform_buttons.py` | 只加控件、排布局，不设颜色 |
+| 功能性按钮（＋/－、分段、AI 发送等） | `resources/qss/theme.py` 的 role/objectName 规则 | alpha.2 起就是 QSS 自绘，保持原样 |
+
+`ButtonStyle` 在 `main.py` 启动时安装：`app.setStyle(ButtonStyle(app.style()))`。
+因为它是 QProxyStyle，`QWizard` 等 Qt 内部创建的按钮也会被同一套绘制接管，
+不需要逐个替换控件类（项目里的 `QDialogButtonBox` 也已替换为
+`add_dialog_buttons`，不再保留另一套按钮布局）。
+
+## 平台摆放规则
 
 | 维度 | Windows（Win32 对话框惯例） | macOS（Apple HIG） |
 |---|---|---|
-| 按钮顺序 | 肯定按钮在**左**，取消在右 | 取消在**左**，肯定（默认）按钮在**最右** |
-| 默认按钮 | 肯定动作；Enter 触发，原生样式带强调色 | 肯定动作；Enter 触发，accent 蓝底 |
-| 外观 | 系统原生样式（Win11 上即 windows11 样式，默认按钮带系统强调色） | QMacStyle 原生 bezel |
-| 宽度 | 同排等宽，最小 75px（Win32 基准 50 DLU） | 按文字自然宽度，不设固定宽 |
+| 按钮顺序 | 肯定按钮在**左**，取消在右 | 取消在左，肯定（默认）按钮在**最右** |
+| 默认按钮 | 肯定动作；Enter 触发 | 肯定动作；Enter 触发 |
+| 外观 | 自绘：普通卡片按钮 / 默认按钮主色填充 | 同左（两平台一致） |
+| 宽度 | 同排等宽，最小 75px | 按文字自然宽度，不设固定宽 |
 | 对齐 | 按钮行**右对齐** | 按钮行**右对齐** |
-| 文案 | 确定 / 取消 / 保存 / 关闭 / 是 / 否 / 不保存 | 同左（两平台统一标准中文文案） |
-| 键盘焦点 | 原生焦点框（不被 QSS 抹掉） | 系统键盘焦点环 |
+| 文案 | 确定 / 取消 / 保存 / 关闭 / 是 / 否 / 不保存 | 同左 |
+| 键盘焦点 | 自绘焦点环（默认按钮用白色内环、普通按钮用主题蓝） | 同左 |
 | Esc | 取消（reject） | 取消（reject） |
-| 向导按钮 | 上一步/下一步/取消同在右下角 | 取消在左下角、完成在右下角 |
+| 向导按钮 | 完成/取消同在下排（QWizard 自排） | 取消在左下、完成在右下 |
 
-配色不进 QSS。`theme.build_palette()` 在应用主题（亮/暗）切换时把窗口/
-文字/按钮/高亮色同步进 QPalette。但 Windows 的原生样式（Win11 的
-`windows11`）画按钮时**不读应用 QPalette**，而是按 `QStyleHints.colorScheme()`
-（系统深/浅色）取按钮底色与文字色，因此 `theme._sync_color_scheme()` 还会
-用 `QStyleHints.setColorScheme()`（Qt 6.8+）把应用的 color scheme 覆盖为
-当前应用主题——否则软件深色 + 系统浅色会出现“浅色文字画在浅色按钮上”的
-不可见按钮。mac 上另由 `mac_window.apply_mac_app_appearance()` 把
-NSAppearance 一并同步。
+## 自绘外观（回到 alpha.2）
 
-Win10 的 `windowsvista` 样式（以及 Qt < 6.8）不跟随 color scheme，永远画
-浅色系统按钮，因此 `theme._native_buttons_need_qss()` 在这类环境下让
-`build_stylesheet(button_fallback=True)` 给通用 `QPushButton` 补回主题化
-QSS（默认按钮用主色填充，即 alpha.2 的观感）；Win11 / mac 仍保持原生按钮，
-不写任何通用按钮 QSS。
+取自 alpha.2 的按钮 QSS，两套主题都从 `ThemeColors` 取色：
 
-## 实现
+| 状态 | 普通按钮 | 主色按钮（`primary=True`） |
+|---|---|---|
+| 常态 | `bg_card` 底、`border_strong` 1px 边、`text_primary` 字 | `primary` 底、`primary` 边、`text_inverse` 字、600 字重 |
+| 悬停 | `bg_hover` | `primary_hover` |
+| 按下 | `bg_pressed` | `primary_pressed` |
+| 禁用 | `bg_hover` 底、`border` 边、`text_disabled` 字 | 同左（不保留主色） |
 
-- `src/app/views/widgets/platform_buttons.py` —— 唯一的按钮行构造点：
-  - `DialogButtonSpec(text, role, on_click, default, button)`：`role` 取
-    `"accept"`（肯定动作）/`"reject"`（取消、关闭）/`"other"`（辅助动作，
-    如"不保存""复制报告"）；
-  - `add_dialog_buttons(row, specs)`：按平台排好序加入 `row`（行首自带
-    stretch 右对齐），确定默认按钮（显式 `default=True` > 第一个 accept >
-    第一个 reject），Windows 上同排等宽；返回视觉顺序的按钮列表；
-  - 需要保留按钮引用时传 `button=预建实例`（helper 收编该实例）；行内最左
-    的辅助按钮先自行 `row.addWidget(...)` 再调 helper。
-- `FramelessMessageBox` 把 `QMessageBox.StandardButton` 映射为三种 role 后
-  走同一构造器（`frameless_dialog._STANDARD_BUTTON_ROLES`）。
-- `QDialogButtonBox`（PrincipleSubDialog）与 `QWizard` 自带平台自适应，
-  不再覆写按钮布局。
-- 测试：`tests/test_platform_buttons.py` 锁定顺序/默认按钮/等宽/右对齐的
-  平台行为（monkeypatch `is_mac` 覆盖两个分支）。
+圆角 6px；内边距 5px 14px；边框 1px（与 alpha.2 QSS 的盒模型一致）。
+尺寸由 `ButtonStyle.sizeFromContents` 计算：文字宽 + 30px、行高 + 12px，
+这样 `platform_buttons` 的等宽/最小宽计算不依赖原生样式。
+
+`primary` 属性由 `platform_buttons` 统一写：显式 `default=True` 或第一个
+accept 角色为 True，其余（含“只有关闭”的整排）为 False。`setDefault(True)`
+只负责 Enter 键落点，不再直接决定是否主色填充——否则纯“关闭”对话框会
+被画成蓝色肯定按钮。
 
 ## 约束
 
-1. 新对话框不要手写按钮行、不要 `setProperty("primary"/"secondary"/...)`
-   （这些属性已随按钮 QSS 移除，挂了也是死属性）；
-2. 不要给 `QPushButton` 加任何全局 QSS 背景/边框——任何盒模型属性都会让
-   按钮改走样式表渲染、丢失原生观感；
-3. 全局 `*` 规则不再含 `color`/`outline`，自绘控件各自的规则里按需补
-   `outline: none`（输入类/表格/树/列表已补）。
-4. **容器底色用 `.QWidget`（精确类选择器）**：主窗体是无边框半透明窗口，
-   普通 QWidget 容器必须有底色否则透出桌面。`theme.py` 用
-   `.QWidget { background-color: $bg_window; }` 只命中 QWidget 本身、不命中
-   QPushButton 等子类，因此按钮保持原生渲染。QWidget 子类容器
-   （TreePanel/AiPanel 等）不受该规则覆盖，需要在自己的 objectName 规则里
-   显式写 `background-color`；对话框内部用 `QDialog .QWidget` 保持透明
-   （对话框 body 自带 bg_dialog）。
+1. **QSS 里不要写通用 `QPushButton` 背景/边框规则**。写了 Qt 会改走
+   `QStyleSheetStyle`，`ButtonStyle.drawControl` 就接管不到，按钮会退回
+   原生外观。`tests/test_theme_color_scheme.py` 已锁定这一点。
+2. 新对话框统一用 `platform_buttons.add_dialog_buttons`，不要手写按钮行、
+   不要再用 `QDialogButtonBox`（它内部是原生按钮布局；项目里已全部替换）。
+3. 功能性按钮继续用 `role` / `objectName` 的 QSS 规则；`ButtonStyle` 的
+   `sizeFromContents` 会跳过这些控件，避免重复加内边距。
+4. 不要手写 `primary` 属性——它由 `platform_buttons` 统一写（True = 主色，
+   False = 普通）；Enter 落点由 `setDefault(True)` 单独表达。
+5. 原生文件选择框（`QFileDialog`）是系统对话框，不在自绘范围内。

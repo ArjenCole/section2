@@ -144,10 +144,8 @@ def main(argv: list[str] | None = None) -> int:
     app.setOrganizationDomain(APP_ORG_DOMAIN)
     # 不设 Fusion：Fusion 对非可编辑组合框返回 SH_ComboBox_Popup=true，弹出层被按
     # 菜单渲染（位置带偏移、容器带框和阴影）；系统原生样式（Windows 6.7+ 默认
-    # windows11）下弹出层紧贴输入框、无框无影。标准按钮的外观也交给原生样式
-    # （配色由 QPalette 同步；Windows 原生样式实际按 QStyleHints.colorScheme()
-    # 取色，所以 ThemeManager 还会把 color scheme 覆盖成应用主题，见
-    # theme._sync_color_scheme）。
+    # windows11）下弹出层紧贴输入框、无框无影。标准按钮不再用原生样式绘制：
+    # 由 ButtonStyle 统一自绘（alpha.2 观感），平台差异只剩按钮排列顺序。
     if sys.platform == "darwin":
         # mac 原生样式同样把组合框弹层按菜单渲染（层叠在按钮上、宽度收缩）、
         # 页签条整体居中：用薄代理样式只纠正这两点，其余保持原生
@@ -155,12 +153,18 @@ def main(argv: list[str] | None = None) -> int:
 
         app.setStyle(MacStyleTweaks())
 
+    # 全平台接管标准按钮绘制：只重写 CE_PushButton，其它控件仍委托底层样式。
+    from app.views.widgets.button_style import ButtonStyle
+
+    app.setStyle(ButtonStyle(app.style()))
+
     _load_fonts()
     install_translations(app)
     apply_initial_theme(app)
     if sys.platform == "darwin":
-        # mac 上原生控件（按钮等）按 NSAppearance 绘制：应用主题（亮/暗）
-        # 切换时同步整个应用的 NSAppearance，否则与 QSS 面板一亮一暗不搭
+        # mac 上其它原生控件（下拉弹层、滚动条等）按 NSAppearance 绘制：应用
+        # 主题（亮/暗）切换时同步整个应用的 NSAppearance，否则与 QSS 面板
+        # 一亮一暗不搭。标准按钮已由 ButtonStyle 自绘，不受影响。
         from app.resources.qss.theme import ThemeManager
         from app.views.widgets.mac_window import apply_mac_app_appearance
 

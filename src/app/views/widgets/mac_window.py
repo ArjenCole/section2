@@ -67,8 +67,9 @@ def _sync_window_appearance(ns_window) -> None:
 def apply_mac_app_appearance(app) -> None:
     """把整个应用的 NSAppearance 同步成当前主题（亮/暗）。
 
-    原生按钮等控件由 QMacStyle 按 NSAppearance 绘制，应用主题切换
-    （Ctrl+Shift+T）时要一起切，否则原生控件与 QSS 面板一亮一暗不搭。
+    原生控件（下拉弹层、滚动条等）由 QMacStyle 按 NSAppearance 绘制，应用
+    主题切换（Ctrl+Shift+T）时要一起切，否则原生控件与 QSS 面板一亮一暗
+    不搭。标准按钮已由 ButtonStyle 自绘，不依赖这里。
     非 macOS 或 offscreen 等非 cocoa 后端直接跳过。
     """
     if not is_mac():

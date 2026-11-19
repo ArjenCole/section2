@@ -43,6 +43,17 @@ def test_finish_enabled_only_with_nonempty_name(qapp):
     assert not _finish_button(wizard)
 
 
+def test_wizard_buttons_marked_for_self_drawn_primary(qapp):
+    """自绘标准按钮：完成按钮 primary=True，取消/上一步/下一步为 False。"""
+    from app.views.dialogs.new_project_wizard import NewProjectWizard
+
+    wizard = NewProjectWizard()
+    finish = wizard.button(QWizard.WizardButton.FinishButton)
+    cancel = wizard.button(QWizard.WizardButton.CancelButton)
+    assert finish.property("primary") is True
+    assert cancel.property("primary") is False
+
+
 def test_typing_keeps_focus_in_project_name(qapp):
     """回归：项目名称每打一个字焦点就跑（2026-11 修复）。
 

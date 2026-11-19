@@ -1,9 +1,10 @@
 """标准按钮行的平台布局构造器。
 
-同一个应用要同时符合 Windows 与 macOS 的对话框按钮惯例（平台原生规范）：
+按钮外观已统一由 ``button_style.ButtonStyle`` 自绘（alpha.2 观感），这里
+只负责**摆放规则**，仍按平台惯例：
 
 - Windows（Win32 对话框惯例）：肯定按钮（确定/保存）在**左**、取消在右；
-  肯定按钮是默认按钮（Enter 触发，原生样式带强调色描边）；一排按钮等宽
+  肯定按钮是默认按钮（Enter 触发，自绘主色填充）；一排按钮等宽
   （最小 75px）；整行右对齐。
 - macOS（Apple HIG）：取消在左、肯定（默认）按钮在**最右**；按钮按文字
   自然宽度；整行右对齐。
@@ -90,7 +91,8 @@ def add_dialog_buttons(row: QBoxLayout, specs: Sequence[DialogButtonSpec]) -> li
       按钮，先加入 ``row`` 再调用本函数）；
     - 默认按钮：显式 ``default=True`` 者优先，否则取第一个 accept 角色；
     - Windows 上同排按钮等宽（≥75px），macOS 保持自然宽度；
-    - 不写任何 QSS 属性，外观由原生样式 + 全局 QPalette 决定。
+    - 外观由 ButtonStyle 按 ``primary`` 属性绘制：只有肯定/显式默认按钮是
+      主色填充，取消/关闭始终是普通卡片按钮（即使为了 Enter 被设为默认）。
     """
     # 右对齐：占位 stretch 排在按钮之前
     row.addStretch(1)
@@ -104,9 +106,10 @@ def add_dialog_buttons(row: QBoxLayout, specs: Sequence[DialogButtonSpec]) -> li
             button.clicked.connect(spec.on_click)
         row.addWidget(button)
 
-    default_index = next(
+    explicit_default = next(
         (i for i, spec in enumerate(ordered_specs) if spec.default), -1
     )
+    default_index = explicit_default
     if default_index < 0:
         default_index = next(
             (i for i, spec in enumerate(ordered_specs) if spec.role == "accept"), -1
@@ -117,6 +120,19 @@ def add_dialog_buttons(row: QBoxLayout, specs: Sequence[DialogButtonSpec]) -> li
         default_index = next(
             (i for i, spec in enumerate(ordered_specs) if spec.role == "reject"), -1
         )
+
+    # primary 属性决定自绘时的主色填充：
+    # - 显式 default=True 的按钮（含消息框把“否/拒绝”设为默认）；
+    # - 没有显式默认时，第一个 accept 角色；
+    # - 只有 dismiss 的整排不填主色，避免“关闭”看起来像肯定动作。
+    primary_index = explicit_default
+    if primary_index < 0:
+        primary_index = next(
+            (i for i, spec in enumerate(ordered_specs) if spec.role == "accept"), -1
+        )
+    for index, button in enumerate(buttons):
+        button.setProperty("primary", index == primary_index)
+
     if default_index >= 0:
         buttons[default_index].setDefault(True)
 

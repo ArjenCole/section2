@@ -325,8 +325,9 @@ def test_dialog_bottom_buttons_platform_standard(qapp, project) -> None:
             assert [button.text() for button in buttons] == expected
             confirm = buttons[expected.index("确定")]
             assert confirm.isDefault()
-            # 原生按钮：不再挂自定义外观属性
-            assert confirm.property("primary") is None
+            # 自绘主色：确定按钮 primary=True，取消按钮显式 False
+            assert confirm.property("primary") is True
+            assert buttons[expected.index("取消")].property("primary") is False
             # 右对齐：取消按钮起点在按钮行中线右侧（右侧还有确定按钮）
             row_mid = dialog.width() / 2
             assert buttons[0].x() > row_mid - buttons[0].width()

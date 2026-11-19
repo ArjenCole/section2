@@ -27,7 +27,6 @@ from PySide6.QtGui import QColor, QDoubleValidator
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QDialogButtonBox,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -215,16 +214,18 @@ class PrincipleSubDialog(FramelessDialog):
         outer.setSpacing(10)
         outer.addLayout(self._body)
         if with_buttons:
-            # QDialogButtonBox 自带平台自适应：Windows 确定（默认）在左、
-            # 取消在右；macOS 取消在左、确定（默认）在最右
-            buttons = QDialogButtonBox(
-                QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+            # 标准按钮行走全项目统一的 platform_buttons：顺序、默认按钮、
+            # 对齐按平台规范，外观由 ButtonStyle 自绘（不再用 QDialogButtonBox
+            # 的原生按钮）。
+            button_row = QHBoxLayout()
+            add_dialog_buttons(
+                button_row,
+                [
+                    DialogButtonSpec(CANCEL_TEXT, "reject", on_click=self.reject),
+                    DialogButtonSpec(OK_TEXT, "accept", on_click=self._accept),
+                ],
             )
-            buttons.button(QDialogButtonBox.StandardButton.Ok).setText(OK_TEXT)
-            buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(CANCEL_TEXT)
-            buttons.accepted.connect(self._accept)
-            buttons.rejected.connect(self.reject)
-            outer.addWidget(buttons)
+            outer.addLayout(button_row)
 
     def _accept(self) -> None:
         self.save()

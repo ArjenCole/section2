@@ -21,6 +21,17 @@
 `.stn` 文件头和 EXE 文件属性（1.0 的 C# 程序用 `System.Version` 解析文件头，
 不能带 `-alpha` 后缀）；数据体里的 `app_version` 记录带后缀的真实版本。
 
+## [Unreleased]
+
+### 变更
+
+- **标准按钮全部改为自绘**：新增 `views/widgets/button_style.py` 的
+  `ButtonStyle`（QProxyStyle），统一绘制 `QPushButton` 的背景、边框、文字、
+  图标与焦点环；普通/主色/悬停/按下/禁用全部按 alpha.2 的按钮观感跟随主题。
+  `platform_buttons` 只保留平台摆放规则（顺序、默认按钮、对齐、Windows 等宽）。
+  `QDialogButtonBox` 已替换为 `add_dialog_buttons`，QSS 不再写通用
+  `QPushButton` 规则（写了会改走 QStyleSheetStyle、自绘失效）。
+
 ## [2.0.0-alpha.4] - 2026-11-18
 
 ### 修复

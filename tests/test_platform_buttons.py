@@ -20,8 +20,10 @@ from app.views.widgets.platform_buttons import (
     CANCEL_TEXT,
     CLOSE_TEXT,
     DISCARD_TEXT,
+    NO_TEXT,
     OK_TEXT,
     SAVE_TEXT,
+    YES_TEXT,
     DialogButtonSpec,
     add_dialog_buttons,
     ordered,
@@ -245,14 +247,41 @@ def test_add_dialog_buttons_zero_arg_callbacks(qapp, monkeypatch) -> None:
 
 
 def test_input_dialog_buttons(qapp, monkeypatch) -> None:
-    """输入对话框：平台顺序 + 确定为默认按钮，无自定义 QSS 属性。"""
+    """输入对话框：平台顺序 + 确定为默认按钮；primary 属性驱动自绘主色。"""
     monkeypatch.setattr(platform_buttons, "is_mac", lambda: False)
     dialog = FramelessInputDialog(None, "重命名", "新名称", "旧名")
     try:
         buttons = [b for b in dialog.findChildren(QPushButton) if b.text() in (OK_TEXT, CANCEL_TEXT)]
         assert [b.text() for b in buttons] == [OK_TEXT, CANCEL_TEXT]
         assert buttons[0].isDefault()
-        assert buttons[0].property("primary") is None
+        assert buttons[0].property("primary") is True
+        assert buttons[1].property("primary") is False
+    finally:
+        dialog.deleteLater()
+
+
+def test_reject_only_row_is_not_primary(monkeypatch) -> None:
+    """只有“关闭”的整排：Enter 有去处（default），但不填主色。"""
+    monkeypatch.setattr(platform_buttons, "is_mac", lambda: False)
+    dialog, buttons = _make_row(DialogButtonSpec(CLOSE_TEXT, "reject"))
+    try:
+        assert buttons[0].isDefault()
+        assert buttons[0].property("primary") is False
+    finally:
+        dialog.deleteLater()
+
+
+def test_explicit_default_other_gets_primary(monkeypatch) -> None:
+    """显式 default=True 的非 accept 按钮也填主色（消息框“否/拒绝”默认）。"""
+    monkeypatch.setattr(platform_buttons, "is_mac", lambda: False)
+    dialog, buttons = _make_row(
+        DialogButtonSpec(YES_TEXT, "accept"),
+        DialogButtonSpec(NO_TEXT, "other", default=True),
+    )
+    try:
+        assert buttons[0].property("primary") is False
+        assert buttons[1].property("primary") is True
+        assert buttons[1].isDefault()
     finally:
         dialog.deleteLater()
 

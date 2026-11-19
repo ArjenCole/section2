@@ -57,44 +57,20 @@ def test_sync_color_scheme_tolerates_qt_without_api() -> None:
     theme._sync_color_scheme(theme.DARK, _OldHints())
 
 
-@pytest.mark.parametrize(
-    ("platform_name", "style_name", "expected"),
-    [
-        ("windows", "windows11", False),
-        ("windows", "windowsvista", True),
-        ("windows", "windows", True),
-        ("offscreen", "fusion", False),
-        ("cocoa", "macos", False),
-    ],
-)
-def test_native_buttons_need_qss_by_style(
-    platform_name: str, style_name: str, expected: bool
-) -> None:
-    """windows11 走原生 + color scheme；windowsvista/旧 Qt 回退 QSS。"""
-    assert (
-        theme._native_buttons_need_qss(
-            platform_name=platform_name,
-            style_name=style_name,
-            has_color_scheme=True,
-        )
-        is expected
-    )
+@pytest.mark.parametrize("theme_colors", [theme.LIGHT, theme.DARK])
+def test_stylesheet_has_no_generic_button_rule(theme_colors) -> None:
+    """标准按钮由 ButtonStyle 自绘：QSS 里不能有通用 QPushButton 规则。
 
-
-def test_native_buttons_need_qss_without_color_scheme_api() -> None:
-    """Qt < 6.8 无法覆盖 color scheme：Windows 上必须回退 QSS。"""
-    assert theme._native_buttons_need_qss(
-        platform_name="windows", style_name="windows11", has_color_scheme=False
-    )
-
-
-def test_stylesheet_button_fallback_is_opt_in() -> None:
-    """默认（windows11/mac）没有通用 QPushButton 规则，回退时才写入。"""
-    without = theme.build_stylesheet(theme.LIGHT)
-    with_fallback = theme.build_stylesheet(theme.LIGHT, button_fallback=True)
-    assert "QPushButton {" not in without
-    assert "QPushButton {" in with_fallback
-    assert "QPushButton:default {" in with_fallback
+    一旦写了 ``QPushButton { background... }``，Qt 会改走 QStyleSheetStyle，
+    ButtonStyle 的 drawControl 就接管不到（回归会表现为按钮外观退回原生）。
+    """
+    sheet = theme.build_stylesheet(theme_colors)
+    assert "QPushButton {" not in sheet
+    assert "QPushButton:default" not in sheet
+    # 功能性按钮的专属规则仍然保留（它们本来就是 QSS 自绘）
+    assert 'QPushButton[role="icon-btn"]' in sheet
+    assert 'QPushButton[role="segment-btn"]' in sheet
+    assert "QPushButton#aiSendBtn" in sheet
 
 
 def test_theme_manager_syncs_color_scheme_before_palette(monkeypatch) -> None:

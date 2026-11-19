@@ -168,7 +168,22 @@ class NewProjectWizard(FramelessDialog):
         # 把结果转发给容器，外层才会关闭并返回
         self._wizard.accepted.connect(self.accept)
         self._wizard.rejected.connect(self.reject)
+        # 标准按钮自绘：完成按钮主色、其余普通（QWizard 内部按钮不走
+        # platform_buttons，需要在这里补 primary 属性）
+        self._mark_wizard_buttons()
         self._remove_wizard_rule_lines()
+
+    def _mark_wizard_buttons(self) -> None:
+        for which, primary in (
+            (QWizard.WizardButton.FinishButton, True),
+            (QWizard.WizardButton.NextButton, False),
+            (QWizard.WizardButton.BackButton, False),
+            (QWizard.WizardButton.CancelButton, False),
+            (QWizard.WizardButton.HelpButton, False),
+        ):
+            button = self._wizard.button(which)
+            if button is not None:
+                button.setProperty("primary", primary)
 
     def _remove_wizard_rule_lines(self) -> None:
         """去掉按钮行上方的贯穿分隔线（页头那条已随 title/subTitle 删除而消失）。

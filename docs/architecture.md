@@ -297,12 +297,14 @@ JSON 数据结构变更时：改 `services/stn_codec.py`（与涉及的模型）
 `ThemeManager` 单例在 `apply()` 里同时 `setPalette` + `setStyleSheet`，并广播 `theme_changed`
 （自绘控件据此重取颜色）。QSS 用 `string.Template` 的 `$token`，不用 f-string——样式表里大括号太多，转义易错。
 
-**通用按钮不走 QSS**：对话框/消息框的标准按钮（确定/取消/保存/关闭…）交还原生样式渲染
-（Windows 用系统样式含默认按钮强调色、macOS 用 QMacStyle accent），顺序、默认按钮、对齐、
-宽度由 `views/widgets/platform_buttons.py` 按平台规范统一安排（详见 `docs/button_standards.md`）。
-原生控件只读 QPalette，所以主题切换时 QPalette 与 QSS 必须同步应用；mac 上另由
-`mac_window.apply_mac_app_appearance()` 同步 NSAppearance。任何 QSS 盒模型属性都会让
-QPushButton 改走样式表渲染，因此全局 `*` 规则不含 `color`/`outline`，自绘控件在各自规则里自理。
+**标准按钮自绘，不再走原生样式**：对话框/消息框/向导的标准按钮（确定/取消/保存/关闭…）
+由 `views/widgets/button_style.py` 的 `ButtonStyle`（QProxyStyle）统一绘制，外观回到
+alpha.2 的按钮观感（`bg_card` 卡片底、6px 圆角、默认按钮主色填充、悬停/按下/禁用跟随主题）。
+`views/widgets/platform_buttons.py` 只负责平台摆放规则（顺序、默认按钮、对齐、Windows 等宽），
+详见 `docs/button_standards.md`。因为 `ButtonStyle` 只重写 `CE_PushButton`，QSS 里不能再写
+通用 `QPushButton` 盒模型规则，否则 Qt 会改走 `QStyleSheetStyle`、自绘接管不到。其余原生
+控件只读 QPalette，所以主题切换时 QPalette 与 QSS 仍要同步应用；mac 上另由
+`mac_window.apply_mac_app_appearance()` 同步 NSAppearance。
 主窗体是无边框半透明窗口：容器底色靠 `.QWidget`（精确类选择器，不命中按钮等子类）
 恢复全局不透明底，QWidget 子类容器（TreePanel/AiPanel 等）在各自 objectName 规则里
 显式写底色；对话框内部用 `QDialog .QWidget` 保持透明（body 自带 bg_dialog）。
