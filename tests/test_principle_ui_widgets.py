@@ -86,6 +86,39 @@ def test_enclosure_dialog_insert_rules(qapp, project, monkeypatch):
     dialog.close()
 
 
+def test_enclosure_dialog_insert_below_selected_row(qapp, project):
+    """「+」：有选中行时插到该行下方（埋深取上下行中值），无选中行才追加。"""
+    from app.views.dialogs.enclosure_edit_dialog import EnclosureEditDialog
+
+    dialog = EnclosureEditDialog(project_io_enclosure_id())
+    try:
+        # 无选中行：仍是追加（0 + 3.5、3.5 + 3.5），插入后新行被选中
+        dialog._work_buttons.add_clicked.emit()
+        dialog._work_buttons.add_clicked.emit()
+        assert [w.min_depth for w in dialog._enclosure().works_sorted()] == [0.0, 3.5, 7.0]
+        assert dialog._work_table.currentRow() == 2
+
+        # 选中中间行（埋深 3.5）→ 新行插在它下面，埋深 = (3.5 + 7.0) / 2
+        dialog._work_table.setCurrentCell(1, 0)
+        dialog._work_buttons.add_clicked.emit()
+        works = dialog._enclosure().works_sorted()
+        assert [w.min_depth for w in works] == [0.0, 3.5, 5.25, 7.0]
+        assert dialog._work_table.currentRow() == 2
+        assert dialog._work_table.item(2, 0).text() == "5.25"
+        # 范围列 = 下一行埋深：中值行把原区间一分为二
+        assert dialog._work_table.item(2, 1).text() == "7"
+
+        # 选中最后一行 → 没有下界，沿用「末行 + 3.5」
+        dialog._work_table.setCurrentCell(3, 0)
+        dialog._work_buttons.add_clicked.emit()
+        assert [w.min_depth for w in dialog._enclosure().works_sorted()] == [
+            0.0, 3.5, 5.25, 7.0, 10.5,
+        ]
+        assert dialog._work_table.currentRow() == 4
+    finally:
+        dialog.close()
+
+
 def project_io_enclosure_id():
     from app.services import project_io
 

@@ -8,7 +8,8 @@
   取消在左、确认在右）；
 * 主表格 7 列：埋深 / 范围 / 围护类型 / 围护形式描述 / 止水类型 / 止水形式描述 /
   按钮列（「+」在按钮列表头格，每行行尾「-」删该行，见 RowButtonColumn），
-  首行埋深恒 0 且只读，Insert 插入做法（埋深取值规则与旧版一致），
+  首行埋深恒 0 且只读，Insert /「+」插入做法：有选中行时插到该行下方、埋深取
+  上下两行中值，无选中行时追加到最后（埋深 = 末行 + 3.5），
   Delete 删除（全删时提示“至少需要一种围护做法。”）；
 * 双击“围护形式描述”：多级围护 → 做法编辑（FormEcls），单构件 → 构件公式编辑
   （FormCpntEdit）；双击“止水形式描述” → 构件公式编辑；
@@ -137,8 +138,12 @@ class EnclosureEditDialog(FramelessDialog):
             return
         self._name.setText(enclosure.name)
 
-    def _fill(self) -> None:
-        """FlashdGVPE：重建做法表格。"""
+    def _fill(self, select_row: int | None = None) -> None:
+        """FlashdGVPE：重建做法表格。
+
+        ``select_row`` 用于重建后把选中行落回指定行（新增做法后选中新行），
+        其余调用方保持“重建后不选中任何行”的原行为。
+        """
         self._loading = True
         try:
             enclosure = self._fresh()
@@ -202,6 +207,10 @@ class EnclosureEditDialog(FramelessDialog):
             table.setColumnWidth(column, 150)
         if self.isVisible():
             self._fit_desc_column()
+        if select_row is not None and 0 <= select_row < table.rowCount():
+            # 只设当前格（整行选择由 SelectRows 行为带出），不触发 cellChanged
+            table.setCurrentCell(select_row, _COL_DEPTH)
+            table.scrollToItem(table.item(select_row, _COL_DEPTH))
 
     def _fit_desc_column(self) -> None:
         """止水形式描述列收窄到总宽刚好塞满表格可视区：不出横向滚动条。
@@ -309,12 +318,25 @@ class EnclosureEditDialog(FramelessDialog):
         return orm.session().get(EnclosureWork, work_id) if work_id else None
 
     # ------------------------------------------------------------------ 做法 Insert/Delete（InsertEcls / KeyUp Delete）
+    def _selected_row(self) -> int | None:
+        """当前选中的最后一行（整行多选时取最下面那行）；无选中返回 None。"""
+        rows = {index.row() for index in self._work_table.selectedIndexes()}
+        return max(rows) if rows else None
+
     def _insert_work(self, position: int | None = None) -> None:
+        """「+」/Insert：有选中行时插到该行**下方**，无选中行时追加到最后。
+
+        插入行的埋深取上下两行的中值（插到最后一行之后没有下界 → 末行 +3.5，
+        沿用原版）；插入后选中新行，便于继续编辑或调序。
+        """
         enclosure = self._enclosure()
         if enclosure is None:
             return
         works = enclosure.works_sorted()
-        if position is None or position < 0 or position > len(works):
+        if position is None:
+            selected = self._selected_row()
+            position = len(works) if selected is None else min(selected + 1, len(works))
+        if position < 0 or position > len(works):
             position = len(works)  # 默认加在最后
         # 新行插到 position 之前：后续行 order_no 先整体后移（原版 mList.Insert）
         for item in works[position:]:
@@ -336,7 +358,7 @@ class EnclosureEditDialog(FramelessDialog):
                 shifted[1].min_depth = 3.5 if len(shifted) == 2 else shifted[2].min_depth / 2.0
         for index, work in enumerate(enclosure.works_sorted()):
             work.order_no = index
-        self._fill()
+        self._fill(select_row=position)
 
     def _delete_selected_works(self) -> None:
         rows = sorted({index.row() for index in self._work_table.selectedIndexes()}, reverse=True)
