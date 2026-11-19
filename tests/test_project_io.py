@@ -17,6 +17,7 @@ import pytest
 from app.core.version import SCHEMA_VERSION
 from app.core.models import base as orm
 from app.core.models.models import BasicInfo, Element, Pipe, Segment, Unit
+from app.core.paths import app_data_dir
 from app.services import project_io, stn_format
 from app.services.project_io import (
     NewProjectSpec,
@@ -211,6 +212,27 @@ def test_backup_on_first_change_and_on_save(tmp_path: Path) -> None:
 
     project_io.save()  # 显式保存 → 再备份一份
     assert len(list(folder.glob("*.stn"))) == 2
+
+
+def test_backup_goes_to_app_data_dir_not_project_dir(tmp_path: Path) -> None:
+    """回归：保存后工程目录不能再凭空出现 Backup 文件夹（测试反馈的问题）。"""
+    path = _make_project(tmp_path)
+    unit = project_io.units(project_io.segments()[0].id)[0]
+    unit_vm.create_element(unit.id, name="首次修改")
+
+    assert not (tmp_path / "Backup").exists()
+    folder = backup_dir(path)
+    assert folder.parent == app_data_dir() / "Backup"
+    assert len(list(folder.glob("*.stn"))) == 1
+
+
+def test_backup_folders_are_keyed_by_project_path(tmp_path: Path) -> None:
+    """不同目录下的同名工程各用各的备份目录，互不覆盖、互不清理。"""
+    first = backup_dir(tmp_path / "甲" / "同名工程.stn")
+    second = backup_dir(tmp_path / "乙" / "同名工程.stn")
+
+    assert first != second
+    assert first.parent == second.parent == app_data_dir() / "Backup"
 
 
 def test_backup_keeps_only_n(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

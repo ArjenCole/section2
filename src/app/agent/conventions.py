@@ -120,7 +120,7 @@ CONVENTIONS_TEXT = f"""\
 - 用户录入的算式以原文进表达式，不要替用户预计算后回写。
 
 ## 操作约定
-- 写操作即时 commit 落盘（自动保存），首次修改自动备份到工程同级 Backup\\。
+- 写操作即时 commit 落盘（自动保存），首次修改自动备份到软件数据目录的 Backup\\（不写工程同级）。
 - 禁止编造 id / 原则名：先查询（get_project_tree / list_elements /
   list_principles / list_library_templates）再写。
 - 找不到目标时按错误文案里的指引先查询，不要反复重试同一调用。

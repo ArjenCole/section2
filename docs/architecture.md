@@ -28,7 +28,7 @@ views/  ──►  viewmodels/  ──►  services/  ──►  core/models/
 2. `views/panels/*` 调用 viewmodel 方法；
 3. viewmodel 调用 `viewmodels/unit_vm.py` 里的数据操作函数（`create_element` / `update_element` / …）；
 4. 数据操作函数改 ORM 对象后调用 `services/project_io.commit()` —— 一次 commit 就是一次落盘（自动保存），
-   本次打开工程的首次修改会顺手备份一份到 `Backup\`；
+   本次打开工程的首次修改会顺手备份一份到软件数据目录的 `Backup\`；
 5. 数据操作函数广播 `EventBus.unit_changed`；
 6. viewmodel 收到广播后**延后到事件循环**重新读库并 emit，界面刷新
    （延后是必要的：本槽可能是在表格 `itemChanged` 里被同步触发的，此时重建表格行会删掉正在处理的单元格）。

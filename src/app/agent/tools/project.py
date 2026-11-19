@@ -18,11 +18,7 @@ from app.services.project_io import NewProjectSpec
 def _project_info() -> dict:
     info = project_io.basic_info()
     path = project_io.current_path()
-    backups = 0
-    if path is not None:
-        folder = project_io.backup_dir(path)
-        if folder.exists():
-            backups = len(list(folder.glob(f"{Path(path).stem}_*{Path(path).suffix}")))
+    backups = project_io.backup_count(path) if path is not None else 0
     return {
         "project_name": info.project_name if info else project_io.project_name(),
         "project_index": info.project_index if info else "",

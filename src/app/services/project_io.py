@@ -1,6 +1,7 @@
 """工程文件生命周期。
 
-新建 / 打开 / 保存 / 另存为 / 关闭、``.lock`` 文件锁防双开、Backup 自动备份。
+新建 / 打开 / 保存 / 另存为 / 关闭、``.lock`` 文件锁防双开、Backup 自动备份
+（存软件数据目录，不写工程文件旁边）。
 工程文件是 `.stn`（1.0 风格 XML 头 + JSON 数据体，见 stn_format / stn_codec）；
 内存里的工作载体是临时 SQLite 工作库（见 core.models.base），保存 = 把工作库
 整体写出为 `.stn`。业务代码不直接建连接，统一走这里。
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import ctypes
 import errno
+import hashlib
 import json
 import os
 import shutil
@@ -38,6 +40,7 @@ from app.core.version import (
 )
 from app.core.main_thread import ensure_main_thread
 from app.core.models import base as orm
+from app.core.paths import app_data_dir
 from app.core.models.models import (
     DOCK_COVER_H_DEFAULT,
     GROOVE_WIDTH_WORK,
@@ -135,9 +138,24 @@ def lock_path(path: str | Path) -> Path:
     return Path(f"{path}{LOCK_SUFFIX}")
 
 
+def backup_root_dir() -> Path:
+    """备份根目录：软件数据目录下的 Backup（不放在工程文件旁边）。"""
+    return app_data_dir() / BACKUP_DIR_NAME
+
+
 def backup_dir(path: str | Path) -> Path:
-    """备份目录：工程同级\\Backup。"""
-    return Path(path).parent / BACKUP_DIR_NAME
+    """某个工程的备份目录：``<软件数据目录>\\Backup\\<工程名>_<路径摘要>``。
+
+    备份曾写在工程同级，工程文件放在共享盘、只读目录或版本库工作区时会写失败，
+    也会在用户的工程目录里凭空多出一个 Backup 文件夹。现在统一放软件数据目录
+    （与 config.toml / logs / migration_backup 一致），并按工程文件全路径取摘要
+    分子目录：不同目录下的同名工程互不干扰，清理旧备份也不会误删别的工程。
+    """
+    project = Path(path)
+    digest = hashlib.blake2b(
+        os.path.normcase(str(project.resolve())).encode("utf-8"), digest_size=4
+    ).hexdigest()
+    return backup_root_dir() / f"{project.stem}_{digest}"
 
 
 def _process_alive(pid: int) -> bool:
@@ -1282,8 +1300,16 @@ def _number_text(value) -> str:
 # --------------------------------------------------------------------------- #
 # 备份
 # --------------------------------------------------------------------------- #
+def backup_count(path: str | Path) -> int:
+    """该工程已有的备份份数（只统计它自己的备份目录）。"""
+    return len(_backup_files(Path(path)))
+
+
 def create_backup() -> Path | None:
-    """把当前工程文件复制到 工程同级\\Backup\\<工程名>_yyMMdd_HHmmss.stn，并只保留最近 20 份。"""
+    """把当前工程文件复制到软件数据目录的备份文件夹，并只保留最近 20 份。
+
+    目标：``<软件数据目录>\\Backup\\<工程名>_<路径摘要>\\<工程名>_yyMMdd_HHmmss.stn``。
+    """
     path = _original_path
     if path is None or not path.exists():
         return None
@@ -1305,16 +1331,30 @@ def _next_backup_path(path: Path) -> Path:
     return candidate
 
 
-def _prune_backups(path: Path) -> None:
-    """同名工程的备份只保留最近 BACKUP_KEEP 份（按文件名时间戳排序）。"""
+def _backup_files(path: Path) -> list[Path]:
+    """本工程目录下的备份文件（按文件名时间戳升序）。
+
+    不用 glob：工程名里合法的 ``[`` / ``*`` 等字符会被当成通配符。
+    """
     folder = backup_dir(path)
-    if not folder.exists():
-        return
-    backups = sorted(
-        folder.glob(f"{path.stem}_*{path.suffix}"),
+    if not folder.is_dir():
+        return []
+    prefix = f"{path.stem}_"
+    return sorted(
+        (
+            item
+            for item in folder.iterdir()
+            if item.is_file()
+            and item.name.startswith(prefix)
+            and item.suffix == path.suffix
+        ),
         key=lambda item: item.name,
     )
-    for stale in backups[:-BACKUP_KEEP]:
+
+
+def _prune_backups(path: Path) -> None:
+    """本工程的备份只保留最近 BACKUP_KEEP 份（按文件名时间戳排序）。"""
+    for stale in _backup_files(path)[:-BACKUP_KEEP]:
         try:
             stale.unlink()
         except OSError:
