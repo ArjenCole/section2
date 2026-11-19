@@ -145,6 +145,15 @@ def test_polish_enables_hover_tracking(qapp) -> None:
     assert button.testAttribute(Qt.WidgetAttribute.WA_Hover)
 
 
+def test_focus_does_not_draw_inner_ring(qapp) -> None:
+    """alpha.2 的 QSS 按钮没有内侧焦点环：Tab/按压后不应出现圆角线框。"""
+    image = _paint(
+        _button("确定"),
+        QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_HasFocus,
+    )
+    assert image.pixelColor(3, _H // 2).name() == LIGHT.bg_card.lower()
+
+
 def test_auto_default_without_primary_stays_normal(qapp) -> None:
     """QDialog 的 autoDefault 不会把辅助按钮画成主色：只看 primary 属性。"""
     button = _button("编辑")

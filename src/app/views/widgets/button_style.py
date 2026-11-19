@@ -5,7 +5,7 @@ QMacStyle），平台差异只由 ``platform_buttons`` 负责排序。原生样�
 按钮外观随系统版本/深浅色漂移，且 Win10 与 Win11 观感不一致。
 
 这里改为**完全自绘**：``ButtonStyle`` 是一个 QProxyStyle，只接管
-``CE_PushButton`` 系列（背景、边框、文字、图标、焦点环），其余控件仍委托
+``CE_PushButton`` 系列（背景、边框、文字、图标），其余控件仍委托
 给底层原生样式。颜色与圆角/内边距照 alpha.2 的按钮 QSS：
 
 - 普通按钮：``bg_card`` 底 + ``border_strong`` 1px 边 + 6px 圆角；
@@ -192,7 +192,6 @@ class ButtonStyle(QProxyStyle):
         )
         hovered = enabled and _is_hovered(option)
         default = _visual_default(option, widget)
-        focused = bool(option.state & QStyle.StateFlag.State_HasFocus)
 
         if background:
             self._paint_background(
@@ -203,7 +202,6 @@ class ButtonStyle(QProxyStyle):
                 pressed=pressed,
                 hovered=hovered,
                 default=default,
-                focused=focused,
             )
         if label:
             self._paint_label(
@@ -226,7 +224,6 @@ class ButtonStyle(QProxyStyle):
         pressed: bool,
         hovered: bool,
         default: bool,
-        focused: bool,
     ) -> None:
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -261,20 +258,6 @@ class ButtonStyle(QProxyStyle):
         pen.setWidthF(_BORDER)
         painter.setPen(pen)
         painter.drawPath(path)
-
-        # 键盘焦点环：自绘按钮必须自己画，否则完全看不出焦点在哪。
-        if enabled and focused:
-            ring = QColor(colors.text_inverse if default else colors.border_focus)
-            ring.setAlpha(110)
-            inner = box.adjusted(2.5, 2.5, -2.5, -2.5)
-            ring_path = QPainterPath()
-            ring_path.addRoundedRect(
-                inner, max(0.0, _RADIUS - 2.5), max(0.0, _RADIUS - 2.5)
-            )
-            ring_pen = QPen(ring)
-            ring_pen.setWidthF(1.0)
-            painter.setPen(ring_pen)
-            painter.drawPath(ring_path)
         painter.restore()
 
     def _paint_label(

@@ -5,7 +5,7 @@
 
 - Windows（Win32 对话框惯例）：肯定按钮（确定/保存）在**左**、取消在右；
   肯定按钮是默认按钮（Enter 触发，自绘主色填充）；一排按钮等宽
-  （最小 75px）；整行右对齐。
+  （最小 84px，向导按钮同一规则）；整行右对齐。
 - macOS（Apple HIG）：取消在左、肯定（默认）按钮在**最右**；按钮按文字
   自然宽度；整行右对齐。
 
@@ -31,9 +31,27 @@ from dataclasses import dataclass
 
 from PySide6.QtWidgets import QBoxLayout, QPushButton
 
-#: Windows 上标准按钮的最小宽度（Win32 对话框基准 50 DLU ≈ 75px），
-#: 同一排按钮再统一等宽到最宽者的自然宽度。
-WIN_MIN_BUTTON_WIDTH = 75
+#: Windows 上标准动作按钮的统一最小宽度（下限）。
+#: 实际宽度还会按当前字体量一遍下面的标准文案，取最长者；这样向导的
+#: 「完成(F)」不会比其它窗体的「确定/取消」宽出一截。
+DIALOG_BUTTON_MIN_WIDTH = 84
+
+#: 参与统一宽度计算的标准文案（含 Qt 中文翻译里的「完成(&F)」去 & 后的形式）。
+#: 新增标准按钮文案时同步补进来，否则该按钮可能比同排窄。
+_STANDARD_WIDTH_TEXTS = (
+    "确定",
+    "取消",
+    "保存",
+    "不保存",
+    "关闭",
+    "是",
+    "否",
+    "允许执行",
+    "拒绝",
+    "完成(F)",
+    "上一步",
+    "下一步",
+)
 
 
 def is_mac() -> bool:
@@ -84,13 +102,39 @@ def ordered(specs: Sequence[DialogButtonSpec]) -> list[DialogButtonSpec]:
     return sorted(specs, key=lambda spec: priority.get(spec.role, 1))
 
 
+def apply_standard_widths(buttons: Sequence[QPushButton]) -> None:
+    """Windows：整排标准动作按钮等宽；macOS 保持自然宽度。
+
+    宽度取三者的最大值：84px 下限、当前字体下标准文案（含「完成(F)」）
+    的最宽者、本排按钮的自然宽度。对话框按钮行和 QWizard 内部按钮共用
+    这一条规则，所以向导的完成/取消与其它窗体的确定/取消同宽。
+    只抬 minimumWidth，不锁死宽度，长文案（如“1. 选择旧工程文件…”）仍可
+    自然变宽。
+    """
+    if is_mac() or not buttons:
+        return
+    width = DIALOG_BUTTON_MIN_WIDTH
+    for button in buttons:
+        # 构造期按钮还没被 QSS polish，字体可能还是应用默认值；先落定字体
+        # 再量，否则对话框按钮会比向导按钮窄几像素。
+        button.ensurePolished()
+        metrics = button.fontMetrics()
+        width = max(
+            width,
+            *(metrics.horizontalAdvance(text) + 30 for text in _STANDARD_WIDTH_TEXTS),
+        )
+    width = max(width, *(button.sizeHint().width() for button in buttons))
+    for button in buttons:
+        button.setMinimumWidth(width)
+
+
 def add_dialog_buttons(row: QBoxLayout, specs: Sequence[DialogButtonSpec]) -> list[QPushButton]:
     """把一排标准按钮按平台惯例加入 ``row``，返回视觉顺序（左→右）的按钮列表。
 
     - 整行右对齐（行首 stretch 由本函数负责，调用方如需在最左侧放辅助
       按钮，先加入 ``row`` 再调用本函数）；
     - 默认按钮：显式 ``default=True`` 者优先，否则取第一个 accept 角色；
-    - Windows 上同排按钮等宽（≥75px），macOS 保持自然宽度；
+    - Windows 上同排按钮等宽（≥84px），macOS 保持自然宽度；
     - 外观由 ButtonStyle 按 ``primary`` 属性绘制：只有肯定/显式默认按钮是
       主色填充，取消/关闭始终是普通卡片按钮（即使为了 Enter 被设为默认）。
     """
@@ -136,11 +180,5 @@ def add_dialog_buttons(row: QBoxLayout, specs: Sequence[DialogButtonSpec]) -> li
     if default_index >= 0:
         buttons[default_index].setDefault(True)
 
-    if not is_mac():
-        # Windows：同排等宽，最小 75px（Win32 标准按钮宽度）
-        equal_width = max(
-            [WIN_MIN_BUTTON_WIDTH, *(button.sizeHint().width() for button in buttons)]
-        )
-        for button in buttons:
-            button.setMinimumWidth(equal_width)
+    apply_standard_widths(buttons)
     return buttons

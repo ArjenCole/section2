@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from app.core.config import get_config
 from app.services.project_io import NewProjectSpec
 from app.views.widgets.frameless_dialog import FramelessDialog
+from app.views.widgets.platform_buttons import apply_standard_widths
 
 #: 旧版 FormNewGuide 的“涵盖专业”勾选项，勾上的会建成单位工程
 _MAJORS = ("雨水工程", "污水工程", "给水工程", "中水工程")
@@ -184,6 +185,24 @@ class NewProjectWizard(FramelessDialog):
             button = self._wizard.button(which)
             if button is not None:
                 button.setProperty("primary", primary)
+        self._apply_wizard_button_widths()
+
+    def _apply_wizard_button_widths(self) -> None:
+        """QWizard 内部按钮不走 add_dialog_buttons，这里补同一套宽度规则。
+
+        完成/取消始终参与；上一步/下一步只在可见时参与，避免隐藏按钮
+        （「下一步」自然宽约 110px）把整排撑宽。
+        """
+        keep = (
+            QWizard.WizardButton.FinishButton,
+            QWizard.WizardButton.CancelButton,
+        )
+        buttons = []
+        for which in (*keep, QWizard.WizardButton.NextButton, QWizard.WizardButton.BackButton):
+            button = self._wizard.button(which)
+            if button is not None and (which in keep or button.isVisible()):
+                buttons.append(button)
+        apply_standard_widths(buttons)
 
     def _remove_wizard_rule_lines(self) -> None:
         """去掉按钮行上方的贯穿分隔线（页头那条已随 title/subTitle 删除而消失）。
@@ -213,6 +232,8 @@ class NewProjectWizard(FramelessDialog):
         super().showEvent(event)
         # 布局重建（recreateLayout）会重新 show 分隔条，显示时再压一次（幂等）
         self._remove_wizard_rule_lines()
+        # 显示时 QWizard 才最终确定哪些按钮可见：补一次等宽规则
+        self._apply_wizard_button_widths()
 
     def values(self) -> dict:
         return self._wizard.values()

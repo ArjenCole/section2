@@ -162,8 +162,9 @@ _QSS = Template(
     """
 /* ===================== 全局 ===================== */
 /* 不设全局 color / outline：文字色由 build_palette 同步进 QPalette，键盘
-   焦点指示交还原生控件样式；标准按钮由 ButtonStyle 自绘焦点环，需要抹掉
-   焦点框的其它自绘控件在各自规则里单独写 outline: none。
+   焦点指示交还原生控件样式；标准按钮不额外画内侧焦点框（alpha.2 的按钮
+   QSS 也没有），需要抹掉焦点框的其它自绘控件在各自规则里单独写
+   outline: none。
    主窗体是无边框半透明窗口（rounded_window），普通 QWidget 容器必须有
    不透明底色，否则整块透明透出桌面——用 .QWidget（精确类选择器，只命中
    QWidget 本身、不命中 QPushButton 等子类）恢复全局底色，标准按钮

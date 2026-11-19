@@ -54,6 +54,51 @@ def test_wizard_buttons_marked_for_self_drawn_primary(qapp):
     assert cancel.property("primary") is False
 
 
+def test_wizard_buttons_use_standard_width(qapp):
+    """完成/取消与其它对话框的确定/取消同宽（Windows 84px 规则）。
+
+    测试不依赖 Qt 中文翻译：手动把按钮文案换成真实的“完成(&F)/取消”，
+    再走一次宽度规则。
+    """
+    from PySide6.QtWidgets import QDialog, QHBoxLayout
+
+    from app.views.dialogs.new_project_wizard import NewProjectWizard
+    from app.views.widgets import platform_buttons
+    from app.views.widgets.platform_buttons import (
+        CANCEL_TEXT,
+        DIALOG_BUTTON_MIN_WIDTH,
+        OK_TEXT,
+        DialogButtonSpec,
+        add_dialog_buttons,
+    )
+
+    if platform_buttons.is_mac():
+        pytest.skip("macOS 标准按钮保持自然宽度")
+
+    wizard = NewProjectWizard()
+    finish = wizard.button(QWizard.WizardButton.FinishButton)
+    cancel = wizard.button(QWizard.WizardButton.CancelButton)
+    finish.setText("完成(&F)")
+    cancel.setText("取消")
+    wizard._apply_wizard_button_widths()
+    try:
+        assert finish.minimumWidth() == cancel.minimumWidth()
+        assert finish.minimumWidth() >= DIALOG_BUTTON_MIN_WIDTH
+        dialog = QDialog()
+        row = QHBoxLayout(dialog)
+        buttons = add_dialog_buttons(
+            row,
+            [
+                DialogButtonSpec(CANCEL_TEXT, "reject"),
+                DialogButtonSpec(OK_TEXT, "accept"),
+            ],
+        )
+        assert {b.minimumWidth() for b in buttons} == {finish.minimumWidth()}
+        dialog.deleteLater()
+    finally:
+        wizard.deleteLater()
+
+
 def test_typing_keeps_focus_in_project_name(qapp):
     """回归：项目名称每打一个字焦点就跑（2026-11 修复）。
 

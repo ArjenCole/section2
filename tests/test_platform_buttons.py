@@ -53,7 +53,7 @@ def test_windows_order_default_and_widths(monkeypatch) -> None:
         assert not buttons[1].isDefault()
         widths = {b.minimumWidth() for b in buttons}
         assert len(widths) == 1, "Windows 同排按钮应等宽"
-        assert widths.pop() >= platform_buttons.WIN_MIN_BUTTON_WIDTH
+        assert widths.pop() >= platform_buttons.DIALOG_BUTTON_MIN_WIDTH
     finally:
         dialog.deleteLater()
 
@@ -88,7 +88,7 @@ def test_mac_order_and_natural_width(monkeypatch) -> None:
     try:
         assert [b.text() for b in buttons] == [CANCEL_TEXT, OK_TEXT]
         assert buttons[1].isDefault()
-        assert buttons[0].minimumWidth() < platform_buttons.WIN_MIN_BUTTON_WIDTH
+        assert buttons[0].minimumWidth() < platform_buttons.DIALOG_BUTTON_MIN_WIDTH
     finally:
         dialog.deleteLater()
 

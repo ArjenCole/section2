@@ -31,6 +31,11 @@
   `platform_buttons` 只保留平台摆放规则（顺序、默认按钮、对齐、Windows 等宽）。
   `QDialogButtonBox` 已替换为 `add_dialog_buttons`，QSS 不再写通用
   `QPushButton` 规则（写了会改走 QStyleSheetStyle、自绘失效）。
+- **统一标准按钮宽度**：Windows 上标准动作按钮以 84px 为下限，按当前字体
+  量「完成(F)」「允许执行」等文案取最长者；`QWizard` 内部按钮与普通对话框
+  共用同一套等宽规则，向导的完成/取消不再比其它窗体宽一截。
+- **移除按钮内侧焦点圆角线框**：alpha.2 的 QSS 按钮没有这个线框；按压或
+  Tab 切换焦点时不再出现，只保留 alpha.2 的背景色反馈。
 
 ## [2.0.0-alpha.4] - 2026-11-18
 
