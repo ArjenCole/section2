@@ -80,6 +80,12 @@
 
 - 主色按钮的**常态边框与底色同色**，焦点时换成 `on-accent`——
   不要用 `focus` 色画主色按钮的边框，两者太接近会看不见；
+- **主色（默认）按钮的文字颜色必须与普通按钮不同**：文字色跟底色走——
+  主色底上必须用 `on-accent` 反色文字，普通按钮用 `text`，两者不得混用。
+  不要把普通文字色画到主色底上：亮色主题是深字压主色底、暗色主题是浅字
+  压浅蓝底，对比度都不够。取色按固定三分支实现：禁用 → `text-disabled`，
+  主色 → `on-accent`，其余 → `text`（次要按钮常态 → `text-secondary`）；
+  悬停/按下只换底色，文字色不变；
 - 禁用态一律降级到禁用表面色/文字色，**不要保留主色**；
 - 文字与底色对比度建议 ≥ 4.5:1；主色上的反色文字同样 ≥ 4.5:1；
 - 不要只靠颜色表达状态，按下/悬停应同时有明暗变化。
@@ -158,12 +164,22 @@
 9. **只靠颜色表达状态**：色弱/高对比度场景不可辨；
 10. **控件代码里写死十六进制**：换主题要全局搜改；
 11. **忘记剥助记符 `&`**：按钮上出现 `&Finish`；
-12. **只按 96 DPI 调尺寸**：高 DPI 下文字被裁或发虚。
+12. **只按 96 DPI 调尺寸**：高 DPI 下文字被裁或发虚；
+13. **按钮命中任何 QSS 规则（包括只有 `color` 的全局 `*` 规则）**：
+    Qt 6 的 QStyleSheetStyle 会把按钮绘制分流——命中背景/边框规则时整颗
+    按钮由 QSS 画（自绘失效）；只命中 `color` 时 bevel 仍归自绘、但
+    **label 由 QSS 用规则色（或调色板 `ButtonText`）绘制**，主色按钮的
+    反色文字会被普通文字色盖掉（亮色主题蓝底上出现深字）。解法：全局
+    QSS 不设 `color`（文字色进 `QPalette`），全局背景用 `.QWidget` 精确
+    类选择器（只命中 QWidget 本身、不命中 QPushButton 等子类），让标准
+    按钮零规则命中。
 
 ## 9. 验收清单
 
 - [ ] 所有标准按钮由同一套自绘逻辑绘制，没有系统原生按钮混入；
+- [ ] 全局 QSS 不含命中按钮的规则（含 `color`），文字色由 `QPalette` 兜底；
 - [ ] 常态 / 悬停 / 按下 / 禁用 / 键盘焦点五态符合颜色角色；
+- [ ] 主色（默认）按钮文字为 `on-accent` 反色，与普通按钮的 `text` 不同；
 - [ ] 禁用态去掉主色，且不响应悬停/焦点；
 - [ ] 键盘焦点只改边框，没有内圈线框，鼠标按压不出现；
 - [ ] Enter 有落点，Esc 能取消；
@@ -209,8 +225,20 @@ add_dialog_buttons(row, [
 
 Qt 侧的注意点：
 
-- **不要写通用 `QPushButton { background/border }` QSS**：一旦命中，
-  Qt 会改走 `QStyleSheetStyle`，`ButtonStyle.drawControl` 就接管不到；
+- **不要写任何命中按钮的 QSS 规则**（含只有 `color` 的全局 `*` 规则）：
+  命中背景/边框规则时 Qt 会改走 `QStyleSheetStyle`，`ButtonStyle.drawControl`
+  就接管不到；只命中 `color` 时更隐蔽——bevel 仍归自绘，但 label 被 QSS
+  用普通文字色画，主色按钮的反色文字被盖掉（§8 反模式 13）；
+- **让按钮零规则命中**的完整做法（两件事一起做）：
+  1) 全局背景规则用 `.QWidget` 精确类选择器（只命中 QWidget 本身，不命中
+     QPushButton 等子类），不要用裸 `QWidget` 类型选择器；
+  2) 全局 QSS 不设 `color`，文字色由 `build_palette()` 生成 `QPalette`
+     并 `app.setPalette()` 同步（未写文字色规则的控件与按钮 label 的
+     兜底色都读它；禁用组 `ButtonText` 要设成 `text-disabled`）；
+- Windows 11 的 `windows11` 样式绘制滚动条/菜单等原生控件时读
+  `QStyleHints.colorScheme()` 而不是 `QPalette`：换肤时先
+  `setColorScheme(Dark/Light)` 再 `setPalette`，否则深色主题会出现
+  浅色控件配浅色文字；
 - `ButtonStyle` 只重写 `CE_PushButton` 系列，其它控件仍走底层原生样式；
 - `QDialogButtonBox` 的按钮和布局由 Qt 自己创建，不受 `add_dialog_buttons`
   的顺序/宽度规则控制，建议替换；
