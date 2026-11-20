@@ -77,6 +77,7 @@ from app.views.dialogs.new_project_wizard import (
     suggested_dir,
     suggested_file_name,
 )
+from app.views.dialogs.project_info_dialog import ProjectInfoDialog
 
 _TREE_WIDTH = 250  # 左侧面板默认宽度（取自运行实例实测）
 _AI_WIDTH = 360
@@ -654,6 +655,7 @@ class MainWindow(QMainWindow):
         self._act_export_excel = self._action("导出 Excel(&E)…", self._export_excel, "Ctrl+E")
         self._act_undo = self._action("撤销(&U)", self._undo, "Ctrl+Z")
         self._act_redo = self._action("重做(&R)", self._redo, "Ctrl+Y")
+        self._act_project_info = self._action("项目基本信息(&I)…", self._edit_project_info)
         # 复制 / 剪切 / 粘贴（brackets 同款：编辑菜单 + 快捷键，构件剪贴板跨文件可用）
         self._act_cut = self._action("剪切(&T)", self._unit_panel.cut_selection, "Ctrl+X")
         self._act_copy = self._action("复制(&C)", self._unit_panel.copy_selection, "Ctrl+C")
@@ -717,6 +719,7 @@ class MainWindow(QMainWindow):
             self._act_export_excel,
             self._act_undo,
             self._act_redo,
+            self._act_project_info,
             self._act_add_segment,
             self._act_add_unit,
             self._act_group_create,
@@ -737,6 +740,7 @@ class MainWindow(QMainWindow):
             self._act_export_excel,
             self._act_undo,
             self._act_redo,
+            self._act_project_info,
             self._act_add_segment,
             self._act_add_unit,
             # 剪切 / 复制 / 粘贴的有效性与格式刷一致：未开工程禁用，
@@ -805,9 +809,11 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self._act_exit)
 
-        # 撤销 / 重做（brackets2 同款：编辑菜单 + Ctrl+Z / Ctrl+Y）
+        # 项目基本信息放在编辑菜单第一行（工程级入口，先于撤销/重做）
         edit_menu = menubar.addMenu("编辑(&E)")
         self._edit_menu = edit_menu
+        edit_menu.addAction(self._act_project_info)
+        edit_menu.addSeparator()
         edit_menu.addAction(self._act_undo)
         edit_menu.addAction(self._act_redo)
         edit_menu.addSeparator()
@@ -882,6 +888,9 @@ class MainWindow(QMainWindow):
         bus().project_closed.connect(self._on_project_closed)
         bus().project_saved.connect(self._on_project_saved)
         bus().node_selected.connect(self._on_node_selected)
+        # 工程名可能在任意入口被改（编辑菜单 / 树根节点重命名 / AI 工具），
+        # 结构广播后统一刷新窗口标题；根节点重命名也会走这条路径。
+        bus().tree_structure_changed.connect(self._update_title)
         bus().ai_context_changed.connect(self._on_ai_context_changed)
         bus().status_message.connect(self._set_status)
         ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
@@ -1100,6 +1109,36 @@ class MainWindow(QMainWindow):
             connect_weak(action.triggered, self, "_open_path", path)
 
     # ------------------------------------------------------------------ 工程操作
+    def _edit_project_info(self) -> None:
+        """编辑菜单「项目基本信息…」：编辑项目名称 / 项目编号 / 编制人。"""
+        if not project_io.is_open():
+            return
+        info = project_io.basic_info()
+        dialog = ProjectInfoDialog(
+            self,
+            project_name=(info.project_name or "") if info is not None else "",
+            project_index=(info.project_index or "") if info is not None else "",
+            author=(info.author or "") if info is not None else "",
+        )
+        if dialog.exec() != ProjectInfoDialog.DialogCode.Accepted:
+            return
+        self._apply_project_info(dialog.values())
+
+    def _apply_project_info(self, values: dict) -> bool:
+        """写回基本信息并刷新树 / 标题；返回是否真的发生了修改。"""
+        try:
+            changed = project_io.update_basic_info(**values)
+        except ProjectIoError as error:
+            self._error("项目基本信息", str(error))
+            return False
+        if changed:
+            # 树面板比对结构指纹后重建（根节点显示名来自 BasicInfo），
+            # 费用汇总等订阅方也会随广播刷新；标题由 tree_structure_changed 更新
+            bus().tree_structure_changed.emit()
+            self._update_title()
+            self._set_status("项目基本信息已更新")
+        return changed
+
     def _new_project(self) -> None:
         # 当前有未保存的临时工程时先询问（Quotor 同款）
         if not self._prompt_save_if_unsaved():

@@ -7,7 +7,7 @@
 * 已选中节点再次单击 → 行内 QLineEdit，文字全选；
 * 回车 / 点击别处 → 写库并重建树；
 * Esc / 空名称 → 保持原名称；
-* 工程根节点、展开箭头不触发编辑；F2 仍可进入编辑。
+* 工程根节点也可改名，改名即修改项目名称；展开箭头不触发编辑；F2 仍可进入编辑。
 """
 
 import app  # noqa: F401  # ICU 预加载必须先于 PySide6
@@ -378,16 +378,50 @@ def test_mouse_double_click_event_cancels_pending_rename(qapp, project):
     assert _visible_editor(panel) is None
 
 
-def test_project_root_is_not_inline_editable(qapp, project):
-    """工程根节点是虚拟节点：再次单击不进入编辑（与右键菜单一致）。"""
+def test_project_root_rename_updates_project_name(qapp, project):
+    """工程根节点支持行内改名：同步修改项目名称（树与库都变）。"""
     panel = _panel(qapp)
     root, _segment, _unit = _items(panel)
     panel._tree.setCurrentItem(root)
     qapp.processEvents()
 
     _click(qapp, panel, root)
-    assert panel._tree.state() == QAbstractItemView.State.NoState
-    assert _visible_editor(panel) is None
+    assert panel._tree.state() == QAbstractItemView.State.EditingState
+    editor = _visible_editor(panel)
+    assert editor is not None
+    assert editor.text() == "新建项目"
+
+    editor.setText("改名后的工程")
+    QTest.keyClick(editor, Qt.Key.Key_Return)
+    qapp.processEvents()
+    qapp.processEvents()
+
+    assert project_io.project_name() == "改名后的工程"
+    assert _items(panel)[0].text(0) == "改名后的工程"
+    assert panel.current_node is not None
+    assert panel.current_node.is_project
+    assert panel.current_node.name == "改名后的工程"
+
+
+def test_project_root_rename_syncs_dialog_values(qapp, project):
+    """根节点改名后，基本信息对话框读到的项目名称也是新名字。"""
+    panel = _panel(qapp)
+    root, _segment, _unit = _items(panel)
+    panel._tree.setCurrentItem(root)
+    qapp.processEvents()
+
+    _click(qapp, panel, root)
+    editor = _visible_editor(panel)
+    assert editor is not None
+    editor.setText("对话框同步工程")
+    QTest.keyClick(editor, Qt.Key.Key_Return)
+    qapp.processEvents()
+    qapp.processEvents()
+
+    info = project_io.basic_info()
+    assert info is not None
+    assert info.project_name == "对话框同步工程"
+    assert panel._tree.topLevelItem(0).text(0) == "对话框同步工程"
 
 
 def test_click_on_expand_arrow_does_not_edit(qapp, project):

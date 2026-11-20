@@ -136,7 +136,13 @@ class ProjectViewModel(QObject):
         if not name:
             self.error_occurred.emit("名称不可为空。")
             return
-        if node.is_enclosure:
+        if node.is_project:
+            # 工程根节点是虚拟节点，但它的显示名就是 BasicInfo.project_name：
+            # 重命名根节点 = 修改项目名称（同步文件头与窗口标题）。
+            if project_io.project_name() == name:
+                return
+            project_io.update_basic_info(project_name=name)
+        elif node.is_enclosure:
             project_io.rename_enclosure(node.id, name)
         elif node.is_foundation:
             project_io.rename_foundation(node.id, name)

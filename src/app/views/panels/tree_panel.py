@@ -10,7 +10,8 @@
   根节点不可拖；dropEvent 只记录意图，模态拖拽循环结束后才写库；
 * 悬停折叠容器 250ms 自动展开；
 * 行内重命名（复刻 1.0 项目结构树 LabelEdit）：节点已选中时再单击一次进入
-  编辑，回车 / 点击别处提交，Esc 取消；F2 同样进入编辑。工程根节点不可改名。
+  编辑，回车 / 点击别处提交，Esc 取消；F2 同样进入编辑。工程根节点也可改名，
+  改名即修改项目名称（同步文件头与窗口标题）。
 
 选中节点通过 EventBus.node_selected 广播，中部工作区据此切换内容。
 """
@@ -140,7 +141,7 @@ class _RenameDelegate(QStyledItemDelegate):
             return
         item = self._tree.itemFromIndex(index)
         node = item.data(0, _NODE_ROLE) if item is not None else None
-        if not isinstance(node, TreeNode) or node.is_project:
+        if not isinstance(node, TreeNode):
             return
         # 不调用 super()：树先保持旧名字，由 ViewModel 校验 / 写库后重建
         self._tree._note_editor_commit()
@@ -380,8 +381,8 @@ class _ProjectTree(QTreeWidget):
             return
         if index != pressed_index:
             return
-        # 工程根节点是虚拟节点（id=None），不支持改名（与右键菜单一致）
-        if item is None or item.parent() is None:
+        # 工程根节点也支持改名：根节点的显示名就是项目名称
+        if item is None:
             return
         if not self._is_text_click(index, event.position().toPoint()):
             return
@@ -747,7 +748,7 @@ class TreePanel(QWidget):
             return
         menu.addSeparator()
         # 新版保留：重命名（原版为 F2 行内编辑）、展开/折叠
-        if node is not None and not node.is_project:
+        if node is not None:
             menu.addAction("重命名", self._rename)
         menu.addAction("展开全部", self._tree.expandAll)
         menu.addAction("折叠全部", self._tree.collapseAll)
@@ -783,7 +784,7 @@ class TreePanel(QWidget):
 
     def _rename(self) -> None:
         node = self._current_node()
-        if node is None or node.is_project:
+        if node is None:
             return
         text, ok = FramelessInputDialog.getText(self, "重命名", "名称：", text=node.name)
         if not ok:
@@ -850,13 +851,12 @@ class TreePanel(QWidget):
         item.setData(0, _NODE_ROLE, node)
         item.setIcon(0, _node_icon(node))
         item.setToolTip(0, _tooltip(node))
+        # 所有节点（含工程根）都可改名：根节点改名即修改项目名称
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         if node.is_project:
             font = item.font(0)
             font.setBold(True)
             item.setFont(0, font)
-        else:
-            # 仅标段 / 单位工程可行内改名（工程根是虚拟节点，与右键菜单一致）
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         for child in node.children:
             item.addChild(self._make_item(child))
         return item

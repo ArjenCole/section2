@@ -798,6 +798,50 @@ def basic_info() -> BasicInfo | None:
     return orm.session().get(BasicInfo, 1)
 
 
+def update_basic_info(
+    *,
+    project_name: str | None = None,
+    project_index: str | None = None,
+    author: str | None = None,
+) -> bool:
+    """更新工程基本信息（项目名称 / 项目编号 / 编制人），有改动时落盘并返回 True。
+
+    只改传入的字段（``None`` = 保持不变）。写入走 :func:`commit`，因此自动保存、
+    撤销快照与 `.stn` 头部 ``mcBasicInfo`` 的镜像都会同步更新。项目名称是
+    1.0 文件头的必填项，不允许为空。
+    """
+    if not orm.is_open():
+        return False
+    session = orm.session()
+    info = session.get(BasicInfo, 1)
+    changed = False
+    if info is None:
+        info = BasicInfo(id=1, project_name="新建项目", project_index="001", author="")
+        session.add(info)
+        changed = True
+    if project_name is not None:
+        name = project_name.strip()
+        if not name:
+            raise ProjectIoError("项目名称不可为空。")
+        if info.project_name != name:
+            info.project_name = name
+            changed = True
+    if project_index is not None:
+        index = project_index.strip()
+        if info.project_index != index:
+            info.project_index = index
+            changed = True
+    if author is not None:
+        author_name = author.strip()
+        if info.author != author_name:
+            info.author = author_name
+            changed = True
+    if not changed:
+        return False
+    commit()
+    return True
+
+
 # --------------------------------------------------------------------------- #
 # 查询辅助（供树面板 / 下拉框使用）
 # --------------------------------------------------------------------------- #
