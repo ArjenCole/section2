@@ -8,6 +8,9 @@
 的项目列同口径）。
 单价列参照综合单价汇总表交互：可编辑，按“类别 + 项目”联动写库（见
 ``summary.set_price_propagate``）；合价 = 数量 × 单价自动算出，不可编辑。
+单价格里按回车 = 提交并选中**下一行的单价格**（Excel 同款，连续录价不用碰
+鼠标）；清单表的清单项目行单价是派生值、不可编辑，跳行时跳过它们，落到下
+一条能录价的工程量行（末行只提交、不移动）。
 清单项目行（清单表）的单价 / 合价为派生值：合价 = 该条目下所有定额工程量
 行合价的合计，单价 = 合价 ÷ 数量，不可编辑、随定额行单价联动刷新。
 定额 / 清单两张表（对应 xlsx 两张 sheet）用页内分段控件切换（Apple HIG
@@ -57,7 +60,11 @@ from app.services import summary as summary_service
 from app.viewmodels.unit_vm import compute_unit
 from app.views.panels.unit_panel import _select_row
 from app.views.widgets.frameless_dialog import FramelessMessageBox, load_icon
-from app.views.widgets.table_edit_delegate import TableEditDelegate
+from app.views.widgets.table_edit_delegate import (
+    ENTER_NEXT_COLUMNS_ATTR,
+    ENTER_NEXT_SKIP_READONLY_ATTR,
+    TableEditDelegate,
+)
 from app.views.widgets.table_width import fixed_width_behavior
 
 # 与导出 Excel 同源：行生成器与清单行底色（导出同款浅蓝）
@@ -256,6 +263,11 @@ class QuantityDetailPanel(QWidget):
             table.setColumnWidth(index, width)
         # 清单项目行浅蓝底：QSS 盖掉 item 底色，须委托自绘
         table.setItemDelegate(_ListingRowDelegate(table))
+        # 单价列回车约定：编辑器里按回车 = 提交并选中下一行的单价格（Excel
+        # 同款，连续录价不用碰鼠标）；清单表里清单项目行的单价是派生值、不可
+        # 编辑，跳行时跳过它们落到下一条能录价的工程量行
+        setattr(table, ENTER_NEXT_COLUMNS_ATTR, (_COL_PRICE,))
+        setattr(table, ENTER_NEXT_SKIP_READONLY_ATTR, True)
         return table
 
     def _on_segment_clicked(self, index: int) -> None:

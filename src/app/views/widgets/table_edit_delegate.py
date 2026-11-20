@@ -24,6 +24,12 @@ from PySide6.QtWidgets import (
 #: 委托与表格是多对一关系，行为开关跟着表格走（``_FOCUS_OWNER_ATTR`` 同款）。
 ENTER_NEXT_COLUMNS_ATTR = "_table_edit_delegate_enter_next_columns"
 
+#: 挂在视图实例上的属性名：为真时回车跳行顺带跳过目标格不可编辑的行。清单
+#: 工程量表的清单项目行单价是派生值（不可编辑），跳过去也接着录不了价，故
+#: 该表开启此开关落到下一条可编辑的单价行。未挂该属性的表格（如主表格，
+#: 合槽父行埋深不可编辑但仍要选中）保持原行为：下一可见行不管能不能编辑都去。
+ENTER_NEXT_SKIP_READONLY_ATTR = "_table_edit_delegate_enter_next_skip_readonly"
+
 
 class TableEditDelegate(QStyledItemDelegate):
     """编辑态抛光：QLineEdit 编辑器无边框、无内边距、不透明底色、占满单元格。"""
@@ -85,10 +91,21 @@ class TableEditDelegate(QStyledItemDelegate):
         self.commitData.emit(editor)
         self.closeEditor.emit(editor, QAbstractItemDelegate.EndEditHint.SubmitModelCache)
         row = index.row() + 1
-        # 跳过隐藏行（收起的合槽成员行）：跳到下一可见行
-        while row < view.model().rowCount() and view.isRowHidden(row):
+        skip_readonly = bool(getattr(view, ENTER_NEXT_SKIP_READONLY_ATTR, False))
+        # 跳过隐藏行（收起的合槽成员行）：跳到下一可见行；开了跳过只读开关的
+        # 表格（工程量明细表的清单表）再跳过目标格不可编辑的行
+        while row < view.model().rowCount() and (
+            view.isRowHidden(row)
+            or (skip_readonly and not self._cell_editable(view, row, index.column()))
+        ):
             row += 1
         if row < view.model().rowCount():
             # 只选中、不代开编辑器；选区行为（整行 / 单元格）由视图自己的
             # selectionBehavior 决定，明细面板照常跟随新选中行刷新
             view.setCurrentIndex(view.model().index(row, index.column()))
+
+    @staticmethod
+    def _cell_editable(view: QTableView, row: int, column: int) -> bool:
+        """(row, column) 的单元格是否可编辑（读模型 flags，空单元格视为不可编辑）。"""
+        index = view.model().index(row, column)
+        return index.isValid() and bool(index.flags() & Qt.ItemFlag.ItemIsEditable)
