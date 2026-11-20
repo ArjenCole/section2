@@ -8,21 +8,29 @@
   18px，text_secondary 着色；
 * 拖拽仅 MoveAction：标段可与标段并排重排，单位工程可在标段内排序或跨标段移动；
   根节点不可拖；dropEvent 只记录意图，模态拖拽循环结束后才写库；
-* 悬停折叠容器 250ms 自动展开。
+* 悬停折叠容器 250ms 自动展开；
+* 行内重命名（复刻 1.0 项目结构树 LabelEdit）：节点已选中时再单击一次进入
+  编辑，回车 / 点击别处提交，Esc 取消；F2 同样进入编辑。工程根节点不可改名。
 
 选中节点通过 EventBus.node_selected 广播，中部工作区据此切换内容。
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+import time
+
+from PySide6.QtCore import QEvent, QModelIndex, Qt, Signal
 from PySide6.QtGui import QCursor, QDrag, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractItemDelegate,
     QAbstractItemView,
+    QApplication,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMenu,
     QStackedWidget,
+    QStyledItemDelegate,
     QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -45,6 +53,9 @@ from app.views.widgets.frameless_dialog import FramelessInputDialog, load_icon
 from app.views.widgets.panel_splitter import SPLITTER_HANDLE_WIDTH, LineSplitter
 
 _NODE_ROLE = Qt.ItemDataRole.UserRole + 1
+
+#: 编辑器提交后这段时间内再点同一行，只结束编辑、不重新进入（秒）
+_CLICK_AFTER_COMMIT_SUPPRESS_SECONDS = 0.3
 
 #: 节点类型图标（Quotor tree_panel._NODE_ICONS 同款）
 _NODE_ICONS = {
@@ -79,8 +90,49 @@ def _structure_signature(root: TreeNode | None) -> tuple[tuple[str, int | None, 
     return tuple(flat)
 
 
+class _RenameDelegate(QStyledItemDelegate):
+    """项目结构树的行内重命名编辑器。
+
+    提交（回车 / 焦点移走）时 QStyledItemDelegate 会调用 :meth:`setModelData`。
+    这里**不**把文字写回 model，而是把 ``(TreeNode, 新名称)`` 交给树面板：
+    写库成功后 ``ProjectViewModel`` 会重建整棵树，旧条目随即销毁。若在
+    ``setModelData`` 里同步写库并重建，QTreeView 正处在关闭编辑器的过程中，
+    删除条目会让它持有无效索引；因此信号用 QueuedConnection 排到下一轮事件。
+    """
+
+    #: (TreeNode, 新名称)
+    rename_requested = Signal(object, str)
+
+    def __init__(self, tree: QTreeWidget) -> None:
+        super().__init__(tree)
+        self._tree = tree
+
+    def setEditorData(self, editor, index: QModelIndex) -> None:  # noqa: N802 - Qt 命名
+        super().setEditorData(editor, index)
+        # 1.0 / Windows 资源管理器同款：进入重命名即全选，直接输入即可覆盖
+        if isinstance(editor, QLineEdit):
+            editor.selectAll()
+
+    def setModelData(self, editor, model, index: QModelIndex) -> None:  # noqa: N802 - Qt 命名
+        if index.column() != 0 or not isinstance(editor, QLineEdit):
+            super().setModelData(editor, model, index)
+            return
+        item = self._tree.itemFromIndex(index)
+        node = item.data(0, _NODE_ROLE) if item is not None else None
+        if not isinstance(node, TreeNode) or node.is_project:
+            return
+        # 不调用 super()：树先保持旧名字，由 ViewModel 校验 / 写库后重建
+        self._tree._note_editor_commit()
+        self.rename_requested.emit(node, editor.text())
+
+    def destroyEditor(self, editor, index: QModelIndex) -> None:  # noqa: N802 - Qt 命名
+        super().destroyEditor(editor, index)
+        # 回车 / Esc / 失焦 / 外部点击结束编辑后撤掉应用级鼠标过滤器
+        self._tree._remove_editor_filter()
+
+
 class _ProjectTree(QTreeWidget):
-    """项目结构树：拖拽移动节点（Quotor _ProjectTree 同款交互）。"""
+    """项目结构树：拖拽移动节点 + 行内重命名（Quotor / 1.0 同款交互）。"""
 
     #: (source_node, target_parent_id, index)；index 为排除自身后的兄弟位置。
     #: parent_id 必须声明为 object 而不是 int：标段移动的父级是项目根（None），
@@ -88,6 +140,8 @@ class _ProjectTree(QTreeWidget):
     #  move_node 里 "parent_id is not None" 判定拿 0 当非法父级，移动被静默吞掉
     move_node_requested = Signal(object, object, int)
     drop_rejected = Signal(str)
+    #: (TreeNode, 新名称)：行内重命名提交
+    rename_requested = Signal(object, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -97,7 +151,9 @@ class _ProjectTree(QTreeWidget):
         self.setIndentation(16)
         self.setAutoExpandDelay(250)  # 悬停折叠容器片刻后自动展开
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        # 单击已选中节点进入编辑由 mouseReleaseEvent 自行判定（要排除展开箭头）；
+        # EditKeyPressed 保留 1.0 的 F2 行内重命名。
+        self.setEditTriggers(QAbstractItemView.EditTrigger.EditKeyPressed)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
@@ -106,6 +162,140 @@ class _ProjectTree(QTreeWidget):
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self._dragging_item: QTreeWidgetItem | None = None
         self._pending_move: tuple[object, object, int] | None = None
+        # 单击重命名：按下时记录“按在哪个条目 / 当时是否已选中 / 是否正在编辑”
+        self._pressed_index: QModelIndex | None = None
+        self._pressed_was_selected = False
+        self._pressed_while_editing = False
+        self._drag_started = False
+        self._editor_filter_installed = False
+        self._last_editor_commit = 0.0
+        self._rename_delegate = _RenameDelegate(self)
+        self._rename_delegate.rename_requested.connect(
+            self._forward_rename, Qt.ConnectionType.QueuedConnection
+        )
+        self.setItemDelegate(self._rename_delegate)
+
+    def _forward_rename(self, node: TreeNode, text: str) -> None:
+        """编辑关闭后的下一轮事件里再把改名请求交给面板。"""
+        self.rename_requested.emit(node, text)
+
+    def _note_editor_commit(self) -> None:
+        """记录编辑器刚提交：紧随其后的同条目单击只结束编辑，不再重新进入。"""
+        self._last_editor_commit = time.monotonic()
+
+    # --- 行内重命名：已选中节点再次单击 ---
+    def edit(
+        self,
+        index,
+        trigger=QAbstractItemView.EditTrigger.AllEditTriggers,
+        event=None,
+    ):
+        """进入编辑后挂应用级事件过滤器，保证点击任何非编辑器区域都能提交。
+
+        QStyledItemDelegate 默认只在焦点移走时提交；点击标签栏 / 工具条等
+        不接受焦点的区域时焦点仍留在编辑器里，编辑不会结束。这里在编辑期间
+        监听应用内鼠标按下，点在编辑器与树条目区域之外就先 commit + close。
+        """
+        super().edit(index, trigger, event)
+        started = self.state() == QAbstractItemView.State.EditingState
+        if started:
+            self._install_editor_filter()
+        return started
+
+    def _active_editor(self) -> QLineEdit | None:
+        editor = self.findChild(QLineEdit)
+        return editor if editor is not None and editor.isVisible() else None
+
+    def _install_editor_filter(self) -> None:
+        application = QApplication.instance()
+        if application is not None and not self._editor_filter_installed:
+            application.installEventFilter(self)
+            self._editor_filter_installed = True
+
+    def _remove_editor_filter(self) -> None:
+        application = QApplication.instance()
+        if application is not None and self._editor_filter_installed:
+            application.removeEventFilter(self)
+            self._editor_filter_installed = False
+
+    @staticmethod
+    def _is_widget_within(watched, ancestor: QWidget) -> bool:
+        return watched is ancestor or (
+            isinstance(watched, QWidget) and ancestor.isAncestorOf(watched)
+        )
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt 命名
+        if event.type() == QEvent.Type.MouseButtonPress:
+            outside_tree = not self._is_widget_within(watched, self)
+            editor = self._active_editor()
+            if editor is None:
+                self._remove_editor_filter()
+            elif not self._is_widget_within(watched, editor):
+                # 点击树条目区 / 编辑器之外：先提交关闭编辑器，再让点击照常送达
+                self.commitData(editor)
+                self.closeEditor(editor, QAbstractItemDelegate.EndEditHint.SubmitModelCache)
+            if outside_tree:
+                # 点到树面板之外：这次点击本身不需要抑制后续编辑
+                self._last_editor_commit = 0.0
+        return super().eventFilter(watched, event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if event.button() == Qt.MouseButton.LeftButton:
+            index = self.indexAt(event.position().toPoint())
+            self._pressed_index = index
+            self._pressed_was_selected = bool(
+                index.isValid() and self.selectionModel().isSelected(index)
+            )
+            # 编辑器开着 / 刚提交完的同条目单击：这一下只结束编辑，不再重新进入
+            just_committed = (
+                self._last_editor_commit > 0.0
+                and time.monotonic() - self._last_editor_commit
+                < _CLICK_AFTER_COMMIT_SUPPRESS_SECONDS
+                and index.isValid()
+                and index == self.currentIndex()
+            )
+            self._pressed_while_editing = (
+                self.state() == QAbstractItemView.State.EditingState or just_committed
+            )
+            self._drag_started = False
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        pressed_index = self._pressed_index
+        pressed_was_selected = self._pressed_was_selected
+        pressed_while_editing = self._pressed_while_editing
+        drag_started = self._drag_started
+        self._pressed_index = None
+        self._pressed_was_selected = False
+        self._pressed_while_editing = False
+        self._drag_started = False
+        super().mouseReleaseEvent(event)
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        if drag_started or pressed_while_editing or not pressed_was_selected:
+            return
+        if pressed_index is None or not pressed_index.isValid():
+            return
+        index = self.indexAt(event.position().toPoint())
+        if index != pressed_index:
+            return
+        item = self.itemFromIndex(index)
+        # 工程根节点是虚拟节点（id=None），不支持改名（与右键菜单一致）
+        if item is None or item.parent() is None:
+            return
+        if not self._is_text_click(index, event.position().toPoint()):
+            return
+        self.edit(index)
+
+    def _is_text_click(self, index: QModelIndex, pos) -> bool:
+        """排除展开/折叠箭头：带子节点的条目左侧 indentation 宽是箭头区。"""
+        rect = self.visualRect(index)
+        if not rect.contains(pos):
+            return False
+        item = self.itemFromIndex(index)
+        if item is not None and item.childCount() > 0:
+            return pos.x() >= rect.left() + self.indentation()
+        return True
 
     # --- 拖拽（Quotor 同款：自建 QDrag + 半透明影像；drop 只记录、循环结束后写库） ---
     def startDrag(self, supported_actions) -> None:  # noqa: N802 - Qt 命名
@@ -115,6 +305,7 @@ class _ProjectTree(QTreeWidget):
         item = items[0]
         if item.parent() is None:  # 根节点（工程）不可拖
             return
+        self._drag_started = True
         self._dragging_item = item
         drag = QDrag(self)
         drag.setMimeData(self.model().mimeData([self.indexFromItem(item)]))
@@ -356,6 +547,7 @@ class TreePanel(QWidget):
         self._vm.error_occurred.connect(lambda message: bus().status_message.emit(message, 4000))
         self._tree.itemSelectionChanged.connect(self._on_selection_changed)
         self._tree.move_node_requested.connect(self._on_move_node_requested)
+        self._tree.rename_requested.connect(self._on_rename_requested)
         self._tree.drop_rejected.connect(lambda message: bus().status_message.emit(message, 5000))
         connect_weak(bus().project_opened, self._vm, "load")
         bus().project_closed.connect(self._on_project_closed)
@@ -368,6 +560,14 @@ class TreePanel(QWidget):
     def _on_move_node_requested(self, node: TreeNode, parent_id: int | None, index: int) -> None:
         self._selected_key = (node.kind, node.id)
         self._vm.move_node(node, parent_id, index)
+
+    def _on_rename_requested(self, node: TreeNode, text: str) -> None:
+        """行内重命名提交：校验 / 写库 / 重建树（失败时条目仍是旧名字）。
+
+        不在这里改 ``_selected_key``：编辑中用户可能已经点了别的节点，
+        重建树应保持当前选中，而不是把选中拉回被改名的节点。
+        """
+        self._vm.rename(node, text)
 
     # ------------------------------------------------------------------ 槽
     def _on_project_closed(self) -> None:
@@ -387,6 +587,9 @@ class TreePanel(QWidget):
         self._vm.load()
 
     def _on_tree_loaded(self, root: TreeNode | None) -> None:
+        # 外部（AI / MCP / 关工程）在编辑途中重建树：先收掉编辑器，
+        # 避免 clear() 把 QTreeView 正在编辑的条目删掉留下无效索引
+        self._close_active_editor()
         self._signature = _structure_signature(root)
         self._tree.blockSignals(True)
         self._tree.clear()
@@ -414,6 +617,15 @@ class TreePanel(QWidget):
         self._vm.select(node)
         bus().node_selected.emit(node)
         self._update_actions()
+
+    def _close_active_editor(self) -> None:
+        """树即将重建：先关掉行内重命名编辑器，避免条目在编辑中被删除。"""
+        if self._tree.state() != QAbstractItemView.State.EditingState:
+            return
+        editor = self._tree.findChild(QLineEdit)
+        if editor is not None and editor.isVisible():
+            self._tree.closeEditor(editor, QAbstractItemDelegate.EndEditHint.NoHint)
+        self._tree._remove_editor_filter()
 
     # ------------------------------------------------------------------ 右键菜单（复刻原版 CMStvDC / CMStvSegment / CMStvUnit）
     def _on_context_menu(self, position) -> None:
@@ -542,6 +754,9 @@ class TreePanel(QWidget):
             font = item.font(0)
             font.setBold(True)
             item.setFont(0, font)
+        else:
+            # 仅标段 / 单位工程可行内改名（工程根是虚拟节点，与右键菜单一致）
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         for child in node.children:
             item.addChild(self._make_item(child))
         return item

@@ -573,6 +573,11 @@ QTableWidget QComboBox, QTableView QComboBox {
 QTableWidget QLineEdit, QTableView QLineEdit {
     padding: 2px 8px;
 }
+/* 项目结构树的行内重命名编辑器：树行比表格行矮（约 28px），
+   纵向内边距压到 1px，文字才不会被编辑器上下边框裁掉 */
+QTreeWidget QLineEdit, QTreeView QLineEdit {
+    padding: 1px 8px;
+}
 
 /* ===================== 列表 ===================== */
 QListView {
