@@ -113,6 +113,20 @@ class _RenameDelegate(QStyledItemDelegate):
         if isinstance(editor, QLineEdit):
             editor.selectAll()
 
+    def updateEditorGeometry(  # noqa: N802 - Qt 命名
+        self, editor, option, index: QModelIndex
+    ) -> None:
+        super().updateEditorGeometry(editor, option, index)
+        # 默认实现按“文字区”给编辑器几何，上下会缩进（QSS item padding 越大越
+        # 明显）。重命名框改为上下撑满整行，视觉上与树行同高。
+        item_rect = self._tree.visualRect(index)
+        if not item_rect.isValid():
+            return
+        rect = editor.geometry()
+        rect.setTop(item_rect.top())
+        rect.setBottom(item_rect.bottom())
+        editor.setGeometry(rect)
+
     def setModelData(self, editor, model, index: QModelIndex) -> None:  # noqa: N802 - Qt 命名
         if index.column() != 0 or not isinstance(editor, QLineEdit):
             super().setModelData(editor, model, index)

@@ -225,6 +225,31 @@ def test_click_same_row_while_editing_commits_without_reentering(qapp, project):
     assert panel._tree.state() == QAbstractItemView.State.NoState
 
 
+def test_inline_editor_height_fills_row(qapp, project):
+    """编辑框上下撑满树行，而不是只占文字区（默认实现会上下缩进）。"""
+    panel = _panel(qapp)
+    # 模拟主题 QSS 的行内边距 / 装饰选中：默认编辑器几何会按文字区缩进
+    panel._tree.setStyleSheet(
+        "QTreeView { show-decoration-selected: 1; }"
+        "QTreeView::item { padding: 5px 8px; }"
+    )
+    qapp.processEvents()
+    _root, _segment, unit = _items(panel)
+    panel._tree.setCurrentItem(unit)
+    qapp.processEvents()
+
+    _click(qapp, panel, unit)
+    editor = _visible_editor(panel)
+    assert editor is not None
+    item_rect = panel._tree.visualItemRect(unit)
+    assert item_rect.height() > editor.fontMetrics().height()  # 行高被 padding 撑大
+    assert editor.height() == item_rect.height()
+    assert editor.geometry().top() == item_rect.top()
+    assert editor.geometry().bottom() == item_rect.bottom()
+    QTest.keyClick(editor, Qt.Key.Key_Escape)
+    qapp.processEvents()
+
+
 def test_escape_cancels_inline_edit(qapp, project):
     """Esc 取消：库与树都保持原名称。"""
     panel = _panel(qapp)
