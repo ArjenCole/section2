@@ -24,6 +24,8 @@ def _panel(qapp) -> TreePanel:
     panel = TreePanel()
     panel.resize(320, 480)
     panel.show()
+    # 测试里缩短“单击 → 进入编辑”的双击判定等待，避免每个用例多等 400ms
+    panel._tree._rename_delay_ms = 100
     panel.vm.load()
     qapp.processEvents()
     return panel
@@ -43,7 +45,13 @@ def _visible_editor(panel: TreePanel) -> QLineEdit | None:
     return None
 
 
-def _click(qapp, panel: TreePanel, item, x_offset: int = 70) -> None:
+def _click(
+    qapp,
+    panel: TreePanel,
+    item,
+    x_offset: int = 70,
+    wait_for_rename: bool = True,
+) -> None:
     tree = panel._tree
     rect = tree.visualItemRect(item)
     pos = QPoint(rect.left() + x_offset, rect.center().y())
@@ -54,6 +62,10 @@ def _click(qapp, panel: TreePanel, item, x_offset: int = 70) -> None:
         pos,
     )
     qapp.processEvents()
+    if wait_for_rename and tree._rename_timer.isActive():
+        # 单击已选中节点会延迟一个双击间隔再进编辑；测试里等它落地
+        QTest.qWait(tree._rename_delay_ms + 20)
+        qapp.processEvents()
 
 
 def _unit_names(segment_id: int) -> list[str]:
@@ -85,7 +97,7 @@ def test_click_selected_node_enters_inline_edit_and_enter_commits(qapp, project)
     assert panel.current_node is not None
     assert panel.current_node.kind == "unit"
     assert panel.current_node.name == "雨水工程（改）"
-    assert panel._tree._editor_filter_installed is False
+    assert panel._tree._mouse_filter_installed is False
 
 
 def test_click_elsewhere_commits_inline_edit(qapp, project):
@@ -268,7 +280,7 @@ def test_escape_cancels_inline_edit(qapp, project):
 
     assert _unit_names(segment_id) == ["雨水工程"]
     assert _items(panel)[2].text(0) == "雨水工程"
-    assert panel._tree._editor_filter_installed is False
+    assert panel._tree._mouse_filter_installed is False
 
 
 def test_empty_name_keeps_old_name(qapp, project):
@@ -301,6 +313,67 @@ def test_first_click_on_unselected_node_only_selects(qapp, project):
 
     _click(qapp, panel, unit)
     assert panel._tree.currentItem() is unit
+    assert panel._tree.state() == QAbstractItemView.State.NoState
+    assert _visible_editor(panel) is None
+
+
+def test_double_click_selected_node_does_not_enter_rename(qapp, project):
+    """已选中节点双击：第一次单击安排的延迟重命名被第二次单击取消。"""
+    panel = _panel(qapp)
+    _root, _segment, unit = _items(panel)
+    panel._tree.setCurrentItem(unit)
+    qapp.processEvents()
+
+    _click(qapp, panel, unit, wait_for_rename=False)
+    assert panel._tree._rename_timer.isActive()
+    _click(qapp, panel, unit, wait_for_rename=False)  # 双击的第二次单击
+    QTest.qWait(panel._tree._rename_delay_ms + 30)
+    qapp.processEvents()
+
+    assert panel._tree.state() == QAbstractItemView.State.NoState
+    assert _visible_editor(panel) is None
+
+
+def test_double_click_unselected_node_does_not_enter_rename(qapp, project):
+    """未选中节点双击：第一次单击只选中，第二次单击不能触发重命名。"""
+    panel = _panel(qapp)
+    _root, _segment, unit = _items(panel)
+    panel._tree.clearSelection()
+    panel._tree.setCurrentItem(None)
+    qapp.processEvents()
+
+    _click(qapp, panel, unit, wait_for_rename=False)
+    assert panel._tree.currentItem() is unit
+    assert panel._tree._rename_timer.isActive() is False
+    _click(qapp, panel, unit, wait_for_rename=False)
+    QTest.qWait(panel._tree._rename_delay_ms + 30)
+    qapp.processEvents()
+
+    assert panel._tree.state() == QAbstractItemView.State.NoState
+    assert _visible_editor(panel) is None
+
+
+def test_mouse_double_click_event_cancels_pending_rename(qapp, project):
+    """Qt 原生双击事件路径：第一次单击后收到 DblClick，也不能进重命名。"""
+    panel = _panel(qapp)
+    _root, _segment, unit = _items(panel)
+    panel._tree.setCurrentItem(unit)
+    qapp.processEvents()
+
+    _click(qapp, panel, unit, wait_for_rename=False)
+    assert panel._tree._rename_timer.isActive()
+    tree = panel._tree
+    rect = tree.visualItemRect(unit)
+    QTest.mouseDClick(
+        tree.viewport(),
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+        QPoint(rect.left() + 70, rect.center().y()),
+    )
+    qapp.processEvents()
+    QTest.qWait(tree._rename_delay_ms + 30)
+    qapp.processEvents()
+
     assert panel._tree.state() == QAbstractItemView.State.NoState
     assert _visible_editor(panel) is None
 

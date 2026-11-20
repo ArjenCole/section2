@@ -19,7 +19,14 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import QEvent, QModelIndex, Qt, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QModelIndex,
+    QPersistentModelIndex,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QCursor, QDrag, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemDelegate,
@@ -142,7 +149,7 @@ class _RenameDelegate(QStyledItemDelegate):
     def destroyEditor(self, editor, index: QModelIndex) -> None:  # noqa: N802 - Qt 命名
         super().destroyEditor(editor, index)
         # 回车 / Esc / 失焦 / 外部点击结束编辑后撤掉应用级鼠标过滤器
-        self._tree._remove_editor_filter()
+        self._tree._remove_mouse_filter_if_idle()
 
 
 class _ProjectTree(QTreeWidget):
@@ -181,8 +188,17 @@ class _ProjectTree(QTreeWidget):
         self._pressed_was_selected = False
         self._pressed_while_editing = False
         self._drag_started = False
-        self._editor_filter_installed = False
+        self._mouse_filter_installed = False
         self._last_editor_commit = 0.0
+        # 单击已选中节点后延迟进入编辑：双击时第二次按下 / 双击事件会取消它，
+        # 避免“双击先闪一下重命名又退出”。延迟取系统双击间隔。
+        self._pending_rename_index: QPersistentModelIndex | None = None
+        self._last_item_click_time = 0.0
+        self._last_item_click_index: QPersistentModelIndex | None = None
+        self._rename_delay_ms = max(1, QApplication.doubleClickInterval())
+        self._rename_timer = QTimer(self)
+        self._rename_timer.setSingleShot(True)
+        self._rename_timer.timeout.connect(self._start_pending_rename)
         self._rename_delegate = _RenameDelegate(self)
         self._rename_delegate.rename_requested.connect(
             self._forward_rename, Qt.ConnectionType.QueuedConnection
@@ -213,24 +229,54 @@ class _ProjectTree(QTreeWidget):
         super().edit(index, trigger, event)
         started = self.state() == QAbstractItemView.State.EditingState
         if started:
-            self._install_editor_filter()
+            self._install_mouse_filter()
         return started
+
+    def _schedule_inline_rename(self, index: QModelIndex) -> None:
+        """延迟到双击判定窗口之后再进入编辑。
+
+        单击已选中节点时不能立刻进编辑：双击的第一次单击也会走到这里，
+        立刻进编辑就会闪一下再被第二次单击关掉。延迟一个系统双击间隔，
+        期间出现第二次按下 / 双击事件就取消。
+        """
+        self._pending_rename_index = QPersistentModelIndex(index)
+        self._rename_timer.start(self._rename_delay_ms)
+        self._install_mouse_filter()
+
+    def _start_pending_rename(self) -> None:
+        index = self._pending_rename_index
+        self._pending_rename_index = None
+        if index is not None and index.isValid():
+            self.edit(QModelIndex(index))
+        self._remove_mouse_filter_if_idle()
+
+    def _cancel_pending_rename(self) -> None:
+        if self._pending_rename_index is None and not self._rename_timer.isActive():
+            return
+        self._rename_timer.stop()
+        self._pending_rename_index = None
+        self._remove_mouse_filter_if_idle()
 
     def _active_editor(self) -> QLineEdit | None:
         editor = self.findChild(QLineEdit)
         return editor if editor is not None and editor.isVisible() else None
 
-    def _install_editor_filter(self) -> None:
+    def _install_mouse_filter(self) -> None:
         application = QApplication.instance()
-        if application is not None and not self._editor_filter_installed:
+        if application is not None and not self._mouse_filter_installed:
             application.installEventFilter(self)
-            self._editor_filter_installed = True
+            self._mouse_filter_installed = True
 
-    def _remove_editor_filter(self) -> None:
+    def _remove_mouse_filter(self) -> None:
         application = QApplication.instance()
-        if application is not None and self._editor_filter_installed:
+        if application is not None and self._mouse_filter_installed:
             application.removeEventFilter(self)
-            self._editor_filter_installed = False
+            self._mouse_filter_installed = False
+
+    def _remove_mouse_filter_if_idle(self) -> None:
+        """没有待进入的编辑、也没有打开的编辑器时，撤掉应用级鼠标过滤器。"""
+        if self._pending_rename_index is None and self._active_editor() is None:
+            self._remove_mouse_filter()
 
     @staticmethod
     def _is_widget_within(watched, ancestor: QWidget) -> bool:
@@ -239,11 +285,16 @@ class _ProjectTree(QTreeWidget):
         )
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt 命名
-        if event.type() == QEvent.Type.MouseButtonPress:
+        if event.type() in (
+            QEvent.Type.MouseButtonPress,
+            QEvent.Type.MouseButtonDblClick,
+        ):
+            # 任何新的鼠标按下 / 双击都取消尚未落地的重命名
+            self._cancel_pending_rename()
             outside_tree = not self._is_widget_within(watched, self)
             editor = self._active_editor()
             if editor is None:
-                self._remove_editor_filter()
+                self._remove_mouse_filter_if_idle()
             elif not self._is_widget_within(watched, editor):
                 # 点击树条目区 / 编辑器之外：先提交关闭编辑器，再让点击照常送达
                 self.commitData(editor)
@@ -255,6 +306,8 @@ class _ProjectTree(QTreeWidget):
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         if event.button() == Qt.MouseButton.LeftButton:
+            # 双击的第二次按下：取消第一次单击安排的重命名
+            self._cancel_pending_rename()
             index = self.indexAt(event.position().toPoint())
             self._pressed_index = index
             self._pressed_was_selected = bool(
@@ -274,6 +327,21 @@ class _ProjectTree(QTreeWidget):
             self._drag_started = False
         super().mousePressEvent(event)
 
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        # 双击不进入重命名；保留 QTreeView 默认的双击展开 / 折叠
+        self._cancel_pending_rename()
+        super().mouseDoubleClickEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        # 单击后还没进编辑时按了键（F2 / 方向键等）：取消待进入的重命名
+        self._cancel_pending_rename()
+        super().keyPressEvent(event)
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        # 待进入重命名期间焦点离开树（点了别的窗口 / 控件）：不再进编辑
+        self._cancel_pending_rename()
+        super().focusOutEvent(event)
+
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         pressed_index = self._pressed_index
         pressed_was_selected = self._pressed_was_selected
@@ -286,20 +354,38 @@ class _ProjectTree(QTreeWidget):
         super().mouseReleaseEvent(event)
         if event.button() != Qt.MouseButton.LeftButton:
             return
+        index = self.indexAt(event.position().toPoint())
+        item = self.itemFromIndex(index) if index.isValid() else None
+        now = time.monotonic()
+        # 同一条目在双击间隔内的第二次抬起 = 双击：只取消待进入的重命名
+        is_double_click = (
+            item is not None
+            and self._last_item_click_index is not None
+            and self._last_item_click_index == index
+            and now - self._last_item_click_time
+            < self._rename_delay_ms / 1000.0
+        )
+        if item is not None:
+            self._last_item_click_time = now
+            self._last_item_click_index = QPersistentModelIndex(index)
+        else:
+            self._last_item_click_time = 0.0
+            self._last_item_click_index = None
+        if is_double_click:
+            self._cancel_pending_rename()
+            return
         if drag_started or pressed_while_editing or not pressed_was_selected:
             return
         if pressed_index is None or not pressed_index.isValid():
             return
-        index = self.indexAt(event.position().toPoint())
         if index != pressed_index:
             return
-        item = self.itemFromIndex(index)
         # 工程根节点是虚拟节点（id=None），不支持改名（与右键菜单一致）
         if item is None or item.parent() is None:
             return
         if not self._is_text_click(index, event.position().toPoint()):
             return
-        self.edit(index)
+        self._schedule_inline_rename(index)
 
     def _is_text_click(self, index: QModelIndex, pos) -> bool:
         """排除展开/折叠箭头：带子节点的条目左侧 indentation 宽是箭头区。"""
@@ -633,13 +719,13 @@ class TreePanel(QWidget):
         self._update_actions()
 
     def _close_active_editor(self) -> None:
-        """树即将重建：先关掉行内重命名编辑器，避免条目在编辑中被删除。"""
-        if self._tree.state() != QAbstractItemView.State.EditingState:
-            return
-        editor = self._tree.findChild(QLineEdit)
-        if editor is not None and editor.isVisible():
-            self._tree.closeEditor(editor, QAbstractItemDelegate.EndEditHint.NoHint)
-        self._tree._remove_editor_filter()
+        """树即将重建：取消待进入的重命名，并关掉正在编辑的编辑器。"""
+        self._tree._cancel_pending_rename()
+        if self._tree.state() == QAbstractItemView.State.EditingState:
+            editor = self._tree.findChild(QLineEdit)
+            if editor is not None and editor.isVisible():
+                self._tree.closeEditor(editor, QAbstractItemDelegate.EndEditHint.NoHint)
+        self._tree._remove_mouse_filter_if_idle()
 
     # ------------------------------------------------------------------ 右键菜单（复刻原版 CMStvDC / CMStvSegment / CMStvUnit）
     def _on_context_menu(self, position) -> None:
