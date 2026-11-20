@@ -8,7 +8,8 @@ FoundationEditDialog，复刻 FormPE / FormPF）与横条等处复用：
 * :class:`ComponentEditDialog` —— 构件编辑器（FormCpntEdit：左参数表、
   右公式表（围护 F 与支撑 Z 上下接续合并成一张表），行头显示键名）；
 * :class:`WidthEditDialog` —— 面宽原则编辑（FormWorkWidth：按工作面宽度 /
-  按沟槽总宽度两个 tab，各自一张宽度表，当前 tab 即取值方式）；
+  按沟槽总宽度两种计算口径，分段控件二选一，各自一张宽度表，选中段即取值
+  方式）；
 * :class:`PrecipitationEditDialog` —— 挖填降水原则编辑（FormPrecipitation：
   左侧「挖填类型」面板 + 右侧井型表（措施名称 / 选用 / 埋深 / 范围 / 侧数 /
   间隔，五种井型）左右布置；v10 起原降水措施原则并入挖填类型。
@@ -26,6 +27,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QDoubleValidator
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QComboBox,
     QFormLayout,
     QGridLayout,
@@ -36,9 +38,10 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
+    QSizePolicy,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -1013,14 +1016,32 @@ class ComponentEditDialog(PrincipleSubDialog):
 class WidthEditDialog(FramelessDialog):
     """面宽原则编辑（旧版 FormWorkWidth，v4 起独立成原则）。
 
-    「按工作面宽度计算 / 按沟槽总宽度计算」两种方式做成 tab 切换
-    （旧版沟槽宽度取值单选 WorkWidth / B），当前 tab 即取值方式，
-    表格只显示当前方式的明细。
+    「按工作面宽度计算 / 按沟槽总宽度计算」是**二选一的计算口径**（旧版沟槽
+    宽度单选 WorkWidth / B）：同一时刻只有一种口径决定槽底宽。因此用分段控件
+    选择而不是 tab——tab 暗示两页并存、可并列浏览，与“选一个”的语义不符。
+    下方堆叠页只显示当前口径的宽度表；两张表的数据都照常保存，切回另一种
+    口径立即生效。
     """
 
-    _TABS = (
-        ("按工作面宽度计算", "work", "工作面宽度表（mm）", WIDTH_KIND_WORK),
-        ("按沟槽总宽度计算", "groove_b", "沟槽宽度表（mm）", WIDTH_KIND_GROOVE_B),
+    #: (分段按钮文字, 表 kind, 表标题, 行内说明, 说明 tooltip)
+    _MODES = (
+        (
+            "按工作面宽度计算",
+            WIDTH_KIND_WORK,
+            "工作面宽度表（mm）",
+            "槽底宽 = 断面宽 + 2 ×（壁厚 + 工作面加宽 + 工作面）",
+            "槽底宽按断面宽加两侧工作面推算：断面宽 + 2 ×（壁厚 + 工作面加宽 + 工作面），\n"
+            "单侧工作面宽取自本表。另一张沟槽宽度表的数据仍会保存，切回即生效。",
+        ),
+        (
+            "按沟槽总宽度计算",
+            WIDTH_KIND_GROOVE_B,
+            "沟槽宽度表（mm）",
+            "槽底宽直接取沟槽宽度表值，不再叠加工作面宽",
+            "槽底宽直接取本表的沟槽宽度值，不再按断面宽推算；\n"
+            "表值为空的格子仍按断面宽 + 2 ×（壁厚 + 工作面加宽 + 工作面）推算。\n"
+            "另一张工作面宽度表的数据仍会保存，切回即生效。",
+        ),
     )
 
     def __init__(self, width_id: int, parent: QWidget | None = None) -> None:
@@ -1028,17 +1049,10 @@ class WidthEditDialog(FramelessDialog):
         self.resize(860, 460)
         self._width_id = width_id
         self._loading = False
+        self._mode_index = 0
         self._tables: dict[str, CellFillTable] = {}
         self._build_ui()
         self._fill()
-        # 取值方式跟随当前 tab（旧版 grooveWidth 单选），切换只写会话、确认才落库。
-        # 必须在 _fill() 之后才连：QTabWidget 的 currentChanged 会在显示/布局阶段
-        # 延迟补发一次，若在 _fill() 之前连上，那一发会在对话框早已关闭后触发——
-        # 槽内再用 isVisible() 挡掉关窗后的补发（早先版本在槽里直接 commit，
-        # 补发撞上"下一次新建工程正在提交事务"就会重入 commit，把 SQLAlchemy
-        # 的提交状态机打断，实测 IllegalStateChangeError / ResourceClosedError，
-        # 也就是日志里那条 "session is in 'prepared' state"）。
-        self._tabs.currentChanged.connect(self._on_tab_changed)
 
     # ------------------------------------------------------------------ 界面
     def _build_ui(self) -> None:
@@ -1052,8 +1066,22 @@ class WidthEditDialog(FramelessDialog):
         name_row.addWidget(self._name, 1)
         root.addLayout(name_row)
 
-        self._tabs = QTabWidget()
-        for title, key, table_title, kind in self._TABS:
+        # 计算方式：二选一的分段控件（旧版 grooveWidth 单选），选中段即取值口径；
+        # 两种口径的差别写在同一行右侧的说明里（分段控件只表达“选哪个”）
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(10)
+        mode_row.addWidget(self._build_mode_control())
+        self._mode_hint = QLabel()
+        self._mode_hint.setProperty("role", "hint")
+        # 说明永不参与撑宽：横向 sizeHint 忽略，窗口变窄时右侧截断而不是把窗体顶宽
+        self._mode_hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        mode_row.addWidget(self._mode_hint, 1)
+        root.addLayout(mode_row)
+
+        # 堆叠页：只显示当前口径的表；role=card 与旧 tab pane 的卡片外观一致
+        self._stack = QStackedWidget()
+        self._stack.setProperty("role", "card")
+        for _title, kind, table_title, _desc, _tip in self._MODES:
             page = QWidget()
             layout = QVBoxLayout(page)
             layout.setContentsMargins(4, 4, 4, 4)
@@ -1071,12 +1099,13 @@ class WidthEditDialog(FramelessDialog):
             # 之后不随内容/窗体变化，总宽超出窗体即出横向滚动条
             fixed_width_behavior(table)
             layout.addWidget(table)
-            self._tabs.addTab(page, title)
+            self._stack.addWidget(page)
             self._tables[kind] = table
-        root.addWidget(self._tabs, 1)
+        root.addWidget(self._stack, 1)
 
         button_row = QHBoxLayout()
-        btn_reset = QPushButton("恢复图集默认")
+        btn_reset = QPushButton("恢复当前方式默认")
+        btn_reset.setToolTip("把当前计算方式对应的宽度表恢复为图集默认值；另一张表不动。")
         btn_reset.clicked.connect(self._reset_current)
         button_row.addWidget(btn_reset)
         # 标准按钮行（确定/取消）：顺序、默认按钮、对齐按平台规范，
@@ -1089,6 +1118,33 @@ class WidthEditDialog(FramelessDialog):
             ],
         )
         root.addLayout(button_row)
+
+        self._set_mode(0)
+
+    def _build_mode_control(self) -> QWidget:
+        """灰底圆角轨道 + 两段互斥按钮（计算方式二选一，样式见 theme.py 分段控件）。"""
+        host = QWidget()
+        host.setProperty("role", "segment-host")
+        host.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        seg = QHBoxLayout(host)
+        seg.setContentsMargins(2, 2, 2, 2)
+        seg.setSpacing(2)
+        self._mode_group = QButtonGroup(self)
+        self._mode_group.setExclusive(True)
+        for index, (title, _kind, _table_title, _desc, tip) in enumerate(self._MODES):
+            button = QPushButton(title)
+            button.setProperty("role", "segment-btn")
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setChecked(index == 0)
+            button.setToolTip(tip)  # 悬停即看该口径的口径说明（含空值回退）
+            self._mode_group.addButton(button, index)
+            seg.addWidget(button)
+        # 只连 idClicked：QTabWidget::currentChanged 那种布局阶段的延迟补发
+        # 在这里不存在，切方式不会再触发关窗后的会话重入（早先版本的
+        # IllegalStateChangeError / ResourceClosedError 由此而来）
+        self._mode_group.idClicked.connect(self._on_mode_clicked)
+        return host
 
     # ------------------------------------------------------------------ 数据
     def _width(self) -> PcpWidth | None:
@@ -1108,7 +1164,7 @@ class WidthEditDialog(FramelessDialog):
                 return
             self._name.setText(width.name)
             index = 0 if width.groove_width != GROOVE_WIDTH_B else 1
-            self._tabs.setCurrentIndex(index)
+            self._set_mode(index)
             data: dict[str, dict[str, dict[int, float]]] = {"work": {}, "groove_b": {}}
             for row in width.items:
                 data.setdefault(row.kind, {}).setdefault(row.pipe_type, {})[int(row.dn)] = row.width
@@ -1123,20 +1179,38 @@ class WidthEditDialog(FramelessDialog):
         finally:
             self._loading = False
 
-    def _on_tab_changed(self, _index: int) -> None:
-        if self._loading or not orm.is_open() or not self.isVisible():
+    def _set_mode(self, index: int) -> None:
+        """切换计算方式：分段按钮、堆叠页、口径说明同步（只改界面，不写会话）。"""
+        index = 0 if index <= 0 else 1
+        self._mode_index = index
+        button = self._mode_group.button(index)
+        if button is not None:
+            button.setChecked(True)  # 互斥组内另一段自动取消选中
+        self._stack.setCurrentIndex(index)
+        _title, _kind, _table_title, desc, tip = self._MODES[index]
+        self._mode_hint.setText(desc)
+        self._mode_hint.setToolTip(tip)
+
+    def _mode_kind(self) -> str:
+        """当前计算方式对应的宽度表 kind。"""
+        return self._MODES[self._mode_index][1]
+
+    def _on_mode_clicked(self, index: int) -> None:
+        """点分段按钮：换表并记下取值口径（只写会话，确认才随本次编辑统一落库）。"""
+        self._set_mode(index)
+        if self._loading or not orm.is_open():
             return
         width = self._width()
         if width is None:
             return
-        desired = GROOVE_WIDTH_WORK if self._tabs.currentIndex() == 0 else GROOVE_WIDTH_B
+        desired = GROOVE_WIDTH_WORK if index == 0 else GROOVE_WIDTH_B
         if width.groove_width == desired:
-            return  # 值没变就不写：延迟补发的信号不该产生多余的未落库修改
-        width.groove_width = desired  # 确认时随本次编辑统一落库
+            return  # 值没变就不写：不产生多余的未落库修改
+        width.groove_width = desired
 
     def _reset_current(self) -> None:
-        """把当前 tab 的表恢复为图集默认（另一种方式的表不动）。"""
-        kind = WIDTH_KIND_WORK if self._tabs.currentIndex() == 0 else WIDTH_KIND_GROOVE_B
+        """把当前计算方式的表恢复为图集默认（另一种方式的表不动）。"""
+        kind = self._mode_kind()
         work, groove = project_io.default_width_tables()
         table_data = work if kind == WIDTH_KIND_WORK else groove
         table = self._tables[kind]

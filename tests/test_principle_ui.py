@@ -433,7 +433,8 @@ def test_width_dialog_cancel_discards_changes(qapp, project) -> None:
     original_mode = width.groove_width
     dialog = WidthEditDialog(width.id)
     try:
-        dialog._tabs.setCurrentIndex(0 if original_mode != "WorkWidth" else 1)
+        # 点另一段计算方式（分段控件互斥，idClicked 即写会话）
+        dialog._mode_group.button(0 if original_mode != "WorkWidth" else 1).click()
         dialog.reject()
         orm.session().expire(width)
         assert width.groove_width == original_mode
@@ -461,6 +462,54 @@ def test_width_dialog_cancel_discards_changes(qapp, project) -> None:
         assert hit is not None and hit.width == 123
     finally:
         confirmed.close()
+
+
+def test_width_dialog_mode_is_segmented_control(qapp, project) -> None:
+    """面宽原则编辑：计算方式用互斥分段控件选择（不是 tab），换方式即换表。
+
+    tab 暗示两种口径并存、可并列浏览；这里其实是二选一的取值口径，同一时刻
+    只有一张表参与计算，所以用分段控件 + 堆叠页表达。
+    """
+    from PySide6.QtWidgets import QLabel, QTabWidget
+
+    from app.core.models.models import GROOVE_WIDTH_B, WIDTH_KIND_GROOVE_B, WIDTH_KIND_WORK
+    from app.views.dialogs.principle_dialogs import WidthEditDialog
+
+    width = project_io.width_principles()[0]
+    dialog = WidthEditDialog(width.id)
+    try:
+        dialog.show()
+        qapp.processEvents()
+        assert not dialog.findChildren(QTabWidget)
+        assert [button.text() for button in dialog._mode_group.buttons()] == [
+            "按工作面宽度计算",
+            "按沟槽总宽度计算",
+        ]
+        # 没有「计算方式:」前缀行；说明与分段控件同一行、位于其右侧
+        assert "计算方式:" not in [label.text() for label in dialog.findChildren(QLabel)]
+        host = dialog._mode_group.buttons()[0].parentWidget()
+        hint = dialog._mode_hint
+        assert hint.x() > host.geometry().right()
+        assert host.y() < hint.geometry().bottom() and hint.y() < host.geometry().bottom()
+
+        # 当前口径的表可见，另一张表整页隐藏（不并列展示）
+        dialog._mode_group.button(0).click()
+        assert dialog._stack.currentIndex() == 0
+        assert dialog._tables[WIDTH_KIND_WORK].isVisible()
+        assert not dialog._tables[WIDTH_KIND_GROOVE_B].isVisible()
+        assert "工作面加宽" in hint.text()
+
+        dialog._mode_group.button(1).click()
+        assert dialog._stack.currentIndex() == 1
+        assert dialog._tables[WIDTH_KIND_GROOVE_B].isVisible()
+        assert not dialog._tables[WIDTH_KIND_WORK].isVisible()
+        assert "直接取沟槽宽度表值" in hint.text()
+        assert width.groove_width == GROOVE_WIDTH_B  # 只写会话，确认才落库
+        # 互斥：选中一段时另一段自动取消
+        assert not dialog._mode_group.button(0).isChecked()
+        assert dialog._mode_group.button(1).isChecked()
+    finally:
+        dialog.reject()  # 回滚，避免污染后续用例的取值方式
 
 
 def test_precipitation_dialog_cancel_discards_edits(qapp, project) -> None:
