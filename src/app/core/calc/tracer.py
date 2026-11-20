@@ -2230,8 +2230,14 @@ _CATEGORY_ORDER: dict[str, int] = {
 
 
 def order_key(key: str) -> int:
-    """定额键排序权重：按类别（旧版 mscGroove.OrderDQ），未知名排最后。"""
-    category = key.split("|")[0] if key else ""
+    """定额键排序权重：按类别（旧版 mscGroove.OrderDQ），未知名排最后。
+
+    类别按三列显示口径取（1/2 段键分类为空 → 排最后，与 2.0 原生分组一致），
+    见 core.quantity_keys。
+    """
+    from app.core.quantity_keys import split_display
+
+    category, _item, _unit = split_display(key)
     return _CATEGORY_ORDER.get(category, 10000)
 
 

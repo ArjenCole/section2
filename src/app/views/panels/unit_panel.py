@@ -21,9 +21,12 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMenu,
+    QPlainTextEdit,
+    QPushButton,
     QStyle,
     QTabWidget,
     QTableWidget,
@@ -58,6 +61,7 @@ from app.core.models.models import (
     category_name,
 )
 from app.core.pipe_category import PIPE_CATEGORIES
+from app.core.quantity_keys import split_display
 from app.resources.qss.theme import ThemeManager
 from app.services import project_io
 from app.services.summary import listing_item_name
@@ -761,11 +765,33 @@ class UnitPanel(QWidget):
         self._distance_placeholder.setVisible(False)
         distance_layout.addWidget(self._distance_placeholder, 1)
 
+        # 1.0 迁移构件的「来源信息」页（只读、可复制）：仅当构件带
+        # legacy_meta 留档时显示（setTabVisible），普通 2.0 工程不出现空页。
+        # 内容是格式化 JSON：show/main 原则名、PE/PF 引用与比例、assigned
+        # 信息、旧版本号与旧来源原文（主表格「来源」列只放摘要）。
+        meta_page = QWidget()
+        meta_page.setProperty("role", "panel")
+        meta_page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        meta_layout = QVBoxLayout(meta_page)
+        meta_layout.setContentsMargins(6, 6, 6, 6)
+        meta_layout.setSpacing(4)
+        self._meta_view = QPlainTextEdit()
+        self._meta_view.setReadOnly(True)
+        self._meta_view.setPlaceholderText("该构件没有 1.0 迁移留档。")
+        meta_layout.addWidget(self._meta_view, 1)
+        self._meta_copy = QPushButton("复制")
+        self._meta_copy.clicked.connect(self._copy_legacy_meta)
+        meta_row = QHBoxLayout()
+        meta_row.addStretch(1)
+        meta_row.addWidget(self._meta_copy)
+        meta_layout.addLayout(meta_row)
+
         detail.addTab(pipe_page, "管材")
         detail.addTab(param_page, "构件参数")
         detail.addTab(qty_page, "工程量")
         detail.addTab(lr_page, "围护原则")
         detail.addTab(distance_page, "工作面宽")
+        detail.addTab(meta_page, "来源信息")
 
         # 三个页签（管材/构件参数/工程量）在窄面板下会被省略并出现滚动箭头：
         # 按页签条完整宽度设最小宽度，保证全部页签可见
@@ -1206,10 +1232,7 @@ class UnitPanel(QWidget):
             quantities = self._merge_quantities([(row.id, dq) for row, dq in chosen])
         digests.setRowCount(len(quantities))
         for row_index, quantity in enumerate(quantities):
-            parts = quantity.key.split("|")
-            category = parts[0] if parts else ""
-            item_name = parts[1] if len(parts) > 1 else ""
-            unit_name = parts[2] if len(parts) > 2 else ""
+            category, item_name, unit_name = split_display(quantity.key)
             for column, text in enumerate(("", category, item_name, unit_name)):
                 item = QTableWidgetItem(text)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -1277,12 +1300,12 @@ class UnitPanel(QWidget):
             # 定额拆解行（原样式）
             for quantity in sorted_items(dq):
                 listing.setRowCount(row_index + 1)
-                parts = quantity.key.split("|")
+                category, item_name, unit_name = split_display(quantity.key)
                 cells = (
                     "",
-                    parts[0] if parts else "",
-                    parts[1] if len(parts) > 1 else "",
-                    parts[2] if len(parts) > 2 else "",
+                    category,
+                    item_name,
+                    unit_name,
                     calc_fmt(quantity.value),
                     getattr(quantity, "expression_outline", quantity.expression),
                 )
@@ -2728,12 +2751,17 @@ class UnitPanel(QWidget):
         pipes: list[PipeRow],
         params: list[ParamRow],
         quantities: list[QuantityRow],
+        legacy_meta: str = "",
     ) -> None:
         if self._multi_detail:
             return  # 多选模式显示占位行，不显示具体条目
         if not project_io.is_open():
             # 工程已关闭：忽略延迟到达的明细信号（旧 id 已不可查）
             return
+        # 1.0 迁移留档页：legacy_meta 非空才显示（普通 2.0 工程不出现空页）
+        meta_index = self._detail_tabs.indexOf(self._meta_view)
+        self._meta_view.setPlainText(legacy_meta)
+        self._detail_tabs.setTabVisible(meta_index, bool(legacy_meta))
         from app.viewmodels.unit_vm import (
             _element,
             auto_atlas_params,
@@ -2956,6 +2984,9 @@ class UnitPanel(QWidget):
                 for index, quantity in enumerate(quantities):
                     category_item = QTableWidgetItem(quantity.category)
                     category_item.setData(_QTY_ROLE, quantity.id)
+                    # 1.0 迁移行：三列按 1.0 规则显示，旧键原文放 tooltip
+                    if quantity.raw_key:
+                        category_item.setToolTip(f"旧版工程量键：{quantity.raw_key}")
                     self._qty_table.setItem(index, 0, category_item)
                     self._qty_table.setItem(index, 1, QTableWidgetItem(quantity.item))
                     # 单位 / 含量列内容居中（数值口径列与主表格埋深 / 数量同款）
@@ -3338,6 +3369,12 @@ class UnitPanel(QWidget):
         quantity_id = self._qty_id_at(row)
         if quantity_id is not None:
             self._vm.remove_quantity(quantity_id)
+
+    def _copy_legacy_meta(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.clipboard().setText(self._meta_view.toPlainText())
+        bus().status_message.emit("来源信息已复制到剪贴板。", 3000)
 
 
 # --------------------------------------------------------------------------- #

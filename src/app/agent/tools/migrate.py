@@ -9,7 +9,7 @@ from app.agent.tool_registry import Tool, ToolRegistry
 from app.agent.tools._common import check_write_path
 from app.core.event_bus import bus
 from app.core.version import PROJECT_SUFFIX
-from app.services import project_io, stn_migration
+from app.services import project_io
 
 
 def _legacy_counts(legacy) -> dict:
@@ -42,9 +42,12 @@ def tool_inspect_legacy_project(arguments: dict) -> dict:
     path = str(arguments.get("path") or "").strip()
     if not path:
         raise ToolError("请提供旧工程 .stn 文件路径。")
+    # 延迟 import：迁移包只在工具被调用时进内存（架构约束见迁移计划 §0.1.1）
+    from app.services import legacy_migration
+
     try:
-        legacy = stn_migration.parse_legacy(path)
-    except stn_migration.MigrationError as error:
+        legacy, _report = legacy_migration.parse(path)
+    except legacy_migration.MigrationError as error:
         raise ToolError(str(error)) from error
     return {
         "ok": True,
@@ -64,9 +67,11 @@ def tool_migrate_legacy_project(arguments: dict) -> dict:
         raise ToolError(
             "迁移会切换数据库连接：请先 close_project（或让用户在界面关闭当前工程）后再迁移。"
         )
+    from app.services import legacy_migration
+
     try:
-        report = stn_migration.migrate(source, target)
-    except stn_migration.MigrationError as error:
+        report = legacy_migration.migrate(source, target)
+    except legacy_migration.MigrationError as error:
         raise ToolError(str(error)) from error
     bus().tree_structure_changed.emit()
     data = {

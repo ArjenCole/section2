@@ -1,6 +1,8 @@
 # 1.0 `.stn` → 2.0 迁移开发计划
 
-> 状态：计划稿（未改代码）
+> 状态：**已实现**（`src/app/services/legacy_migration/`，行为级测试见
+> `tests/test_legacy_migration_plan.py`、隔离约束见
+> `tests/test_legacy_isolation.py`）。
 >
 > 目标：1.0 工程打开后，**1.0 里填写的原则、参数、构件关系必须能在 2.0 数据里找到对应值**；不要求新旧算量数字一致，但不能静默丢数据、错配原则或把 1.0 没有的值写进 2.0。
 >

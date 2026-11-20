@@ -109,7 +109,7 @@ class ElementInput:
 
     沟槽断面 / 降水 / 围护 / 特殊地基按构件引用的单条 ``pe`` × ``pf`` 计算；
     回填材质命名、支撑、管道基础同样用 ``pe``（1.0 多原则条目迁移时已按
-    比例拆成独立条目，见 services/stn_migration）。
+    比例拆成独立条目，见 services/legacy_migration）。
     """
 
     category: int
@@ -129,8 +129,10 @@ class ElementInput:
     #: 构件参数 (参数名, 单位) → 原文：构筑物“名称/单位”行、井筒参数等
     #: 非数值内容按原文查询（旧版“-名称”等键已拆成名称+单位两列）
     named_params: dict[tuple[str, str], str] = field(default_factory=dict)
-    #: 附属构筑物工程量行 (类别, 项目, 单位, 值原文)，值可写算式
-    struct_quantities: list[tuple[str, str, str, str]] = field(default_factory=list)
+    #: 附属构筑物工程量行 (类别, 项目, 单位, 值原文, 键原文)，值可写算式；
+    #: ``raw_key`` 为 1.0 工程量键原文（可选，普通工程为空）——非空时计算
+    #: 输出用它作为工程量 key，保证 1.0 的 1/2 段键、带空段的键不被重拼
+    struct_quantities: list[tuple[str, str, str, str, str]] = field(default_factory=list)
     pe: PcpEnclosure | None = None
     pf: PcpFoundation | None = None
     #: 降水 / 面宽原则（旧版挂在 PE 下，v4 起独立引用）
@@ -339,7 +341,7 @@ def build_element_input(
     ]
     contents = [evaluate_or_default(pipe.content) for pipe in element.pipes]
     quantities = [
-        (quantity.category, quantity.item, quantity.unit, quantity.value)
+        (quantity.category, quantity.item, quantity.unit, quantity.value, quantity.raw_key or "")
         for quantity in element.quantities
     ]
     return ElementInput(
@@ -1093,9 +1095,11 @@ def compute_structure(info: ElementInput) -> QDict | None:
         return None
     amount_dim = info.amount_dim
     out = QDict()
-    for category, item, unit, text in info.struct_quantities:
-        key = "|".join((category, item, unit))
-        if not item and not unit:
+    for category, item, unit, text, raw_key in info.struct_quantities:
+        # 工程量 key：1.0 迁移行优先用键原文（raw_key，可为 1/2 段或 >3 段），
+        # 原生行按三列拼；键整体为空的行不输出
+        key = raw_key or "|".join((category, item, unit))
+        if not key:
             continue
         value = evaluate_or_default(text)
         out.add(key, value, _usable_text(text) or fmt(value), "构筑物")

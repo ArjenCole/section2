@@ -30,7 +30,7 @@ from xml.etree.ElementTree import SubElement
 
 from sqlalchemy import func, select
 
-from app.services import stn_codec, stn_format, stn_migration, undo as undo_stack
+from app.services import stn_codec, stn_format, undo as undo_stack
 from app.core.version import (
     APP_VERSION,
     BACKUP_DIR_NAME,
@@ -507,7 +507,11 @@ def open_legacy_project(path: str | Path) -> None:
     ensure_main_thread("打开旧版工程")
     source = Path(path)
     try:
-        report = stn_migration.build_legacy_database(source)
+        # 延迟 import：迁移包只允许在检测到 1.0 文件后进入（架构约束，
+        # 见 docs/legacy_migration_plan.md §0.1.1）
+        from app.services import legacy_migration
+
+        report = legacy_migration.build_legacy_database(source)
     except Exception as error:
         orm.close_database()
         if isinstance(error, orm.ProjectFileError):
@@ -516,7 +520,9 @@ def open_legacy_project(path: str | Path) -> None:
     _original_path = None
     _backup_done_for_session = False
     try:
-        backup = stn_migration.backup_legacy_file(source, report.schema_version)
+        from app.services.legacy_migration import backup_legacy_file
+
+        backup = backup_legacy_file(source, report.schema_version)
         backup_note = f"原文件已备份至：{backup}"
     except OSError:
         backup_note = "原文件备份失败，请手动留存原文件。"
@@ -1315,22 +1321,23 @@ def import_spcp(path: str | Path) -> tuple[str, str]:
         root = ET.parse(source).getroot()
     except ET.ParseError as error:
         raise ProjectIoError(f"原则文件不是有效的 XML：{error}") from error
-    from app.services import stn_migration
+    # 延迟 import：.spcp 单原则导入走 legacy_migration（架构约束同 open_legacy_project）
+    from app.services import legacy_migration
     from app.services.atlas import component_library
 
     library = component_library()
     session = orm.session()
     if root.tag == _SPCP_PE_ROOT:
-        legacy = stn_migration._parse_enclosure(root, "")
+        legacy = legacy_migration._parse_enclosure(root, "")
         legacy.name = unique_principle_name(legacy.name, enclosure_names())
-        enclosure = stn_migration.write_legacy_enclosure(session, legacy, library,
-                                                         order_no=next_order_no(PcpEnclosure))
+        enclosure = legacy_migration.write_legacy_enclosure(session, legacy, library,
+                                                            order_no=next_order_no(PcpEnclosure))
         commit()
         return "enclosure", enclosure.name
     if root.tag == _SPCP_PF_ROOT:
-        name, replacements, component, pipe_base = stn_migration._parse_foundation(root)
+        name, replacements, component, pipe_base = legacy_migration._parse_foundation(root)
         name = unique_principle_name(name, foundation_names())
-        foundation = stn_migration.write_legacy_foundation(
+        foundation = legacy_migration.write_legacy_foundation(
             session, (name, replacements, component), library,
             order_no=next_order_no(PcpFoundation), pipe_base=pipe_base,
         )

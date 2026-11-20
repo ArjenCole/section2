@@ -251,6 +251,8 @@ def _dump_document(
             "project_index": (info.project_index or "") if info else "",
             "author": (info.author or "") if info else "",
             "atlas_name": (info.atlas_name or "") if info else "",
+            # 1.0 迁移来源留档（可选字段，普通工程为空不写出）
+            **({"legacy_meta": info.legacy_meta} if info and info.legacy_meta else {}),
         },
         "principles": {
             "enclosures": [_dump_enclosure(item) for item in enclosures],
@@ -436,6 +438,8 @@ def _dump_element(element: Element, group_index: int | None = None) -> dict:
                 "item": row.item or "",
                 "unit": row.unit or "",
                 "value": row.value or "",
+                # 1.0 工程量键原文（可选字段，普通工程为空不写出）
+                **({"raw_key": row.raw_key} if row.raw_key else {}),
             }
             for row in sorted(element.quantities, key=lambda row: (row.order_no, row.id))
         ],
@@ -464,6 +468,9 @@ def _dump_element(element: Element, group_index: int | None = None) -> dict:
         data["center_distance_right"] = element.center_distance_right
     if group_index is not None:
         data["group"] = int(group_index)
+    # 1.0 迁移留档（可选字段，普通工程为空不写出，保持零漂移）
+    if element.legacy_meta:
+        data["legacy_meta"] = element.legacy_meta
     return data
 
 
@@ -484,6 +491,8 @@ def load_database(data: dict) -> None:
             project_index=info.get("project_index") or "001",
             author=info.get("author") or "",
             atlas_name=info.get("atlas_name") or "",
+            # 1.0 迁移来源留档（可选字段，缺省为空）
+            legacy_meta=str(info.get("legacy_meta") or ""),
         )
     )
 
@@ -770,6 +779,8 @@ def _load_element(data: dict, *, order_no: int) -> Element:
         center_distance_left=str(data.get("center_distance_left") or ""),
         center_distance_right=str(data.get("center_distance_right") or ""),
         source=data.get("source") or "",
+        # 1.0 迁移留档（可选字段，缺省为空）
+        legacy_meta=str(data.get("legacy_meta") or ""),
         order_no=order_no,
     )
     from app.core.pipe_dimensions import normalize
@@ -814,6 +825,7 @@ def _load_element(data: dict, *, order_no: int) -> Element:
                 item=row.get("item") or "",
                 unit=row.get("unit") or "",
                 value=row.get("value") or "0",
+                raw_key=str(row.get("raw_key") or ""),
                 order_no=row_index,
             )
         )

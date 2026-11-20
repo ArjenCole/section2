@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -197,13 +198,19 @@ class ParamRow:
 
 @dataclass
 class QuantityRow:
-    """附属构筑物工程量行（详情面板“工程量”页，可增删）。"""
+    """附属构筑物工程量行（详情面板“工程量”页，可增删）。
+
+    ``raw_key`` 为 1.0 工程量键原文（迁移行非空）：三列显示按 1.0 规则
+    解析（1/2 段键分类为空），tooltip 提示旧键；只改“值”保留，改三列
+    即清空（见 update_quantity）。
+    """
 
     id: int
     category: str
     item: str
     unit: str
     value: str
+    raw_key: str = ""
 
 
 def _evaluate_field(text: str) -> tuple[float, str]:
@@ -486,9 +493,25 @@ def quantity_rows(element_id: int) -> list[QuantityRow]:
             item=quantity.item,
             unit=quantity.unit,
             value=quantity.value,
+            raw_key=quantity.raw_key or "",
         )
         for quantity in element.quantities
     ]
+
+
+def legacy_meta_text(element_id: int) -> str:
+    """构件的 1.0 迁移留档（格式化 JSON；普通工程 / 无留档为空）。
+
+    详情面板“来源信息”只读页按它显隐与显示；解析失败时原样返回原文。
+    """
+    element = _element(element_id)
+    text = (element.legacy_meta or "").strip() if element is not None else ""
+    if not text:
+        return ""
+    try:
+        return json.dumps(json.loads(text), ensure_ascii=False, indent=2)
+    except ValueError:
+        return text
 
 
 def compute_unit(unit_id: int):
@@ -2355,13 +2378,20 @@ def create_quantity(
 
 
 def update_quantity(quantity_id: int, **fields) -> ElementQuantity | None:
-    """修改工程量行（类别 / 项目 / 单位 / 值）。"""
+    """修改工程量行（类别 / 项目 / 单位 / 值）。
+
+    1.0 迁移行的编辑口径（决策 17）：只改“值”保留 ``raw_key``（键原文不动，
+    价格仍按旧键精确命中）；改分类 / 名称 / 单位任一列即清空 ``raw_key``，
+    此后按编辑后的三列走 2.0 原生键。
+    """
     quantity = orm.session().get(ElementQuantity, quantity_id) if project_io.is_open() else None
     if quantity is None:
         return None
     for key, value in fields.items():
         if key in _QUANTITY_FIELDS:
             setattr(quantity, key, str(value))
+    if any(key in ("category", "item", "unit") for key in fields):
+        quantity.raw_key = ""
     project_io.commit()
     bus().unit_changed.emit(quantity.element.unit_id, [quantity.element.id])
     return quantity
@@ -2388,7 +2418,7 @@ class UnitViewModel(QObject):
     #: 列表（含空表）表示整表重装。
     unit_loaded = Signal(int, object, object)
     # element_id, list[PipeRow], list[ParamRow], list[QuantityRow]
-    detail_loaded = Signal(int, object, object, object)
+    detail_loaded = Signal(int, object, object, object, object)
     error_occurred = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -2413,17 +2443,21 @@ class UnitViewModel(QObject):
         self._unit_id = unit_id
         if unit_id is None:
             self.unit_loaded.emit(0, [], None)
-            self.detail_loaded.emit(0, [], [], [])
+            self.detail_loaded.emit(0, [], [], [], "")
             return
         self.unit_loaded.emit(unit_id, table_rows(unit_id), None)
 
     def load_detail(self, element_id: int | None) -> None:
         self._element_id = element_id
         if element_id is None:
-            self.detail_loaded.emit(0, [], [], [])
+            self.detail_loaded.emit(0, [], [], [], "")
             return
         self.detail_loaded.emit(
-            element_id, pipe_rows(element_id), param_rows(element_id), quantity_rows(element_id)
+            element_id,
+            pipe_rows(element_id),
+            param_rows(element_id),
+            quantity_rows(element_id),
+            legacy_meta_text(element_id),
         )
 
     def clear_detail(self) -> None:
@@ -2468,6 +2502,7 @@ class UnitViewModel(QObject):
                 pipe_rows(self._element_id),
                 param_rows(self._element_id),
                 quantity_rows(self._element_id),
+                legacy_meta_text(self._element_id),
             )
 
     # --- 构件操作 ---

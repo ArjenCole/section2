@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from app.core.calc.tracer import QDict, fmt, sorted_items
 from app.core.event_bus import bus, connect_weak
+from app.core.quantity_keys import split_display
 from app.resources.qss.theme import ThemeManager
 from app.services import project_io
 from app.services import summary as summary_service
@@ -252,13 +253,13 @@ class SummaryPanel(QObject):
             merged.extend(summary)
         self._price_rows = []
         for quantity in sorted_items(merged):
-            parts = quantity.key.split("|")
+            category, item, unit = split_display(quantity.key)
             self._price_rows.append(
                 {
                     "key": quantity.key,
-                    "category": parts[0] if parts else "",
-                    "item": parts[1] if len(parts) > 1 else "",
-                    "unit": parts[2] if len(parts) > 2 else "",
+                    "category": category,
+                    "item": item,
+                    "unit": unit,
                     "amount": quantity.value,
                 }
             )

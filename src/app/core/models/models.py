@@ -227,6 +227,9 @@ class BasicInfo(Base):
     project_index: Mapped[str] = mapped_column(String(100), default="001")
     author: Mapped[str] = mapped_column(String(100), default="")
     atlas_name: Mapped[str] = mapped_column(String(100), default=DEFAULT_ATLAS_NAME)
+    #: 1.0 迁移来源信息（JSON 文本：source_version / source_file / migrated_at）；
+    #: 普通工程为空，不参与计算与 UI 主流程
+    legacy_meta: Mapped[str | None] = mapped_column(Text, nullable=True, default="")
 
 
 class Segment(Base):
@@ -323,6 +326,9 @@ class Element(Base):
     )
     #: 来源（旧版主表格“来源”列，构件库插入时记录模板出处）
     source: Mapped[str] = mapped_column(String(200), default="")
+    #: 1.0 迁移留档（JSON 文本：show/main 原则名、PE/PF 引用与比例、旧来源等）；
+    #: 普通工程为空，不参与计算；详情面板“来源信息”页按它显隐
+    legacy_meta: Mapped[str | None] = mapped_column(Text, nullable=True, default="")
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     unit: Mapped[Unit] = relationship(back_populates="elements")
@@ -441,6 +447,13 @@ class ElementQuantity(Base):
     v5 起独立成表；界面上在详情面板“工程量”页编辑，行可增删。
     计算时每行输出一条工程量“类别|项目|单位”，``value`` 为值原文（可写算式），
     随构件数量（amount）放大。
+
+    ``raw_key`` 是 1.0 工程量键原文（可选，普通工程为空）：1.0 的键不要求
+    三段（1/2 段、>3 段都合法），迁移时把原文留在这里，计算输出优先用它，
+    保证 1.0 的键不被 ``category|item|unit`` 重拼改写；显示用的三列按 1.0
+    规则解析（见 services.legacy_migration.structure_keys）。编辑行为：
+    只改“值”保留 ``raw_key``，改分类/名称/单位任一列即清空，按三列走
+    2.0 原生键。
     """
 
     __tablename__ = "element_quantity"
@@ -455,6 +468,8 @@ class ElementQuantity(Base):
     item: Mapped[str] = mapped_column(String(100), default="")
     unit: Mapped[str] = mapped_column(String(50), default="")
     value: Mapped[str] = mapped_column(String(200), default="0")
+    #: 1.0 工程量键原文（可选；空 = 2.0 原生行，键按三列拼）
+    raw_key: Mapped[str] = mapped_column(String(300), default="")
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     element: Mapped[Element] = relationship(back_populates="quantities")
@@ -711,6 +726,9 @@ class PcpFoundation(Base):
     #: 基础角度 °（旧版 PE.found_angle；120 / 180 …）
     found_angle: Mapped[int] = mapped_column(Integer, default=120)
     order_no: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    #: 1.0 迁移来源（JSON 文本：legacy_pe_name / legacy_pf_name，由哪条旧
+    #: PE × 旧 PF 生成）；普通工程为空，不是算量必需
+    legacy_meta: Mapped[str | None] = mapped_column(Text, nullable=True, default="")
 
     cushions: Mapped[list["FoundationCushion"]] = relationship(
         back_populates="foundation",

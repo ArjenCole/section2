@@ -48,12 +48,13 @@ def test_migrate_sample(tmp_path: Path, source: Path) -> None:
     expected = _source_counts(source)
     assert report.segments == expected["segments"]
     assert report.units == expected["units"]
-    # 1.0 多原则条目按比例拆条（方案 B），构件/管道只会增多不会减少；
+    # 1.0 多原则条目按比例拆条（决策 3），构件/管道只会增多不会减少；
     # 精确拆分数见 test_migrate_multi_principle_split
     assert report.elements >= expected["elements"]
     assert report.pipes >= expected["pipes"]
     assert report.enclosures == expected["enclosures"]
-    assert report.foundations == expected["foundations"]
+    # 决策 2：所有 PE×PF 组合全部生成新地基原则
+    assert report.foundations == expected["enclosures"] * expected["foundations"]
     assert report.prices == expected["prices"]
 
     # 迁移结果能被新软件打开，且原则引用不悬空
@@ -111,39 +112,53 @@ def test_migrate_multi_principle_split(tmp_path: Path) -> None:
     assert report.pipes == 3
     assert report.splits == 1
     assert len(report.split_details) == 1
-    assert "放坡开挖 60%" in report.split_details[0]
-    assert "钢板桩 40%" in report.split_details[0]
+    # 拆分明细带组合与占比（新 PF 名为 旧PF·旧PE，见决策 1/2）
+    assert "放坡开挖" in report.split_details[0]
+    assert "60%" in report.split_details[0]
+    assert "钢板桩" in report.split_details[0]
+    assert "40%" in report.split_details[0]
     assert "旧主围护原则：钢板桩" in report.split_details[0]
+    # 决策 2：旧 PF1 × 3 条 PE → 3 条新 PF（PF名·PE名）
+    assert report.foundations == 3
+    assert any("没有地基处理 × 放坡开挖 → 没有地基处理·放坡开挖" in line for line in report.pf_mappings)
+    assert any("没有地基处理 × 钢板桩 → 没有地基处理·钢板桩" in line for line in report.pf_mappings)
 
     project_io.open_project(target)
     try:
         rows = list(orm.session().scalars(select(Element).order_by(Element.order_no, Element.id)))
         assert len(rows) == 4
 
-        # 单原则条目原样保留（名称/数量原文不动）
+        # 单原则条目原样保留（名称/数量原文不动；比例 = 1 不追加后缀）；
+        # 地基引用也按 决策 2 映射到新 PF（PF名·PE名）
         assert rows[0].name == ""
         assert rows[0].amount == "100"
         assert rows[0].pe_name == "放坡开挖"
+        assert rows[0].pf_name == "没有地基处理·放坡开挖"
         assert rows[0].pp_name == "放坡开挖" and rows[0].pw_name == "放坡开挖"
 
-        # 拆分条目：名称加“·原则名 占比%”后缀，数量合成算式，各引用自己的原则
-        assert rows[1].name == "·放坡开挖 60%"
+        # 拆分条目：名称 = 原名·新PF名 占比%（决策 14；原名为空时去掉前导·），
+        # 数量合成算式，各引用自己的 PE 与对应新 PF（原 PE1 + PF2 → 新 PF2·PE1）
+        assert rows[1].name == "没有地基处理·放坡开挖 60%"
         assert rows[1].amount == "(200.5)*0.6"
         assert rows[1].pe_name == "放坡开挖"
+        assert rows[1].pf_name == "没有地基处理·放坡开挖"
         assert rows[1].pp_name == "放坡开挖" and rows[1].pw_name == "放坡开挖"
-        assert rows[2].name == "·钢板桩 40%"
+        assert rows[2].name == "没有地基处理·钢板桩 40%"
         assert rows[2].amount == "(200.5)*0.4"
         assert rows[2].pe_name == "钢板桩"
+        assert rows[2].pf_name == "没有地基处理·钢板桩"
         assert rows[2].pp_name == "钢板桩" and rows[2].pw_name == "钢板桩"
         # 管道行原样复制到每个子条目
         for row in rows[1:3]:
             assert len(row.pipes) == 1 and row.pipes[0].dn == 800
 
-        # 构筑物不拆：围护取旧主原则（mainPEname 在文件中存在）
+        # 构筑物不拆（决策 18）：围护取旧主原则（mainPEname 在文件中存在），
+        # 地基按 PF名·PE名 映射，原始 refs 进 legacy_meta
         well = rows[3]
         assert well.category == CATEGORY_STRUCTURE
         assert well.name == "圆形雨水检查井DN1000"
         assert well.pe_name == "不起作用的原则"
+        assert well.pf_name == "没有地基处理·不起作用的原则"
 
         # 拆分条目可正常计算（深度 3.6 > 围护做法适用范围即可出量）
         from app.viewmodels.unit_vm import compute_unit

@@ -22,11 +22,14 @@ import json
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from app.core.models.models import CATEGORY_NAMES
 from app.core.paths import resources_dir
 from app.core.pipe_category import PIPE_CATEGORIES, category_of_mat, normalize_category
-from app.services.stn_migration import LegacyProject, parse_legacy
+
+if TYPE_CHECKING:  # 兜底解析走 legacy_migration（延迟 import，见 element_library）
+    from app.services.legacy_migration.parser import LegacyProject
 
 _CATEGORY_BY_NAME = {name: value for value, name in CATEGORY_NAMES.items()}
 
@@ -157,7 +160,7 @@ def element_library() -> ElementLibrary:
     path = inventory_path()
     if path.exists():
         return _from_asset(path)
-    return _from_legacy(parse_legacy(ele_inventory_path()))
+    return _from_legacy_file(ele_inventory_path())
 
 
 def reload_library() -> None:
@@ -284,6 +287,19 @@ def _template_from_asset(element: dict) -> ElementTemplate:
 # --------------------------------------------------------------------------- #
 # 旧 .stn 兜底（没有 JSON 资产时）
 # --------------------------------------------------------------------------- #
+def _from_legacy_file(path: Path) -> ElementLibrary:
+    """解析旧版库存 .stn 构造构件库（legacy_migration 延迟 import 兜底）。
+
+    2.0 正常路径不得顶层 import 迁移包（架构约束，见
+    docs/legacy_migration_plan.md §0.1.1）：只有真的没有 JSON 资产时才
+    走到这里，函数内延迟 import。
+    """
+    from app.services.legacy_migration import parse_legacy
+
+    legacy, _report = parse_legacy(path)
+    return _from_legacy(legacy)
+
+
 def _from_legacy(legacy: LegacyProject) -> ElementLibrary:
     categories: list[str] = []
     units: dict[str, tuple[LibraryUnit, ...]] = {}

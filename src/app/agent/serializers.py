@@ -163,12 +163,14 @@ def element_detail_dict(element_id: int) -> dict:
 # 工程量
 # --------------------------------------------------------------------------- #
 def quantity_dict(quantity, include_steps: bool = True) -> dict:
-    parts = quantity.key.split("|")
+    from app.core.quantity_keys import split_display
+
+    category, item, unit = split_display(quantity.key)
     data = {
         "key": quantity.key,
-        "category": parts[0] if parts else "",
-        "item": parts[1] if len(parts) > 1 else "",
-        "unit": parts[2] if len(parts) > 2 else "",
+        "category": category,
+        "item": item,
+        "unit": unit,
         "value": quantity.value,
         "expression": quantity.expression,
         "display_expression": quantity.display_expression,

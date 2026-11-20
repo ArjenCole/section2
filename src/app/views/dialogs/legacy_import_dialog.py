@@ -1,8 +1,12 @@
 """旧版工程导入向导（M6）。
 
 流程：选择旧版 .stn → 选择新版 .stn 保存路径 → 解析摘要预览 → 确认写库并打开 →
-结束报告（成功计数 + 警告/跳过明细，支持复制文本）。
+结束报告（成功计数 + 分节明细 + 警告/跳过，支持复制文本）。
 旧版 .stn 文件任何情况下只读。
+
+迁移包按架构约束延迟 import（打开向导时才进内存，见
+docs/legacy_migration_plan.md §0.1.1）；报告有 skipped 时正文前加警告标，
+不能只显示"迁移成功"。
 """
 
 from __future__ import annotations
@@ -24,7 +28,6 @@ from app.core.version import PROJECT_FILE_FILTER, PROJECT_SUFFIX
 from app.views.widgets.frameless_dialog import FramelessDialog, FramelessMessageBox
 from app.views.widgets.platform_buttons import CLOSE_TEXT, DialogButtonSpec, add_dialog_buttons
 from app.core.event_bus import bus
-from app.services import stn_migration
 from app.views.dialogs.new_project_wizard import suggested_dir
 
 
@@ -86,6 +89,8 @@ class LegacyImportDialog(FramelessDialog):
 
     # ------------------------------------------------------------------ 步骤
     def _pick_source(self) -> None:
+        from app.services import legacy_migration
+
         start = str(suggested_dir())
         target, _filter = QFileDialog.getOpenFileName(
             self, "选择旧工程", start, "旧版 Section 工程 (*.stn)"
@@ -93,8 +98,8 @@ class LegacyImportDialog(FramelessDialog):
         if not target:
             return
         try:
-            self._legacy = stn_migration.parse_legacy(target)
-        except stn_migration.MigrationError as error:
+            self._legacy, _report = legacy_migration.parse(target)
+        except legacy_migration.MigrationError as error:
             FramelessMessageBox.warning(self, "无法读取", str(error))
             return
         self._source = Path(target)
@@ -132,15 +137,20 @@ class LegacyImportDialog(FramelessDialog):
         self._btn_run.setEnabled(True)
 
     def _run(self) -> None:
+        from app.services import legacy_migration
+
         if self._source is None or self._target is None:
             return
         try:
-            report = stn_migration.migrate(self._source, self._target)
+            report = legacy_migration.migrate(self._source, self._target)
         except Exception as error:
             FramelessMessageBox.critical(self, "迁移失败", f"{error}\n\n半成品文件已删除，原 .stn 未被修改。")
             return
         update_config({"ui": {"last_dir": str(self._target.parent)}})
-        self._summary.setPlainText(report.text())
+        text = report.text()
+        if report.skipped:
+            text = f"⚠ 有 {len(report.skipped)} 条数据被跳过，请核对下方明细。\n\n{text}"
+        self._summary.setPlainText(text)
         self._btn_copy.setEnabled(True)
         self._btn_run.setEnabled(False)
         FramelessMessageBox.information(

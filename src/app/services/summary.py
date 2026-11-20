@@ -21,6 +21,7 @@ from app.core.evaluator import format_number
 from app.core.models import base as orm
 from app.core.models.models import Price, Unit
 from app.core.models.models import category_name
+from app.core.quantity_keys import split_display
 from app.services import undo as undo_stack
 
 
@@ -195,20 +196,22 @@ def batch_import_prices(path: str | Path) -> dict:
 def unit_summary(unit_id: int) -> list[dict]:
     """单位工程汇总：量 × 单价 = 合价。"""
     from app.core.calc.tracer import sorted_items
+    from app.core.quantity_keys import split_display
     from app.viewmodels.unit_vm import compute_unit
 
     summary, _detail = compute_unit(unit_id)
     by_key, by_scope = price_maps()
     rows: list[dict] = []
     for quantity in sorted_items(summary):
-        parts = quantity.key.split("|")
+        # 三列按 1.0 规则切分（1/2 段键分类为空，键原文经 raw_key 保留在 key 里）
+        category, item, unit = split_display(quantity.key)
         price = resolve_price(quantity.key, by_key, by_scope)
         rows.append(
             {
                 "key": quantity.key,
-                "category": parts[0] if parts else "",
-                "item": parts[1] if len(parts) > 1 else "",
-                "unit": parts[2] if len(parts) > 2 else "",
+                "category": category,
+                "item": item,
+                "unit": unit,
                 "amount": quantity.value,
                 "price": price,
                 "total": quantity.value * price,
@@ -232,6 +235,7 @@ def export_excel(
     from openpyxl.styles import Font
 
     from app.core.calc.tracer import fmt, sorted_items
+    from app.core.quantity_keys import split_display
     from app.viewmodels.unit_vm import compute_unit
 
     if kind not in ("定额", "清单"):
@@ -268,12 +272,12 @@ def export_excel(
         summary, detail = compute_unit(uid)
         if kind == "定额":
             for quantity in sorted_items(summary):
-                parts = quantity.key.split("|")
+                category, item, unit = split_display(quantity.key)
                 price = resolve_price(quantity.key, by_key, by_scope)
                 row = [
-                    parts[0] if parts else "",
-                    parts[1] if len(parts) > 1 else "",
-                    parts[2] if len(parts) > 2 else "",
+                    category,
+                    item,
+                    unit,
                     quantity.display_expression,
                     quantity.expression,
                     quantity.value,
@@ -300,12 +304,12 @@ def export_excel(
                 sheet.append(row)
                 exported_rows += 1
                 for quantity in sorted_items(qdict):
-                    parts = quantity.key.split("|")
+                    category, item, unit = split_display(quantity.key)
                     price = resolve_price(quantity.key, by_key, by_scope)
                     row = [
-                        parts[0] if parts else "",
-                        parts[1] if len(parts) > 1 else "",
-                        parts[2] if len(parts) > 2 else "",
+                        category,
+                        item,
+                        unit,
                         quantity.display_expression,
                         quantity.expression,
                         quantity.value,
@@ -365,24 +369,10 @@ def _quantity_row(quantity, with_expression: bool = True) -> list:
     ``with_expression=False`` 时不解析主算式（解析极重，见 tracer 展示层），
     两列以空串占位——只显示数量、不需要算式的调用方（工程量明细表）用。
     """
-    parts = quantity.key.split("|")
+    category, item, unit = split_display(quantity.key)
     if not with_expression:
-        return [
-            parts[0] if parts else "",
-            parts[1] if len(parts) > 1 else "",
-            parts[2] if len(parts) > 2 else "",
-            quantity.value,
-            "",
-            "",
-        ]
-    return [
-        parts[0] if parts else "",
-        parts[1] if len(parts) > 1 else "",
-        parts[2] if len(parts) > 2 else "",
-        quantity.value,
-        _main_expression(quantity),
-        quantity.expression,
-    ]
+        return [category, item, unit, quantity.value, "", ""]
+    return [category, item, unit, quantity.value, _main_expression(quantity), quantity.expression]
 
 
 def _quota_rows(qdict, with_expression: bool = True) -> list[list]:
