@@ -11,6 +11,9 @@
   首行埋深恒 0 且只读，Insert /「+」插入做法：有选中行时插到该行下方、埋深取
   上下两行中值，无选中行时追加到最后（埋深 = 末行 + 3.5），
   Delete 删除（全删时提示“至少需要一种围护做法。”）；
+* 拖动行调整做法顺序：一次只拖按下的那一行（多选时也一样），落点线画在插入
+  位置，松手后按新顺序重排 order_no，并把原有的一组埋深阈值升序贴回去
+  （首行恒 0，与只读首行一致；阈值与顺序同向，否则「范围」列倒挂、计算取错）；
 * 双击“围护形式描述”：多级围护 → 做法编辑（FormEcls），单构件 → 构件公式编辑
   （FormCpntEdit）；双击“止水形式描述” → 构件公式编辑；
 * 「确认修改」才落库（原版“编辑副本、确认生效”）：做法表与子编辑器的编辑
@@ -19,8 +22,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtCore import QMimeData, QPoint, QRect, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QCursor, QDrag, QKeyEvent, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -34,6 +37,7 @@ from PySide6.QtWidgets import (
 from app.core.event_bus import bus
 from app.core.models import base as orm
 from app.core.models.models import MULTI_LEVEL_TEXT, EnclosureWork, PcpEnclosure
+from app.resources.qss.theme import ThemeManager
 from app.services import project_io
 from app.services.project_io import new_enclosure_work
 from app.views.dialogs.principle_dialogs import (
@@ -55,6 +59,8 @@ from app.views.widgets.table_width import fixed_width_behavior
 _COL_DEPTH, _COL_RANGE, _COL_ECLS_CAT, _COL_ECLS_DIS, _COL_WS_CAT, _COL_WS_DIS = range(6)
 #: 止水形式描述列的下限：可视区减其余列不足这么多时钳回来（宁出横向滚动条）
 _DESC_MIN_WIDTH = 80
+#: 做法行拖拽的 MIME 类型：只认表格内部的拖拽（外部文件 / 文本一律不接）
+_WORK_ROW_MIME = "application/x-section2-enclosure-work-row"
 
 
 class EnclosureEditDialog(FramelessDialog):
@@ -85,6 +91,7 @@ class EnclosureEditDialog(FramelessDialog):
         self._work_table = _WorkTable()
         self._work_table.insert_requested.connect(lambda: self._insert_work())
         self._work_table.delete_requested.connect(self._delete_selected_works)
+        self._work_table.row_move_requested.connect(self._move_work_row)
         self._work_table.cellChanged.connect(self._on_cell_changed)
         self._work_table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         table_row.addWidget(self._work_table, 1)
@@ -386,6 +393,32 @@ class EnclosureEditDialog(FramelessDialog):
             work.order_no = index
         self._fill()
 
+    # ------------------------------------------------------------------ 拖动调序
+    def _move_work_row(self, source_row: int, insert_row: int) -> None:
+        """把做法行 ``source_row`` 移到 ``insert_row`` 之前（一次只动一行）。
+
+        行的先后就是做法生效的先后（``order_no``），而埋深阈值决定“多深用哪条”：
+        两者必须同向，否则「范围」列倒挂、计算也会取错做法。所以重排后把原有的
+        一组埋深阈值**升序**贴回新顺序（首行仍恒 0，与只读首行一致）。
+        """
+        enclosure = self._enclosure()
+        if enclosure is None:
+            return
+        works = enclosure.works_sorted()
+        if not 0 <= source_row < len(works):
+            return
+        insert_row = max(0, min(insert_row, len(works)))
+        if insert_row in (source_row, source_row + 1):
+            return  # 原地：不动
+        work = works.pop(source_row)
+        # 先删后插：插在源行之后时目标下标要减 1（insert_row 是按原列表给的）
+        target = insert_row - 1 if insert_row > source_row else insert_row
+        works.insert(target, work)
+        for index, (item, depth) in enumerate(zip(works, sorted(w.min_depth for w in works))):
+            item.order_no = index
+            item.min_depth = depth
+        self._fill(select_row=target)
+
     # ------------------------------------------------------------------ 确认 / 取消
     def reject(self) -> None:  # noqa: N802 - Qt 命名
         """取消修改：回滚会话，丢弃做法表与子编辑器的全部未落库修改。
@@ -422,10 +455,12 @@ class EnclosureEditDialog(FramelessDialog):
 
 
 class _WorkTable(CellFillTable):
-    """做法表格：Insert 插入行 / Delete 删除选中行（原版 dGVPE_KeyUp）。"""
+    """做法表格：Insert 插入行 / Delete 删除选中行 / 拖动行调序（原版 dGVPE_KeyUp）。"""
 
     insert_requested = Signal()
     delete_requested = Signal()
+    #: (源行, 插入行)：插入行 = 源行要插到该行**之前**（按拖拽前的行号，含末尾）
+    row_move_requested = Signal(int, int)
 
     def __init__(self) -> None:
         super().__init__()
@@ -442,6 +477,18 @@ class _WorkTable(CellFillTable):
         # 每次装填后重算），围护形式描述固定宽、止水形式描述按可视区收窄
         # （_fit_desc_column），总宽刚好不出横向滚动条
         fixed_width_behavior(self)
+        # 拖动行调序：只认本表格内部的拖拽（MoveAction），落点线自绘——Qt 默认
+        # 指示器只在行上下 2px 边缘判 Above/Below，行中心是 OnItem（画整行框），
+        # 对“插到某行前后”的语义不清楚，见 _resolve_drop / paintEvent
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.setDropIndicatorShown(False)
+        #: 按下时所在行（一次只拖这一行；多选时也不整组拖）
+        self._drag_row: int | None = None
+        #: 落点线的 y（视口坐标）；None = 不画
+        self._drop_line_y: int | None = None
+        #: 拖拽循环结束后才落地的移动意图（重建表格不能发生在循环里）
+        self._pending_move: tuple[int, int] | None = None
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         if event.key() == Qt.Key.Key_Insert:
@@ -451,3 +498,123 @@ class _WorkTable(CellFillTable):
             self.delete_requested.emit()
             return
         super().keyPressEvent(event)
+
+    # ------------------------------------------------------------------ 拖动调序
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if event.button() == Qt.MouseButton.LeftButton:
+            index = self.indexAt(event.position().toPoint())
+            # 一次只拖一行：记住按下的那一行，startDrag 只用它
+            self._drag_row = index.row() if index.isValid() else None
+        super().mousePressEvent(event)
+
+    def startDrag(self, supported_actions) -> None:  # noqa: N802 - Qt 命名
+        row = self._drag_row
+        if row is None or not 0 <= row < self.rowCount():
+            return
+        index = self.model().index(row, 0)
+        # 拖拽影像只取这一行（整行宽），半透明，鼠标落点跟着按下位置
+        rect = QRect(
+            0, self.visualRect(index).top(), self.viewport().width(), self.rowHeight(row)
+        ).intersected(self.viewport().rect())
+        if rect.isEmpty():
+            return
+        mime = QMimeData()
+        mime.setData(_WORK_ROW_MIME, str(row).encode("ascii"))
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        dpr = self.devicePixelRatioF() or 1.0
+        pixmap = QPixmap(rect.size() * dpr)
+        pixmap.setDevicePixelRatio(dpr)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setOpacity(0.8)
+        painter.drawPixmap(0, 0, self.viewport().grab(rect))
+        painter.end()
+        drag.setPixmap(pixmap)
+        hotspot = self.viewport().mapFromGlobal(QCursor.pos()) - rect.topLeft()
+        hotspot.setX(max(0, min(hotspot.x(), rect.width())))
+        hotspot.setY(max(0, min(hotspot.y(), rect.height())))
+        drag.setHotSpot(hotspot)
+        # 只允许移动动作：Ctrl 等修饰键不会切成复制
+        drag.exec(Qt.DropAction.MoveAction, Qt.DropAction.MoveAction)
+        self._drag_row = None
+        self._set_drop_line(None)
+        # 拖拽循环结束后再改数据：循环里重建表格会拆掉正在拖的单元格控件
+        self._consume_pending_move()
+
+    def _consume_pending_move(self) -> None:
+        """落地拖拽期间记下的移动意图（模态循环结束后才发信号）。"""
+        pending, self._pending_move = self._pending_move, None
+        if pending is not None:
+            self.row_move_requested.emit(*pending)
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if event.source() is not self or self._drag_row is None:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        if event.source() is not self or self._drag_row is None:
+            event.ignore()
+            self._set_drop_line(None)
+            return
+        target = self._resolve_drop(event.position().toPoint())
+        self._set_drop_line(target[1] if target is not None else None)
+        event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        self._set_drop_line(None)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        source = self._drag_row
+        self._set_drop_line(None)
+        if event.source() is not self or source is None:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        target = self._resolve_drop(event.position().toPoint())
+        if target is not None:
+            self._pending_move = (source, target[0])
+
+    def _resolve_drop(self, pos: QPoint) -> tuple[int, int] | None:
+        """落点 → ``(插入行, 落点线 y)``；原地不动返回 None。
+
+        插入行 = 拖拽行插到该行之前（``rowCount()`` = 追加到末尾）。行的上下半
+        自己判：上半插到该行之前、下半插到之后，落点线画在对应边界上；落在空白
+        区（末行下方）按追加处理。
+        """
+        source = self._drag_row
+        if source is None:
+            return None
+        row = self.rowAt(pos.y())
+        if row < 0:
+            # 落在末行下方的空白区：追加到末尾，线画在末行底边
+            insert_row = self.rowCount()
+            last = self.visualRect(self.model().index(self.rowCount() - 1, 0))
+            y = 0 if last.isNull() else last.bottom() + 1
+        else:
+            rect = self.visualRect(self.model().index(row, 0))
+            if pos.y() < rect.center().y():
+                insert_row, y = row, rect.top()
+            else:
+                insert_row, y = row + 1, rect.bottom() + 1
+        if insert_row in (source, source + 1):
+            return None  # 原地（插到自己前面 / 后面）
+        return insert_row, max(0, min(y, self.viewport().height() - 1))
+
+    def _set_drop_line(self, y: int | None) -> None:
+        if self._drop_line_y == y:
+            return
+        self._drop_line_y = y
+        self.viewport().update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().paintEvent(event)
+        y = self._drop_line_y
+        if y is None:
+            return
+        painter = QPainter(self.viewport())
+        painter.setPen(QPen(QColor(ThemeManager.instance().current().border_focus), 2))
+        painter.drawLine(0, y, self.viewport().width(), y)
