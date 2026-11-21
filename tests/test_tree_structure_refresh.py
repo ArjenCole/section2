@@ -129,12 +129,18 @@ def test_ui_change_reloads_tree_once(qapp, project, panel) -> None:
 
     panel._vm.tree_loaded.disconnect()
     panel._vm.tree_loaded.connect(counting)
+    try:
+        panel.vm.add_segment("界面新增标段")
+        qapp.processEvents()
 
-    panel.vm.add_segment("界面新增标段")
-    qapp.processEvents()
-
-    assert len(calls) == 1
-    assert _segment_names(panel) == ["新建标段", "界面新增标段"]
+        assert len(calls) == 1
+        assert _segment_names(panel) == ["新建标段", "界面新增标段"]
+    finally:
+        # counting 强引用着面板的绑定方法：不摘除的话面板销毁后闭包仍挂在
+        # vm 信号上，后续用例一广播 project_opened → 旧 vm.load()（connect_weak
+        # 对纯 Python 对象永远放行）→ 死面板 _on_tree_loaded 撞上已删除的
+        # C++ 对象，异常带崩整个 Qt 事件循环，成片污染之后的用例
+        panel._vm.tree_loaded.disconnect(counting)
 
 
 def test_tree_keeps_selection_after_external_change(qapp, project, panel) -> None:
@@ -178,11 +184,15 @@ def test_principle_change_broadcast_does_not_rebuild_tree(qapp, project, panel) 
 
     panel._vm.tree_loaded.disconnect()
     panel._vm.tree_loaded.connect(counting)
+    try:
+        bus().tree_structure_changed.emit()  # 原则增删改名时就是这么发的
+        qapp.processEvents()
 
-    bus().tree_structure_changed.emit()  # 原则增删改名时就是这么发的
-    qapp.processEvents()
-
-    assert rebuilds == []
+        assert rebuilds == []
+    finally:
+        # 同 test_ui_change_reloads_tree_once：闭包不摘除会把死面板钉在
+        # vm 信号上，污染之后的全部用例
+        panel._vm.tree_loaded.disconnect(counting)
 
 
 def test_main_window_tree_and_summary_agree_after_ai_build(qapp, project) -> None:

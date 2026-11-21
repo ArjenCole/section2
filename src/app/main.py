@@ -40,6 +40,7 @@ from app.core.version import (  # noqa: E402
     APP_NAME,
     APP_ORG_DOMAIN,
     APP_ORG_NAME,
+    APP_TITLE_NAME,
     APP_VERSION,
     PROJECT_SUFFIX,
 )
@@ -138,7 +139,9 @@ def main(argv: list[str] | None = None) -> int:
     # 都经这个执行器回到主线程（见 app.core.main_thread）。
     install_main_thread_executor()
     app.setApplicationName(APP_NAME)
-    app.setApplicationDisplayName(APP_DISPLAY_NAME)
+    # 任务栏 / 窗口标题后缀（Qt 追加 “ - <display name>”）：用短名 Section2，
+    # 不用带版本的 APP_DISPLAY_NAME（标题里不需要重复版本号）
+    app.setApplicationDisplayName(APP_TITLE_NAME)
     app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName(APP_ORG_NAME)
     app.setOrganizationDomain(APP_ORG_DOMAIN)

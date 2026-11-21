@@ -42,6 +42,7 @@ from app.core.event_bus import bus, connect_weak
 from app.mcp_server.controller import McpServerController
 from app.core.version import (
     APP_DISPLAY_NAME,
+    APP_TITLE_NAME,
     APP_VERSION,
     IS_PRERELEASE,
     PROJECT_FILE_FILTER,
@@ -937,6 +938,9 @@ class MainWindow(QMainWindow):
 
     def _on_project_saved(self, path: str) -> None:
         """保存成功提示（绑定方法连接：PySide 只持弱引用，窗口销毁自动断开）。"""
+        # 显式保存已在 project_io 里刷新已保存点，这里刷新标题清星号；
+        # 界面保存与 AI 保存工具都广播本信号，标题在此统一刷新
+        self._update_title()
         self._set_status(f"已保存：{path}")
 
     def _on_project_closed(self) -> None:
@@ -1081,12 +1085,21 @@ class MainWindow(QMainWindow):
     def _update_title(self) -> None:
         path_hint = ""
         if not project_io.is_open():
-            title = f"{APP_DISPLAY_NAME} {APP_VERSION}"
+            # 未开工程：标题就是应用名本身——Qt 会把 applicationDisplayName
+            # （Section2）追加到窗口标题后，标题已含本名时不再追加，任务栏
+            # 就只显示 Section2（开工程时显示“工程.stn - Section2”）
+            title = APP_TITLE_NAME
         else:
-            # 临时工程没有文件路径，也照常显示工程名（Quotor 同款）
-            name = project_io.project_name() or "未命名工程"
-            title = f"{name} - {APP_DISPLAY_NAME} {APP_VERSION}"
+            # 任务栏 / 开始菜单只显示文件名（Quotor 同款，不拼应用名）：
+            # 已保存工程用工程文件名，临时工程按项目名给建议文件名（与
+            # 保存对话框的建议一致）；距已保存点有修改时加 * 前缀
             path = project_io.current_path()
+            name = (
+                Path(path).name
+                if path is not None
+                else suggested_file_name(project_io.project_name())
+            )
+            title = f"{'*' if undo_stack.is_dirty() else ''}{name}"
             # 状态栏已移除：工程路径改挂在标题提示上，信息不丢
             path_hint = str(path) if path else "（尚未保存到文件）"
         self.setWindowTitle(title)
@@ -1329,6 +1342,10 @@ class MainWindow(QMainWindow):
     def _update_undo_actions(self) -> None:
         self._act_undo.setEnabled(project_io.is_open() and undo_stack.can_undo())
         self._act_redo.setEnabled(project_io.is_open() and undo_stack.can_redo())
+        # 撤销栈变化（修改 / 撤销 / 重做 / 新开工程）后同步标题星号：
+        # 当前内容与已保存点不同 → 加 *（is_dirty 按内容比较，撤销回
+        # 已保存内容时星号自动消失；标题刷新与按钮可用态同源同频）
+        self._update_title()
 
     def _undo(self) -> None:
         self._restore_from_stack(undo_stack.undo(), "撤销")

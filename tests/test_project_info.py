@@ -112,7 +112,9 @@ def test_edit_menu_project_info_updates_basic_info_tree_and_title(qapp, project,
         )
         root = window._tree_panel._tree.topLevelItem(0)
         assert root.text(0) == "改后的工程"
-        assert "改后的工程" in window.windowTitle()
+        # 窗口标题只显示工程文件名（Quotor 同款），项目名称变化不进标题；
+        # 改名是一次未显式保存的修改，标题带 * 星号
+        assert window.windowTitle() == "*测试工程.stn"
     finally:
         window.close()
         qapp.processEvents()

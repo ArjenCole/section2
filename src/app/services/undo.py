@@ -25,9 +25,10 @@
 * 时间窗合并（200ms）：一次用户操作内部可能连续提交多次（如候选参数改一格
   会连着落盘两次），窗口内的提交合并为一步，Ctrl+Z 一次回到操作前。
 
-与 brackets2 的偏差：brackets2 记录"已保存点"并据此判 is_dirty；本工程
-提交即落盘、不存在"未保存修改"状态，恢复后由 project_io 重写文件即可，
-因此没有保存点机制。快照序列化时会剔除 ``saved_at``——它是每次提交都变的
+与 brackets2 的偏差：本工程提交即落盘（自动保存），是否写盘不由 is_dirty
+决定，保存点只供界面在窗口标题上提示"距上次显式保存有修改"（加 * 前缀，
+project_io 在显式保存 / 另存为后调 :func:`mark_saved`，见 :attr:`is_dirty`）。
+快照序列化时会剔除 ``saved_at``——它是每次提交都变的
 meta，留着会让"内容未变"的判定永远不成立。
 
 本模块刻意不依赖 Qt 与工程数据库：快照内容全部由调用方传入 / 返回，
@@ -46,7 +47,9 @@ __all__ = [
     "can_redo",
     "can_undo",
     "clear",
+    "is_dirty",
     "last_focus",
+    "mark_saved",
     "note_intent",
     "patch_top_ui",
     "record",
@@ -195,6 +198,7 @@ class UndoStack:
     def __init__(self) -> None:
         self._snaps: list[_Snapshot] = []
         self._pos: int = -1  # 当前快照下标
+        self._saved_text: str | None = None  # 已保存点的工程 JSON 文本（brackets2 同款）
         self._last_push: float | None = None  # 最近一次记录时刻，时间窗合并用
         self._last_focus: tuple[tuple[int, int], int | None] | tuple[str, str] | None = None
         self._ui_provider = None  # 由视图注入：捕获界面状态的回调
@@ -245,6 +249,20 @@ class UndoStack:
         return 0 <= self._pos < len(self._snaps) - 1
 
     @property
+    def is_dirty(self) -> bool:
+        """当前内容与已保存点是否不同（窗口标题加 * 用）。
+
+        保存点在 :meth:`reset` 时建立：打开已有工程以基线内容为保存点，
+        从无星号开始；新建临时工程 / 1.0 转译（内容尚未保存到任何文件）
+        不设保存点，一开始就是脏——星号要等显式保存（:meth:`mark_saved`）
+        才消失。按内容比较而不按栈位置，撤销 / 重做回到已保存内容时星号
+        自动消失。无工程（空栈）恒为 False。
+        """
+        if not 0 <= self._pos < len(self._snaps):
+            return False
+        return self._saved_text is None or self._snaps[self._pos].text != self._saved_text
+
+    @property
     def last_focus(self) -> tuple[tuple[int, int], int | None] | tuple[str, str] | None:
         """最近一次 undo()/redo() 对比相邻快照得出的焦点。
 
@@ -261,19 +279,36 @@ class UndoStack:
         """清空栈（关闭工程）。"""
         self._snaps = []
         self._pos = -1
+        self._saved_text = None
         self._last_focus = None
         self._pending_intent = None
         self._notify()
 
-    def reset(self, data: dict) -> None:
-        """初始化栈（新建 / 打开工程后）：当前内容是不可撤销的基线快照。"""
+    def reset(self, data: dict, *, saved: bool = True) -> None:
+        """初始化栈（新建 / 打开工程后）：当前内容是不可撤销的基线快照。
+
+        ``saved=True``（打开已有 `.stn`）：基线同时记为已保存点，从无星号
+        开始；``saved=False``（新建临时工程 / 1.0 转译——内容尚未保存到任何
+        文件）：不设保存点，:attr:`is_dirty` 从一开始就是 True，标题带 *
+        直到显式保存。
+        """
         text, size = _serialize(data)
         self._snaps = [_Snapshot(text, None, size)]
         self._pos = 0
+        self._saved_text = text if saved else None
         self._last_push = None
         self._last_focus = None
         self._pending_intent = None
         self._notify()
+
+    def mark_saved(self) -> None:
+        """显式保存 / 另存为后调用：把当前内容记为已保存点（清窗口标题星号）。
+
+        只在 project_io 的显式保存路径调用；commit 即落盘的自动保存不动
+        保存点——星号语义是"距上次显式保存有修改"（界面层决定）。
+        """
+        if 0 <= self._pos < len(self._snaps):
+            self._saved_text = self._snaps[self._pos].text
 
     def record(self, data: dict) -> None:
         """工程内容变更（commit）后调用；内容未变时只更新界面状态，不新增一步。
@@ -407,8 +442,18 @@ def can_redo() -> bool:
     return _stack.can_redo
 
 
-def reset(data: dict) -> None:
-    _stack.reset(data)
+def is_dirty() -> bool:
+    """当前内容距已保存点是否有修改（窗口标题星号用）。"""
+    return _stack.is_dirty
+
+
+def mark_saved() -> None:
+    """显式保存 / 另存为后记录已保存点（project_io 的保存路径调用）。"""
+    _stack.mark_saved()
+
+
+def reset(data: dict, *, saved: bool = True) -> None:
+    _stack.reset(data, saved=saved)
 
 
 def record(data: dict) -> None:

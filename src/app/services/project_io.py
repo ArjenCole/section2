@@ -384,7 +384,8 @@ def new_project(spec: NewProjectSpec) -> Path | None:
     if path is None:
         _original_path = None
         _backup_done_for_session = False
-        undo_stack.reset(stn_codec.dump_database())
+        # 临时工程内容尚未保存到任何文件：不设保存点，标题从一开始就带 *
+        undo_stack.reset(stn_codec.dump_database(), saved=False)
         return None
     if path.suffix.lower() != PROJECT_SUFFIX:
         path = path.with_suffix(PROJECT_SUFFIX)
@@ -532,7 +533,8 @@ def open_legacy_project(path: str | Path) -> None:
         f"{backup_note}\n"
         "当前工程尚未保存到文件，原文件不会被覆盖；请用「另存为」保存为新的 .stn 工程。"
     )
-    undo_stack.reset(stn_codec.dump_database())
+    # 转译结果只进临时工作库：内容尚未保存到任何文件，不设保存点（标题带 *）
+    undo_stack.reset(stn_codec.dump_database(), saved=False)
 
 
 def last_migration_notice() -> str:
@@ -559,6 +561,7 @@ def save() -> Path | None:
     _discard_pending_write()  # 刚写出的就是最新内容，防抖挂起不再需要
     create_backup()
     _backup_done_for_session = True
+    undo_stack.mark_saved()  # 显式保存：刷新已保存点，窗口标题清星号
     return _original_path
 
 
@@ -591,6 +594,7 @@ def save_as(path: str | Path) -> Path:
     release_lock(old_path)
     _original_path = target
     _backup_done_for_session = False
+    undo_stack.mark_saved()  # 另存为同样是显式保存：刷新已保存点，窗口标题清星号
     return target
 
 

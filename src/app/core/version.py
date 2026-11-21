@@ -5,6 +5,11 @@
 
 APP_NAME = "Section2"  # platformdirs 目录名 / QApplication.applicationName
 APP_DISPLAY_NAME = "Section 2.0"
+#: 任务栏 / 窗口标题后缀用的应用名：main.py 把它设为 Qt 的
+#: applicationDisplayName，Qt 会在窗口标题后追加“ - Section2”（开工程显示
+#: “工程.stn - Section2”）；标题本身已含本名时 Qt 不再追加，未开工程的
+#: 任务栏就只显示 Section2。
+APP_TITLE_NAME = "Section2"
 APP_ORG_NAME = "Section"
 APP_ORG_DOMAIN = "section.local"
 
