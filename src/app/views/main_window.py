@@ -682,7 +682,6 @@ class MainWindow(QMainWindow):
         self._act_format_painter.setCheckable(True)
         self._act_format_painter.toggled.connect(self._toggle_format_painter)
         self._act_close = self._action("关闭工程(&C)", self._close_project)
-        self._act_import_legacy = self._action("导入旧版工程(.stn)…", self._import_legacy)
         self._act_exit = self._action("退出(&Q)", self.close, "Ctrl+Q")
 
         # 动作一律接绑定方法：QAction 是窗口的 C++ 子对象，lambda 抓 self 会形成
@@ -804,8 +803,6 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self._act_save_as)
         file_menu.addAction(self._act_export_excel)
         file_menu.addAction(self._act_close)
-        file_menu.addSeparator()
-        file_menu.addAction(self._act_import_legacy)
         file_menu.addSeparator()
         file_menu.addAction(self._act_exit)
 
@@ -1412,13 +1409,6 @@ class MainWindow(QMainWindow):
         else:
             self._main_tabs.setCurrentWidget(self._summary_panel.price_page)
             self._summary_panel.locate_price_row(key)
-
-    def _import_legacy(self) -> None:
-        """旧 .stn 单向迁移导入（M6）。"""
-        from app.views.dialogs.legacy_import_dialog import LegacyImportDialog
-
-        self._legacy_import = LegacyImportDialog(self)
-        self._legacy_import.show()
 
     def _toggle_theme(self) -> None:
         name = ThemeManager.instance().toggle(QApplication.instance())

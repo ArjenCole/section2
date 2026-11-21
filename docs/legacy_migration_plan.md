@@ -102,9 +102,7 @@ src/app/services/legacy_migration/
 - `legacy_migration` 可以依赖 `app.core.models`、`app.services.element_library`、`app.services.atlas_match` 等 2.0 服务；
 - **2.0 核心不得反向依赖 `legacy_migration`**；
 - 2.0 启动、正常打开/保存/计算/汇总/导出路径不得 import 迁移包；
-- 只有两个入口延迟 import：
-  1. `project_io.open_project` 检测到 1.0 XML 后，才 `from app.services import legacy_migration`；
-  2. `legacy_import_dialog` 打开导入向导时，才 import。
+- 只有一个入口延迟 import：`project_io.open_project` 检测到 1.0 XML 后，才 `from app.services import legacy_migration`（直接打开文件即自动识别版本并转译；早期设计中的独立导入向导窗体已随直接打开流程取消）；
 - `element_library._from_legacy`（没有 JSON 资产时的兜底）改为函数内延迟 import；
 - `.spcp` 单原则导入也归到 `legacy_migration`，由 `project_io` 延迟 import。
 

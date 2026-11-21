@@ -5,9 +5,8 @@ docs/legacy_migration_plan.md §0.1.1）：2.0 正常路径不得 import 迁移�
 本模块只为既有调用 / 测试保留旧导入路径（``from app.services import
 stn_migration``），自身不做任何解析 / 匹配 / 拆分逻辑。
 
-2.0 侧的正式入口是 :func:`app.services.project_io.open_project`（检测到
-1.0 XML 后延迟 import 迁移包）与导入向导
-（``views/dialogs/legacy_import_dialog.py``，同样延迟 import）。
+2.0 侧的唯一正式入口是 :func:`app.services.project_io.open_project`
+（检测到 1.0 XML 后延迟 import 迁移包并自动转译，打开旧版文件即走此流程）。
 """
 
 from __future__ import annotations

@@ -24,7 +24,6 @@ _ALLOWED_MODULES = {
     "app.services.element_library",  # _from_legacy_file：无 JSON 资产时的兜底
     "app.services.project_io",  # open_legacy_project / import_spcp：检测到 1.0 后
     "app.agent.tools.migrate",  # AI 迁移工具：调用时
-    "app.views.dialogs.legacy_import_dialog",  # 导入向导：打开时
 }
 
 

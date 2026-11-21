@@ -3,9 +3,9 @@
 架构约束（优先级最高）：
 
 * **2.0 核心不得反向依赖本包**：启动、正常打开 / 保存 / 计算 / 汇总 / 导出
-  路径不 import ``legacy_migration``；只有两处入口延迟 import——
-  ``project_io.open_project`` 检测到 1.0 XML 后、``legacy_import_dialog``
-  打开导入向导时（另有 ``element_library._from_legacy`` 无 JSON 资产时的
+  路径不 import ``legacy_migration``；主入口延迟 import——
+  ``project_io.open_project`` 检测到 1.0 XML 后（另有
+  ``element_library._from_legacy`` 无 JSON 资产时的
   兜底、``project_io.import_spcp``、AI 迁移工具三处按需延迟 import）；
 * **迁移后的文件就是普通 2.0 文件**：写出标准 ``Section2`` JSON，不带
   ``migrated`` / ``is_legacy`` 标记；``legacy_meta`` / ``raw_key`` 是普通
@@ -16,7 +16,7 @@
 * :func:`detect` —— 是否为 1.0 旧版文件；
 * :func:`parse` —— 1.0 XML → LegacyProject + 解析报告（逐元素容错）；
 * :func:`build_database` —— 解析并写入临时工作库（自动转译共用）；
-* :func:`migrate` —— 解析 + 建库 + 写出新 `.stn`（导入向导 / AI 工具用）；
+* :func:`migrate` —— 解析 + 建库 + 写出新 `.stn`（AI 迁移工具用）；
 * :func:`backup` —— 原文件备份到软件数据目录（原文件任何情况下不修改）；
 * :class:`MigrationReport` —— 迁移报告（计数 + 分节明细 + 警告 / 跳过）。
 """
