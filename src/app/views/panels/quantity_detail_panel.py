@@ -136,8 +136,10 @@ class QuantityDetailPanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setProperty("role", "panel")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # 页面不画底色，透出主面板的窗体灰底（bg_window），与构件列表页
+        # （UnitPanel 透明同款）一致：页边条与 bg_window 同色的表格行头
+        # 连成一体，不再衬出白框
+        self.setProperty("role", "ghost")
         self._node = None
         self._loading = False  # 程序化填装表格时屏蔽信号
         self._dirty = False  # 页面不可见期间数据变了，显示时补一次重载

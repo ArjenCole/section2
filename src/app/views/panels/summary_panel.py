@@ -111,8 +111,10 @@ class SummaryPanel(QObject):
     def _build_cost_page(self) -> QWidget:
         """费用汇总表页：项目结构每个节点一行（合槽构件同款树状表格）。"""
         page = QWidget()
-        page.setProperty("role", "panel")
-        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # 页面不画底色，透出主面板的窗体灰底（bg_window），与构件列表页
+        # （UnitPanel 透明同款）一致：页边条与 bg_window 同色的表格行头
+        # 连成一体，不再衬出白框
+        page.setProperty("role", "ghost")
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(6, 6, 6, 6)
         page_layout.setSpacing(4)
@@ -134,8 +136,8 @@ class SummaryPanel(QObject):
     def _build_price_page(self) -> QWidget:
         """综合单价汇总表页：工程量合并行，仅单价列可编辑。"""
         page = QWidget()
-        page.setProperty("role", "panel")
-        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # 页面不画底色，透出主面板的窗体灰底（费用汇总表页同款，见 _build_cost_page）
+        page.setProperty("role", "ghost")
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(6, 6, 6, 6)
         page_layout.setSpacing(4)
